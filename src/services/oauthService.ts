@@ -1,36 +1,45 @@
 import { ApiResponse, ConnectedAccount, SocialPlatform } from '../types/oauth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+
+const resolveRedirectUri = (envKeyValue?: string): string => {
+  if (!envKeyValue) return APP_URL;
+  if (envKeyValue.startsWith('http://') || envKeyValue.startsWith('https://')) {
+    return envKeyValue;
+  }
+  return `${APP_URL}${envKeyValue}`;
+};
 
 // Platform OAuth Configuration
 export const oauthConfigs = {
   Instagram: {
     clientId: import.meta.env.VITE_INSTAGRAM_APP_ID,
-    redirectUri: `${import.meta.env.VITE_APP_URL}${import.meta.env.VITE_INSTAGRAM_REDIRECT_URI}`,
+    redirectUri: resolveRedirectUri(import.meta.env.VITE_INSTAGRAM_REDIRECT_URI),
     authUrl: 'https://api.instagram.com/oauth/authorize',
-    scopes: ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_messages'],
+    scopes: ['user_profile', 'user_media'],
   },
   Twitter: {
     clientId: import.meta.env.VITE_TWITTER_CLIENT_ID,
-    redirectUri: `${import.meta.env.VITE_APP_URL}${import.meta.env.VITE_TWITTER_REDIRECT_URI}`,
+    redirectUri: resolveRedirectUri(import.meta.env.VITE_TWITTER_REDIRECT_URI),
     authUrl: 'https://twitter.com/i/oauth2/authorize',
     scopes: ['tweet.read', 'tweet.write', 'users.read', 'follows.read', 'follows.write'],
   },
   LinkedIn: {
     clientId: import.meta.env.VITE_LINKEDIN_CLIENT_ID,
-    redirectUri: `${import.meta.env.VITE_APP_URL}${import.meta.env.VITE_LINKEDIN_REDIRECT_URI}`,
+    redirectUri: resolveRedirectUri(import.meta.env.VITE_LINKEDIN_REDIRECT_URI),
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
     scopes: ['r_liteprofile', 'w_member_social', 'r_basicprofile', 'r_emailaddress'],
   },
   Facebook: {
     clientId: import.meta.env.VITE_FACEBOOK_APP_ID,
-    redirectUri: `${import.meta.env.VITE_APP_URL}${import.meta.env.VITE_FACEBOOK_REDIRECT_URI}`,
+    redirectUri: resolveRedirectUri(import.meta.env.VITE_FACEBOOK_REDIRECT_URI),
     authUrl: 'https://www.facebook.com/v18.0/dialog/oauth',
     scopes: ['pages_manage_posts', 'pages_read_user_content', 'pages_manage_metadata'],
   },
   TikTok: {
     clientId: import.meta.env.VITE_TIKTOK_CLIENT_ID,
-    redirectUri: `${import.meta.env.VITE_APP_URL}${import.meta.env.VITE_TIKTOK_REDIRECT_URI}`,
+    redirectUri: resolveRedirectUri(import.meta.env.VITE_TIKTOK_REDIRECT_URI),
     authUrl: 'https://www.tiktok.com/oauth/authorize',
     scopes: ['user.info.basic', 'video.upload'],
   },

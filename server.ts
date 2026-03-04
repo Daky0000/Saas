@@ -9,10 +9,22 @@ dotenv.config();
 const app = express();
 const PORT = process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const allowedOrigins = new Set([
+  process.env.VITE_APP_URL || 'http://localhost:3000',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://marketing.dakyworld.com',
+]);
 
 // Middleware
 app.use(cors({
-  origin: process.env.VITE_APP_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`Origin not allowed by CORS: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -23,6 +35,26 @@ interface OAuthState {
   userId: string;
   code: string;
   state: string;
+}
+
+interface StoredConnection {
+  id: string;
+  userId: string;
+  platform: string;
+  handle: string;
+  followers: string;
+  connected: boolean;
+  connectedAt: string;
+  expiresAt?: string;
+}
+
+const userConnections = new Map<string, StoredConnection[]>();
+
+function resolveRedirectUri(uri: string | undefined): string {
+  if (!uri) return '';
+  if (uri.startsWith('http://') || uri.startsWith('https://')) return uri;
+  const appUrl = process.env.VITE_APP_URL || 'http://localhost:3000';
+  return `${appUrl}${uri}`;
 }
 
 // OAuth Handler for Instagram
@@ -148,11 +180,13 @@ async function exchangeInstagramCode(code: string) {
     client_id: process.env.VITE_INSTAGRAM_APP_ID || '',
     client_secret: process.env.INSTAGRAM_APP_SECRET || '',
     grant_type: 'authorization_code',
-    redirect_uri: process.env.VITE_INSTAGRAM_REDIRECT_URI || '',
+    redirect_uri: resolveRedirectUri(process.env.VITE_INSTAGRAM_REDIRECT_URI),
     code,
   });
 
-  const response = await axios.post('https://graph.instagram.com/v18.0/oauth/access_token', data);
+  const response = await axios.post('https://api.instagram.com/oauth/access_token', data, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  });
   return response.data;
 }
 
@@ -227,18 +261,34 @@ async function storeUserConnection(
   platform: string,
   tokenData: any
 ): Promise<void> {
-  // Implement storing connection in database
-  console.log(`Storing connection for user ${userId} on ${platform}`);
+  const existing = userConnections.get(userId) || [];
+  const next: StoredConnection = {
+    id: `${platform.toLowerCase()}-${Date.now()}`,
+    userId,
+    platform,
+    handle: tokenData?.user_id ? String(tokenData.user_id) : `${platform.toLowerCase()}_account`,
+    followers: '0',
+    connected: true,
+    connectedAt: new Date().toISOString(),
+    expiresAt: tokenData?.expires_in
+      ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
+      : undefined,
+  };
+
+  const filtered = existing.filter((acc) => acc.platform !== platform);
+  userConnections.set(userId, [...filtered, next]);
 }
 
 async function getUserConnectedAccounts(userId: string): Promise<any[]> {
-  // Implement fetching accounts from database
-  return [];
+  return userConnections.get(userId) || [];
 }
 
 async function removeUserConnection(userId: string, platform: string): Promise<void> {
-  // Implement removing connection from database
-  console.log(`Removing connection for user ${userId} on ${platform}`);
+  const existing = userConnections.get(userId) || [];
+  userConnections.set(
+    userId,
+    existing.filter((acc) => acc.platform !== platform)
+  );
 }
 
 async function testPlatformConnection(userId: string, platform: string): Promise<any> {
@@ -267,7 +317,7 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
-  res.json({ message: 'OAuth Backend Server Running ✓', version: '1.0.0' });
+  res.json({ message: 'OAuth Backend Server Running', version: '1.0.0' });
 });
 
 // Start server
@@ -276,3 +326,4 @@ app.listen(PORT, () => {
 });
 
 export default app;
+

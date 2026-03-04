@@ -24,6 +24,11 @@ function App() {
     const pathname = window.location.pathname;
     const isCallback = pathname.startsWith('/auth/') && pathname.includes('callback');
     setIsOAuthCallback(isCallback);
+
+    const page = new URLSearchParams(window.location.search).get('page');
+    if (page && ['dashboard', 'posts', 'cards', 'connects', 'analytics', 'profile'].includes(page)) {
+      setCurrentPage(page as PageType);
+    }
     
     // Check for existing session (simplified)
     const session = localStorage.getItem('auth_session');
