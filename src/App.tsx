@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { BarChart4, FileText, Palette, Share2, TrendingUp, Settings, Menu, X, LogOut } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
@@ -11,6 +11,7 @@ import OAuthCallback from './pages/OAuthCallback';
 import { useOAuthCallback } from './hooks/useOAuth';
 
 type PageType = 'dashboard' | 'posts' | 'cards' | 'connects' | 'analytics' | 'profile';
+const VALID_PAGES: PageType[] = ['dashboard', 'posts', 'cards', 'connects', 'analytics', 'profile'];
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -19,23 +20,61 @@ function App() {
   const [isOAuthCallback, setIsOAuthCallback] = useState(false);
   useOAuthCallback();
 
+  const getPageFromUrl = useCallback((): PageType | null => {
+    const page = new URLSearchParams(window.location.search).get('page');
+    if (!page) return null;
+    return VALID_PAGES.includes(page as PageType) ? (page as PageType) : null;
+  }, []);
+
+  const syncUrlForPage = useCallback((page: PageType, replace = false) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', page);
+    if (replace) {
+      window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
+    window.history.pushState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  const navigateToPage = useCallback(
+    (page: PageType, replace = false) => {
+      setCurrentPage(page);
+      syncUrlForPage(page, replace);
+    },
+    [syncUrlForPage]
+  );
+
   useEffect(() => {
     // Check if we're in an OAuth callback route
     const pathname = window.location.pathname;
     const isCallback = pathname.startsWith('/auth/') && pathname.includes('callback');
     setIsOAuthCallback(isCallback);
 
-    const page = new URLSearchParams(window.location.search).get('page');
-    if (page && ['dashboard', 'posts', 'cards', 'connects', 'analytics', 'profile'].includes(page)) {
-      setCurrentPage(page as PageType);
+    const pageFromUrl = getPageFromUrl();
+    if (pageFromUrl) {
+      setCurrentPage(pageFromUrl);
+    } else if (!isCallback) {
+      syncUrlForPage('dashboard', true);
     }
-    
+
     // Check for existing session (simplified)
     const session = localStorage.getItem('auth_session');
     if (session) {
       setIsAuthenticated(true);
     }
-  }, []);
+  }, [getPageFromUrl, syncUrlForPage]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const pageFromUrl = getPageFromUrl();
+      if (pageFromUrl) {
+        setCurrentPage(pageFromUrl);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [getPageFromUrl]);
 
   const handleLogin = () => {
     localStorage.setItem('auth_session', 'true');
@@ -101,7 +140,7 @@ function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setCurrentPage(item.id as PageType)}
+                onClick={() => navigateToPage(item.id as PageType)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
                   currentPage === item.id
                     ? 'bg-blue-50 text-blue-600 shadow-sm'
@@ -157,7 +196,7 @@ function App() {
                   <button
                     key={item.id}
                     onClick={() => {
-                      setCurrentPage(item.id as PageType);
+                      navigateToPage(item.id as PageType);
                       setSidebarOpen(false);
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
