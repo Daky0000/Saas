@@ -11,7 +11,18 @@ import OAuthCallback from './pages/OAuthCallback';
 import { useOAuthCallback } from './hooks/useOAuth';
 
 type PageType = 'dashboard' | 'posts' | 'cards' | 'connects' | 'analytics' | 'profile';
-const VALID_PAGES: PageType[] = ['dashboard', 'posts', 'cards', 'connects', 'analytics', 'profile'];
+const PAGE_PATHS: Record<PageType, string> = {
+  dashboard: '/dashboard',
+  posts: '/posts',
+  cards: '/cards',
+  connects: '/connects',
+  analytics: '/analytics',
+  profile: '/profile',
+};
+
+const PATH_TO_PAGE = new Map<string, PageType>(
+  Object.entries(PAGE_PATHS).map(([page, path]) => [path, page as PageType])
+);
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -20,70 +31,108 @@ function App() {
   const [isOAuthCallback, setIsOAuthCallback] = useState(false);
   useOAuthCallback();
 
-  const getPageFromUrl = useCallback((): PageType | null => {
-    const page = new URLSearchParams(window.location.search).get('page');
-    if (!page) return null;
-    return VALID_PAGES.includes(page as PageType) ? (page as PageType) : null;
+  const getPageFromPath = useCallback((pathname: string): PageType | null => {
+    return PATH_TO_PAGE.get(pathname) ?? null;
   }, []);
 
-  const syncUrlForPage = useCallback((page: PageType, replace = false) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('page', page);
+  const navigatePath = useCallback((path: string, replace = false) => {
     if (replace) {
-      window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+      window.history.replaceState({}, document.title, path);
       return;
     }
-    window.history.pushState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    window.history.pushState({}, document.title, path);
   }, []);
 
   const navigateToPage = useCallback(
     (page: PageType, replace = false) => {
       setCurrentPage(page);
-      syncUrlForPage(page, replace);
+      const path = PAGE_PATHS[page];
+      if (window.location.pathname !== path || window.location.search) {
+        navigatePath(path, replace);
+      }
     },
-    [syncUrlForPage]
+    [navigatePath]
   );
 
   useEffect(() => {
-    // Check if we're in an OAuth callback route
     const pathname = window.location.pathname;
     const isCallback = pathname.startsWith('/auth/') && pathname.includes('callback');
     setIsOAuthCallback(isCallback);
 
-    const pageFromUrl = getPageFromUrl();
-    if (pageFromUrl) {
-      setCurrentPage(pageFromUrl);
-    } else if (!isCallback) {
-      syncUrlForPage('dashboard', true);
+    const session = localStorage.getItem('auth_session');
+    const loggedIn = Boolean(session);
+    setIsAuthenticated(loggedIn);
+
+    if (isCallback) {
+      return;
     }
 
-    // Check for existing session (simplified)
-    const session = localStorage.getItem('auth_session');
-    if (session) {
-      setIsAuthenticated(true);
+    if (!loggedIn) {
+      if (pathname !== '/login') {
+        navigatePath('/login', true);
+      }
+      return;
     }
-  }, [getPageFromUrl, syncUrlForPage]);
+
+    const pageFromPath = getPageFromPath(pathname);
+    if (pageFromPath) {
+      setCurrentPage(pageFromPath);
+      return;
+    }
+
+    if (pathname === '/' || pathname === '/login') {
+      navigateToPage('dashboard', true);
+      return;
+    }
+
+    navigateToPage('dashboard', true);
+  }, [getPageFromPath, navigatePath, navigateToPage]);
 
   useEffect(() => {
     const handlePopState = () => {
-      const pageFromUrl = getPageFromUrl();
-      if (pageFromUrl) {
-        setCurrentPage(pageFromUrl);
+      const pathname = window.location.pathname;
+      const isCallback = pathname.startsWith('/auth/') && pathname.includes('callback');
+      setIsOAuthCallback(isCallback);
+
+      if (isCallback) {
+        return;
       }
+
+      if (!isAuthenticated) {
+        if (pathname !== '/login') {
+          navigatePath('/login', true);
+        }
+        return;
+      }
+
+      const pageFromPath = getPageFromPath(pathname);
+      if (pageFromPath) {
+        setCurrentPage(pageFromPath);
+        return;
+      }
+
+      if (pathname === '/login' || pathname === '/') {
+        navigateToPage('dashboard', true);
+        return;
+      }
+
+      navigateToPage('dashboard', true);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [getPageFromUrl]);
+  }, [getPageFromPath, isAuthenticated, navigatePath, navigateToPage]);
 
   const handleLogin = () => {
     localStorage.setItem('auth_session', 'true');
     setIsAuthenticated(true);
+    navigateToPage('dashboard', true);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('auth_session');
     setIsAuthenticated(false);
+    navigatePath('/login', true);
   };
 
   if (!isAuthenticated && !isOAuthCallback) {
