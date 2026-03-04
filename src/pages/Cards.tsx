@@ -40,6 +40,79 @@ interface CardDesign {
   };
 }
 
+const normalizeCardDesign = (raw: any): CardDesign => {
+  const base: CardDesign = {
+    aspectRatio: '1:1',
+    width: 800,
+    layout: { padding: 40, alignment: 'center' },
+    typography: {
+      font: 'Poppins',
+      size: 48,
+      weight: 700,
+      spacing: 2,
+      lineHeight: 1.5,
+      color: '#000000',
+    },
+    background: {
+      type: 'gradient',
+      color1: '#667eea',
+      color2: '#764ba2',
+      angle: 135,
+      blur: 0,
+      overlay: { enabled: false, color: '#000000', opacity: 0.5 },
+    },
+    branding: {
+      logo: 'C',
+      primaryColor: '#667eea',
+      secondaryColor: '#764ba2',
+      showBranding: true,
+    },
+  };
+
+  const alignment = raw?.layout?.alignment || raw?.layouts?.textAlignment || base.layout.alignment;
+  const type = raw?.background?.type || base.background.type;
+
+  return {
+    aspectRatio: raw?.aspectRatio || raw?.layouts?.aspectRatio || base.aspectRatio,
+    width: Number(raw?.width) || base.width,
+    layout: {
+      padding: Number(raw?.layout?.padding ?? raw?.layouts?.padding) || base.layout.padding,
+      alignment: ['left', 'center', 'right'].includes(alignment) ? alignment : base.layout.alignment,
+    },
+    typography: {
+      font: raw?.typography?.font || raw?.typography?.fontFamily || base.typography.font,
+      size: Number(raw?.typography?.size ?? raw?.typography?.fontSize) || base.typography.size,
+      weight:
+        (Number(raw?.typography?.weight ?? raw?.typography?.fontWeight) || base.typography.weight) as CardDesign['typography']['weight'],
+      spacing: Number(raw?.typography?.spacing ?? raw?.typography?.letterSpacing) || base.typography.spacing,
+      lineHeight:
+        (Number(raw?.typography?.lineHeight) || base.typography.lineHeight) as CardDesign['typography']['lineHeight'],
+      color: raw?.typography?.color || base.typography.color,
+    },
+    background: {
+      type: ['solid', 'gradient', 'image'].includes(type) ? type : base.background.type,
+      color1:
+        raw?.background?.color1 || raw?.background?.solidColor || raw?.background?.gradientStart || base.background.color1,
+      color2: raw?.background?.color2 || raw?.background?.gradientEnd || base.background.color2,
+      angle: Number(raw?.background?.angle ?? raw?.background?.gradientAngle) || base.background.angle,
+      image: raw?.background?.image || raw?.background?.imageUrl,
+      blur: Number(raw?.background?.blur) || base.background.blur,
+      overlay: {
+        enabled: Boolean(raw?.background?.overlay?.enabled),
+        color: raw?.background?.overlay?.color || raw?.background?.overlayColor || base.background.overlay.color,
+        opacity: Number(raw?.background?.overlay?.opacity ?? raw?.background?.overlayOpacity) || base.background.overlay.opacity,
+      },
+    },
+    branding: {
+      logo: raw?.branding?.logo || base.branding.logo,
+      primaryColor: raw?.branding?.primaryColor || raw?.branding?.colorPalette?.[0] || base.branding.primaryColor,
+      secondaryColor: raw?.branding?.secondaryColor || raw?.branding?.colorPalette?.[1] || base.branding.secondaryColor,
+      showBranding:
+        typeof raw?.branding?.showBranding === 'boolean' ? raw.branding.showBranding : base.branding.showBranding,
+    },
+  };
+};
+
 const Cards = () => {
   const [activeTab, setActiveTab] = useState<'design' | 'customize' | 'templates' | 'collection'>('design');
   const [customizeTab, setCustomizeTab] = useState<'layout' | 'typography' | 'background' | 'branding' | 'ai'>('layout');
@@ -71,6 +144,13 @@ const Cards = () => {
       showBranding: true,
     },
   });
+
+  const setNormalizedCardDesign = (next: any) => {
+    setCardDesign((prev) => {
+      const candidate = typeof next === 'function' ? next(prev) : next;
+      return normalizeCardDesign(candidate);
+    });
+  };
 
   const tabs = [
     { id: 'design', label: 'Design' },
@@ -398,13 +478,13 @@ const Cards = () => {
 
               {customizeTab === 'ai' && (
                 <div className="py-4">
-                  <CardDesignAssistant cardDesign={cardDesign} setCardDesign={setCardDesign} />
+                  <CardDesignAssistant cardDesign={cardDesign} setCardDesign={setNormalizedCardDesign} />
                 </div>
               )}
             </div>
           )}
 
-          {activeTab === 'templates' && <CardTemplateLibrary setCardDesign={setCardDesign} />}
+          {activeTab === 'templates' && <CardTemplateLibrary setCardDesign={setNormalizedCardDesign} />}
 
           {activeTab === 'collection' && (
             <div className="text-center py-8">
