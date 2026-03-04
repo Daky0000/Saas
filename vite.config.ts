@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: './', // Use relative asset paths so deployment works on custom domains and subpaths
+  base: '/', // Use root-absolute assets so clean URLs (/dashboard, /posts) can load JS/CSS
   server: {
     port: 3000,
     proxy: {
