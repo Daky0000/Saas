@@ -63,16 +63,31 @@ export const Connects: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     const success = params.get('success');
     const errorMsg = params.get('error');
+    const page = params.get('page');
 
     if (success === 'true') {
       addNotification('Successfully connected account!', 'success');
       refetch();
-      window.history.replaceState({}, document.title, window.location.pathname);
+      const nextParams = new URLSearchParams();
+      if (page) nextParams.set('page', page);
+      const nextSearch = nextParams.toString();
+      window.history.replaceState(
+        {},
+        document.title,
+        `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`
+      );
     }
 
     if (errorMsg) {
       addNotification(`Connection failed: ${decodeURIComponent(errorMsg)}`, 'error');
-      window.history.replaceState({}, document.title, window.location.pathname);
+      const nextParams = new URLSearchParams();
+      if (page) nextParams.set('page', page);
+      const nextSearch = nextParams.toString();
+      window.history.replaceState(
+        {},
+        document.title,
+        `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`
+      );
     }
   }, [refetch]);
 
