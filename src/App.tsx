@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
-import { BarChart4, FileText, Palette, Share2, TrendingUp, Settings, Menu, X } from 'lucide-react';
+import { BarChart4, FileText, Palette, Share2, TrendingUp, Settings, Menu, X, LogOut } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
 import Connects from './pages/Connects';
 import Analytics from './pages/Analytics';
 import Profile from './pages/Profile';
+import Auth from './pages/Auth';
 import OAuthCallback from './pages/OAuthCallback';
 import { useOAuthCallback } from './hooks/useOAuth';
 
 type PageType = 'dashboard' | 'posts' | 'cards' | 'connects' | 'analytics' | 'profile';
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isOAuthCallback, setIsOAuthCallback] = useState(false);
@@ -22,7 +24,27 @@ function App() {
     const pathname = window.location.pathname;
     const isCallback = pathname.startsWith('/auth/') && pathname.includes('callback');
     setIsOAuthCallback(isCallback);
+    
+    // Check for existing session (simplified)
+    const session = localStorage.getItem('auth_session');
+    if (session) {
+      setIsAuthenticated(true);
+    }
   }, []);
+
+  const handleLogin = () => {
+    localStorage.setItem('auth_session', 'true');
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_session');
+    setIsAuthenticated(false);
+  };
+
+  if (!isAuthenticated && !isOAuthCallback) {
+    return <Auth onLogin={handleLogin} />;
+  }
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart4 },
@@ -88,10 +110,18 @@ function App() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-gray-100 text-center">
+        <div className="p-4 border-t border-gray-100 space-y-2">
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium text-red-600 hover:bg-red-50"
+          >
+            <LogOut size={20} />
+            {sidebarOpen && <span>Logout</span>}
+          </button>
+          
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="text-gray-500 hover:text-gray-700 transition-colors text-sm"
+            className="w-full text-gray-500 hover:text-gray-700 transition-colors text-sm py-2"
           >
             {sidebarOpen ? '← Collapse' : '→'}
           </button>
