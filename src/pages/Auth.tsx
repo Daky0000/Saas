@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Mail, Lock, User, Eye, EyeOff, Github, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 
 interface AuthProps {
   onLogin: () => void;
