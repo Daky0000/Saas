@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BarChart4, FileText, Palette, Share2, TrendingUp, Settings, Menu, X } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
@@ -6,12 +6,23 @@ import Cards from './pages/Cards';
 import Connects from './pages/Connects';
 import Analytics from './pages/Analytics';
 import Profile from './pages/Profile';
+import OAuthCallback from './pages/OAuthCallback';
+import { useOAuthCallback } from './hooks/useOAuth';
 
 type PageType = 'dashboard' | 'posts' | 'cards' | 'connects' | 'analytics' | 'profile';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isOAuthCallback, setIsOAuthCallback] = useState(false);
+  useOAuthCallback();
+
+  useEffect(() => {
+    // Check if we're in an OAuth callback route
+    const pathname = window.location.pathname;
+    const isCallback = pathname.startsWith('/auth/') && pathname.includes('callback');
+    setIsOAuthCallback(isCallback);
+  }, []);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart4 },
@@ -23,6 +34,10 @@ function App() {
   ];
 
   const renderPage = () => {
+    if (isOAuthCallback) {
+      return <OAuthCallback />;
+    }
+
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
