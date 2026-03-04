@@ -1,0 +1,137 @@
+import { useState } from 'react';
+import { BarChart4, FileText, Palette, Share2, TrendingUp, Settings, Menu, X } from 'lucide-react';
+import Dashboard from './pages/Dashboard';
+import Posts from './pages/Posts';
+import Cards from './pages/Cards';
+import Connects from './pages/Connects';
+import Analytics from './pages/Analytics';
+import Profile from './pages/Profile';
+
+type PageType = 'dashboard' | 'posts' | 'cards' | 'connects' | 'analytics' | 'profile';
+
+function App() {
+  const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const menuItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart4 },
+    { id: 'posts', label: 'Posts', icon: FileText },
+    { id: 'cards', label: 'Cards', icon: Palette },
+    { id: 'connects', label: 'Connects', icon: Share2 },
+    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
+    { id: 'profile', label: 'Profile', icon: Settings },
+  ];
+
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'dashboard':
+        return <Dashboard />;
+      case 'posts':
+        return <Posts />;
+      case 'cards':
+        return <Cards />;
+      case 'connects':
+        return <Connects />;
+      case 'analytics':
+        return <Analytics />;
+      case 'profile':
+        return <Profile />;
+      default:
+        return <Dashboard />;
+    }
+  };
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      {/* Sidebar */}
+      <aside className={`${
+        sidebarOpen ? 'w-64' : 'w-20'
+      } bg-white border-r border-gray-200 transition-all duration-300 hidden md:flex flex-col`}>
+        <div className="p-6 border-b border-gray-100">
+          <div className="text-2xl font-black text-gray-900">
+            {sidebarOpen ? '🎨 ContentFlow' : '🎨'}
+          </div>
+        </div>
+
+        <nav className="flex-1 p-4 space-y-2">
+          {menuItems.map(item => {
+            const IconComponent = item.icon;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setCurrentPage(item.id as PageType)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
+                  currentPage === item.id
+                    ? 'bg-blue-50 text-blue-600 shadow-sm'
+                    : 'text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <IconComponent size={20} />
+                {sidebarOpen && <span>{item.label}</span>}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-gray-100 text-center">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="text-gray-500 hover:text-gray-700 transition-colors text-sm"
+          >
+            {sidebarOpen ? '← Collapse' : '→'}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile Header */}
+        <header className="bg-white border-b border-gray-100 px-4 py-4 flex md:hidden items-center justify-between">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 hover:bg-gray-100 rounded-lg"
+          >
+            {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          <h1 className="text-xl font-black">🎨 ContentFlow</h1>
+          <div className="w-10"></div>
+        </header>
+
+        {/* Mobile Sidebar */}
+        {sidebarOpen && (
+          <div className="md:hidden bg-white p-4 border-b border-gray-100">
+            <nav className="space-y-2">
+              {menuItems.map(item => {
+                const IconComponent = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setCurrentPage(item.id as PageType);
+                      setSidebarOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
+                      currentPage === item.id
+                        ? 'bg-blue-50 text-blue-600'
+                        : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    <IconComponent size={20} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        )}
+
+        {/* Page Content */}
+        <main className="flex-1 overflow-auto p-6 md:p-8">
+          {renderPage()}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default App;
