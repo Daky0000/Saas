@@ -1,424 +1,672 @@
-import { useState } from 'react';
-import { Plus, Link2, AlertCircle, RefreshCw, Copy, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  AlertCircle,
+  CheckCircle,
+  Loader,
+  Plus,
+  X,
+  LogOut,
+  RefreshCw,
+  Settings,
+  Clock,
+  AlertTriangle,
+  Zap,
+} from 'lucide-react';
+import { useConnectedAccounts, useOAuthConnect } from '../hooks/useOAuth';
+import { SocialPlatform, ConnectedAccount, AutoPostingConfig, ContentVariation, RepostingSchedule, ErrorLog } from '../types/oauth';
 
-const Connects = () => {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'auto-posting' | 'variations' | 'reposting' | 'errors'>('accounts');
-  const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
-  const [connectedAccounts] = useState([
-    { id: 1, platform: 'Instagram', handle: '@contentcreator', connected: false, followers: '0' },
-    { id: 2, platform: 'Twitter', handle: '@creator_hub', connected: false, followers: '0' },
-    { id: 3, platform: 'LinkedIn', handle: '/in/creator', connected: false, followers: '0' },
-    { id: 4, platform: 'Facebook', handle: 'Creator Hub', connected: false, followers: '0' },
-    { id: 5, platform: 'TikTok', handle: '@creator_hub', connected: false, followers: '0' },
-  ]);
+interface Notification {
+  id: string;
+  type: 'success' | 'error';
+  message: string;
+}
 
-  const connectionRequirements: Record<string, { title: string; description: string; fields: Array<{ name: string; description: string; example: string }> }> = {
-    Instagram: {
-      title: 'Connect Your Instagram Account',
-      description: 'You will be redirected to Instagram to authorize access to your account. You need to be the account owner or have admin access.',
-      fields: [
-        { name: 'Instagram Account', description: 'Your Instagram business or personal account', example: '@yourhandle' },
-        { name: 'Authorization', description: 'Grant permission to post content and manage your account', example: 'Click "Authorize" button' },
-      ],
+interface ConnectionModalState {
+  isOpen: boolean;
+  platform: SocialPlatform | null;
+}
+
+const PLATFORMS: SocialPlatform[] = ['Instagram', 'Twitter', 'LinkedIn', 'Facebook', 'TikTok'];
+
+const PLATFORM_COLORS: Record<SocialPlatform, string> = {
+  Instagram: 'from-pink-500 to-purple-500',
+  Twitter: 'from-blue-400 to-blue-600',
+  LinkedIn: 'from-blue-600 to-blue-800',
+  Facebook: 'from-blue-500 to-blue-700',
+  TikTok: 'from-gray-900 to-pink-600',
+};
+
+const PLATFORM_ICONS: Record<SocialPlatform, string> = {
+  Instagram: '📷',
+  Twitter: '𝕏',
+  LinkedIn: '💼',
+  Facebook: 'f',
+  TikTok: '♪',
+};
+
+export const Connects: React.FC = () => {
+  const [activeTab, setActiveTab] = useState('accounts');
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [modalState, setModalState] = useState<ConnectionModalState>({
+    isOpen: false,
+    platform: null,
+  });
+
+  const { accounts, loading, error, refetch, disconnect } = useConnectedAccounts();
+  const [autoPostingConfigs, setAutoPostingConfigs] = useState<AutoPostingConfig[]>([]);
+  const [contentVariations, setContentVariations] = useState<ContentVariation[]>([]);
+  const [repostingSchedules, setRepostingSchedules] = useState<RepostingSchedule[]>([]);
+  const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
+
+  // Handle OAuth callbacks from URL params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get('success');
+    const errorMsg = params.get('error');
+
+    if (success === 'true') {
+      addNotification('Successfully connected account!', 'success');
+      refetch();
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    if (errorMsg) {
+      addNotification(`Connection failed: ${decodeURIComponent(errorMsg)}`, 'error');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [refetch]);
+
+  // Load mock data
+  useEffect(() => {
+    // Mock auto posting configs
+    setAutoPostingConfigs([
+      {
+        id: '1',
+        platform: 'Instagram',
+        enabled: true,
+        carbonCopy: 'Keep it original',
+        format: 'Standard',
+        autoHashtags: true,
+        maxLength: 2200,
+      },
+      {
+        id: '2',
+        platform: 'Twitter',
+        enabled: true,
+        carbonCopy: 'Adapt for platform',
+        format: 'Thread',
+        autoHashtags: false,
+        maxLength: 280,
+      },
+      {
+        id: '3',
+        platform: 'LinkedIn',
+        enabled: false,
+        carbonCopy: 'Professional tone',
+        format: 'Article',
+        autoHashtags: true,
+        maxLength: 3000,
+      },
+    ]);
+
+    // Mock content variations
+    setContentVariations([
+      {
+        platform: 'Instagram',
+        type: 'Image Caption',
+        format: 'Emoji-rich, conversational',
+        adaptations: ['Add emojis', 'Use hashtags', 'Include call-to-action'],
+      },
+      {
+        platform: 'Twitter',
+        type: 'Tweet',
+        format: 'Concise, engaging',
+        adaptations: ['Thread format', 'Quote format', 'Reply chains'],
+      },
+      {
+        platform: 'LinkedIn',
+        type: 'Post',
+        format: 'Professional, thought-leadership',
+        adaptations: ['Article link', 'Professional insights', 'Industry updates'],
+      },
+    ]);
+
+    // Mock reposting schedules
+    setRepostingSchedules([
+      {
+        id: '1',
+        title: 'Morning Boost',
+        frequency: 'Daily at 9 AM',
+        platforms: ['Instagram', 'Twitter', 'LinkedIn'],
+        lastRepost: '2026-03-04 09:00',
+        nextRepost: '2026-03-05 09:00',
+        performance: 'Excellent',
+      },
+      {
+        id: '2',
+        title: 'Evening Engagement',
+        frequency: 'Daily at 6 PM',
+        platforms: ['Instagram', 'Facebook'],
+        lastRepost: '2026-03-03 18:00',
+        nextRepost: '2026-03-04 18:00',
+        performance: 'Good',
+      },
+    ]);
+
+    // Mock error logs
+    setErrorLogs([
+      {
+        id: '1',
+        timestamp: '2026-03-04 14:23',
+        platform: 'Twitter',
+        error: 'Rate limit exceeded',
+        type: 'rate-limit',
+        status: 'active',
+      },
+      {
+        id: '2',
+        timestamp: '2026-03-03 10:15',
+        platform: 'Instagram',
+        error: 'Token expired, please reauthorize',
+        type: 'auth',
+        status: 'resolved',
+      },
+    ]);
+  }, []);
+
+  const addNotification = useCallback((message: string, type: 'success' | 'error') => {
+    const id = Math.random().toString(36).substring(7);
+    setNotifications((prev) => [...prev, { id, type, message }]);
+
+    setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    }, 4000);
+  }, []);
+
+  const handleConnect = useCallback((platform: SocialPlatform) => {
+    setModalState({ isOpen: true, platform });
+  }, []);
+
+  const handleDisconnect = useCallback(
+    async (platform: SocialPlatform) => {
+      const result = await disconnect(platform);
+      if (result.success) {
+        addNotification(`Disconnected from ${platform}`, 'success');
+      } else {
+        addNotification(`Failed to disconnect from ${platform}`, 'error');
+      }
     },
-    Twitter: {
-      title: 'Connect Your Twitter/X Account',
-      description: 'Authorize ContentFlow to post tweets and manage your Twitter presence.',
-      fields: [
-        { name: 'Twitter API Credentials', description: 'API Key and API Secret from your Twitter Developer account', example: 'From Twitter Developer Portal' },
-        { name: 'Access Token', description: 'Your personal access token for authentication', example: 'Generated token' },
-        { name: 'Access Secret', description: 'Your access token secret', example: 'Generated secret' },
-      ],
+    [disconnect, addNotification]
+  );
+
+  const handleConfirmConnection = useCallback(
+    async (platform: SocialPlatform | null) => {
+      if (platform) {
+        const { connect } = useOAuthConnect(platform);
+        try {
+          await connect();
+        } catch (err) {
+          addNotification('Failed to initiate connection', 'error');
+        }
+      }
+      setModalState({ isOpen: false, platform: null });
     },
-    LinkedIn: {
-      title: 'Connect Your LinkedIn Account',
-      description: 'Authenticate with LinkedIn to enable posting to your profile and company pages.',
-      fields: [
-        { name: 'LinkedIn Email', description: 'Your LinkedIn account email address', example: 'you@example.com' },
-        { name: 'Authorization', description: 'Grant permission to post and manage content', example: 'Click "Authorize" button' },
-        { name: '2FA Code', description: 'If enabled, two-factor authentication code', example: '6-digit code' },
-      ],
-    },
-    Facebook: {
-      title: 'Connect Your Facebook Account',
-      description: 'Link your Facebook Business account to schedule and publish posts.',
-      fields: [
-        { name: 'Facebook Account', description: 'Your Facebook business or personal account', example: 'Your account name' },
-        { name: 'Authorization', description: 'Grant permission to manage pages and posts', example: 'Click "Login with Facebook"' },
-        { name: 'Select Page', description: 'Choose which Facebook page to manage', example: 'Your business page' },
-      ],
-    },
-    TikTok: {
-      title: 'Connect Your TikTok Account',
-      description: 'Authorize ContentFlow to access your TikTok account for content management.',
-      fields: [
-        { name: 'TikTok Account', description: 'Your TikTok username', example: '@yourusername' },
-        { name: 'Authorization', description: 'Grant permission for posting and analytics access', example: 'Click "Authorize" button' },
-        { name: 'Creator Account', description: 'Your account must be a Creator Account', example: 'Upgrade to creator account' },
-      ],
-    },
+    [addNotification]
+  );
+
+  const getConnectedAccount = (platform: SocialPlatform): ConnectedAccount | undefined => {
+    return accounts.find((acc) => acc.platform === platform);
   };
 
-  const autoPostingConfigs = [
-    {
-      id: 1,
-      platform: 'Instagram',
-      enabled: true,
-      carbonCopy: 'Use exact caption',
-      format: 'Single image with carousel support',
-      autoHashtags: true,
-      maxLength: 2200,
-    },
-    {
-      id: 2,
-      platform: 'Twitter',
-      enabled: true,
-      carbonCopy: 'Shorten caption to 280 chars',
-      format: 'Thread format with breaks',
-      autoHashtags: true,
-      maxLength: 280,
-    },
-    {
-      id: 3,
-      platform: 'LinkedIn',
-      enabled: true,
-      carbonCopy: 'Professional tone + CTA',
-      format: 'Long-form with emojis',
-      autoHashtags: true,
-      maxLength: 3000,
-    },
-  ];
-
-  const variations = [
-    {
-      platform: 'Instagram',
-      type: 'Carousel',
-      format: '3-5 slides, 1080x1350px each',
-      adaptations: ['Add product images', 'Include call-to-action', 'Optimize for mobile'],
-    },
-    {
-      platform: 'Twitter',
-      type: 'Thread',
-      format: '3-7 tweets connected',
-      adaptations: ['Break content into hooks', 'Add engagement questions', 'Number tweets'],
-    },
-    {
-      platform: 'Facebook',
-      type: 'Album Post',
-      format: '1-10 images in collection',
-      adaptations: ['Add detailed captions', 'Include video option', 'Optimize for feed'],
-    },
-    {
-      platform: 'Pinterest',
-      type: 'Pin',
-      format: '1000x1500px vertical',
-      adaptations: ['Add SEO description', 'Brand colors only', 'Pinterest best practices'],
-    },
-  ];
-
-  const repostingSchedules = [
-    {
-      id: 1,
-      title: 'Top performing posts',
-      frequency: 'Weekly',
-      platforms: ['Instagram', 'Twitter'],
-      lastRepost: '2024-01-14',
-      nextRepost: '2024-01-21',
-      performance: 'Excellent',
-    },
-    {
-      id: 2,
-      title: 'Monthly highlights',
-      frequency: 'Monthly',
-      platforms: ['LinkedIn'],
-      lastRepost: '2024-01-01',
-      nextRepost: '2024-02-01',
-      performance: 'Good',
-    },
-  ];
-
-  const errors = [
-    {
-      id: 1,
-      timestamp: '2024-01-14 14:32',
-      platform: 'Facebook',
-      error: 'Token expired - please reconnect your account',
-      type: 'auth',
-      status: 'active',
-    },
-    {
-      id: 2,
-      timestamp: '2024-01-13 09:15',
-      platform: 'Twitter',
-      error: 'Image upload failed - file too large (12MB max)',
-      type: 'file',
-      status: 'resolved',
-    },
-    {
-      id: 3,
-      timestamp: '2024-01-12 16:42',
-      platform: 'Instagram',
-      error: 'Rate limit exceeded - try again in 2 hours',
-      type: 'rate-limit',
-      status: 'resolved',
-    },
-  ];
-
-  const tabs = [
-    { id: 'accounts', label: 'OAuth & Accounts', icon: Link2 },
-    { id: 'auto-posting', label: 'Auto Posting', icon: Plus },
-    { id: 'variations', label: 'Variations', icon: Copy },
-    { id: 'reposting', label: 'Auto Reposting', icon: RefreshCw },
-    { id: 'errors', label: 'Error Handling', icon: AlertCircle },
-  ];
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-black text-gray-900 mb-2">Connects</h1>
-        <p className="text-gray-600">Distribution engine - automate posting across platforms</p>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 p-6">
+      {/* Header */}
+      <div className="max-w-6xl mx-auto mb-8">
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">Connected Accounts</h1>
+        <p className="text-gray-600">
+          Manage your social media connections, configure auto-posting, and monitor account activity.
+        </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`px-4 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-600 hover:text-gray-900'
+      {/* Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {notifications.map((notif) => (
+          <div
+            key={notif.id}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-white ${
+              notif.type === 'success' ? 'bg-green-500' : 'bg-red-500'
             }`}
           >
-            {tab.label}
-          </button>
+            {notif.type === 'success' ? (
+              <CheckCircle size={20} />
+            ) : (
+              <AlertCircle size={20} />
+            )}
+            <span>{notif.message}</span>
+            <button
+              onClick={() =>
+                setNotifications((prev) => prev.filter((n) => n.id !== notif.id))
+              }
+              className="ml-2 hover:opacity-80"
+            >
+              <X size={16} />
+            </button>
+          </div>
         ))}
       </div>
 
-      {/* OAuth & Accounts */}
-      {activeTab === 'accounts' && (
-        <div className="space-y-4">
-          <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-6 border-l-4 border-blue-500">
-            <h2 className="text-lg font-bold text-gray-900 mb-2">Connected Accounts</h2>
-            <p className="text-sm text-gray-600">Manage your social media OAuth connections</p>
-          </div>
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto">
+        {/* Tabs */}
+        <div className="mb-8 flex gap-2 border-b border-gray-300 bg-white rounded-t-lg p-1 overflow-x-auto">
+          {['accounts', 'auto-posting', 'variations', 'reposting', 'errors'].map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-3 font-medium whitespace-nowrap border-b-2 transition-colors ${
+                activeTab === tab
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              {tab === 'accounts' && 'OAuth & Accounts'}
+              {tab === 'auto-posting' && 'Auto Posting'}
+              {tab === 'variations' && 'Variations'}
+              {tab === 'reposting' && 'Auto Reposting'}
+              {tab === 'errors' && 'Error Handling'}
+            </button>
+          ))}
+        </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {connectedAccounts.map(account => (
-              <div key={account.id} className="bg-white rounded-lg shadow-md p-6 border-t-4 border-blue-500">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900">{account.platform}</h3>
-                    <p className="text-sm text-gray-600 mt-1">{account.handle}</p>
-                  </div>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      account.connected
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-700'
-                    }`}
+        {/* OAuth & Accounts Tab */}
+        {activeTab === 'accounts' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {PLATFORMS.map((platform) => {
+                const connected = getConnectedAccount(platform);
+                return (
+                  <div
+                    key={platform}
+                    className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
                   >
-                    {account.connected ? '✓ Connected' : 'Not Connected'}
-                  </span>
-                </div>
-                <div className="text-sm text-gray-600 mb-4">{account.followers} followers</div>
-                <button 
-                  onClick={() => setConnectingPlatform(account.platform)}
-                  className={`w-full px-4 py-2 rounded-lg font-semibold transition-colors ${
-                  account.connected
-                    ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}>
-                  {account.connected ? 'Disconnect' : 'Connect'}
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+                    <div
+                      className={`h-24 bg-gradient-to-r ${PLATFORM_COLORS[platform]} flex items-center justify-center text-white text-4xl`}
+                    >
+                      {PLATFORM_ICONS[platform]}
+                    </div>
 
-      {/* Auto Posting */}
-      {activeTab === 'auto-posting' && (
-        <div className="space-y-4">
-          {autoPostingConfigs.map(config => (
-            <div key={config.id} className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-gray-900">{config.platform}</h3>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" defaultChecked={config.enabled} className="w-4 h-4" />
-                  <span className="text-sm font-semibold text-gray-700">Enabled</span>
-                </label>
-              </div>
-              <div className="space-y-2 text-sm text-gray-600">
-                <p><strong>Format:</strong> {config.format}</p>
-                <p><strong>Caption:</strong> {config.carbonCopy}</p>
-                <p><strong>Max Length:</strong> {config.maxLength} characters</p>
-                <label className="flex items-center gap-2 mt-3 cursor-pointer">
-                  <input type="checkbox" defaultChecked={config.autoHashtags} className="w-4 h-4" />
-                  <span>Auto-add hashtags</span>
-                </label>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                    <div className="p-4">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        {platform}
+                      </h3>
 
-      {/* Variations */}
-      {activeTab === 'variations' && (
-        <div className="space-y-4">
-          {variations.map((variation, idx) => (
-            <div key={idx} className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900">{variation.platform}</h3>
-                  <p className="text-sm text-gray-600 mt-1">{variation.type} • {variation.format}</p>
-                </div>
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-700 mb-2">Adaptations:</p>
-                <ul className="space-y-1">
-                  {variation.adaptations.map((adaptation, i) => (
-                    <li key={i} className="text-sm text-gray-600 flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
-                      {adaptation}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Auto Reposting */}
-      {activeTab === 'reposting' && (
-        <div className="space-y-4">
-          {repostingSchedules.map(schedule => (
-            <div key={schedule.id} className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900">{schedule.title}</h3>
-                  <p className="text-sm text-gray-600 mt-1">Every {schedule.frequency}</p>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                  schedule.performance === 'Excellent'
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-yellow-100 text-yellow-700'
-                }`}>
-                  {schedule.performance}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                <div>
-                  <p className="text-gray-600">Last repost</p>
-                  <p className="font-semibold text-gray-900">{schedule.lastRepost}</p>
-                </div>
-                <div>
-                  <p className="text-gray-600">Next repost</p>
-                  <p className="font-semibold text-gray-900">{schedule.nextRepost}</p>
-                </div>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {schedule.platforms.map(platform => (
-                  <span key={platform} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
-                    {platform}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Error Handling */}
-      {activeTab === 'errors' && (
-        <div className="space-y-4">
-          {errors.map(error => (
-            <div key={error.id} className={`bg-white rounded-lg shadow-md p-6 border-l-4 ${
-              error.status === 'active' ? 'border-red-500' : 'border-green-500'
-            }`}>
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <AlertCircle size={18} className={error.status === 'active' ? 'text-red-600' : 'text-green-600'} />
-                    <h3 className="font-bold text-gray-900">{error.platform}</h3>
-                  </div>
-                  <p className="text-sm text-gray-600">{error.error}</p>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap ${
-                  error.status === 'active'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-green-100 text-green-700'
-                }`}>
-                  {error.status === 'active' ? '⚠️ Active' : '✓ Resolved'}
-                </span>
-              </div>
-              <p className="text-xs text-gray-500 mb-3">{error.timestamp}</p>
-              {error.status === 'active' && (
-                <button className="w-full px-4 py-2 bg-red-100 text-red-700 rounded-lg font-semibold hover:bg-red-200 transition-colors flex items-center justify-center gap-2">
-                  <RefreshCw size={16} /> Retry
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Connection Modal */}
-      {connectingPlatform && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold">{connectionRequirements[connectingPlatform]?.title}</h2>
-                <p className="text-blue-100 mt-1">{connectionRequirements[connectingPlatform]?.description}</p>
-              </div>
-              <button
-                onClick={() => setConnectingPlatform(null)}
-                className="text-white hover:text-blue-100 text-3xl"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="p-6">
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Required Credentials</h3>
-                  <div className="space-y-4">
-                    {connectionRequirements[connectingPlatform]?.fields.map((field, idx) => (
-                      <div key={idx} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 hover:bg-blue-50 transition-all">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <p className="font-semibold text-gray-900">{field.name}</p>
-                            <p className="text-sm text-gray-600 mt-1">{field.description}</p>
-                            <p className="text-xs text-gray-500 mt-2 font-mono bg-gray-100 p-2 rounded inline-block">Example: {field.example}</p>
+                      {loading && !connected ? (
+                        <div className="flex items-center gap-2 text-gray-600 mb-4">
+                          <Loader size={16} className="animate-spin" />
+                          <span className="text-sm">Loading...</span>
+                        </div>
+                      ) : connected ? (
+                        <div className="mb-4">
+                          <div className="flex items-center gap-2 text-green-600 mb-2">
+                            <CheckCircle size={16} />
+                            <span className="text-sm font-medium">Connected</span>
                           </div>
-                          <CheckCircle size={20} className="text-green-500 mt-1 flex-shrink-0" />
+                          <div className="space-y-1 text-sm">
+                            <p className="text-gray-700">
+                              <span className="font-medium">Handle:</span> @{connected.handle}
+                            </p>
+                            <p className="text-gray-700">
+                              <span className="font-medium">Followers:</span> {connected.followers}
+                            </p>
+                            {connected.expiresAt && (
+                              <p className="text-gray-700">
+                                <span className="font-medium">Token Expires:</span> {connected.expiresAt}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-gray-50 rounded p-2 mb-4">
+                          <p className="text-sm text-gray-600">
+                            Not connected. Click Connect to link your {platform} account.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        {!connected ? (
+                          <button
+                            onClick={() => handleConnect(platform)}
+                            className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                          >
+                            <Plus size={16} />
+                            Connect
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleConnect(platform)}
+                              className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-medium py-2 px-4 rounded-lg transition-colors text-sm"
+                            >
+                              <RefreshCw size={16} />
+                              Reauth
+                            </button>
+                            <button
+                              onClick={() => handleDisconnect(platform)}
+                              className="flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 font-medium py-2 px-4 rounded-lg transition-colors"
+                            >
+                              <LogOut size={16} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-gap-3">
+                <AlertCircle className="text-red-600 flex-shrink-0" size={20} />
+                <p className="text-red-800">{error}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Auto Posting Tab */}
+        {activeTab === 'auto-posting' && (
+          <div className="space-y-6">
+            <div className="grid gap-4">
+              {autoPostingConfigs.map((config) => (
+                <div
+                  key={config.id}
+                  className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition-shadow"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-12 h-12 bg-blue-100 rounded-lg text-blue-600 text-xl">
+                        {PLATFORM_ICONS[config.platform]}
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          {config.platform}
+                        </h3>
+                        <p className="text-sm text-gray-600">
+                          {config.enabled ? '✓ Enabled' : '✗ Disabled'}
+                        </p>
+                      </div>
+                    </div>
+                    <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                      <Settings size={20} />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-50 rounded p-3">
+                      <p className="text-xs text-gray-600 font-medium mb-1">Content Copy</p>
+                      <p className="text-sm font-semibold text-gray-900">{config.carbonCopy}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3">
+                      <p className="text-xs text-gray-600 font-medium mb-1">Format</p>
+                      <p className="text-sm font-semibold text-gray-900">{config.format}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3">
+                      <p className="text-xs text-gray-600 font-medium mb-1">Max Length</p>
+                      <p className="text-sm font-semibold text-gray-900">{config.maxLength}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3">
+                      <p className="text-xs text-gray-600 font-medium mb-1">Auto Hashtags</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {config.autoHashtags ? '✓ Yes' : '✗ No'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Content Variations Tab */}
+        {activeTab === 'variations' && (
+          <div className="space-y-6">
+            <div className="grid gap-4">
+              {contentVariations.map((variation, idx) => (
+                <div
+                  key={idx}
+                  className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition-shadow"
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="flex items-center justify-center w-10 h-10 bg-purple-100 rounded-lg text-purple-600 text-lg">
+                      {PLATFORM_ICONS[variation.platform]}
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {variation.platform}
+                      </h3>
+                      <p className="text-sm text-gray-600">{variation.type}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-purple-50 rounded p-4 mb-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Format Style:</p>
+                    <p className="text-sm text-gray-900">{variation.format}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-3">Content Adaptations:</p>
+                    <ul className="space-y-2">
+                      {variation.adaptations.map((adaptation, i) => (
+                        <li
+                          key={i}
+                          className="flex items-center gap-2 text-sm text-gray-700 bg-gray-50 rounded p-2"
+                        >
+                          <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+                          {adaptation}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Auto Reposting Tab */}
+        {activeTab === 'reposting' && (
+          <div className="space-y-6">
+            <div className="grid gap-4">
+              {repostingSchedules.map((schedule) => (
+                <div
+                  key={schedule.id}
+                  className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition-shadow"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {schedule.title}
+                      </h3>
+                      <p className="text-sm text-gray-600 flex items-center gap-2 mt-1">
+                        <Clock size={14} />
+                        {schedule.frequency}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span
+                        className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
+                          schedule.performance === 'Excellent'
+                            ? 'bg-green-100 text-green-800'
+                            : schedule.performance === 'Good'
+                            ? 'bg-blue-100 text-blue-800'
+                            : schedule.performance === 'Fair'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {schedule.performance}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-gray-50 rounded p-3">
+                      <p className="text-xs text-gray-600 font-medium mb-1">Last Repost</p>
+                      <p className="text-sm font-semibold text-gray-900">{schedule.lastRepost}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3">
+                      <p className="text-xs text-gray-600 font-medium mb-1">Next Repost</p>
+                      <p className="text-sm font-semibold text-gray-900">{schedule.nextRepost}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-2">Platforms:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {schedule.platforms.map((platform) => (
+                        <span
+                          key={platform}
+                          className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium"
+                        >
+                          {PLATFORM_ICONS[platform]}
+                          {platform}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Error Handling Tab */}
+        {activeTab === 'errors' && (
+          <div className="space-y-6">
+            <div className="grid gap-4">
+              {errorLogs.length === 0 ? (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-8 text-center">
+                  <Zap className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                  <p className="text-green-800 font-semibold">All systems operational</p>
+                  <p className="text-green-700 text-sm">No errors detected</p>
+                </div>
+              ) : (
+                errorLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className={`rounded-lg border p-6 ${
+                      log.status === 'active'
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-gray-50 border-gray-200'
+                    } hover:shadow-lg transition-shadow`}
+                  >
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        {log.status === 'active' ? (
+                          <AlertTriangle className="text-red-600" size={24} />
+                        ) : (
+                          <CheckCircle className="text-gray-400" size={24} />
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-600">
+                              {log.platform}
+                            </span>
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                log.type === 'auth'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : log.type === 'rate-limit'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : log.type === 'api'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}
+                            >
+                              {log.type}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">{log.timestamp}</p>
                         </div>
                       </div>
-                    ))}
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          log.status === 'active'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}
+                      >
+                        {log.status === 'active' ? 'Active' : 'Resolved'}
+                      </span>
+                    </div>
+                    <p className={`text-sm ${log.status === 'active' ? 'text-red-800' : 'text-gray-700'}`}>
+                      {log.error}
+                    </p>
                   </div>
-                </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-sm text-blue-900">
-                    <strong>Note:</strong> Your credentials are encrypted and stored securely. We never store your passwords - only API tokens and authentication keys needed to post on your behalf.
-                  </p>
-                </div>
+      {/* Connection Modal */}
+      {modalState.isOpen && modalState.platform && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div
+                className={`flex items-center justify-center w-12 h-12 bg-gradient-to-r ${
+                  PLATFORM_COLORS[modalState.platform]
+                } rounded-lg text-white text-2xl`}
+              >
+                {PLATFORM_ICONS[modalState.platform]}
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  Connect {modalState.platform}
+                </h2>
               </div>
             </div>
 
-            <div className="flex gap-3 p-6 border-t border-gray-200">
+            <div className="bg-blue-50 rounded-lg p-4 mb-6">
+              <p className="text-sm text-blue-900">
+                You will be redirected to {modalState.platform} to authorize this connection. Make
+                sure you have an account and are logged in.
+              </p>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="flex items-center gap-2 text-sm text-gray-700">
+                <CheckCircle size={16} className="text-green-600" />
+                <span>Secure OAuth connection</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-gray-700">
+                <CheckCircle size={16} className="text-green-600" />
+                <span>No password required</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-gray-700">
+                <CheckCircle size={16} className="text-green-600" />
+                <span>Full control over permissions</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
               <button
-                onClick={() => setConnectingPlatform(null)}
-                className="flex-1 px-6 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
+                onClick={() => setModalState({ isOpen: false, platform: null })}
+                className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium transition-colors"
               >
                 Cancel
               </button>
-              <button className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transition-all">
-                Proceed to Connect
+              <button
+                onClick={() => handleConfirmConnection(modalState.platform)}
+                className={`flex-1 px-4 py-2 text-white rounded-lg font-medium transition-colors bg-gradient-to-r ${
+                  modalState.platform && PLATFORM_COLORS[modalState.platform]
+                } hover:opacity-90`}
+              >
+                Continue
               </button>
             </div>
           </div>
