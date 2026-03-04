@@ -15,27 +15,35 @@ const CardPreview = ({ design }: CardPreviewProps) => {
     return ratios[aspectRatio] || [800, 450];
   };
 
-  const [width, height] = getAspectRatioDimensions(design.layouts.aspectRatio);
+  const aspectRatio = design?.aspectRatio || design?.layouts?.aspectRatio || '1:1';
+  const [width, height] = getAspectRatioDimensions(aspectRatio);
+  const padding = Number(design?.layout?.padding ?? design?.layouts?.padding ?? 40);
+  const textAlignment = design?.layout?.alignment || design?.layouts?.textAlignment || 'center';
+  const backgroundType = design?.background?.type || 'gradient';
 
   const backgroundStyle: React.CSSProperties = {
     width: `${width}px`,
     height: `${height}px`,
-    padding: `${design.layouts.padding}px`,
+    padding: `${padding}px`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     overflow: 'hidden',
     borderRadius: '12px',
-    textAlign: design.layouts.textAlignment as any,
+    textAlign: textAlignment as any,
   };
 
-  if (design.background.type === 'solid') {
-    backgroundStyle.backgroundColor = design.background.solidColor;
-  } else if (design.background.type === 'gradient') {
-    backgroundStyle.background = `linear-gradient(${design.background.gradientAngle}deg, ${design.background.gradientStart}, ${design.background.gradientEnd})`;
-  } else if (design.background.type === 'image') {
-    backgroundStyle.backgroundImage = `url('${design.background.imageUrl}')`;
+  if (backgroundType === 'solid') {
+    backgroundStyle.backgroundColor = design?.background?.color1 || design?.background?.solidColor || '#ffffff';
+  } else if (backgroundType === 'gradient') {
+    const angle = Number(design?.background?.angle ?? design?.background?.gradientAngle ?? 135);
+    const start = design?.background?.color1 || design?.background?.gradientStart || '#667eea';
+    const end = design?.background?.color2 || design?.background?.gradientEnd || '#764ba2';
+    backgroundStyle.background = `linear-gradient(${angle}deg, ${start}, ${end})`;
+  } else if (backgroundType === 'image') {
+    const imageUrl = design?.background?.image || design?.background?.imageUrl || '';
+    backgroundStyle.backgroundImage = `url('${imageUrl}')`;
     backgroundStyle.backgroundSize = 'cover';
     backgroundStyle.backgroundPosition = 'center';
   }
@@ -43,8 +51,8 @@ const CardPreview = ({ design }: CardPreviewProps) => {
   const overlayStyle: React.CSSProperties = {
     position: 'absolute',
     inset: 0,
-    backgroundColor: design.background.overlayColor,
-    opacity: design.background.overlayOpacity,
+    backgroundColor: design?.background?.overlay?.color || design?.background?.overlayColor || '#000000',
+    opacity: Number(design?.background?.overlay?.opacity ?? design?.background?.overlayOpacity ?? 0),
     zIndex: 1,
   };
 
@@ -52,12 +60,12 @@ const CardPreview = ({ design }: CardPreviewProps) => {
     position: 'relative',
     zIndex: 2,
     maxWidth: '90%',
-    color: '#ffffff',
-    fontFamily: design.typography.fontFamily,
-    fontSize: `${design.typography.fontSize}px`,
-    fontWeight: design.typography.fontWeight,
-    letterSpacing: `${design.typography.letterSpacing}px`,
-    lineHeight: design.typography.lineHeight,
+    color: design?.typography?.color || '#ffffff',
+    fontFamily: design?.typography?.font || design?.typography?.fontFamily || 'Poppins',
+    fontSize: `${Number(design?.typography?.size ?? design?.typography?.fontSize ?? 48)}px`,
+    fontWeight: Number(design?.typography?.weight ?? design?.typography?.fontWeight ?? 700),
+    letterSpacing: `${Number(design?.typography?.spacing ?? design?.typography?.letterSpacing ?? 0)}px`,
+    lineHeight: Number(design?.typography?.lineHeight ?? 1.4),
   };
 
   return (
@@ -67,13 +75,13 @@ const CardPreview = ({ design }: CardPreviewProps) => {
         <div style={backgroundStyle}>
           <div style={overlayStyle}></div>
           <div style={contentStyle}>
-            <div className="font-bold mb-3">{design.title}</div>
-            <div className="text-sm opacity-90">{design.content}</div>
+            <div className="font-bold mb-3">{design?.title || 'Your Title Here'}</div>
+            <div className="text-sm opacity-90">{design?.content || 'Your content preview appears here.'}</div>
           </div>
         </div>
       </div>
       <p className="text-xs text-gray-600 text-center">
-        {width}px × {height}px ({design.layouts.aspectRatio})
+        {width}px x {height}px ({aspectRatio})
       </p>
     </div>
   );
