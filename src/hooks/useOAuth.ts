@@ -15,7 +15,7 @@ export const useOAuthCallback = () => {
       if (error) {
         console.error('OAuth error:', error);
         // Redirect to connects page with error
-        window.location.href = '/connects?error=' + encodeURIComponent(error);
+        window.location.href = '/?page=connects&error=' + encodeURIComponent(error);
         return;
       }
 
@@ -28,13 +28,15 @@ export const useOAuthCallback = () => {
 
           if (result.success) {
             // Redirect to connects page with success
-            window.location.href = '/connects?success=true';
+            window.location.href = '/?page=connects&success=true';
           } else {
-            window.location.href = '/connects?error=' + encodeURIComponent(result.error || 'Unknown error');
+            window.location.href =
+              '/?page=connects&error=' + encodeURIComponent(result.error || 'Unknown error');
           }
         } catch (error) {
           console.error('OAuth callback error:', error);
-          window.location.href = '/connects?error=' + encodeURIComponent('Callback processing failed');
+          window.location.href =
+            '/?page=connects&error=' + encodeURIComponent('Callback processing failed');
         } finally {
           setIsProcessing(false);
         }
