@@ -1,4 +1,5 @@
-﻿import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
@@ -13,12 +14,18 @@ const app = express();
 const PORT = process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const DATABASE_URL = process.env.DATABASE_URL;
+const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const allowedOrigins = new Set([
   process.env.VITE_APP_URL || 'http://localhost:3000',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'https://marketing.dakyworld.com',
+  'https://daky0000.github.io',
+  ...extraOrigins,
 ]);
 
 const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
@@ -33,10 +40,22 @@ async function ensureDatabase() {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
+      username TEXT,
       password_hash TEXT NOT NULL,
       full_name TEXT,
+      phone TEXT,
+      country TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+  `);
+
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS country TEXT;`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx
+    ON users (LOWER(username))
+    WHERE username IS NOT NULL;
   `);
 
   await pool.query(`
@@ -107,10 +126,17 @@ interface StoredConnection {
 type DbUserRow = {
   id: string;
   email: string;
+  username: string | null;
   full_name: string | null;
+  phone: string | null;
+  country: string | null;
   password_hash: string;
   created_at: string;
 };
+
+const inMemoryUsersById = new Map<string, DbUserRow>();
+const inMemoryUserIdByEmail = new Map<string, string>();
+const inMemoryUserIdByUsername = new Map<string, string>();
 
 // Helpers
 async function dbQuery<T = any>(sql: string, params: any[] = []) {
@@ -118,6 +144,14 @@ async function dbQuery<T = any>(sql: string, params: any[] = []) {
     throw new Error('DATABASE_URL is not configured. Please set it to enable persistence.');
   }
   return pool.query<T>(sql, params);
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizeUsername(value: string) {
+  return value.trim().toLowerCase();
 }
 
 function signToken(userId: string, email: string) {
@@ -136,22 +170,150 @@ function getAuthUser(req: Request) {
 }
 
 async function findUserByEmail(email: string): Promise<DbUserRow | undefined> {
-  const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+  const normalizedEmail = normalizeEmail(email);
+  if (!pool) {
+    const userId = inMemoryUserIdByEmail.get(normalizedEmail);
+    return userId ? inMemoryUsersById.get(userId) : undefined;
+  }
+  const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
   return result.rows[0];
 }
 
+async function findUserByUsername(username: string): Promise<DbUserRow | undefined> {
+  const normalizedUsername = normalizeUsername(username);
+  if (!pool) {
+    const userId = inMemoryUserIdByUsername.get(normalizedUsername);
+    return userId ? inMemoryUsersById.get(userId) : undefined;
+  }
+  const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE LOWER(username) = $1', [normalizedUsername]);
+  return result.rows[0];
+}
+
+async function findUserByIdentifier(identifier: string): Promise<DbUserRow | undefined> {
+  const normalized = identifier.trim();
+  if (!normalized) return undefined;
+  if (normalized.includes('@')) {
+    return findUserByEmail(normalized);
+  }
+  return findUserByUsername(normalized);
+}
+
 async function getUserById(id: string): Promise<DbUserRow | undefined> {
+  if (!pool) {
+    return inMemoryUsersById.get(id);
+  }
   const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE id = $1', [id]);
   return result.rows[0];
 }
 
-async function createUser(name: string, email: string, password: string): Promise<DbUserRow> {
+async function createUser(
+  name: string,
+  username: string,
+  email: string,
+  password: string
+): Promise<DbUserRow> {
   const hash = await bcrypt.hash(password, 10);
   const id = randomUUID();
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedUsername = normalizeUsername(username);
+
+  if (!pool) {
+    const user: DbUserRow = {
+      id,
+      email: normalizedEmail,
+      username: normalizedUsername,
+      full_name: name || null,
+      phone: null,
+      country: null,
+      password_hash: hash,
+      created_at: new Date().toISOString(),
+    };
+    inMemoryUsersById.set(id, user);
+    inMemoryUserIdByEmail.set(normalizedEmail, id);
+    inMemoryUserIdByUsername.set(normalizedUsername, id);
+    return user;
+  }
+
   const result = await dbQuery<DbUserRow>(
-    'INSERT INTO users (id, email, password_hash, full_name) VALUES ($1, $2, $3, $4) RETURNING *',
-    [id, email.toLowerCase(), hash, name || null]
+    'INSERT INTO users (id, email, username, password_hash, full_name, phone, country) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+    [id, normalizedEmail, normalizedUsername, hash, name || null, null, null]
   );
+  return result.rows[0];
+}
+
+async function updateUserProfile(
+  userId: string,
+  updates: { name: string; username: string; email: string; phone: string; country: string }
+): Promise<DbUserRow | undefined> {
+  const normalizedEmail = normalizeEmail(updates.email);
+  const normalizedUsername = normalizeUsername(updates.username);
+  const normalizedPhone = updates.phone.trim();
+  const normalizedCountry = updates.country.trim();
+  const normalizedName = updates.name.trim();
+
+  if (!pool) {
+    const existing = inMemoryUsersById.get(userId);
+    if (!existing) return undefined;
+
+    const byEmail = inMemoryUserIdByEmail.get(normalizedEmail);
+    if (byEmail && byEmail !== userId) {
+      throw new Error('Email is already in use');
+    }
+    const byUsername = inMemoryUserIdByUsername.get(normalizedUsername);
+    if (byUsername && byUsername !== userId) {
+      throw new Error('Username is already in use');
+    }
+
+    inMemoryUserIdByEmail.delete(normalizeEmail(existing.email));
+    if (existing.username) {
+      inMemoryUserIdByUsername.delete(normalizeUsername(existing.username));
+    }
+
+    const nextUser: DbUserRow = {
+      ...existing,
+      email: normalizedEmail,
+      username: normalizedUsername,
+      full_name: normalizedName || null,
+      phone: normalizedPhone || null,
+      country: normalizedCountry || null,
+    };
+
+    inMemoryUsersById.set(userId, nextUser);
+    inMemoryUserIdByEmail.set(normalizedEmail, userId);
+    inMemoryUserIdByUsername.set(normalizedUsername, userId);
+    return nextUser;
+  }
+
+  const duplicateEmail = await dbQuery<{ id: string }>('SELECT id FROM users WHERE email = $1 AND id <> $2', [
+    normalizedEmail,
+    userId,
+  ]);
+  if (duplicateEmail.rowCount) {
+    throw new Error('Email is already in use');
+  }
+
+  const duplicateUsername = await dbQuery<{ id: string }>(
+    'SELECT id FROM users WHERE LOWER(username) = $1 AND id <> $2',
+    [normalizedUsername, userId]
+  );
+  if (duplicateUsername.rowCount) {
+    throw new Error('Username is already in use');
+  }
+
+  const result = await dbQuery<DbUserRow>(
+    `
+    UPDATE users
+    SET email = $1,
+        username = $2,
+        full_name = $3,
+        phone = $4,
+        country = $5
+    WHERE id = $6
+    RETURNING *;
+  `,
+    [normalizedEmail, normalizedUsername, normalizedName || null, normalizedPhone || null, normalizedCountry || null, userId]
+  );
+
   return result.rows[0];
 }
 
@@ -167,9 +329,11 @@ function requireAuth(req: Request, res: Response): { userId: string; email?: str
 // Auth routes
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { email, password, name } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    const { email, password, name, username } = req.body;
+    if (!email || !password || !name || !username) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Name, username, email, and password are required' });
     }
 
     const existing = await findUserByEmail(email);
@@ -177,13 +341,25 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Account already exists' });
     }
 
-    const user = await createUser(name, email, password);
+    const existingUsername = await findUserByUsername(username);
+    if (existingUsername) {
+      return res.status(400).json({ success: false, error: 'Username is already in use' });
+    }
+
+    const user = await createUser(name, username, email, password);
     const token = signToken(user.id, user.email);
 
     return res.json({
       success: true,
       token,
-      user: { id: user.id, email: user.email, name: user.full_name },
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        name: user.full_name,
+        phone: user.phone,
+        country: user.country,
+      },
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -193,12 +369,15 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 
 app.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    const { identifier, email, password } = req.body;
+    const loginIdentifier = (identifier || email || '').trim();
+    if (!loginIdentifier || !password) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Username or email and password are required' });
     }
 
-    const user = await findUserByEmail(email);
+    const user = await findUserByIdentifier(loginIdentifier);
     if (!user) {
       return res.status(400).json({ success: false, error: 'Invalid credentials' });
     }
@@ -212,7 +391,14 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       token,
-      user: { id: user.id, email: user.email, name: user.full_name },
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        name: user.full_name,
+        phone: user.phone,
+        country: user.country,
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -232,11 +418,59 @@ app.get('/api/auth/me', async (req: Request, res: Response) => {
 
     return res.json({
       success: true,
-      user: { id: user.id, email: user.email, name: user.full_name },
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        name: user.full_name,
+        phone: user.phone,
+        country: user.country,
+      },
     });
   } catch (error) {
     console.error('Me error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch user' });
+  }
+});
+
+app.put('/api/auth/profile', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { name, username, email, phone, country } = req.body;
+    if (!name || !username || !email) {
+      return res.status(400).json({ success: false, error: 'Name, username, and email are required' });
+    }
+
+    const updated = await updateUserProfile(auth.userId, {
+      name: String(name),
+      username: String(username),
+      email: String(email),
+      phone: String(phone || ''),
+      country: String(country || ''),
+    });
+
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: updated.id,
+        email: updated.email,
+        username: updated.username,
+        name: updated.full_name,
+        phone: updated.phone,
+        country: updated.country,
+      },
+    });
+  } catch (error) {
+    console.error('Profile update error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update profile';
+    const statusCode = message.includes('already in use') ? 400 : 500;
+    return res.status(statusCode).json({ success: false, error: message });
   }
 });
 
@@ -577,3 +811,4 @@ app.listen(PORT, () => {
 });
 
 export default app;
+

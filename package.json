@@ -4,9 +4,10 @@
     "version": "0.0.1",
     "type": "module",
     "scripts": {
-        "dev": "vite",
-        "build": "tsc && vite build && node scripts/sync-pages.mjs",
-        "build:dist": "tsc && vite build",
+        "dev": "node scripts/use-source-index.mjs && vite",
+        "dev:api": "ts-node server.ts",
+        "build": "node scripts/use-source-index.mjs && tsc && vite build && node scripts/sync-pages.mjs",
+        "build:dist": "node scripts/use-source-index.mjs && tsc && vite build",
         "sync:pages": "node scripts/sync-pages.mjs",
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
         "preview": "vite preview"
@@ -17,6 +18,7 @@
         "@tiptap/react": "^3.20.0",
         "@tiptap/starter-kit": "^3.20.0",
         "axios": "^1.13.6",
+        "bcryptjs": "^3.0.3",
         "cors": "^2.8.6",
         "dotenv": "^17.3.1",
         "express": "^5.2.1",

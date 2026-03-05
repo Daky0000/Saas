@@ -33,13 +33,13 @@ jobs:
       - name: Build project
         run: npm run build
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          VITE_APP_URL: ${{ secrets.VITE_APP_URL }}
-          VITE_INSTAGRAM_APP_ID: ${{ secrets.VITE_INSTAGRAM_APP_ID }}
-          VITE_TWITTER_CLIENT_ID: ${{ secrets.VITE_TWITTER_CLIENT_ID }}
-          VITE_LINKEDIN_CLIENT_ID: ${{ secrets.VITE_LINKEDIN_CLIENT_ID }}
-          VITE_FACEBOOK_APP_ID: ${{ secrets.VITE_FACEBOOK_APP_ID }}
-          VITE_TIKTOK_CLIENT_ID: ${{ secrets.VITE_TIKTOK_CLIENT_ID }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || vars.VITE_API_BASE_URL }}
+          VITE_APP_URL: ${{ secrets.VITE_APP_URL || vars.VITE_APP_URL }}
+          VITE_INSTAGRAM_APP_ID: ${{ secrets.VITE_INSTAGRAM_APP_ID || vars.VITE_INSTAGRAM_APP_ID }}
+          VITE_TWITTER_CLIENT_ID: ${{ secrets.VITE_TWITTER_CLIENT_ID || vars.VITE_TWITTER_CLIENT_ID }}
+          VITE_LINKEDIN_CLIENT_ID: ${{ secrets.VITE_LINKEDIN_CLIENT_ID || vars.VITE_LINKEDIN_CLIENT_ID }}
+          VITE_FACEBOOK_APP_ID: ${{ secrets.VITE_FACEBOOK_APP_ID || vars.VITE_FACEBOOK_APP_ID }}
+          VITE_TIKTOK_CLIENT_ID: ${{ secrets.VITE_TIKTOK_CLIENT_ID || vars.VITE_TIKTOK_CLIENT_ID }}
 
       - name: Add CNAME
         run: cp CNAME dist/CNAME
