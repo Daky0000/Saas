@@ -1,6 +1,12 @@
-import { useState } from 'react';
-import { Plus, Eye, Share2, Trash2, Users, Clock, Zap, Wand2, Hash, TrendingUp, Upload, Image, Video, CheckCircle, Copy, Calendar, AlertCircle, Instagram, Linkedin, Facebook, Music } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, Eye, Share2, Trash2, Users, Clock, Zap, Wand2, Hash, TrendingUp, Upload, Image, Video, CheckCircle, Copy, Calendar, AlertCircle, Instagram, Linkedin, Facebook, Music, Globe, Loader2 } from 'lucide-react';
 import RichTextEditor from '../components/RichTextEditor';
+import { wordpressService, type FeaturedImagePayload, type WordPressTerm } from '../services/wordpressService';
+
+type PublishFeedback = {
+  type: 'success' | 'error';
+  message: string;
+};
 
 const Posts = () => {
   const [activeTab, setActiveTab] = useState<'published' | 'drafts' | 'schedule' | 'media' | 'editor'>('published');

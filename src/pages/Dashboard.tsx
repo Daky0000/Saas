@@ -28,9 +28,13 @@ function Dashboard({ currentUser }: DashboardProps) {
       <div>
         <h1 className="text-4xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-gray-600 mt-2">
-          {preferredName
-            ? `Welcome back, ${preferredName}. Here is your workspace snapshot.`
-            : 'Welcome back. Here is your workspace snapshot.'}
+          {preferredName ? (
+            <>
+              Welcome back, <span className="font-bold text-gray-900">{preferredName}</span>.
+            </>
+          ) : (
+            'Welcome back.'
+          )}
         </p>
       </div>
 
