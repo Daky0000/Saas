@@ -13,6 +13,8 @@ interface ImportMetaEnv {
   readonly VITE_FACEBOOK_REDIRECT_URI: string;
   readonly VITE_TIKTOK_CLIENT_ID: string;
   readonly VITE_TIKTOK_REDIRECT_URI: string;
+  readonly VITE_WORDPRESS_CLIENT_ID: string;
+  readonly VITE_WORDPRESS_REDIRECT_URI: string;
 }
 
 interface ImportMeta {

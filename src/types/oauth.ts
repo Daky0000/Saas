@@ -1,4 +1,4 @@
-export type SocialPlatform = 'Instagram' | 'Twitter' | 'LinkedIn' | 'Facebook' | 'TikTok';
+export type SocialPlatform = 'Instagram' | 'Twitter' | 'LinkedIn' | 'Facebook' | 'TikTok' | 'WordPress';
 
 export interface ConnectedAccount {
   id: string;

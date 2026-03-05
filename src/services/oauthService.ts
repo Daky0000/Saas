@@ -55,6 +55,12 @@ export const oauthConfigs = {
     authUrl: 'https://www.tiktok.com/oauth/authorize',
     scopes: ['user.info.basic', 'video.upload'],
   },
+  WordPress: {
+    clientId: import.meta.env.VITE_WORDPRESS_CLIENT_ID,
+    redirectUri: resolveRedirectUri(import.meta.env.VITE_WORDPRESS_REDIRECT_URI),
+    authUrl: 'https://public-api.wordpress.com/oauth2/authorize',
+    scopes: ['global'],
+  },
 };
 
 // API Service Functions

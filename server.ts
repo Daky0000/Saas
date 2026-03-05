@@ -6,13 +6,14 @@ import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Pool } from 'pg';
-import { randomUUID } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const WORDPRESS_CREDENTIALS_KEY = process.env.WORDPRESS_CREDENTIALS_KEY || JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
   .split(',')
@@ -84,6 +85,27 @@ async function ensureDatabase() {
       UNIQUE (user_id, platform)
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wordpress_connections (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      site_url TEXT NOT NULL,
+      username TEXT NOT NULL,
+      app_password_encrypted TEXT NOT NULL,
+      wp_user_id INTEGER,
+      wp_display_name TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS site_url TEXT;`);
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS username TEXT;`);
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS app_password_encrypted TEXT;`);
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS wp_user_id INTEGER;`);
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS wp_display_name TEXT;`);
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE wordpress_connections ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();`);
 }
 
 ensureDatabase().catch((err) => {
@@ -102,7 +124,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 // Types
 interface OAuthState {
@@ -134,9 +156,33 @@ type DbUserRow = {
   created_at: string;
 };
 
+type WordPressConnectionRow = {
+  user_id: string;
+  site_url: string;
+  username: string;
+  app_password_encrypted: string;
+  wp_user_id: number | null;
+  wp_display_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type WordPressConnectInput = {
+  siteUrl: string;
+  username: string;
+  appPassword: string;
+};
+
+type WordPressTerm = {
+  id: number;
+  name: string;
+  slug: string;
+};
+
 const inMemoryUsersById = new Map<string, DbUserRow>();
 const inMemoryUserIdByEmail = new Map<string, string>();
 const inMemoryUserIdByUsername = new Map<string, string>();
+const inMemoryWordPressConnections = new Map<string, WordPressConnectionRow>();
 
 // Helpers
 async function dbQuery<T = any>(sql: string, params: any[] = []) {
@@ -152,6 +198,87 @@ function normalizeEmail(value: string) {
 
 function normalizeUsername(value: string) {
   return value.trim().toLowerCase();
+}
+
+function getWordPressEncryptionKey() {
+  return createHash('sha256').update(WORDPRESS_CREDENTIALS_KEY).digest();
+}
+
+function encryptSecret(secret: string) {
+  const key = getWordPressEncryptionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
+}
+
+function decryptSecret(payload: string) {
+  const parts = payload.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid encrypted payload');
+  }
+  const [ivBase64, tagBase64, encryptedBase64] = parts;
+  const key = getWordPressEncryptionKey();
+  const iv = Buffer.from(ivBase64, 'base64');
+  const tag = Buffer.from(tagBase64, 'base64');
+  const encrypted = Buffer.from(encryptedBase64, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
+function normalizeWordPressSiteUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('WordPress Site URL is required');
+  }
+
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const parsed = new URL(withProtocol);
+  parsed.pathname = '';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function buildWordPressAuthHeader(username: string, appPassword: string) {
+  const token = Buffer.from(`${username}:${appPassword}`, 'utf8').toString('base64');
+  return `Basic ${token}`;
+}
+
+function wordPressApiBaseUrl(siteUrl: string) {
+  return `${siteUrl}/wp-json/wp/v2`;
+}
+
+function parseAxiosError(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    if (status === 401 || status === 403) {
+      return 'Authentication failed. Check WordPress username and application password.';
+    }
+    if (status === 404) {
+      return 'WordPress REST API endpoint was not found. Check the site URL.';
+    }
+    if (status === 400) {
+      return 'WordPress rejected the request. Confirm your input values.';
+    }
+    return `WordPress API request failed${status ? ` (HTTP ${status})` : ''}.`;
+  }
+  return error instanceof Error ? error.message : 'Unexpected error';
+}
+
+function sanitizeWordPressConnection(row: WordPressConnectionRow) {
+  return {
+    connected: true,
+    siteUrl: row.site_url,
+    username: row.username,
+    userId: row.wp_user_id,
+    displayName: row.wp_display_name,
+    connectedAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function signToken(userId: string, email: string) {
@@ -317,6 +444,137 @@ async function updateUserProfile(
   return result.rows[0];
 }
 
+async function getWordPressConnection(userId: string): Promise<WordPressConnectionRow | undefined> {
+  if (!pool) {
+    return inMemoryWordPressConnections.get(userId);
+  }
+  const result = await dbQuery<WordPressConnectionRow>(
+    'SELECT * FROM wordpress_connections WHERE user_id = $1',
+    [userId]
+  );
+  return result.rows[0];
+}
+
+async function saveWordPressConnection(
+  userId: string,
+  input: { siteUrl: string; username: string; appPassword: string; wpUserId: number; wpDisplayName: string }
+) {
+  const encryptedPassword = encryptSecret(input.appPassword);
+  const now = new Date().toISOString();
+
+  if (!pool) {
+    const existing = inMemoryWordPressConnections.get(userId);
+    const row: WordPressConnectionRow = {
+      user_id: userId,
+      site_url: input.siteUrl,
+      username: input.username,
+      app_password_encrypted: encryptedPassword,
+      wp_user_id: input.wpUserId,
+      wp_display_name: input.wpDisplayName || null,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    };
+    inMemoryWordPressConnections.set(userId, row);
+    return row;
+  }
+
+  const result = await dbQuery<WordPressConnectionRow>(
+    `
+      INSERT INTO wordpress_connections
+        (user_id, site_url, username, app_password_encrypted, wp_user_id, wp_display_name, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (user_id) DO UPDATE
+      SET site_url = EXCLUDED.site_url,
+          username = EXCLUDED.username,
+          app_password_encrypted = EXCLUDED.app_password_encrypted,
+          wp_user_id = EXCLUDED.wp_user_id,
+          wp_display_name = EXCLUDED.wp_display_name,
+          updated_at = NOW()
+      RETURNING *;
+    `,
+    [userId, input.siteUrl, input.username, encryptedPassword, input.wpUserId, input.wpDisplayName || null]
+  );
+
+  return result.rows[0];
+}
+
+async function removeWordPressConnection(userId: string) {
+  if (!pool) {
+    inMemoryWordPressConnections.delete(userId);
+    return;
+  }
+  await dbQuery('DELETE FROM wordpress_connections WHERE user_id = $1', [userId]);
+}
+
+async function validateWordPressConnection(input: WordPressConnectInput) {
+  const siteUrl = normalizeWordPressSiteUrl(input.siteUrl);
+  const username = input.username.trim();
+  const appPassword = input.appPassword.trim();
+
+  if (!username) {
+    throw new Error('WordPress Username is required');
+  }
+  if (!appPassword) {
+    throw new Error('WordPress Application Password is required');
+  }
+
+  const response = await axios.get(`${wordPressApiBaseUrl(siteUrl)}/users/me`, {
+    headers: {
+      Authorization: buildWordPressAuthHeader(username, appPassword),
+    },
+    timeout: 15000,
+  });
+
+  const user = response.data;
+  if (!user || typeof user !== 'object' || !user.id) {
+    throw new Error('WordPress returned an unexpected user response');
+  }
+
+  return {
+    siteUrl,
+    username,
+    appPassword,
+    wpUserId: Number(user.id),
+    wpDisplayName: String(user.name || user.slug || username),
+  };
+}
+
+async function getAuthenticatedWordPressConnection(userId: string) {
+  const connection = await getWordPressConnection(userId);
+  if (!connection) {
+    throw new Error('WordPress is not connected');
+  }
+
+  const appPassword = decryptSecret(connection.app_password_encrypted);
+  return {
+    connection,
+    authHeader: buildWordPressAuthHeader(connection.username, appPassword),
+  };
+}
+
+async function fetchWordPressTerms(userId: string, type: 'categories' | 'tags'): Promise<WordPressTerm[]> {
+  const { connection, authHeader } = await getAuthenticatedWordPressConnection(userId);
+  const response = await axios.get(`${wordPressApiBaseUrl(connection.site_url)}/${type}`, {
+    headers: { Authorization: authHeader },
+    params: { per_page: 100, hide_empty: false },
+    timeout: 15000,
+  });
+
+  const terms = Array.isArray(response.data) ? response.data : [];
+  return terms.map((term: any) => ({
+    id: Number(term.id),
+    name: String(term.name || ''),
+    slug: String(term.slug || ''),
+  }));
+}
+
+function toArrayOfNumbers(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > 0);
+}
+
 function requireAuth(req: Request, res: Response): { userId: string; email?: string } | null {
   const auth = getAuthUser(req);
   if (!auth) {
@@ -474,6 +732,209 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
   }
 });
 
+// WordPress direct connection routes
+app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { siteUrl, username, appPassword } = req.body as WordPressConnectInput;
+    if (!siteUrl || !username || !appPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'WordPress Site URL, WordPress Username, and Application Password are required',
+      });
+    }
+
+    let validated;
+    try {
+      validated = await validateWordPressConnection({ siteUrl, username, appPassword });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: parseAxiosError(error) });
+    }
+
+    const saved = await saveWordPressConnection(auth.userId, validated);
+
+    return res.json({
+      success: true,
+      message: 'WordPress Connected Successfully',
+      data: sanitizeWordPressConnection(saved),
+    });
+  } catch (error) {
+    console.error('WordPress connect error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to connect WordPress' });
+  }
+});
+
+app.get('/api/wordpress/status', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const connection = await getWordPressConnection(auth.userId);
+    if (!connection) {
+      return res.json({ success: true, data: { connected: false } });
+    }
+
+    return res.json({ success: true, data: sanitizeWordPressConnection(connection) });
+  } catch (error) {
+    console.error('WordPress status error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch WordPress status' });
+  }
+});
+
+app.delete('/api/wordpress/disconnect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    await removeWordPressConnection(auth.userId);
+    return res.json({ success: true, message: 'WordPress disconnected' });
+  } catch (error) {
+    console.error('WordPress disconnect error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to disconnect WordPress' });
+  }
+});
+
+app.get('/api/wordpress/categories', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const categories = await fetchWordPressTerms(auth.userId, 'categories');
+    return res.json({ success: true, data: categories });
+  } catch (error) {
+    const message = parseAxiosError(error);
+    const statusCode = message.includes('not connected') ? 400 : 500;
+    return res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.get('/api/wordpress/tags', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const tags = await fetchWordPressTerms(auth.userId, 'tags');
+    return res.json({ success: true, data: tags });
+  } catch (error) {
+    const message = parseAxiosError(error);
+    const statusCode = message.includes('not connected') ? 400 : 500;
+    return res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const {
+      title,
+      content,
+      excerpt,
+      slug,
+      status,
+      categories,
+      tags,
+      author,
+      seoTitle,
+      seoDescription,
+      focusKeyword,
+      featuredImage,
+    } = req.body || {};
+
+    if (!title || !content) {
+      return res.status(400).json({ success: false, error: 'Post title and content are required' });
+    }
+
+    const desiredStatus = status === 'publish' ? 'publish' : 'draft';
+    const { connection, authHeader } = await getAuthenticatedWordPressConnection(auth.userId);
+    const headers = { Authorization: authHeader };
+    const apiBase = wordPressApiBaseUrl(connection.site_url);
+    let featuredMediaId: number | null = null;
+
+    if (featuredImage && typeof featuredImage === 'object') {
+      const fileName = String((featuredImage as any).fileName || 'featured-image.jpg').replace(/"/g, '');
+      const mimeType = String((featuredImage as any).mimeType || 'image/jpeg');
+      let dataBase64 = String((featuredImage as any).dataBase64 || '');
+      dataBase64 = dataBase64.replace(/^data:[^;]+;base64,/, '');
+
+      if (dataBase64) {
+        const mediaBuffer = Buffer.from(dataBase64, 'base64');
+        const mediaResponse = await axios.post(`${apiBase}/media`, mediaBuffer, {
+          headers: {
+            ...headers,
+            'Content-Type': mimeType,
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          },
+          timeout: 30000,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        });
+        if (mediaResponse.data?.id) {
+          featuredMediaId = Number(mediaResponse.data.id);
+        }
+      }
+    }
+
+    const postMeta: Record<string, string> = {};
+    if (typeof seoTitle === 'string' && seoTitle.trim()) {
+      postMeta._yoast_wpseo_title = seoTitle.trim();
+      postMeta.rank_math_title = seoTitle.trim();
+    }
+    if (typeof seoDescription === 'string' && seoDescription.trim()) {
+      postMeta._yoast_wpseo_metadesc = seoDescription.trim();
+      postMeta.rank_math_description = seoDescription.trim();
+    }
+    if (typeof focusKeyword === 'string' && focusKeyword.trim()) {
+      postMeta._yoast_wpseo_focuskw = focusKeyword.trim();
+      postMeta.rank_math_focus_keyword = focusKeyword.trim();
+    }
+
+    const authorId = Number(author);
+    const payload: Record<string, any> = {
+      title: String(title),
+      content: String(content),
+      excerpt: typeof excerpt === 'string' ? excerpt : '',
+      slug: typeof slug === 'string' && slug.trim() ? slug.trim() : undefined,
+      status: desiredStatus,
+      categories: toArrayOfNumbers(categories),
+      tags: toArrayOfNumbers(tags),
+    };
+
+    if (Number.isFinite(authorId) && authorId > 0) {
+      payload.author = authorId;
+    }
+    if (featuredMediaId) {
+      payload.featured_media = featuredMediaId;
+    }
+    if (Object.keys(postMeta).length > 0) {
+      payload.meta = postMeta;
+    }
+
+    const postResponse = await axios.post(`${apiBase}/posts`, payload, {
+      headers,
+      timeout: 30000,
+    });
+
+    return res.json({
+      success: true,
+      message: desiredStatus === 'publish' ? 'Post Published Successfully' : 'Post Saved as Draft',
+      data: {
+        id: postResponse.data?.id,
+        link: postResponse.data?.link,
+        status: postResponse.data?.status,
+        featuredMediaId,
+      },
+    });
+  } catch (error) {
+    const message = parseAxiosError(error);
+    const statusCode = message.includes('not connected') ? 400 : 500;
+    return res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
 // OAuth state registration (for CSRF protection)
 app.post('/api/oauth/state', async (req: Request, res: Response) => {
   try {
@@ -538,6 +999,9 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
       case 'TikTok':
         tokenData = await exchangeTikTokCode(code);
         break;
+      case 'WordPress':
+        tokenData = await exchangeWordPressCode(code);
+        break;
       default:
         return res.status(400).json({ success: false, error: 'Unsupported platform' });
     }
@@ -561,7 +1025,23 @@ app.get('/api/accounts', async (req: Request, res: Response) => {
     if (!auth) return;
 
     const accounts = await getUserConnectedAccounts(auth.userId);
-    return res.json({ success: true, data: accounts });
+    const filteredAccounts = accounts.filter((account) => account.platform !== 'WordPress');
+    const wordPressConnection = await getWordPressConnection(auth.userId);
+
+    if (wordPressConnection) {
+      filteredAccounts.push({
+        id: `wordpress-${auth.userId}`,
+        userId: auth.userId,
+        platform: 'WordPress',
+        handle: wordPressConnection.username,
+        followers: '0',
+        connected: true,
+        connectedAt: wordPressConnection.created_at,
+        expiresAt: null,
+      });
+    }
+
+    return res.json({ success: true, data: filteredAccounts });
   } catch (error) {
     console.error('Accounts error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch accounts' });
@@ -575,6 +1055,10 @@ app.delete('/api/accounts/:platform', async (req: Request, res: Response) => {
     if (!auth) return;
 
     const { platform } = req.params;
+    if (platform === 'WordPress') {
+      await removeWordPressConnection(auth.userId);
+      return res.json({ success: true });
+    }
     await removeUserConnection(auth.userId, platform);
     return res.json({ success: true });
   } catch (error) {
@@ -590,11 +1074,20 @@ app.get('/api/accounts/:platform/test', async (req: Request, res: Response) => {
     if (!auth) return;
 
     const { platform } = req.params;
+    if (platform === 'WordPress') {
+      const { connection, authHeader } = await getAuthenticatedWordPressConnection(auth.userId);
+      const response = await axios.get(`${wordPressApiBaseUrl(connection.site_url)}/users/me`, {
+        headers: { Authorization: authHeader },
+        timeout: 15000,
+      });
+      return res.json({ success: true, data: { status: 'ok', platform, user: response.data } });
+    }
+
     const result = await testPlatformConnection(auth.userId, platform);
     return res.json({ success: true, data: result });
   } catch (error) {
-    console.error('Test connection error:', error);
-    return res.status(500).json({ success: false, error: 'Connection test failed' });
+    const message = parseAxiosError(error);
+    return res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -693,6 +1186,21 @@ async function exchangeTikTokCode(code: string) {
     code,
     grant_type: 'authorization_code',
     redirect_uri: process.env.VITE_TIKTOK_REDIRECT_URI,
+  });
+  return response.data;
+}
+
+async function exchangeWordPressCode(code: string) {
+  const data = new URLSearchParams({
+    client_id: process.env.VITE_WORDPRESS_CLIENT_ID || '',
+    client_secret: process.env.WORDPRESS_CLIENT_SECRET || '',
+    grant_type: 'authorization_code',
+    redirect_uri: resolveRedirectUri(process.env.VITE_WORDPRESS_REDIRECT_URI),
+    code,
+  });
+
+  const response = await axios.post('https://public-api.wordpress.com/oauth2/token', data, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
   return response.data;
 }

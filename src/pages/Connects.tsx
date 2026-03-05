@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import {
   AlertCircle,
   CheckCircle,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useConnectedAccounts, useOAuthConnect } from '../hooks/useOAuth';
 import { SocialPlatform, ConnectedAccount, AutoPostingConfig, ContentVariation, RepostingSchedule, ErrorLog } from '../types/oauth';
+import { wordpressService } from '../services/wordpressService';
 
 interface Notification {
   id: string;
@@ -26,7 +27,13 @@ interface ConnectionModalState {
   platform: SocialPlatform | null;
 }
 
-const PLATFORMS: SocialPlatform[] = ['Instagram', 'Twitter', 'LinkedIn', 'Facebook', 'TikTok'];
+interface WordPressFormState {
+  siteUrl: string;
+  username: string;
+  appPassword: string;
+}
+
+const PLATFORMS: SocialPlatform[] = ['Instagram', 'Twitter', 'LinkedIn', 'Facebook', 'TikTok', 'WordPress'];
 
 const PLATFORM_COLORS: Record<SocialPlatform, string> = {
   Instagram: 'from-pink-500 to-purple-500',
@@ -34,19 +41,27 @@ const PLATFORM_COLORS: Record<SocialPlatform, string> = {
   LinkedIn: 'from-blue-600 to-blue-800',
   Facebook: 'from-blue-500 to-blue-700',
   TikTok: 'from-gray-900 to-pink-600',
+  WordPress: 'from-slate-700 to-slate-900',
 };
 
 const PLATFORM_ICONS: Record<SocialPlatform, string> = {
-  Instagram: '📷',
-  Twitter: '𝕏',
-  LinkedIn: '💼',
+  Instagram: 'IG',
+  Twitter: 'X',
+  LinkedIn: 'in',
   Facebook: 'f',
-  TikTok: '♪',
+  TikTok: 'TT',
+  WordPress: 'W',
 };
 
 export const Connects: React.FC = () => {
   const [activeTab, setActiveTab] = useState('accounts');
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isWordPressConnecting, setIsWordPressConnecting] = useState(false);
+  const [wordPressForm, setWordPressForm] = useState<WordPressFormState>({
+    siteUrl: '',
+    username: '',
+    appPassword: '',
+  });
   const [modalState, setModalState] = useState<ConnectionModalState>({
     isOpen: false,
     platform: null,
@@ -184,6 +199,13 @@ export const Connects: React.FC = () => {
   }, []);
 
   const handleConnect = useCallback((platform: SocialPlatform) => {
+    if (platform === 'WordPress') {
+      setWordPressForm({
+        siteUrl: '',
+        username: '',
+        appPassword: '',
+      });
+    }
     setModalState({ isOpen: true, platform });
   }, []);
 
@@ -201,17 +223,48 @@ export const Connects: React.FC = () => {
 
   const handleConfirmConnection = useCallback(
     async (platform: SocialPlatform | null) => {
-      if (platform) {
-        const { connect } = useOAuthConnect(platform);
-        try {
-          await connect();
-        } catch (err) {
-          addNotification('Failed to initiate connection', 'error');
+      if (!platform) {
+        setModalState({ isOpen: false, platform: null });
+        return;
+      }
+
+      if (platform === 'WordPress') {
+        if (!wordPressForm.siteUrl.trim() || !wordPressForm.username.trim() || !wordPressForm.appPassword.trim()) {
+          addNotification('All WordPress fields are required.', 'error');
+          return;
         }
+
+        setIsWordPressConnecting(true);
+        try {
+          const result = await wordpressService.connect({
+            siteUrl: wordPressForm.siteUrl.trim(),
+            username: wordPressForm.username.trim(),
+            appPassword: wordPressForm.appPassword.trim(),
+          });
+
+          if (!result.success) {
+            addNotification(result.error || 'Failed to connect WordPress', 'error');
+            return;
+          }
+
+          addNotification('WordPress Connected Successfully', 'success');
+          setModalState({ isOpen: false, platform: null });
+          await refetch();
+        } finally {
+          setIsWordPressConnecting(false);
+        }
+        return;
+      }
+
+      const { connect } = useOAuthConnect(platform);
+      try {
+        await connect();
+      } catch (_err) {
+        addNotification('Failed to initiate connection', 'error');
       }
       setModalState({ isOpen: false, platform: null });
     },
-    [addNotification]
+    [addNotification, refetch, wordPressForm]
   );
 
   const getConnectedAccount = (platform: SocialPlatform): ConnectedAccount | undefined => {
@@ -326,9 +379,13 @@ export const Connects: React.FC = () => {
                           </div>
                         </div>
                       ) : (
-                        <div className="bg-gray-50 rounded p-2 mb-4">
-                          <p className="text-sm text-gray-600">
-                            Not connected. Click Connect to link your {platform} account.
+                        <div className="bg-red-50 border border-red-100 rounded p-2 mb-4">
+                          <div className="flex items-center gap-2 text-red-600 mb-1">
+                            <AlertCircle size={14} />
+                            <span className="text-sm font-medium">Not connected</span>
+                          </div>
+                          <p className="text-sm text-red-700">
+                            Click Connect to link your {platform} account.
                           </p>
                         </div>
                       )}
@@ -340,7 +397,7 @@ export const Connects: React.FC = () => {
                             className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
                           >
                             <Plus size={16} />
-                            Connect
+                            {platform === 'WordPress' ? 'Connect WordPress' : 'Connect'}
                           </button>
                         ) : (
                           <>
@@ -394,7 +451,7 @@ export const Connects: React.FC = () => {
                           {config.platform}
                         </h3>
                         <p className="text-sm text-gray-600">
-                          {config.enabled ? '✓ Enabled' : '✗ Disabled'}
+                          {config.enabled ? '鉁?Enabled' : '鉁?Disabled'}
                         </p>
                       </div>
                     </div>
@@ -419,7 +476,7 @@ export const Connects: React.FC = () => {
                     <div className="bg-gray-50 rounded p-3">
                       <p className="text-xs text-gray-600 font-medium mb-1">Auto Hashtags</p>
                       <p className="text-sm font-semibold text-gray-900">
-                        {config.autoHashtags ? '✓ Yes' : '✗ No'}
+                        {config.autoHashtags ? '鉁?Yes' : '鉁?No'}
                       </p>
                     </div>
                   </div>
@@ -631,27 +688,77 @@ export const Connects: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-blue-50 rounded-lg p-4 mb-6">
-              <p className="text-sm text-blue-900">
-                You will be redirected to {modalState.platform} to authorize this connection. Make
-                sure you have an account and are logged in.
-              </p>
-            </div>
+            {modalState.platform === 'WordPress' ? (
+              <div className="space-y-4 mb-6">
+                <div className="bg-blue-50 rounded-lg p-4">
+                  <p className="text-sm text-blue-900">
+                    Enter your WordPress site URL, username, and application password to connect.
+                  </p>
+                </div>
 
-            <div className="space-y-3 mb-6">
-              <div className="flex items-center gap-2 text-sm text-gray-700">
-                <CheckCircle size={16} className="text-green-600" />
-                <span>Secure OAuth connection</span>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Site URL</label>
+                  <input
+                    type="url"
+                    placeholder="https://example.com"
+                    value={wordPressForm.siteUrl}
+                    onChange={(event) =>
+                      setWordPressForm((prev) => ({ ...prev, siteUrl: event.target.value }))
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Username</label>
+                  <input
+                    type="text"
+                    value={wordPressForm.username}
+                    onChange={(event) =>
+                      setWordPressForm((prev) => ({ ...prev, username: event.target.value }))
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    WordPress Application Password
+                  </label>
+                  <input
+                    type="password"
+                    value={wordPressForm.appPassword}
+                    onChange={(event) =>
+                      setWordPressForm((prev) => ({ ...prev, appPassword: event.target.value }))
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-sm text-gray-700">
-                <CheckCircle size={16} className="text-green-600" />
-                <span>No password required</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-gray-700">
-                <CheckCircle size={16} className="text-green-600" />
-                <span>Full control over permissions</span>
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="bg-blue-50 rounded-lg p-4 mb-6">
+                  <p className="text-sm text-blue-900">
+                    You will be redirected to {modalState.platform} to authorize this connection.
+                  </p>
+                </div>
+
+                <div className="space-y-3 mb-6">
+                  <div className="flex items-center gap-2 text-sm text-gray-700">
+                    <CheckCircle size={16} className="text-green-600" />
+                    <span>Secure OAuth connection</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-700">
+                    <CheckCircle size={16} className="text-green-600" />
+                    <span>No password required</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-700">
+                    <CheckCircle size={16} className="text-green-600" />
+                    <span>Full control over permissions</span>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="flex gap-3">
               <button
@@ -662,11 +769,12 @@ export const Connects: React.FC = () => {
               </button>
               <button
                 onClick={() => handleConfirmConnection(modalState.platform)}
+                disabled={isWordPressConnecting}
                 className={`flex-1 px-4 py-2 text-white rounded-lg font-medium transition-colors bg-gradient-to-r ${
                   modalState.platform && PLATFORM_COLORS[modalState.platform]
-                } hover:opacity-90`}
+                } hover:opacity-90 disabled:opacity-70`}
               >
-                Continue
+                {isWordPressConnecting ? 'Connecting...' : modalState.platform === 'WordPress' ? 'Connect' : 'Continue'}
               </button>
             </div>
           </div>
@@ -677,3 +785,5 @@ export const Connects: React.FC = () => {
 };
 
 export default Connects;
+
+
