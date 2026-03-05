@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { ConnectedAccount, SocialPlatform } from '../types/oauth';
 import oauthService from '../services/oauthService';
 
@@ -88,6 +88,7 @@ export const useOAuthConnect = (platform: SocialPlatform) => {
     const state = Math.random().toString(36).substring(7);
     sessionStorage.setItem('oauth_state', state);
     sessionStorage.setItem('oauth_platform', platform);
+    await oauthService.registerState(platform, state);
 
     const authUrl = oauthService.getAuthorizationUrl(platform, state);
     window.location.href = authUrl;
@@ -95,3 +96,4 @@ export const useOAuthConnect = (platform: SocialPlatform) => {
 
   return { connect };
 };
+

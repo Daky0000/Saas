@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 
 interface AuthProps {
   onLogin: () => void;
 }
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -13,21 +15,47 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [name, setName] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    if (isLogin) {
-      // Check for specific credentials
-      if (email === 'dakyworld' && password === 'Dakyworld#1') {
-        onLogin();
-      } else {
-        setError('Invalid username or password');
+    try {
+      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+      const payload: Record<string, any> = { email, password };
+      if (!isLogin) payload.name = name;
+
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        setError(data?.error || 'Authentication failed');
+        return;
       }
-    } else {
-      // For signup, just proceed for now
+
+      if (data.token) {
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('auth_session', 'true');
+        if (data.user) {
+          localStorage.setItem('auth_user', JSON.stringify(data.user));
+        }
+      }
+
       onLogin();
+    } catch (err) {
+      console.error('Auth error:', err);
+      setError('Unable to connect to the server');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -45,9 +73,9 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         <div className="absolute bottom-20 left-12 right-12 text-white">
           <div className="flex items-center gap-2 mb-8">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold">C</span>
+              <span className="text-white font-bold">D</span>
             </div>
-            <span className="text-2xl font-bold tracking-tight text-white">ContentFlow</span>
+            <span className="text-2xl font-bold tracking-tight text-white">Dakyworld hub</span>
           </div>
           
           <blockquote className="space-y-4">
@@ -68,19 +96,19 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           {/* Mobile Logo */}
           <div className="lg:hidden flex items-center gap-2 mb-12">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold">C</span>
+              <span className="text-white font-bold">D</span>
             </div>
-            <span className="text-2xl font-bold tracking-tight text-gray-900">ContentFlow</span>
+            <span className="text-2xl font-bold tracking-tight text-gray-900">Dakyworld hub</span>
           </div>
 
           <div className="mb-10">
             <h1 className="text-3xl font-bold text-gray-900 mb-3">
-              {isLogin ? 'Welcome back to ContentFlow' : 'Create your account'}
+              {isLogin ? 'Welcome back to Dakyworld hub' : 'Create your account'}
             </h1>
             <p className="text-gray-500">
               {isLogin 
                 ? 'Manage your social media presence effortlessly with our powerful platform.' 
-                : 'Join ContentFlow and start growing your reach.'}
+                : 'Join Dakyworld hub and start growing your reach.'}
             </p>
           </div>
 
@@ -112,7 +140,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                 <input
                   type="text"
                   required
-                  placeholder="dakyworld"
+                  placeholder="you@example.com"
                   className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -177,9 +205,10 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
             <button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 mt-4"
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 mt-4"
             >
-              {isLogin ? 'Log in' : 'Create account'}
+              {loading ? 'Processing...' : isLogin ? 'Log in' : 'Create account'}
             </button>
           </form>
 

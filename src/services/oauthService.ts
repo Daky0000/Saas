@@ -1,7 +1,7 @@
-import { ApiResponse, ConnectedAccount, SocialPlatform } from '../types/oauth';
+﻿import { ApiResponse, ConnectedAccount, SocialPlatform } from '../types/oauth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
-const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+const APP_URL = import.meta.env.VITE_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 const resolveRedirectUri = (envKeyValue?: string): string => {
   if (!envKeyValue) return APP_URL;
@@ -9,6 +9,12 @@ const resolveRedirectUri = (envKeyValue?: string): string => {
     return envKeyValue;
   }
   return `${APP_URL}${envKeyValue}`;
+};
+
+const authHeaders = () => {
+  if (typeof window === 'undefined') return {} as Record<string, string>;
+  const token = localStorage.getItem('auth_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 // Platform OAuth Configuration
@@ -47,9 +53,7 @@ export const oauthConfigs = {
 
 // API Service Functions
 export const oauthService = {
-  /**
-   * Generate OAuth authorization URL
-   */
+  /** Generate OAuth authorization URL */
   getAuthorizationUrl: (platform: SocialPlatform, state: string): string => {
     const config = oauthConfigs[platform];
     const params = new URLSearchParams({
@@ -62,9 +66,33 @@ export const oauthService = {
     return `${config.authUrl}?${params.toString()}`;
   },
 
-  /**
-   * Exchange authorization code for access token
-   */
+  /** Persist OAuth state on the backend */
+  registerState: async (platform: SocialPlatform, state: string): Promise<ApiResponse<void>> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/oauth/state`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({ platform, state }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to store OAuth state');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error storing OAuth state:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to store OAuth state',
+      };
+    }
+  },
+
+  /** Exchange authorization code for access token */
   exchangeCodeForToken: async (
     platform: SocialPlatform,
     code: string,
@@ -75,6 +103,7 @@ export const oauthService = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...authHeaders(),
         },
         credentials: 'include',
         body: JSON.stringify({
@@ -98,14 +127,15 @@ export const oauthService = {
     }
   },
 
-  /**
-   * Get connected accounts for user
-   */
+  /** Get connected accounts for user */
   getConnectedAccounts: async (): Promise<ApiResponse<ConnectedAccount[]>> => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/accounts`, {
         method: 'GET',
         credentials: 'include',
+        headers: {
+          ...authHeaders(),
+        },
       });
 
       if (!response.ok) {
@@ -123,14 +153,15 @@ export const oauthService = {
     }
   },
 
-  /**
-   * Disconnect account
-   */
+  /** Disconnect account */
   disconnectAccount: async (platform: SocialPlatform): Promise<ApiResponse<void>> => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/accounts/${platform}`, {
         method: 'DELETE',
         credentials: 'include',
+        headers: {
+          ...authHeaders(),
+        },
       });
 
       if (!response.ok) {
@@ -147,14 +178,15 @@ export const oauthService = {
     }
   },
 
-  /**
-   * Test platform connection
-   */
+  /** Test platform connection */
   testConnection: async (platform: SocialPlatform): Promise<ApiResponse<any>> => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/accounts/${platform}/test`, {
         method: 'GET',
         credentials: 'include',
+        headers: {
+          ...authHeaders(),
+        },
       });
 
       if (!response.ok) {
@@ -171,9 +203,7 @@ export const oauthService = {
     }
   },
 
-  /**
-   * Publish post to platform
-   */
+  /** Publish post to platform */
   publishPost: async (
     platform: SocialPlatform,
     content: { text: string; media?: string[]; hashtags?: string[] }
@@ -183,6 +213,7 @@ export const oauthService = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...authHeaders(),
         },
         credentials: 'include',
         body: JSON.stringify(content),
@@ -202,14 +233,15 @@ export const oauthService = {
     }
   },
 
-  /**
-   * Get platform analytics
-   */
+  /** Get platform analytics */
   getAnalytics: async (platform: SocialPlatform): Promise<ApiResponse<any>> => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/analytics/${platform}`, {
         method: 'GET',
         credentials: 'include',
+        headers: {
+          ...authHeaders(),
+        },
       });
 
       if (!response.ok) {
