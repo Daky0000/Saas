@@ -1,7 +1,13 @@
 ﻿import { ApiResponse, ConnectedAccount, SocialPlatform } from '../types/oauth';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
-const APP_URL = import.meta.env.VITE_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
+  ? ''
+  : rawApiBaseUrl.replace(/\/$/, '');
+const APP_URL =
+  typeof window !== 'undefined'
+    ? window.location.origin
+    : import.meta.env.VITE_APP_URL || '';
 
 const resolveRedirectUri = (envKeyValue?: string): string => {
   if (!envKeyValue) return APP_URL;
