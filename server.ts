@@ -1,14 +1,19 @@
-import express, { type Request, type Response } from 'express';
+﻿import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { Pool } from 'pg';
+import { randomUUID } from 'crypto';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const DATABASE_URL = process.env.DATABASE_URL;
+
 const allowedOrigins = new Set([
   process.env.VITE_APP_URL || 'http://localhost:3000',
   'http://localhost:3000',
@@ -16,17 +21,68 @@ const allowedOrigins = new Set([
   'https://marketing.dakyworld.com',
 ]);
 
-// Middleware
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error(`Origin not allowed by CORS: ${origin}`));
-  },
-  credentials: true,
-}));
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+
+async function ensureDatabase() {
+  if (!pool) {
+    console.warn('DATABASE_URL is not set; running in in-memory mode.');
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      full_name TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      state TEXT PRIMARY KEY,
+      user_id TEXT,
+      platform TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '15 minutes')
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      handle TEXT,
+      followers INTEGER DEFAULT 0,
+      connected BOOLEAN DEFAULT TRUE,
+      connected_at TIMESTAMPTZ DEFAULT NOW(),
+      expires_at TIMESTAMPTZ,
+      access_token TEXT,
+      refresh_token TEXT,
+      token_data JSONB DEFAULT '{}'::jsonb,
+      UNIQUE (user_id, platform)
+    );
+  `);
+}
+
+ensureDatabase().catch((err) => {
+  console.error('Database initialization failed:', err);
+});
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Types
@@ -48,26 +104,184 @@ interface StoredConnection {
   expiresAt?: string;
 }
 
-const userConnections = new Map<string, StoredConnection[]>();
+type DbUserRow = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  password_hash: string;
+  created_at: string;
+};
 
-function resolveRedirectUri(uri: string | undefined): string {
-  if (!uri) return '';
-  if (uri.startsWith('http://') || uri.startsWith('https://')) return uri;
-  const appUrl = process.env.VITE_APP_URL || 'http://localhost:3000';
-  return `${appUrl}${uri}`;
+// Helpers
+async function dbQuery<T = any>(sql: string, params: any[] = []) {
+  if (!pool) {
+    throw new Error('DATABASE_URL is not configured. Please set it to enable persistence.');
+  }
+  return pool.query<T>(sql, params);
 }
 
-// OAuth Handler for Instagram
+function signToken(userId: string, email: string) {
+  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+function getAuthUser(req: Request) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    return { userId: decoded.userId as string, email: decoded.email as string };
+  } catch {
+    return null;
+  }
+}
+
+async function findUserByEmail(email: string): Promise<DbUserRow | undefined> {
+  const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+  return result.rows[0];
+}
+
+async function getUserById(id: string): Promise<DbUserRow | undefined> {
+  const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0];
+}
+
+async function createUser(name: string, email: string, password: string): Promise<DbUserRow> {
+  const hash = await bcrypt.hash(password, 10);
+  const id = randomUUID();
+  const result = await dbQuery<DbUserRow>(
+    'INSERT INTO users (id, email, password_hash, full_name) VALUES ($1, $2, $3, $4) RETURNING *',
+    [id, email.toLowerCase(), hash, name || null]
+  );
+  return result.rows[0];
+}
+
+function requireAuth(req: Request, res: Response): { userId: string; email?: string } | null {
+  const auth = getAuthUser(req);
+  if (!auth) {
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return null;
+  }
+  return auth;
+}
+
+// Auth routes
+app.post('/api/auth/register', async (req: Request, res: Response) => {
+  try {
+    const { email, password, name } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+
+    const existing = await findUserByEmail(email);
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'Account already exists' });
+    }
+
+    const user = await createUser(name, email, password);
+    const token = signToken(user.id, user.email);
+
+    return res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, name: user.full_name },
+    });
+  } catch (error) {
+    console.error('Register error:', error);
+    return res.status(500).json({ success: false, error: 'Registration failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+
+    const user = await findUserByEmail(email);
+    if (!user) {
+      return res.status(400).json({ success: false, error: 'Invalid credentials' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(400).json({ success: false, error: 'Invalid credentials' });
+    }
+
+    const token = signToken(user.id, user.email);
+    return res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, name: user.full_name },
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ success: false, error: 'Login failed' });
+  }
+});
+
+app.get('/api/auth/me', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const user = await getUserById(auth.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    return res.json({
+      success: true,
+      user: { id: user.id, email: user.email, name: user.full_name },
+    });
+  } catch (error) {
+    console.error('Me error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch user' });
+  }
+});
+
+// OAuth state registration (for CSRF protection)
+app.post('/api/oauth/state', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { state, platform } = req.body;
+    if (!state || !platform) {
+      return res.status(400).json({ success: false, error: 'Missing state or platform' });
+    }
+
+    if (!pool) {
+      return res.status(503).json({ success: false, error: 'Database not configured' });
+    }
+
+    await dbQuery(
+      `INSERT INTO oauth_states (state, user_id, platform, expires_at)
+       VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')
+       ON CONFLICT (state) DO NOTHING`,
+      [state, auth.userId, platform]
+    );
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('OAuth state error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to store state' });
+  }
+});
+
+// OAuth Handler for Instagram and others
 app.post('/api/oauth/callback', async (req: Request, res: Response) => {
   try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
     const { platform, code, state } = req.body;
 
     if (!code || !state) {
       return res.status(400).json({ success: false, error: 'Missing code or state' });
     }
 
-    // Validate state to prevent CSRF
-    const storedState = getStoredState(state);
+    const storedState = await getStoredState(state);
     if (!storedState) {
       return res.status(400).json({ success: false, error: 'Invalid state parameter' });
     }
@@ -94,16 +308,14 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
         return res.status(400).json({ success: false, error: 'Unsupported platform' });
     }
 
-    // Store user connection in database
-    const userId = getUserIdFromRequest(req);
-    await storeUserConnection(userId, platform, tokenData);
+    await storeUserConnection(auth.userId, platform, tokenData);
 
     return res.json({ success: true, data: tokenData });
   } catch (error) {
     console.error('OAuth callback error:', error);
-    return res.status(500).json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'OAuth callback failed' 
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'OAuth callback failed',
     });
   }
 });
@@ -111,10 +323,13 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
 // Get connected accounts
 app.get('/api/accounts', async (req: Request, res: Response) => {
   try {
-    const userId = getUserIdFromRequest(req);
-    const accounts = await getUserConnectedAccounts(userId);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const accounts = await getUserConnectedAccounts(auth.userId);
     return res.json({ success: true, data: accounts });
   } catch (error) {
+    console.error('Accounts error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch accounts' });
   }
 });
@@ -122,11 +337,14 @@ app.get('/api/accounts', async (req: Request, res: Response) => {
 // Disconnect account
 app.delete('/api/accounts/:platform', async (req: Request, res: Response) => {
   try {
-    const userId = getUserIdFromRequest(req);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
     const { platform } = req.params;
-    await removeUserConnection(userId, platform);
+    await removeUserConnection(auth.userId, platform);
     return res.json({ success: true });
   } catch (error) {
+    console.error('Disconnect error:', error);
     return res.status(500).json({ success: false, error: 'Failed to disconnect' });
   }
 });
@@ -134,11 +352,14 @@ app.delete('/api/accounts/:platform', async (req: Request, res: Response) => {
 // Test connection
 app.get('/api/accounts/:platform/test', async (req: Request, res: Response) => {
   try {
-    const userId = getUserIdFromRequest(req);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
     const { platform } = req.params;
-    const result = await testPlatformConnection(userId, platform);
+    const result = await testPlatformConnection(auth.userId, platform);
     return res.json({ success: true, data: result });
   } catch (error) {
+    console.error('Test connection error:', error);
     return res.status(500).json({ success: false, error: 'Connection test failed' });
   }
 });
@@ -146,11 +367,13 @@ app.get('/api/accounts/:platform/test', async (req: Request, res: Response) => {
 // Publish post
 app.post('/api/posts/:platform/publish', async (req: Request, res: Response) => {
   try {
-    const userId = getUserIdFromRequest(req);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
     const { platform } = req.params;
     const { text, media, hashtags } = req.body;
 
-    const result = await publishToPlatform(userId, platform, {
+    const result = await publishToPlatform(auth.userId, platform, {
       text,
       media,
       hashtags,
@@ -158,6 +381,7 @@ app.post('/api/posts/:platform/publish', async (req: Request, res: Response) => 
 
     return res.json({ success: true, data: result });
   } catch (error) {
+    console.error('Publish error:', error);
     return res.status(500).json({ success: false, error: 'Failed to publish post' });
   }
 });
@@ -165,11 +389,14 @@ app.post('/api/posts/:platform/publish', async (req: Request, res: Response) => 
 // Get analytics
 app.get('/api/analytics/:platform', async (req: Request, res: Response) => {
   try {
-    const userId = getUserIdFromRequest(req);
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
     const { platform } = req.params;
-    const analytics = await getPlatformAnalytics(userId, platform);
+    const analytics = await getPlatformAnalytics(auth.userId, platform);
     return res.json({ success: true, data: analytics });
   } catch (error) {
+    console.error('Analytics error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch analytics' });
   }
 });
@@ -236,78 +463,102 @@ async function exchangeTikTokCode(code: string) {
   return response.data;
 }
 
-// Database/Storage Functions (implement with your database)
-function getStoredState(state: string): boolean {
-  // Implement state validation from storage
-  return true;
+// Database/Storage Functions
+async function getStoredState(state: string): Promise<boolean> {
+  if (!pool) return true;
+  const result = await dbQuery('SELECT 1 FROM oauth_states WHERE state = $1 AND expires_at > NOW()', [state]);
+  return result.rowCount > 0;
 }
 
-function getUserIdFromRequest(req: Request): string {
-  // Extract user ID from JWT token or session
-  const token = req.headers.authorization?.split(' ')[1];
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
-      return decoded.userId;
-    } catch (e) {
-      // Handle token validation error
-    }
+async function storeUserConnection(userId: string, platform: string, tokenData: any): Promise<void> {
+  if (!pool) {
+    console.warn('DATABASE_URL not set; cannot persist social connection');
+    return;
   }
-  return 'default-user'; // Replace with proper auth
-}
 
-async function storeUserConnection(
-  userId: string,
-  platform: string,
-  tokenData: any
-): Promise<void> {
-  const existing = userConnections.get(userId) || [];
-  const next: StoredConnection = {
-    id: `${platform.toLowerCase()}-${Date.now()}`,
-    userId,
-    platform,
-    handle: tokenData?.user_id ? String(tokenData.user_id) : `${platform.toLowerCase()}_account`,
-    followers: '0',
-    connected: true,
-    connectedAt: new Date().toISOString(),
-    expiresAt: tokenData?.expires_in
-      ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
-      : undefined,
-  };
+  const handle =
+    tokenData?.user_id || tokenData?.username || tokenData?.handle || `${platform.toLowerCase()}_account`;
+  const followers = Number(tokenData?.followers || tokenData?.followers_count || 0);
+  const expiresAt = tokenData?.expires_in
+    ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
+    : null;
 
-  const filtered = existing.filter((acc) => acc.platform !== platform);
-  userConnections.set(userId, [...filtered, next]);
+  await dbQuery(
+    `
+    INSERT INTO social_accounts
+      (id, user_id, platform, handle, followers, connected, connected_at, expires_at, access_token, refresh_token, token_data)
+    VALUES ($1, $2, $3, $4, $5, true, NOW(), $6, $7, $8, $9)
+    ON CONFLICT (user_id, platform) DO UPDATE
+      SET handle = EXCLUDED.handle,
+          followers = EXCLUDED.followers,
+          connected = true,
+          connected_at = NOW(),
+          expires_at = EXCLUDED.expires_at,
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          token_data = EXCLUDED.token_data;
+  `,
+    [
+      randomUUID(),
+      userId,
+      platform,
+      String(handle),
+      followers,
+      expiresAt,
+      tokenData?.access_token ?? tokenData?.accessToken ?? null,
+      tokenData?.refresh_token ?? tokenData?.refreshToken ?? null,
+      tokenData || {},
+    ]
+  );
 }
 
 async function getUserConnectedAccounts(userId: string): Promise<any[]> {
-  return userConnections.get(userId) || [];
+  if (!pool) return [];
+  const result = await dbQuery(
+    `
+    SELECT
+      id,
+      user_id AS "userId",
+      platform,
+      handle,
+      followers::text AS followers,
+      connected,
+      connected_at AS "connectedAt",
+      expires_at AS "expiresAt"
+    FROM social_accounts
+    WHERE user_id = $1
+    ORDER BY platform;
+  `,
+    [userId]
+  );
+  return result.rows;
 }
 
 async function removeUserConnection(userId: string, platform: string): Promise<void> {
-  const existing = userConnections.get(userId) || [];
-  userConnections.set(
-    userId,
-    existing.filter((acc) => acc.platform !== platform)
-  );
+  if (!pool) return;
+  await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND platform = $2', [userId, platform]);
 }
 
 async function testPlatformConnection(userId: string, platform: string): Promise<any> {
   // Implement testing connection
-  return { status: 'ok', platform };
+  return { status: 'ok', platform, userId };
 }
 
-async function publishToPlatform(
-  userId: string,
-  platform: string,
-  content: any
-): Promise<any> {
+async function publishToPlatform(userId: string, platform: string, content: any): Promise<any> {
   // Implement publishing to platform
-  return { postId: 'test', platform };
+  return { postId: 'test', platform, userId, content };
 }
 
 async function getPlatformAnalytics(userId: string, platform: string): Promise<any> {
   // Implement fetching analytics
-  return { platform, followers: 0, engagement: 0 };
+  return { platform, followers: 0, engagement: 0, userId };
+}
+
+function resolveRedirectUri(uri: string | undefined): string {
+  if (!uri) return '';
+  if (uri.startsWith('http://') || uri.startsWith('https://')) return uri;
+  const appUrl = process.env.VITE_APP_URL || 'http://localhost:3000';
+  return `${appUrl}${uri}`;
 }
 
 // Health check
@@ -326,4 +577,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-

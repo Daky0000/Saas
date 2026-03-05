@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import { BarChart4, FileText, Palette, Share2, TrendingUp, Settings, Menu, X, LogOut } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
@@ -60,7 +60,8 @@ function App() {
     setIsOAuthCallback(isCallback);
 
     const session = localStorage.getItem('auth_session');
-    const loggedIn = Boolean(session);
+    const token = localStorage.getItem('auth_token');
+    const loggedIn = Boolean(session || token);
     setIsAuthenticated(loggedIn);
 
     if (isCallback) {
@@ -131,6 +132,8 @@ function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('auth_session');
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_user');
     setIsAuthenticated(false);
     navigatePath('/login', true);
   };
@@ -179,7 +182,7 @@ function App() {
       } bg-white border-r border-gray-200 transition-all duration-300 hidden md:flex flex-col`}>
         <div className="p-6 border-b border-gray-100">
           <div className="text-2xl font-black text-gray-900">
-            {sidebarOpen ? '🎨 ContentFlow' : '🎨'}
+            {sidebarOpen ? '馃帹 Dakyworld hub' : '馃帹'}
           </div>
         </div>
 
@@ -231,7 +234,7 @@ function App() {
           >
             {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
-          <h1 className="text-xl font-black">🎨 ContentFlow</h1>
+          <h1 className="text-xl font-black">馃帹 Dakyworld hub</h1>
           <div className="w-10"></div>
         </header>
 
@@ -273,3 +276,4 @@ function App() {
 }
 
 export default App;
+
