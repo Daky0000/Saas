@@ -11,9 +11,11 @@ import {
   Clock,
   AlertTriangle,
   Zap,
+  Globe,
 } from 'lucide-react';
 import { useConnectedAccounts, useOAuthConnect } from '../hooks/useOAuth';
 import { SocialPlatform, ConnectedAccount, AutoPostingConfig, ContentVariation, RepostingSchedule, ErrorLog } from '../types/oauth';
+import { wordpressService } from '../services/wordpressService';
 
 interface Notification {
   id: string;
@@ -52,11 +54,37 @@ export const Connects: React.FC = () => {
     platform: null,
   });
 
+  // WordPress connection state
+  const [wpConnected, setWpConnected] = useState(false);
+  const [wpSiteUrl, setWpSiteUrl] = useState<string | null>(null);
+  const [wpModalOpen, setWpModalOpen] = useState(false);
+  const [wpConnecting, setWpConnecting] = useState(false);
+  const [wpConnectError, setWpConnectError] = useState<string | null>(null);
+  const [wpForm, setWpForm] = useState({ siteUrl: '', username: '', applicationPassword: '' });
+  const [wpConnectionType, setWpConnectionType] = useState<'make_webhook' | 'wordpress_api' | null>(null);
+  const [wpStatusLoading, setWpStatusLoading] = useState(true);
+
   const { accounts, loading, error, refetch, disconnect } = useConnectedAccounts();
   const [autoPostingConfigs, setAutoPostingConfigs] = useState<AutoPostingConfig[]>([]);
   const [contentVariations, setContentVariations] = useState<ContentVariation[]>([]);
   const [repostingSchedules, setRepostingSchedules] = useState<RepostingSchedule[]>([]);
   const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
+
+  // Fetch WordPress connection status
+  const fetchWpStatus = useCallback(async () => {
+    setWpStatusLoading(true);
+    const result = await wordpressService.getStatus();
+    setWpStatusLoading(false);
+    if (result.success) {
+      setWpConnected(!!result.connected);
+      setWpSiteUrl(result.siteUrl ?? null);
+      setWpConnectionType(result.connectionType ?? null);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchWpStatus();
+  }, [fetchWpStatus]);
 
   // Handle OAuth callbacks from URL params
   useEffect(() => {
@@ -198,6 +226,40 @@ export const Connects: React.FC = () => {
     },
     [disconnect, addNotification]
   );
+
+  const handleConnectWordPress = useCallback(async () => {
+    setWpConnectError(null);
+    if (!wpForm.siteUrl.trim() || !wpForm.username.trim() || !wpForm.applicationPassword.trim()) {
+      setWpConnectError('Site URL, Username, and Application Password are required.');
+      return;
+    }
+    setWpConnecting(true);
+    const result = await wordpressService.connect({
+      siteUrl: wpForm.siteUrl.trim(),
+      username: wpForm.username.trim(),
+      applicationPassword: wpForm.applicationPassword.trim(),
+    });
+    setWpConnecting(false);
+    if (result.success) {
+      addNotification(result.message || 'WordPress Connected Successfully', 'success');
+      setWpModalOpen(false);
+      setWpForm({ siteUrl: '', username: '', applicationPassword: '' });
+      fetchWpStatus();
+    } else {
+      setWpConnectError(result.error || 'Connection failed');
+    }
+  }, [wpForm, addNotification, fetchWpStatus]);
+
+  const handleDisconnectWordPress = useCallback(async () => {
+    const result = await wordpressService.disconnect();
+    if (result.success) {
+      addNotification('WordPress disconnected', 'success');
+      setWpConnected(false);
+      setWpSiteUrl(null);
+    } else {
+      addNotification(result.error || 'Failed to disconnect', 'error');
+    }
+  }, [addNotification]);
 
   const handleConfirmConnection = useCallback(
     async (platform: SocialPlatform | null) => {
@@ -364,6 +426,76 @@ export const Connects: React.FC = () => {
                   </div>
                 );
               })}
+            </div>
+
+            {/* WordPress connection card */}
+            <div className="mt-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">WordPress</h3>
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow max-w-sm">
+                <div className="h-24 bg-gradient-to-r from-blue-600 to-indigo-600 flex items-center justify-center text-white">
+                  <Globe size={40} />
+                </div>
+                <div className="p-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">WordPress</h3>
+                  {wpStatusLoading ? (
+                    <div className="flex items-center gap-2 text-gray-600 mb-4">
+                      <Loader size={16} className="animate-spin" />
+                      <span className="text-sm">Loading...</span>
+                    </div>
+                  ) : wpConnected ? (
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2 text-green-600 mb-2">
+                        <CheckCircle size={16} />
+                        <span className="text-sm font-medium">Connected</span>
+                        {wpConnectionType === 'make_webhook' && (
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Make</span>
+                        )}
+                      </div>
+                      {wpSiteUrl && wpConnectionType === 'wordpress_api' && (
+                        <p className="text-sm text-gray-700 truncate" title={wpSiteUrl}>
+                          <span className="font-medium">Site:</span> {wpSiteUrl}
+                        </p>
+                      )}
+                      {wpConnectionType === 'make_webhook' && (
+                        <p className="text-sm text-gray-600">Publishing via Make webhook</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-red-50 border border-red-100 rounded p-2 mb-4">
+                      <div className="flex items-center gap-2 text-red-600 mb-1">
+                        <span className="w-2 h-2 rounded-full bg-red-500" aria-hidden />
+                        <span className="text-sm font-medium">Not connected</span>
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        Click Connect to link your WordPress site via Application Password.
+                      </p>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    {!wpConnected ? (
+                      <button
+                        onClick={() => {
+                          setWpConnectError(null);
+                          setWpForm((f) => ({ ...f, siteUrl: '', username: '', password: '', applicationPassword: '', webhookUrl: '' }));
+                          setWpModalOpen(true);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                      >
+                        <Plus size={16} />
+                        Connect WordPress
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleDisconnectWordPress}
+                        className="flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 font-medium py-2 px-4 rounded-lg transition-colors"
+                      >
+                        <LogOut size={16} />
+                        Disconnect
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {error && (
@@ -667,6 +799,111 @@ export const Connects: React.FC = () => {
                 } hover:opacity-90`}
               >
                 Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WordPress Connect Modal */}
+      {wpModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg text-white">
+                  <Globe size={24} />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900">Connect WordPress</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setWpModalOpen(false);
+                  setWpConnectError(null);
+                }}
+                className="text-gray-500 hover:text-gray-700 p-1"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Connect your WordPress site using an{' '}
+              <a
+                href="https://wordpress.org/documentation/article/application-passwords/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Application Password
+              </a>
+              . This is a secure way to grant access without sharing your main password.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Site URL</label>
+                <input
+                  type="url"
+                  value={wpForm.siteUrl}
+                  onChange={(e) => setWpForm((f) => ({ ...f, siteUrl: e.target.value }))}
+                  placeholder="https://yoursite.com"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Username</label>
+                <input
+                  type="text"
+                  value={wpForm.username}
+                  onChange={(e) => setWpForm((f) => ({ ...f, username: e.target.value }))}
+                  placeholder="Your WordPress username"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  autoComplete="username"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Application Password</label>
+                <input
+                  type="password"
+                  value={wpForm.applicationPassword}
+                  onChange={(e) => setWpForm((f) => ({ ...f, applicationPassword: e.target.value }))}
+                  placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  autoComplete="off"
+                />
+              </div>
+              {wpConnectError && (
+                <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                  <AlertCircle size={18} />
+                  <span>{wpConnectError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setWpModalOpen(false);
+                  setWpConnectError(null);
+                }}
+                className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConnectWordPress}
+                disabled={wpConnecting}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+              >
+                {wpConnecting ? (
+                  <>
+                    <Loader size={18} className="animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  'Connect'
+                )}
               </button>
             </div>
           </div>

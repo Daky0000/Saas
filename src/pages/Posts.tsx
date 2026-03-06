@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Plus, Eye, Share2, Trash2, Users, Clock, Zap, Wand2, Hash, TrendingUp, Upload, Image, Video, CheckCircle, Copy, Calendar, AlertCircle, Instagram, Linkedin, Facebook, Music } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, Eye, Share2, Trash2, Users, Clock, Zap, Wand2, Hash, TrendingUp, Upload, Image, Video, CheckCircle, Copy, Calendar, AlertCircle, Instagram, Linkedin, Facebook, Music, Globe, Loader } from 'lucide-react';
 import RichTextEditor from '../components/RichTextEditor';
+import { wordpressService, type WpCategory, type WpTag } from '../services/wordpressService';
 
 const Posts = () => {
   const [activeTab, setActiveTab] = useState<'published' | 'drafts' | 'schedule' | 'media' | 'editor'>('published');
@@ -14,6 +15,24 @@ const Posts = () => {
   const [scheduledTime, setScheduledTime] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<any[]>([]);
   const [previewPlatform, setPreviewPlatform] = useState<string>('Instagram');
+  // Featured image for WordPress (single file)
+  const [featuredImageFile, setFeaturedImageFile] = useState<File | null>(null);
+  const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null);
+
+  // WordPress publish state
+  const [wpConnected, setWpConnected] = useState(false);
+
+
+  const [wpPublishStatus, setWpPublishStatus] = useState<'draft' | 'publish'>('publish');
+  const [wpExcerpt, setWpExcerpt] = useState('');
+  const [wpSlug, setWpSlug] = useState('');
+  const [wpSeoTitle, setWpSeoTitle] = useState('');
+  const [wpSeoDescription, setWpSeoDescription] = useState('');
+  const [wpFocusKeyword, setWpFocusKeyword] = useState('');
+  const [wpFeaturedImageUrl, setWpFeaturedImageUrl] = useState('');
+  const [wpPublishing, setWpPublishing] = useState(false);
+  const [wpPublishError, setWpPublishError] = useState<string | null>(null);
+  const [wpPublishSuccess, setWpPublishSuccess] = useState<string | null>(null);
 
   const publishedPosts = [
     {
@@ -122,6 +141,90 @@ const Posts = () => {
     { id: 'media', label: 'Media Library', count: 12 },
   ];
 
+  // WordPress: fetch connection status when editor is open
+  useEffect(() => {
+    if (!showEditor) return;
+    wordpressService.getStatus().then((r) => {
+      if (r.success) {
+        setWpConnected(!!r.connected);
+      }
+    });
+  }, [showEditor]);
+
+
+
+  const handleFeaturedImageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    setFeaturedImageFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setFeaturedImagePreview(reader.result as string);
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }, []);
+
+  const clearFeaturedImage = useCallback(() => {
+    setFeaturedImageFile(null);
+    setFeaturedImagePreview(null);
+  }, []);
+
+  const handlePublishToWordPress = useCallback(async () => {
+    setWpPublishError(null);
+    setWpPublishSuccess(null);
+    if (!postTitle.trim() && !postContent.trim()) {
+      setWpPublishError('Add a title or content to publish.');
+      return;
+    }
+    setWpPublishing(true);
+
+    let featuredImageBase64: string | undefined;
+    let featuredImageFilename: string | undefined;
+    if (featuredImageFile) {
+      try {
+        featuredImageBase64 = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve((r.result as string).replace(/^data:image\/\w+;base64,/, ''));
+          r.onerror = reject;
+          r.readAsDataURL(featuredImageFile);
+        });
+        featuredImageFilename = featuredImageFile.name;
+      } catch {
+        setWpPublishError('Failed to read featured image.');
+        setWpPublishing(false);
+        return;
+      }
+    }
+    const result = await wordpressService.publish({
+      title: postTitle.trim() || 'Untitled',
+      content: postContent || '',
+      excerpt: wpExcerpt.trim() || undefined,
+      slug: wpSlug.trim() || undefined,
+      status: wpPublishStatus,
+      featuredImageBase64,
+      featuredImageFilename,
+      seoTitle: wpSeoTitle.trim() || undefined,
+      seoDescription: wpSeoDescription.trim() || undefined,
+      focusKeyword: wpFocusKeyword.trim() || undefined,
+    });
+    setWpPublishing(false);
+    if (result.success) {
+      setWpPublishSuccess(result.message || 'Post Published Successfully');
+      setTimeout(() => setWpPublishSuccess(null), 5000);
+    } else {
+      setWpPublishError(result.error || 'Publish failed');
+    }
+  }, [
+    postTitle,
+    postContent,
+    wpExcerpt,
+    wpSlug,
+    wpPublishStatus,
+    wpSeoTitle,
+    wpSeoDescription,
+    wpFocusKeyword,
+    featuredImageFile,
+  ]);
+
   return (
     <div className="space-y-6 pb-8">
       <div className="flex items-center justify-between mb-8">
@@ -206,19 +309,34 @@ const Posts = () => {
                   </div>
                 </div>
 
-                {/* Featured Image */}
+                {/* Featured Image (used for WordPress and previews) */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-900 mb-2">Featured Image</label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 hover:bg-blue-50 transition-all cursor-pointer">
+                  <label className="block border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 hover:bg-blue-50 transition-all cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleFeaturedImageChange}
+                    />
                     <div className="flex justify-center gap-4 mb-3">
                       <Upload size={24} className="text-gray-400" />
                       <Image size={24} className="text-gray-400" />
                       <Video size={24} className="text-gray-400" />
                     </div>
-                    <p className="text-sm text-gray-600">Drag & drop images, videos, or GIFs here</p>
-                    <p className="text-xs text-gray-500 mt-1">Supports JPG, PNG, MP4, GIF (Max 100MB)</p>
-                  </div>
-                  {selectedMedia.length > 0 && (
+                    <p className="text-sm text-gray-600">Click to upload featured image (JPG, PNG, GIF)</p>
+                    <p className="text-xs text-gray-500 mt-1">Used when publishing to WordPress</p>
+                  </label>
+                  {(featuredImagePreview || featuredImageFile) && (
+                    <div className="mt-3 flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                      {featuredImagePreview && (
+                        <img src={featuredImagePreview} alt="Featured" className="w-16 h-16 object-cover rounded" />
+                      )}
+                      <span className="text-sm text-gray-700 flex-1 truncate">{featuredImageFile?.name}</span>
+                      <button type="button" onClick={clearFeaturedImage} className="text-gray-400 hover:text-red-600 font-bold">×</button>
+                    </div>
+                  )}
+                  {selectedMedia.length > 0 && !featuredImageFile && (
                     <div className="mt-3 space-y-2">
                       {selectedMedia.map((media, idx) => (
                         <div key={idx} className="flex items-center gap-3 p-2 bg-gray-50 rounded-lg">
@@ -328,6 +446,105 @@ const Posts = () => {
                     })}
                   </div>
                 </div>
+
+                {/* Publish to WordPress (when connected) */}
+                {wpConnected && (
+                  <div className="border border-indigo-200 rounded-lg p-4 bg-indigo-50/50 space-y-4">
+                    <div className="flex items-center gap-2 text-indigo-800 font-semibold">
+                      <Globe size={20} />
+                      <span>Publish to WordPress</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt</label>
+                        <textarea
+                          value={wpExcerpt}
+                          onChange={(e) => setWpExcerpt(e.target.value)}
+                          placeholder="Short excerpt for the post"
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Slug (URL)</label>
+                        <input
+                          type="text"
+                          value={wpSlug}
+                          onChange={(e) => setWpSlug(e.target.value)}
+                          placeholder="post-url-slug"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={wpPublishStatus}
+                        onChange={(e) => setWpPublishStatus(e.target.value as 'draft' | 'publish')}
+                        className="w-full md:w-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                      >
+                        <option value="publish">Publish</option>
+                        <option value="draft">Draft</option>
+                      </select>
+                    </div>
+                    <div className="space-y-3 border-t border-indigo-200 pt-3">
+                      <div className="text-sm font-medium text-gray-700">SEO (optional, for Yoast / RankMath)</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <input
+                          type="text"
+                          value={wpSeoTitle}
+                          onChange={(e) => setWpSeoTitle(e.target.value)}
+                          placeholder="SEO title"
+                          className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={wpSeoDescription}
+                          onChange={(e) => setWpSeoDescription(e.target.value)}
+                          placeholder="SEO description"
+                          className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={wpFocusKeyword}
+                          onChange={(e) => setWpFocusKeyword(e.target.value)}
+                          placeholder="Focus keyword"
+                          className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                      </div>
+                    </div>
+                    {wpPublishError && (
+                      <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                        <AlertCircle size={18} />
+                        <span>{wpPublishError}</span>
+                      </div>
+                    )}
+                    {wpPublishSuccess && (
+                      <div className="flex items-center gap-2 text-green-600 text-sm bg-green-50 p-3 rounded-lg">
+                        <CheckCircle size={18} />
+                        <span>{wpPublishSuccess}</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handlePublishToWordPress}
+                      disabled={wpPublishing}
+                      className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium disabled:opacity-60"
+                    >
+                      {wpPublishing ? (
+                        <>
+                          <Loader size={18} className="animate-spin" />
+                          Publishing...
+                        </>
+                      ) : (
+                        <>
+                          <Globe size={18} />
+                          Publish to WordPress
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
 
                 {/* Scheduling */}
                 <div>
