@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add src/components/admin/CardBuilder.tsx src/components/admin/AdminCardsManagement.tsx src/pages/Cards.tsx src/components/AdvancedTemplateCard.tsx src/components/AdvancedTemplateCardModal.tsx src/components/PrebuiltTemplates.tsx src/components/StyleAssetPicker.tsx src/components/admin/ src/components/cards/ src/data/ src/hooks/useTemplateEditor.tsx src/pages/Admin.tsx src/pages/Integrations.tsx src/pages/Pricing.tsx src/services/adminUserService.ts src/services/cardTemplateService.ts src/services/pricingService.ts src/services/wordpressService.ts src/types/admin.ts src/types/cardTemplate.ts src/types/pricing.ts src/App.tsx src/components/CardPreview.tsx src/components/CardTemplateLibrary.tsx src/hooks/useOAuth.ts src/pages/Auth.tsx src/pages/Connects.tsx src/pages/Posts.tsx src/pages/Profile.tsx src/utils/userSession.ts server.ts package.json package-lock.json)",
+      "Bash(git commit:*)",
+      "Bash(git push origin master)",
+      "Bash(git pull origin master --rebase)",
+      "Bash(git stash)",
+      "Bash(git stash pop)",
+      "Bash(git stash --include-untracked -- .cursor/)",
+      "Bash(python -c:*)",
+      "Bash(node -e:*)"
+    ]
+  }
+}
