@@ -34,10 +34,17 @@ const allowedOrigins = new Set([
 ]);
 
 const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+let dbReady = false;
+
+function hasDatabase() {
+  return Boolean(pool && dbReady);
+}
 
 async function ensureDatabase() {
   if (!pool) {
     console.warn('DATABASE_URL is not set; running in in-memory mode.');
+    dbReady = false;
+    seedInMemoryUsers();
     return;
   }
 
@@ -57,6 +64,11 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS country TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;`);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx
     ON users (LOWER(username))
@@ -111,11 +123,34 @@ async function ensureDatabase() {
       UNIQUE (user_id)
     );
   `);
-}
 
-ensureDatabase().catch((err) => {
-  console.error('Database initialization failed:', err);
-});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pricing_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      price DECIMAL(10, 2) NOT NULL,
+      billing_period TEXT NOT NULL DEFAULT 'monthly',
+      features TEXT[] DEFAULT '{}',
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS card_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      design_data JSON NOT NULL,
+      cover_image_url TEXT,
+      is_published BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  dbReady = true;
+}
 
 app.use(
   cors({
@@ -157,20 +192,112 @@ type DbUserRow = {
   full_name: string | null;
   phone: string | null;
   country: string | null;
+  role: string;
+  status: string;
+  avatar_url: string | null;
+  cover_url: string | null;
+  last_login_at: string | null;
   password_hash: string;
   created_at: string;
+};
+
+type AdminDbRole = 'admin' | 'user';
+type AdminDbStatus = 'active' | 'suspended' | 'pending' | 'banned';
+
+type DbPricingPlan = {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  billing_period: 'monthly' | 'yearly';
+  features: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type DbCardTemplate = {
+  id: string;
+  name: string;
+  description?: string;
+  design_data: any;
+  cover_image_url?: string;
+  is_published: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 const inMemoryUsersById = new Map<string, DbUserRow>();
 const inMemoryUserIdByEmail = new Map<string, string>();
 const inMemoryUserIdByUsername = new Map<string, string>();
+const inMemoryPricingPlansById = new Map<string, DbPricingPlan>();
+const inMemoryCardTemplatesById = new Map<string, DbCardTemplate>();
+
+function upsertInMemoryUser(input: {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
+  password: string;
+  role: AdminDbRole;
+  status?: AdminDbStatus;
+}) {
+  const normalizedEmail = normalizeEmail(input.email);
+  const normalizedUsername = normalizeUsername(input.username);
+  const existingId = inMemoryUserIdByUsername.get(normalizedUsername) || inMemoryUserIdByEmail.get(normalizedEmail);
+  const id = existingId || input.id;
+  const existing = inMemoryUsersById.get(id);
+  const passwordHash =
+    existing && bcrypt.compareSync(input.password, existing.password_hash)
+      ? existing.password_hash
+      : bcrypt.hashSync(input.password, 10);
+
+  const nextUser: DbUserRow = {
+    id,
+    email: normalizedEmail,
+    username: normalizedUsername,
+    full_name: input.name,
+    phone: existing?.phone || null,
+    country: existing?.country || null,
+    role: input.role,
+    status: input.status || 'active',
+    avatar_url: existing?.avatar_url || null,
+    cover_url: existing?.cover_url || null,
+    last_login_at: existing?.last_login_at || null,
+    password_hash: passwordHash,
+    created_at: existing?.created_at || new Date().toISOString(),
+  };
+
+  inMemoryUsersById.set(id, nextUser);
+  inMemoryUserIdByEmail.set(normalizedEmail, id);
+  inMemoryUserIdByUsername.set(normalizedUsername, id);
+}
+
+function seedInMemoryUsers() {
+  upsertInMemoryUser({
+    id: 'admin-1',
+    name: 'Dan Ayipah',
+    username: 'daky',
+    email: 'officialdakyworld@gmail.com',
+    password: 'DanAyipah#1',
+    role: 'admin',
+  });
+  upsertInMemoryUser({
+    id: 'platform-user-1',
+    name: 'Platform User',
+    username: 'user',
+    email: 'user@dakyworldhub.com',
+    password: 'user',
+    role: 'user',
+  });
+}
 
 // Helpers
 async function dbQuery<T = any>(sql: string, params: any[] = []) {
-  if (!pool) {
+  if (!hasDatabase()) {
     throw new Error('DATABASE_URL is not configured. Please set it to enable persistence.');
   }
-  return pool.query<T>(sql, params);
+  return pool!.query<T>(sql, params);
 }
 
 function normalizeEmail(value: string) {
@@ -179,6 +306,93 @@ function normalizeEmail(value: string) {
 
 function normalizeUsername(value: string) {
   return value.trim().toLowerCase();
+}
+
+ensureDatabase().catch((err) => {
+  dbReady = false;
+  seedInMemoryUsers();
+  console.error('Database initialization failed:', err);
+});
+ensureSeedUsers().catch((err) => {
+  console.error('Seed user initialization failed:', err);
+});
+ensureSeedPricingPlans().catch((err) => {
+  console.error('Seed pricing plans initialization failed:', err);
+});
+
+function titleRole(role: string) {
+  switch (role) {
+    case 'admin':
+      return 'Admin';
+    default:
+      return 'User';
+  }
+}
+
+function titleStatus(status: string) {
+  switch (status) {
+    case 'active':
+      return 'Active';
+    case 'suspended':
+      return 'Suspended';
+    case 'pending':
+      return 'Pending';
+    case 'banned':
+      return 'Banned';
+    default:
+      return 'Active';
+  }
+}
+
+function parseAdminRole(role: string | undefined): AdminDbRole {
+  switch ((role || '').trim().toLowerCase()) {
+    case 'admin':
+      return 'admin';
+    default:
+      return 'user';
+  }
+}
+
+function parseAdminStatus(status: string | undefined): AdminDbStatus {
+  switch ((status || '').trim().toLowerCase()) {
+    case 'suspended':
+      return 'suspended';
+    case 'pending':
+      return 'pending';
+    case 'banned':
+      return 'banned';
+    default:
+      return 'active';
+  }
+}
+
+function userToAuthPayload(user: DbUserRow) {
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    name: user.full_name,
+    phone: user.phone,
+    country: user.country,
+    role: user.role === 'admin' ? 'admin' : 'user',
+    avatar: user.avatar_url,
+    cover: user.cover_url,
+  };
+}
+
+function userToManagedUser(user: DbUserRow) {
+  return {
+    id: user.id,
+    name: user.full_name || user.username || user.email.split('@')[0],
+    email: user.email,
+    username: user.username || '',
+    role: titleRole(user.role),
+    status: titleStatus(user.status),
+    avatar: user.avatar_url || `https://ui-avatars.com/api/?background=eff6ff&color=1d4ed8&name=${encodeURIComponent(user.full_name || user.username || user.email)}`,
+    dateJoined: user.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+    lastLogin: user.last_login_at || 'Never',
+    recentActions: ['User record synced from database'],
+  };
 }
 
 function signToken(userId: string, email: string) {
@@ -198,7 +412,7 @@ function getAuthUser(req: Request) {
 
 async function findUserByEmail(email: string): Promise<DbUserRow | undefined> {
   const normalizedEmail = normalizeEmail(email);
-  if (!pool) {
+  if (!hasDatabase()) {
     const userId = inMemoryUserIdByEmail.get(normalizedEmail);
     return userId ? inMemoryUsersById.get(userId) : undefined;
   }
@@ -208,7 +422,7 @@ async function findUserByEmail(email: string): Promise<DbUserRow | undefined> {
 
 async function findUserByUsername(username: string): Promise<DbUserRow | undefined> {
   const normalizedUsername = normalizeUsername(username);
-  if (!pool) {
+  if (!hasDatabase()) {
     const userId = inMemoryUserIdByUsername.get(normalizedUsername);
     return userId ? inMemoryUsersById.get(userId) : undefined;
   }
@@ -226,7 +440,7 @@ async function findUserByIdentifier(identifier: string): Promise<DbUserRow | und
 }
 
 async function getUserById(id: string): Promise<DbUserRow | undefined> {
-  if (!pool) {
+  if (!hasDatabase()) {
     return inMemoryUsersById.get(id);
   }
   const result = await dbQuery<DbUserRow>('SELECT * FROM users WHERE id = $1', [id]);
@@ -237,14 +451,15 @@ async function createUser(
   name: string,
   username: string,
   email: string,
-  password: string
+  password: string,
+  options?: { role?: AdminDbRole; status?: AdminDbStatus; avatarUrl?: string | null; coverUrl?: string | null }
 ): Promise<DbUserRow> {
   const hash = await bcrypt.hash(password, 10);
   const id = randomUUID();
   const normalizedEmail = normalizeEmail(email);
   const normalizedUsername = normalizeUsername(username);
 
-  if (!pool) {
+  if (!hasDatabase()) {
     const user: DbUserRow = {
       id,
       email: normalizedEmail,
@@ -252,6 +467,11 @@ async function createUser(
       full_name: name || null,
       phone: null,
       country: null,
+      role: options?.role || 'user',
+      status: options?.status || 'active',
+      avatar_url: options?.avatarUrl || null,
+      cover_url: options?.coverUrl || null,
+      last_login_at: null,
       password_hash: hash,
       created_at: new Date().toISOString(),
     };
@@ -262,15 +482,220 @@ async function createUser(
   }
 
   const result = await dbQuery<DbUserRow>(
-    'INSERT INTO users (id, email, username, password_hash, full_name, phone, country) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-    [id, normalizedEmail, normalizedUsername, hash, name || null, null, null]
+    'INSERT INTO users (id, email, username, password_hash, full_name, phone, country, role, status, avatar_url, cover_url, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+    [id, normalizedEmail, normalizedUsername, hash, name || null, null, null, options?.role || 'user', options?.status || 'active', options?.avatarUrl || null, options?.coverUrl || null, null]
   );
   return result.rows[0];
 }
 
+async function updateLastLogin(userId: string) {
+  if (!hasDatabase()) {
+    const user = inMemoryUsersById.get(userId);
+    if (!user) return;
+    inMemoryUsersById.set(userId, { ...user, last_login_at: new Date().toISOString() });
+    return;
+  }
+  await dbQuery('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userId]);
+}
+
+async function ensureSeedUser(input: {
+  name: string;
+  username: string;
+  email: string;
+  password: string;
+  role: AdminDbRole;
+  status?: AdminDbStatus;
+}) {
+  const existing = await findUserByUsername(input.username);
+  if (existing) {
+    return existing;
+  }
+  return createUser(input.name, input.username, input.email, input.password, {
+    role: input.role,
+    status: input.status || 'active',
+  });
+}
+
+async function ensureSeedUsers() {
+  if (!hasDatabase()) {
+    seedInMemoryUsers();
+    return;
+  }
+
+  await ensureSeedUser({
+    name: 'Dan Ayipah',
+    username: 'daky',
+    email: 'officialdakyworld@gmail.com',
+    password: 'DanAyipah#1',
+    role: 'admin',
+  });
+  await ensureSeedUser({
+    name: 'Platform User',
+    username: 'user',
+    email: 'user@dakyworldhub.com',
+    password: 'user',
+    role: 'user',
+  });
+}
+
+async function ensureSeedPricingPlans() {
+  const plans = [
+    {
+      name: 'Starter',
+      description: 'For solo creators building posts, cards, and a lean publishing workflow.',
+      monthlyPrice: 19,
+      yearlyPrice: 190,
+      monthlyFeatures: [
+        'Up to 60 social posts per month',
+        'Access to the social card template editor',
+        'JPG export for final cards',
+        'Up to 3 connected integrations',
+        'Basic analytics overview',
+        '1 team member',
+      ],
+      yearlyFeatures: [
+        'Everything in Starter monthly',
+        'Save about 2 months each year',
+        '60 social posts per month',
+        '3 connected integrations',
+        'Basic analytics overview',
+        '1 team member',
+      ],
+    },
+    {
+      name: 'Growth',
+      description: 'For active brands that need more output, more templates, and more connected tools.',
+      monthlyPrice: 49,
+      yearlyPrice: 490,
+      featured: true,
+      monthlyFeatures: [
+        'Up to 250 social posts per month',
+        'Unlimited card edits and exports',
+        'Advanced template customization',
+        'Up to 10 connected integrations',
+        'Full analytics dashboard and insights',
+        'Up to 5 team members',
+      ],
+      yearlyFeatures: [
+        'Everything in Growth monthly',
+        'Save about 2 months each year',
+        '250 social posts per month',
+        '10 connected integrations',
+        'Advanced editor and analytics access',
+        'Up to 5 team members',
+      ],
+    },
+    {
+      name: 'Scale',
+      description: 'For teams running multi-channel content operations with heavier collaboration needs.',
+      monthlyPrice: 99,
+      yearlyPrice: 990,
+      monthlyFeatures: [
+        'Unlimited social posts',
+        'Unlimited card templates and exports',
+        'Priority access to new editor features',
+        'Unlimited integrations',
+        'Advanced analytics and export workflows',
+        'Up to 15 team members',
+      ],
+      yearlyFeatures: [
+        'Everything in Scale monthly',
+        'Save about 2 months each year',
+        'Unlimited posts and exports',
+        'Unlimited integrations',
+        'Advanced analytics and exports',
+        'Up to 15 team members',
+      ],
+    },
+  ];
+
+  if (!hasDatabase()) {
+    // Seed in-memory pricing plans
+    const now = new Date().toISOString();
+    plans.forEach((plan) => {
+      const monthlyId = randomUUID();
+      const yearlyId = randomUUID();
+
+      inMemoryPricingPlansById.set(monthlyId, {
+        id: monthlyId,
+        name: `${plan.name} (Monthly)`,
+        description: plan.description,
+        price: plan.monthlyPrice,
+        billing_period: 'monthly',
+        features: plan.monthlyFeatures,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      });
+
+      inMemoryPricingPlansById.set(yearlyId, {
+        id: yearlyId,
+        name: `${plan.name} (Yearly)`,
+        description: plan.description,
+        price: plan.yearlyPrice,
+        billing_period: 'yearly',
+        features: plan.yearlyFeatures,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      });
+    });
+    console.log(`Seeded ${inMemoryPricingPlansById.size} pricing plans in-memory`);
+    return;
+  }
+
+  // Check if plans already exist
+  const existing = await dbQuery<{ count: number }>(
+    'SELECT COUNT(*) as count FROM pricing_plans'
+  );
+
+  if (existing.rows[0]?.count > 0) {
+    console.log('Pricing plans already seeded in database');
+    return; // Plans already seeded
+  }
+
+  const now = new Date().toISOString();
+
+  for (const plan of plans) {
+    const monthlyId = randomUUID();
+    const yearlyId = randomUUID();
+
+    await dbQuery(
+      'INSERT INTO pricing_plans (id, name, description, price, billing_period, features, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [
+        monthlyId,
+        `${plan.name} (Monthly)`,
+        plan.description,
+        plan.monthlyPrice,
+        'monthly',
+        plan.monthlyFeatures,
+        true,
+        now,
+        now,
+      ]
+    );
+
+    await dbQuery(
+      'INSERT INTO pricing_plans (id, name, description, price, billing_period, features, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [
+        yearlyId,
+        `${plan.name} (Yearly)`,
+        plan.description,
+        plan.yearlyPrice,
+        'yearly',
+        plan.yearlyFeatures,
+        true,
+        now,
+        now,
+      ]
+    );
+  }
+  console.log(`Seeded 6 pricing plans in database (${plans.length} plan types)`);
+}
+
 async function updateUserProfile(
   userId: string,
-  updates: { name: string; username: string; email: string; phone: string; country: string }
+  updates: { name: string; username: string; email: string; phone: string; country: string; avatar?: string; cover?: string }
 ): Promise<DbUserRow | undefined> {
   const normalizedEmail = normalizeEmail(updates.email);
   const normalizedUsername = normalizeUsername(updates.username);
@@ -278,7 +703,7 @@ async function updateUserProfile(
   const normalizedCountry = updates.country.trim();
   const normalizedName = updates.name.trim();
 
-  if (!pool) {
+  if (!hasDatabase()) {
     const existing = inMemoryUsersById.get(userId);
     if (!existing) return undefined;
 
@@ -303,6 +728,8 @@ async function updateUserProfile(
       full_name: normalizedName || null,
       phone: normalizedPhone || null,
       country: normalizedCountry || null,
+      avatar_url: typeof updates.avatar === 'string' ? updates.avatar || null : existing.avatar_url,
+      cover_url: typeof updates.cover === 'string' ? updates.cover || null : existing.cover_url,
     };
 
     inMemoryUsersById.set(userId, nextUser);
@@ -334,11 +761,22 @@ async function updateUserProfile(
         username = $2,
         full_name = $3,
         phone = $4,
-        country = $5
-    WHERE id = $6
+        country = $5,
+        avatar_url = COALESCE($6, avatar_url),
+        cover_url = COALESCE($7, cover_url)
+    WHERE id = $8
     RETURNING *;
   `,
-    [normalizedEmail, normalizedUsername, normalizedName || null, normalizedPhone || null, normalizedCountry || null, userId]
+    [
+      normalizedEmail,
+      normalizedUsername,
+      normalizedName || null,
+      normalizedPhone || null,
+      normalizedCountry || null,
+      typeof updates.avatar === 'string' ? updates.avatar || null : null,
+      typeof updates.cover === 'string' ? updates.cover || null : null,
+      userId,
+    ]
   );
 
   return result.rows[0];
@@ -351,6 +789,17 @@ function requireAuth(req: Request, res: Response): { userId: string; email?: str
     return null;
   }
   return auth;
+}
+
+async function requireAdmin(req: Request, res: Response): Promise<DbUserRow | null> {
+  const auth = requireAuth(req, res);
+  if (!auth) return null;
+  const user = await getUserById(auth.userId);
+  if (!user || user.role !== 'admin') {
+    res.status(403).json({ success: false, error: 'Admin access required' });
+    return null;
+  }
+  return user;
 }
 
 // Auth routes
@@ -379,14 +828,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        name: user.full_name,
-        phone: user.phone,
-        country: user.country,
-      },
+      user: userToAuthPayload(user),
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -414,18 +856,13 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid credentials' });
     }
 
+    await updateLastLogin(user.id);
+    const refreshedUser = (await getUserById(user.id)) || user;
     const token = signToken(user.id, user.email);
     return res.json({
       success: true,
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        name: user.full_name,
-        phone: user.phone,
-        country: user.country,
-      },
+      user: userToAuthPayload(refreshedUser),
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -445,14 +882,7 @@ app.get('/api/auth/me', async (req: Request, res: Response) => {
 
     return res.json({
       success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        name: user.full_name,
-        phone: user.phone,
-        country: user.country,
-      },
+      user: userToAuthPayload(user),
     });
   } catch (error) {
     console.error('Me error:', error);
@@ -465,7 +895,7 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const { name, username, email, phone, country } = req.body;
+    const { name, username, email, phone, country, avatar, cover } = req.body;
     if (!name || !username || !email) {
       return res.status(400).json({ success: false, error: 'Name, username, and email are required' });
     }
@@ -476,6 +906,8 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
       email: String(email),
       phone: String(phone || ''),
       country: String(country || ''),
+      avatar: typeof avatar === 'string' ? avatar : undefined,
+      cover: typeof cover === 'string' ? cover : undefined,
     });
 
     if (!updated) {
@@ -484,20 +916,232 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
 
     return res.json({
       success: true,
-      user: {
-        id: updated.id,
-        email: updated.email,
-        username: updated.username,
-        name: updated.full_name,
-        phone: updated.phone,
-        country: updated.country,
-      },
+      user: userToAuthPayload(updated),
     });
   } catch (error) {
     console.error('Profile update error:', error);
     const message = error instanceof Error ? error.message : 'Failed to update profile';
     const statusCode = message.includes('already in use') ? 400 : 500;
     return res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.get('/api/users', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const role = String(req.query.role || 'All');
+    const status = String(req.query.status || 'All');
+    const joined = String(req.query.joined || 'all');
+    const page = Math.max(1, Number(req.query.page || 1));
+    const perPage = Math.max(1, Number(req.query.perPage || 25));
+
+    const users = hasDatabase()
+      ? (await dbQuery<DbUserRow>('SELECT * FROM users ORDER BY created_at DESC')).rows
+      : Array.from(inMemoryUsersById.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
+    const now = new Date('2026-03-07T00:00:00Z').getTime();
+    const filtered = users.filter((user) => {
+      const matchesSearch =
+        !search ||
+        [user.id, user.email, user.username || '', user.full_name || '']
+          .some((value) => value.toLowerCase().includes(search));
+      const matchesRole = role === 'All' || titleRole(user.role) === role;
+      const matchesStatus = status === 'All' || titleStatus(user.status) === status;
+      const joinedMs = new Date(user.created_at).getTime();
+      const diffDays = Math.floor((now - joinedMs) / (1000 * 60 * 60 * 24));
+      const matchesJoined =
+        joined === 'all' ||
+        (joined === '7days' && diffDays <= 7) ||
+        (joined === '30days' && diffDays <= 30) ||
+        (joined === '1year' && diffDays <= 365);
+      return matchesSearch && matchesRole && matchesStatus && matchesJoined;
+    });
+
+    const start = (page - 1) * perPage;
+    const items = filtered.slice(start, start + perPage).map(userToManagedUser);
+
+    return res.json({
+      items,
+      total: filtered.length,
+      page,
+      perPage,
+    });
+  } catch (error) {
+    console.error('List users error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch users' });
+  }
+});
+
+app.post('/api/users', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { name, email, username, password, role, status } = req.body;
+    if (!name || !email || !username || !password) {
+      return res.status(400).json({ success: false, error: 'Name, email, username, and password are required' });
+    }
+
+    const existingEmail = await findUserByEmail(String(email));
+    if (existingEmail) {
+      return res.status(400).json({ success: false, error: 'Email is already in use' });
+    }
+    const existingUsername = await findUserByUsername(String(username));
+    if (existingUsername) {
+      return res.status(400).json({ success: false, error: 'Username is already in use' });
+    }
+
+    const created = await createUser(String(name), String(username), String(email), String(password), {
+      role: parseAdminRole(role),
+      status: parseAdminStatus(status),
+    });
+    return res.status(201).json(userToManagedUser(created));
+  } catch (error) {
+    console.error('Create user error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to create user';
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.put('/api/users/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const existing = await getUserById(id);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const normalizedEmail = normalizeEmail(String(req.body.email || existing.email));
+    const normalizedUsername = normalizeUsername(String(req.body.username || existing.username || ''));
+    const duplicateEmail = await findUserByEmail(normalizedEmail);
+    if (duplicateEmail && duplicateEmail.id !== id) {
+      return res.status(400).json({ success: false, error: 'Email is already in use' });
+    }
+    const duplicateUsername = await findUserByUsername(normalizedUsername);
+    if (duplicateUsername && duplicateUsername.id !== id) {
+      return res.status(400).json({ success: false, error: 'Username is already in use' });
+    }
+
+    const nextRole = parseAdminRole(req.body.role);
+    const nextStatus = parseAdminStatus(req.body.status);
+    const nextAvatar = typeof req.body.avatar === 'string' ? req.body.avatar.trim() : existing.avatar_url;
+    const nextName = String(req.body.name || existing.full_name || '').trim();
+
+    let updated: DbUserRow | undefined;
+    if (!hasDatabase()) {
+      const nextUser: DbUserRow = {
+        ...existing,
+        full_name: nextName || null,
+        email: normalizedEmail,
+        username: normalizedUsername || null,
+        role: nextRole,
+        status: nextStatus,
+        avatar_url: nextAvatar || null,
+      };
+      inMemoryUsersById.set(id, nextUser);
+      inMemoryUserIdByEmail.set(normalizedEmail, id);
+      if (normalizedUsername) {
+        inMemoryUserIdByUsername.set(normalizedUsername, id);
+      }
+      updated = nextUser;
+    } else {
+      updated = (
+        await dbQuery<DbUserRow>(
+          `UPDATE users
+           SET full_name = $1, email = $2, username = $3, role = $4, status = $5, avatar_url = $6
+           WHERE id = $7
+           RETURNING *`,
+          [nextName || null, normalizedEmail, normalizedUsername || null, nextRole, nextStatus, nextAvatar || null, id],
+        )
+      ).rows[0];
+    }
+
+    return res.json(userToManagedUser(updated!));
+  } catch (error) {
+    console.error('Update user error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update user' });
+  }
+});
+
+app.delete('/api/users/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    if (admin.id === id) {
+      return res.status(400).json({ success: false, error: 'Admin cannot delete the active admin account' });
+    }
+
+    if (!hasDatabase()) {
+      const existing = inMemoryUsersById.get(id);
+      if (existing?.username) {
+        inMemoryUserIdByUsername.delete(normalizeUsername(existing.username));
+      }
+      if (existing) {
+        inMemoryUserIdByEmail.delete(normalizeEmail(existing.email));
+      }
+      inMemoryUsersById.delete(id);
+    } else {
+      await dbQuery('DELETE FROM users WHERE id = $1', [id]);
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to delete user' });
+  }
+});
+
+app.patch('/api/users/:id/status', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const nextStatus = parseAdminStatus(req.body.status);
+    if (!hasDatabase()) {
+      const existing = inMemoryUsersById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'User not found' });
+      }
+      inMemoryUsersById.set(id, { ...existing, status: nextStatus });
+    } else {
+      await dbQuery('UPDATE users SET status = $1 WHERE id = $2', [nextStatus, id]);
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Patch user status error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update status' });
+  }
+});
+
+app.patch('/api/users/:id/role', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const nextRole = parseAdminRole(req.body.role);
+    if (!hasDatabase()) {
+      const existing = inMemoryUsersById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'User not found' });
+      }
+      inMemoryUsersById.set(id, { ...existing, role: nextRole });
+    } else {
+      await dbQuery('UPDATE users SET role = $1 WHERE id = $2', [nextRole, id]);
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Patch user role error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update role' });
   }
 });
 
@@ -943,7 +1587,7 @@ async function wpRequest(
   }
 }
 
-// POST /api/wordpress/connect — validate and store connection (tries Application Password first, then login password)
+// POST /api/wordpress/connect �?validate and store connection (tries Application Password first, then login password)
 app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -958,7 +1602,7 @@ app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
     if (!hasAppPassword && !hasLoginPassword) {
       return res.status(400).json({
         success: false,
-        error: 'Provide either your WordPress login password or an Application Password (Users → Profile → Application Passwords).',
+        error: 'Provide either your WordPress login password or an Application Password (Users �?Profile �?Application Passwords).',
       });
     }
 
@@ -998,9 +1642,9 @@ app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
       if (isNotFound) {
         message = `Site not found. ${urlHint}`;
       } else if (isNotLoggedIn) {
-        message = 'WordPress REST API requires an Application Password, not your normal login password. In your WordPress admin go to Users → your profile → Application Passwords, create a new one, and paste it in the "Application Password" field above. Some hosts disable this; if you don’t see it, check your host’s docs or use a plugin that enables REST API auth.';
+        message = 'WordPress REST API requires an Application Password, not your normal login password. In your WordPress admin go to Users �?your profile �?Application Passwords, create a new one, and paste it in the "Application Password" field above. Some hosts disable this; if you don’t see it, check your host’s docs or use a plugin that enables REST API auth.';
       } else {
-        message = lastError || 'WordPress authentication failed. Try an Application Password (Users → Profile → Application Passwords).';
+        message = lastError || 'WordPress authentication failed. Try an Application Password (Users �?Profile �?Application Passwords).';
       }
       return res.status(400).json({ success: false, error: message });
     }
@@ -1067,7 +1711,7 @@ app.delete('/api/wordpress/disconnect', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/wordpress/connect-webhook — validate and store Make webhook URL
+// POST /api/wordpress/connect-webhook �?validate and store Make webhook URL
 const MAKE_TEST_PAYLOAD = {
   title: 'Connection Test',
   content: 'This is a test post from the web app.',
@@ -1142,7 +1786,7 @@ app.delete('/api/wordpress/disconnect-webhook', async (req: Request, res: Respon
   }
 });
 
-// POST /api/wordpress/publish-webhook — send payload to stored Make webhook
+// POST /api/wordpress/publish-webhook �?send payload to stored Make webhook
 app.post('/api/wordpress/publish-webhook', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -1239,7 +1883,7 @@ app.get('/api/wordpress/tags', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/wordpress/publish — create post (optionally upload featured image, set meta)
+// POST /api/wordpress/publish �?create post (optionally upload featured image, set meta)
 app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -1359,6 +2003,611 @@ app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
       console.error('WordPress publish error:', err.message);
     }
     return res.status(500).json({ success: false, error: 'Failed to publish post' });
+  }
+});
+
+// Pricing Plans Routes
+app.get('/api/pricing/plans', async (req: Request, res: Response) => {
+  try {
+    let plans: DbPricingPlan[] = [];
+
+    if (!hasDatabase()) {
+      plans = Array.from(inMemoryPricingPlansById.values());
+      console.log(`GET /api/pricing/plans - Returning ${plans.length} in-memory plans`);
+    } else {
+      const result = await dbQuery<DbPricingPlan>(
+        'SELECT id, name, description, price, billing_period, features, is_active, created_at, updated_at FROM pricing_plans ORDER BY created_at DESC'
+      );
+      plans = result.rows;
+      console.log(`GET /api/pricing/plans - Returning ${plans.length} database plans`);
+    }
+
+    console.log('Plans to return:', plans.length > 0 ? plans[0] : 'No plans');
+
+    return res.json({
+      success: true,
+      plans: plans.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        price: parseFloat(String(p.price)),
+        billingPeriod: p.billing_period,
+        features: Array.isArray(p.features) ? p.features : [],
+        isActive: p.is_active,
+        createdAt: p.created_at,
+        updatedAt: p.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('Get pricing plans error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch pricing plans' });
+  }
+});
+
+app.post('/api/pricing/plans', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { name, description, price, billingPeriod, features } = req.body;
+    if (!name || !description || price === undefined) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Name, description, and price are required' });
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+
+    if (!hasDatabase()) {
+      const plan: DbPricingPlan = {
+        id,
+        name,
+        description,
+        price: Number(price),
+        billing_period: (billingPeriod || 'monthly') as 'monthly' | 'yearly',
+        features: Array.isArray(features) ? features : [],
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      };
+      inMemoryPricingPlansById.set(id, plan);
+
+      return res.status(201).json({
+        success: true,
+        plan: {
+          id: plan.id,
+          name: plan.name,
+          description: plan.description,
+          price: plan.price,
+          billingPeriod: plan.billing_period,
+          features: plan.features,
+          isActive: plan.is_active,
+          createdAt: plan.created_at,
+          updatedAt: plan.updated_at,
+        },
+      });
+    } else {
+      const result = await dbQuery<DbPricingPlan>(
+        'INSERT INTO pricing_plans (id, name, description, price, billing_period, features, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+        [
+          id,
+          name,
+          description,
+          Number(price),
+          billingPeriod || 'monthly',
+          features || [],
+          true,
+          now,
+          now,
+        ]
+      );
+      const plan = result.rows[0];
+
+      return res.status(201).json({
+        success: true,
+        plan: {
+          id: plan.id,
+          name: plan.name,
+          description: plan.description,
+          price: parseFloat(String(plan.price)),
+          billingPeriod: plan.billing_period,
+          features: Array.isArray(plan.features) ? plan.features : [],
+          isActive: plan.is_active,
+          createdAt: plan.created_at,
+          updatedAt: plan.updated_at,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Create pricing plan error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to create pricing plan' });
+  }
+});
+
+app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const { name, description, price, billingPeriod, features, isActive } = req.body;
+
+    if (!name || !description || price === undefined) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Name, description, and price are required' });
+    }
+
+    const now = new Date().toISOString();
+
+    if (!hasDatabase()) {
+      const existing = inMemoryPricingPlansById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Pricing plan not found' });
+      }
+
+      const updated: DbPricingPlan = {
+        ...existing,
+        name,
+        description,
+        price: Number(price),
+        billing_period: (billingPeriod || 'monthly') as 'monthly' | 'yearly',
+        features: Array.isArray(features) ? features : [],
+        is_active: isActive !== undefined ? isActive : existing.is_active,
+        updated_at: now,
+      };
+      inMemoryPricingPlansById.set(id, updated);
+
+      return res.json({
+        success: true,
+        plan: {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          price: updated.price,
+          billingPeriod: updated.billing_period,
+          features: updated.features,
+          isActive: updated.is_active,
+          createdAt: updated.created_at,
+          updatedAt: updated.updated_at,
+        },
+      });
+    } else {
+      const result = await dbQuery<DbPricingPlan>(
+        'UPDATE pricing_plans SET name = $1, description = $2, price = $3, billing_period = $4, features = $5, is_active = $6, updated_at = $7 WHERE id = $8 RETURNING *',
+        [
+          name,
+          description,
+          Number(price),
+          billingPeriod || 'monthly',
+          features || [],
+          isActive !== undefined ? isActive : true,
+          now,
+          id,
+        ]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Pricing plan not found' });
+      }
+
+      const plan = result.rows[0];
+      return res.json({
+        success: true,
+        plan: {
+          id: plan.id,
+          name: plan.name,
+          description: plan.description,
+          price: parseFloat(String(plan.price)),
+          billingPeriod: plan.billing_period,
+          features: Array.isArray(plan.features) ? plan.features : [],
+          isActive: plan.is_active,
+          createdAt: plan.created_at,
+          updatedAt: plan.updated_at,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Update pricing plan error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update pricing plan' });
+  }
+});
+
+app.delete('/api/pricing/plans/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+
+    if (!hasDatabase()) {
+      if (!inMemoryPricingPlansById.has(id)) {
+        return res.status(404).json({ success: false, error: 'Pricing plan not found' });
+      }
+      inMemoryPricingPlansById.delete(id);
+    } else {
+      const result = await dbQuery('DELETE FROM pricing_plans WHERE id = $1', [id]);
+      if (result.rowCount === 0) {
+        return res.status(404).json({ success: false, error: 'Pricing plan not found' });
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Delete pricing plan error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to delete pricing plan' });
+  }
+});
+
+app.patch('/api/pricing/plans/:id/status', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    if (isActive === undefined) {
+      return res.status(400).json({ success: false, error: 'isActive is required' });
+    }
+
+    const now = new Date().toISOString();
+
+    if (!hasDatabase()) {
+      const existing = inMemoryPricingPlansById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Pricing plan not found' });
+      }
+
+      const updated: DbPricingPlan = {
+        ...existing,
+        is_active: isActive,
+        updated_at: now,
+      };
+      inMemoryPricingPlansById.set(id, updated);
+
+      return res.json({
+        success: true,
+        plan: {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          price: updated.price,
+          billingPeriod: updated.billing_period,
+          features: updated.features,
+          isActive: updated.is_active,
+          createdAt: updated.created_at,
+          updatedAt: updated.updated_at,
+        },
+      });
+    } else {
+      const result = await dbQuery<DbPricingPlan>(
+        'UPDATE pricing_plans SET is_active = $1, updated_at = $2 WHERE id = $3 RETURNING *',
+        [isActive, now, id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Pricing plan not found' });
+      }
+
+      const plan = result.rows[0];
+      return res.json({
+        success: true,
+        plan: {
+          id: plan.id,
+          name: plan.name,
+          description: plan.description,
+          price: parseFloat(String(plan.price)),
+          billingPeriod: plan.billing_period,
+          features: Array.isArray(plan.features) ? plan.features : [],
+          isActive: plan.is_active,
+          createdAt: plan.created_at,
+          updatedAt: plan.updated_at,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Update pricing plan status error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update pricing plan status' });
+  }
+});
+
+// Card Templates Routes
+app.get('/api/card-templates', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    let templates: DbCardTemplate[] = [];
+
+    if (!hasDatabase()) {
+      templates = Array.from(inMemoryCardTemplatesById.values());
+    } else {
+      const result = await dbQuery<DbCardTemplate>(
+        'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at FROM card_templates ORDER BY created_at DESC'
+      );
+      templates = result.rows;
+    }
+
+    return res.json({
+      success: true,
+      templates: templates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description || '',
+        designData: typeof t.design_data === 'string' ? JSON.parse(t.design_data) : t.design_data,
+        coverImageUrl: t.cover_image_url,
+        isPublished: t.is_published,
+        createdAt: t.created_at,
+        updatedAt: t.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('Get card templates error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch card templates' });
+  }
+});
+
+app.get('/api/card-templates/published', async (req: Request, res: Response) => {
+  try {
+    let templates: DbCardTemplate[] = [];
+
+    if (!hasDatabase()) {
+      templates = Array.from(inMemoryCardTemplatesById.values()).filter((t) => t.is_published);
+    } else {
+      const result = await dbQuery<DbCardTemplate>(
+        'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at FROM card_templates WHERE is_published = true ORDER BY created_at DESC'
+      );
+      templates = result.rows;
+    }
+
+    return res.json({
+      success: true,
+      templates: templates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description || '',
+        designData: typeof t.design_data === 'string' ? JSON.parse(t.design_data) : t.design_data,
+        coverImageUrl: t.cover_image_url,
+        isPublished: t.is_published,
+        createdAt: t.created_at,
+        updatedAt: t.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('Get published card templates error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch published card templates' });
+  }
+});
+
+app.post('/api/card-templates', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { name, description, designData } = req.body;
+    if (!name || !designData) {
+      return res.status(400).json({ success: false, error: 'Name and designData are required' });
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+
+    const template: DbCardTemplate = {
+      id,
+      name,
+      description: description || '',
+      design_data: designData,
+      is_published: false,
+      created_at: now,
+      updated_at: now,
+    };
+
+    if (!hasDatabase()) {
+      inMemoryCardTemplatesById.set(id, template);
+    } else {
+      await dbQuery(
+        'INSERT INTO card_templates (id, name, description, design_data, is_published, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [id, name, description || '', JSON.stringify(designData), false, now, now]
+      );
+    }
+
+    return res.json({
+      success: true,
+      template: {
+        id: template.id,
+        name: template.name,
+        description: template.description,
+        designData: template.design_data,
+        coverImageUrl: template.cover_image_url,
+        isPublished: template.is_published,
+        createdAt: template.created_at,
+        updatedAt: template.updated_at,
+      },
+    });
+  } catch (error) {
+    console.error('Create card template error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to create card template' });
+  }
+});
+
+app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const { name, description, designData } = req.body;
+
+    if (!name || !designData) {
+      return res.status(400).json({ success: false, error: 'Name and designData are required' });
+    }
+
+    const now = new Date().toISOString();
+
+    if (!hasDatabase()) {
+      const existing = inMemoryCardTemplatesById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Card template not found' });
+      }
+
+      const updated: DbCardTemplate = {
+        ...existing,
+        name,
+        description: description || '',
+        design_data: designData,
+        updated_at: now,
+      };
+      inMemoryCardTemplatesById.set(id, updated);
+
+      return res.json({
+        success: true,
+        template: {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          designData: updated.design_data,
+          coverImageUrl: updated.cover_image_url,
+          isPublished: updated.is_published,
+          createdAt: updated.created_at,
+          updatedAt: updated.updated_at,
+        },
+      });
+    } else {
+      await dbQuery(
+        'UPDATE card_templates SET name = $1, description = $2, design_data = $3, updated_at = $4 WHERE id = $5',
+        [name, description || '', JSON.stringify(designData), now, id]
+      );
+
+      const result = await dbQuery<DbCardTemplate>(
+        'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at FROM card_templates WHERE id = $1',
+        [id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Card template not found' });
+      }
+
+      const template = result.rows[0];
+      return res.json({
+        success: true,
+        template: {
+          id: template.id,
+          name: template.name,
+          description: template.description,
+          designData: typeof template.design_data === 'string' ? JSON.parse(template.design_data) : template.design_data,
+          coverImageUrl: template.cover_image_url,
+          isPublished: template.is_published,
+          createdAt: template.created_at,
+          updatedAt: template.updated_at,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Update card template error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update card template' });
+  }
+});
+
+app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const { coverImageUrl } = req.body;
+
+    if (!coverImageUrl) {
+      return res.status(400).json({ success: false, error: 'coverImageUrl is required' });
+    }
+
+    const now = new Date().toISOString();
+
+    if (!hasDatabase()) {
+      const existing = inMemoryCardTemplatesById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Card template not found' });
+      }
+
+      const updated: DbCardTemplate = {
+        ...existing,
+        cover_image_url: coverImageUrl,
+        is_published: true,
+        updated_at: now,
+      };
+      inMemoryCardTemplatesById.set(id, updated);
+
+      return res.json({
+        success: true,
+        template: {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          designData: updated.design_data,
+          coverImageUrl: updated.cover_image_url,
+          isPublished: updated.is_published,
+          createdAt: updated.created_at,
+          updatedAt: updated.updated_at,
+        },
+      });
+    } else {
+      await dbQuery(
+        'UPDATE card_templates SET cover_image_url = $1, is_published = true, updated_at = $2 WHERE id = $3',
+        [coverImageUrl, now, id]
+      );
+
+      const result = await dbQuery<DbCardTemplate>(
+        'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at FROM card_templates WHERE id = $1',
+        [id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Card template not found' });
+      }
+
+      const template = result.rows[0];
+      return res.json({
+        success: true,
+        template: {
+          id: template.id,
+          name: template.name,
+          description: template.description,
+          designData: typeof template.design_data === 'string' ? JSON.parse(template.design_data) : template.design_data,
+          coverImageUrl: template.cover_image_url,
+          isPublished: template.is_published,
+          createdAt: template.created_at,
+          updatedAt: template.updated_at,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Publish card template error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to publish card template' });
+  }
+});
+
+app.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+
+    if (!hasDatabase()) {
+      const existing = inMemoryCardTemplatesById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Card template not found' });
+      }
+      inMemoryCardTemplatesById.delete(id);
+      return res.json({ success: true, message: 'Card template deleted' });
+    } else {
+      await dbQuery('DELETE FROM card_templates WHERE id = $1', [id]);
+      return res.json({ success: true, message: 'Card template deleted' });
+    }
+  } catch (error) {
+    console.error('Delete card template error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to delete card template' });
   }
 });
 

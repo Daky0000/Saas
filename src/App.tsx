@@ -6,6 +6,7 @@ import {
   LogOut,
   Menu,
   Palette,
+  Receipt,
   Settings,
   Share2,
   TrendingUp,
@@ -14,11 +15,15 @@ import {
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
-import Connects from './pages/Connects';
+import Integrations from './pages/Integrations';
+import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
+import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
 import Auth from './pages/Auth';
 import OAuthCallback from './pages/OAuthCallback';
+import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
+import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { useOAuthCallback } from './hooks/useOAuth';
 import {
   AppUser,
@@ -29,11 +34,19 @@ import {
   setStoredUser,
 } from './utils/userSession';
 
-type PageType = 'dashboard' | 'posts' | 'cards' | 'connects' | 'analytics' | 'profile';
+type PageType = 'dashboard' | 'posts' | 'cards' | 'integrations' | 'pricing' | 'admin' | 'analytics' | 'profile';
 
 type AuthMeResponse = {
   success: boolean;
   user?: Partial<AppUser> & { id?: string; email?: string };
+};
+
+const safeJson = async <T,>(response: Response): Promise<T | null> => {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
 };
 
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
@@ -45,7 +58,9 @@ const PAGE_PATHS: Record<PageType, string> = {
   dashboard: '/dashboard',
   posts: '/posts',
   cards: '/cards',
-  connects: '/connects',
+  integrations: '/integrations',
+  pricing: '/pricing',
+  admin: '/admin/users',
   analytics: '/analytics',
   profile: '/profile',
 };
@@ -53,6 +68,8 @@ const PAGE_PATHS: Record<PageType, string> = {
 const PATH_TO_PAGE = new Map<string, PageType>(
   Object.entries(PAGE_PATHS).map(([page, path]) => [path, page as PageType])
 );
+PATH_TO_PAGE.set('/connects', 'integrations');
+PATH_TO_PAGE.set('/admin', 'admin');
 
 async function fetchCurrentUser(token: string): Promise<AppUser | null> {
   try {
@@ -65,7 +82,11 @@ async function fetchCurrentUser(token: string): Promise<AppUser | null> {
       return null;
     }
 
-    const payload = (await response.json()) as AuthMeResponse;
+    const payload = await safeJson<AuthMeResponse>(response);
+    if (!payload) {
+      return null;
+    }
+
     if (!payload.success || !payload.user?.id || !payload.user?.email) {
       return null;
     }
@@ -77,6 +98,9 @@ async function fetchCurrentUser(token: string): Promise<AppUser | null> {
       username: payload.user.username ?? null,
       phone: payload.user.phone ?? null,
       country: payload.user.country ?? null,
+      role: payload.user.role === 'admin' ? 'admin' : 'user',
+      avatar: payload.user.avatar ?? null,
+      cover: payload.user.cover ?? null,
     });
   } catch {
     return null;
@@ -91,6 +115,18 @@ function App() {
   const [isOAuthCallback, setIsOAuthCallback] = useState(false);
 
   useOAuthCallback();
+
+  useEffect(() => {
+    const resetFlag = 'force_auth_reset_done';
+    if (sessionStorage.getItem(resetFlag) === '1') {
+      return;
+    }
+
+    localStorage.removeItem('auth_session');
+    localStorage.removeItem('auth_token');
+    clearStoredUser();
+    sessionStorage.setItem(resetFlag, '1');
+  }, []);
 
   const getPageFromPath = useCallback((pathname: string): PageType | null => {
     return PATH_TO_PAGE.get(pathname) ?? null;
@@ -115,6 +151,11 @@ function App() {
     [navigatePath]
   );
 
+  const getDefaultPageForUser = useCallback(
+    (user: AppUser | null): PageType => (user?.role === 'admin' ? 'admin' : 'dashboard'),
+    [],
+  );
+
   useEffect(() => {
     let canceled = false;
 
@@ -131,11 +172,24 @@ function App() {
       const storedUser = getStoredUser();
       setAuthUser(storedUser);
 
-      if (!storedUser && token) {
+      if (token) {
         void fetchCurrentUser(token).then((user) => {
-          if (!user || canceled) {
+          if (canceled) {
             return;
           }
+
+          if (!user) {
+            localStorage.removeItem('auth_session');
+            localStorage.removeItem('auth_token');
+            clearStoredUser();
+            setAuthUser(null);
+            setIsAuthenticated(false);
+            if (window.location.pathname !== '/login') {
+              navigatePath('/login', true);
+            }
+            return;
+          }
+
           const persisted = setStoredUser(user);
           setAuthUser(persisted);
         });
@@ -168,11 +222,11 @@ function App() {
       };
     }
 
-    navigateToPage('dashboard', true);
+    navigateToPage(getDefaultPageForUser(getStoredUser()), true);
     return () => {
       canceled = true;
     };
-  }, [getPageFromPath, navigatePath, navigateToPage]);
+  }, [getDefaultPageForUser, getPageFromPath, navigatePath, navigateToPage]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -197,19 +251,19 @@ function App() {
         return;
       }
 
-      navigateToPage('dashboard', true);
+      navigateToPage(getDefaultPageForUser(getStoredUser()), true);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [getPageFromPath, isAuthenticated, navigatePath, navigateToPage]);
+  }, [getDefaultPageForUser, getPageFromPath, isAuthenticated, navigatePath, navigateToPage]);
 
   const handleLogin = (user: AppUser) => {
     localStorage.setItem('auth_session', 'true');
     setIsAuthenticated(true);
     const storedUser = setStoredUser(user);
     setAuthUser(storedUser);
-    navigateToPage('dashboard', true);
+    navigateToPage(getDefaultPageForUser(storedUser), true);
   };
 
   const handleLogout = () => {
@@ -230,12 +284,27 @@ function App() {
     return <Auth onLogin={handleLogin} />;
   }
 
+  if (isAuthenticated && currentPage === 'admin' && authUser?.role !== 'admin') {
+    navigateToPage('dashboard', true);
+    return <Dashboard currentUser={authUser} />;
+  }
+
+  if (isAuthenticated && currentPage === 'admin' && !isOAuthCallback) {
+    return (
+      <TemplateEditorProvider>
+        <Admin currentUser={authUser} />
+        <AdvancedTemplateCardModal />
+      </TemplateEditorProvider>
+    );
+  }
+
   const profileNeedsAttention = !isProfileComplete(authUser);
   const menuItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: BarChart4 },
     { id: 'posts' as const, label: 'Posts', icon: FileText },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
-    { id: 'connects' as const, label: 'Connects', icon: Share2 },
+    { id: 'integrations' as const, label: 'Integrations', icon: Share2 },
+    { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
     { id: 'profile' as const, label: 'Profile', icon: Settings },
   ];
@@ -252,8 +321,12 @@ function App() {
         return <Posts />;
       case 'cards':
         return <Cards />;
-      case 'connects':
-        return <Connects />;
+      case 'integrations':
+        return <Integrations />;
+      case 'pricing':
+        return <Pricing />;
+      case 'admin':
+        return <Admin currentUser={authUser} />;
       case 'analytics':
         return <Analytics />;
       case 'profile':
@@ -264,7 +337,8 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <TemplateEditorProvider>
+      <div className="flex h-screen bg-gray-50">
       <aside
         className={`${
           sidebarOpen ? 'w-64' : 'w-20'
@@ -304,6 +378,15 @@ function App() {
         </nav>
 
         <div className="p-4 border-t border-gray-100 space-y-2">
+          {authUser?.role === 'admin' && (
+            <button
+              onClick={() => navigateToPage('admin')}
+              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+            >
+              Open Admin Portal
+            </button>
+          )}
+
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium text-red-600 hover:bg-red-50"
@@ -360,12 +443,26 @@ function App() {
                 );
               })}
             </nav>
+            {authUser?.role === 'admin' && (
+              <button
+                onClick={() => {
+                  navigateToPage('admin');
+                  setSidebarOpen(false);
+                }}
+                className="mt-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700"
+              >
+                Open Admin Portal
+              </button>
+            )}
           </div>
         )}
 
         <main className="flex-1 overflow-auto p-6 md:p-8">{renderPage()}</main>
       </div>
     </div>
+
+      <AdvancedTemplateCardModal />
+    </TemplateEditorProvider>
   );
 }
 

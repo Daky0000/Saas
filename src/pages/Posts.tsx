@@ -21,9 +21,14 @@ const Posts = () => {
 
   // WordPress publish state
   const [wpConnected, setWpConnected] = useState(false);
-
-
+  const [wpConnectionType, setWpConnectionType] = useState<'make_webhook' | 'wordpress_api' | null>(null);
+  const [wpCategories, setWpCategories] = useState<WpCategory[]>([]);
+  const [wpTags, setWpTags] = useState<WpTag[]>([]);
   const [wpPublishStatus, setWpPublishStatus] = useState<'draft' | 'publish'>('publish');
+  const [wpSelectedCategoryIds, setWpSelectedCategoryIds] = useState<number[]>([]);
+  const [wpSelectedTagIds, setWpSelectedTagIds] = useState<number[]>([]);
+  const [wpCategoryNamesStr, setWpCategoryNamesStr] = useState('');
+  const [wpTagNamesStr, setWpTagNamesStr] = useState('');
   const [wpExcerpt, setWpExcerpt] = useState('');
   const [wpSlug, setWpSlug] = useState('');
   const [wpSeoTitle, setWpSeoTitle] = useState('');
@@ -147,11 +152,21 @@ const Posts = () => {
     wordpressService.getStatus().then((r) => {
       if (r.success) {
         setWpConnected(!!r.connected);
+        setWpConnectionType(r.connectionType ?? null);
       }
     });
   }, [showEditor]);
 
-
+  // WordPress: fetch categories and tags when connected via direct API (not Make)
+  useEffect(() => {
+    if (!wpConnected || wpConnectionType !== 'wordpress_api') return;
+    wordpressService.getCategories().then((r) => {
+      if (r.success && r.data) setWpCategories(r.data);
+    });
+    wordpressService.getTags().then((r) => {
+      if (r.success && r.data) setWpTags(r.data);
+    });
+  }, [wpConnected, wpConnectionType]);
 
   const handleFeaturedImageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -177,6 +192,28 @@ const Posts = () => {
     }
     setWpPublishing(true);
 
+    if (wpConnectionType === 'make_webhook') {
+      const categories = wpCategoryNamesStr.trim() ? wpCategoryNamesStr.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+      const tags = wpTagNamesStr.trim() ? wpTagNamesStr.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+      const result = await wordpressService.publishViaWebhook({
+        title: postTitle.trim() || 'Untitled',
+        content: postContent || '',
+        excerpt: wpExcerpt.trim() || undefined,
+        status: wpPublishStatus,
+        featured_image: wpFeaturedImageUrl.trim() || undefined,
+        categories,
+        tags,
+      });
+      setWpPublishing(false);
+      if (result.success) {
+        setWpPublishSuccess(result.message || 'Post sent to WordPress successfully.');
+        setTimeout(() => setWpPublishSuccess(null), 5000);
+      } else {
+        setWpPublishError(result.error || 'Failed to publish to WordPress.');
+      }
+      return;
+    }
+
     let featuredImageBase64: string | undefined;
     let featuredImageFilename: string | undefined;
     if (featuredImageFile) {
@@ -200,6 +237,8 @@ const Posts = () => {
       excerpt: wpExcerpt.trim() || undefined,
       slug: wpSlug.trim() || undefined,
       status: wpPublishStatus,
+      categories: wpSelectedCategoryIds.length ? wpSelectedCategoryIds : undefined,
+      tags: wpSelectedTagIds.length ? wpSelectedTagIds : undefined,
       featuredImageBase64,
       featuredImageFilename,
       seoTitle: wpSeoTitle.trim() || undefined,
@@ -214,11 +253,17 @@ const Posts = () => {
       setWpPublishError(result.error || 'Publish failed');
     }
   }, [
+    wpConnectionType,
     postTitle,
     postContent,
     wpExcerpt,
     wpSlug,
     wpPublishStatus,
+    wpSelectedCategoryIds,
+    wpSelectedTagIds,
+    wpCategoryNamesStr,
+    wpTagNamesStr,
+    wpFeaturedImageUrl,
     wpSeoTitle,
     wpSeoDescription,
     wpFocusKeyword,
@@ -453,6 +498,9 @@ const Posts = () => {
                     <div className="flex items-center gap-2 text-indigo-800 font-semibold">
                       <Globe size={20} />
                       <span>Publish to WordPress</span>
+                      {wpConnectionType === 'make_webhook' && (
+                        <span className="text-xs bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">Make</span>
+                      )}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
@@ -465,16 +513,18 @@ const Posts = () => {
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                         />
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Slug (URL)</label>
-                        <input
-                          type="text"
-                          value={wpSlug}
-                          onChange={(e) => setWpSlug(e.target.value)}
-                          placeholder="post-url-slug"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                        />
-                      </div>
+                      {wpConnectionType === 'wordpress_api' && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Slug (URL)</label>
+                          <input
+                            type="text"
+                            value={wpSlug}
+                            onChange={(e) => setWpSlug(e.target.value)}
+                            placeholder="post-url-slug"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                          />
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -487,6 +537,80 @@ const Posts = () => {
                         <option value="draft">Draft</option>
                       </select>
                     </div>
+                    {wpConnectionType === 'make_webhook' ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Categories</label>
+                          <input
+                            type="text"
+                            value={wpCategoryNamesStr}
+                            onChange={(e) => setWpCategoryNamesStr(e.target.value)}
+                            placeholder="AI, Technology"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Comma-separated names (mapped in Make)</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+                          <input
+                            type="text"
+                            value={wpTagNamesStr}
+                            onChange={(e) => setWpTagNamesStr(e.target.value)}
+                            placeholder="automation, content"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Comma-separated names (mapped in Make)</p>
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Featured image URL (optional)</label>
+                          <input
+                            type="url"
+                            value={wpFeaturedImageUrl}
+                            onChange={(e) => setWpFeaturedImageUrl(e.target.value)}
+                            placeholder="https://example.com/image.jpg"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Categories</label>
+                          <select
+                            multiple
+                            value={wpSelectedCategoryIds.map(String)}
+                            onChange={(e) => {
+                              const opts = Array.from(e.target.selectedOptions, (o) => Number(o.value));
+                              setWpSelectedCategoryIds(opts);
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm min-h-[80px]"
+                          >
+                            {wpCategories.map((c) => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+                          <select
+                            multiple
+                            value={wpSelectedTagIds.map(String)}
+                            onChange={(e) => {
+                              const opts = Array.from(e.target.selectedOptions, (o) => Number(o.value));
+                              setWpSelectedTagIds(opts);
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm min-h-[80px]"
+                          >
+                            {wpTags.map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+                        </div>
+                      </div>
+                    )}
+                    {wpConnectionType === 'wordpress_api' && (
                     <div className="space-y-3 border-t border-indigo-200 pt-3">
                       <div className="text-sm font-medium text-gray-700">SEO (optional, for Yoast / RankMath)</div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -513,6 +637,7 @@ const Posts = () => {
                         />
                       </div>
                     </div>
+                    )}
                     {wpPublishError && (
                       <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
                         <AlertCircle size={18} />

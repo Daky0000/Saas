@@ -60,7 +60,8 @@ export const Connects: React.FC = () => {
   const [wpModalOpen, setWpModalOpen] = useState(false);
   const [wpConnecting, setWpConnecting] = useState(false);
   const [wpConnectError, setWpConnectError] = useState<string | null>(null);
-  const [wpForm, setWpForm] = useState({ siteUrl: '', username: '', applicationPassword: '' });
+  const [wpForm, setWpForm] = useState({ siteUrl: '', username: '', password: '', applicationPassword: '', webhookUrl: '' });
+  const [wpModalTab, setWpModalTab] = useState<'make' | 'wordpress_api'>('make');
   const [wpConnectionType, setWpConnectionType] = useState<'make_webhook' | 'wordpress_api' | null>(null);
   const [wpStatusLoading, setWpStatusLoading] = useState(true);
 
@@ -229,26 +230,50 @@ export const Connects: React.FC = () => {
 
   const handleConnectWordPress = useCallback(async () => {
     setWpConnectError(null);
-    if (!wpForm.siteUrl.trim() || !wpForm.username.trim() || !wpForm.applicationPassword.trim()) {
-      setWpConnectError('Site URL, Username, and Application Password are required.');
+    if (wpModalTab === 'make') {
+      const url = wpForm.webhookUrl.trim();
+      if (!url || (!url.startsWith('https://') && !url.startsWith('http://'))) {
+        setWpConnectError('Enter a valid Make webhook URL (https:// or http://).');
+        return;
+      }
+      setWpConnecting(true);
+      const result = await wordpressService.connectWebhook(url);
+      setWpConnecting(false);
+      if (result.success) {
+        addNotification(result.message || 'WordPress (Make) connected successfully', 'success');
+        setWpModalOpen(false);
+        setWpForm((f) => ({ ...f, webhookUrl: '' }));
+        fetchWpStatus();
+      } else {
+        setWpConnectError(result.error || 'Connection failed');
+      }
+      return;
+    }
+    if (!wpForm.siteUrl.trim() || !wpForm.username.trim()) {
+      setWpConnectError('Site URL and Username are required.');
+      return;
+    }
+    if (!wpForm.password.trim() && !wpForm.applicationPassword.trim()) {
+      setWpConnectError('Enter your WordPress login password or an Application Password.');
       return;
     }
     setWpConnecting(true);
     const result = await wordpressService.connect({
       siteUrl: wpForm.siteUrl.trim(),
       username: wpForm.username.trim(),
-      applicationPassword: wpForm.applicationPassword.trim(),
+      password: wpForm.password.trim() || undefined,
+      applicationPassword: wpForm.applicationPassword.trim() || undefined,
     });
     setWpConnecting(false);
     if (result.success) {
       addNotification(result.message || 'WordPress Connected Successfully', 'success');
       setWpModalOpen(false);
-      setWpForm({ siteUrl: '', username: '', applicationPassword: '' });
+      setWpForm({ siteUrl: '', username: '', password: '', applicationPassword: '', webhookUrl: '' });
       fetchWpStatus();
     } else {
       setWpConnectError(result.error || 'Connection failed');
     }
-  }, [wpForm, addNotification, fetchWpStatus]);
+  }, [wpModalTab, wpForm, addNotification, fetchWpStatus]);
 
   const handleDisconnectWordPress = useCallback(async () => {
     const result = await wordpressService.disconnect();
@@ -827,59 +852,117 @@ export const Connects: React.FC = () => {
               </button>
             </div>
 
-            <p className="text-sm text-gray-600 mb-4">
-              Connect your WordPress site using an{' '}
-              <a
-                href="https://wordpress.org/documentation/article/application-passwords/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline"
+            {/* Tabs: Make (Webhook) | WordPress API */}
+            <div className="flex gap-1 p-1 bg-gray-100 rounded-lg mb-4">
+              <button
+                type="button"
+                onClick={() => { setWpModalTab('make'); setWpConnectError(null); }}
+                className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${wpModalTab === 'make' ? 'bg-white text-indigo-600 shadow' : 'text-gray-600 hover:text-gray-900'}`}
               >
-                Application Password
-              </a>
-              . This is a secure way to grant access without sharing your main password.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Site URL</label>
-                <input
-                  type="url"
-                  value={wpForm.siteUrl}
-                  onChange={(e) => setWpForm((f) => ({ ...f, siteUrl: e.target.value }))}
-                  placeholder="https://yoursite.com"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Username</label>
-                <input
-                  type="text"
-                  value={wpForm.username}
-                  onChange={(e) => setWpForm((f) => ({ ...f, username: e.target.value }))}
-                  placeholder="Your WordPress username"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  autoComplete="username"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Application Password</label>
-                <input
-                  type="password"
-                  value={wpForm.applicationPassword}
-                  onChange={(e) => setWpForm((f) => ({ ...f, applicationPassword: e.target.value }))}
-                  placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  autoComplete="off"
-                />
-              </div>
-              {wpConnectError && (
-                <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
-                  <AlertCircle size={18} />
-                  <span>{wpConnectError}</span>
-                </div>
-              )}
+                Via Make (Webhook)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setWpModalTab('wordpress_api'); setWpConnectError(null); }}
+                className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${wpModalTab === 'wordpress_api' ? 'bg-white text-indigo-600 shadow' : 'text-gray-600 hover:text-gray-900'}`}
+              >
+                Via WordPress API
+              </button>
             </div>
+
+            {wpModalTab === 'make' ? (
+              <>
+                <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+                  <p className="font-semibold text-gray-900 mb-2">To connect WordPress via Make:</p>
+                  <ol className="list-decimal list-inside space-y-1.5 text-gray-700">
+                    <li>Create a scenario in <strong>Make</strong>.</li>
+                    <li>Add a <strong>Custom Webhook</strong> module and copy the generated webhook URL.</li>
+                    <li>Add the <strong>WordPress → Create a Post</strong> module.</li>
+                    <li>Map the webhook payload fields (title, content, excerpt, status, featured_image, categories, tags) to the WordPress post fields.</li>
+                    <li>Paste the webhook URL below and click Connect.</li>
+                  </ol>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Webhook URL (from Make)</label>
+                    <input
+                      type="url"
+                      value={wpForm.webhookUrl}
+                      onChange={(e) => setWpForm((f) => ({ ...f, webhookUrl: e.target.value }))}
+                      placeholder="https://hook.eu1.make.com/..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">The URL from your Make scenario’s Custom Webhook module.</p>
+                  </div>
+                  {wpConnectError && (
+                    <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                      <AlertCircle size={18} />
+                      <span>{wpConnectError}</span>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-600 mb-2">Enter your WordPress site URL and login details.</p>
+                <div className="text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4">
+                  <strong>If you see &quot;You are not currently logged in&quot;</strong> — use an <strong>Application Password</strong> (Users → your profile → Application Passwords).
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Site URL</label>
+                    <input
+                      type="url"
+                      value={wpForm.siteUrl}
+                      onChange={(e) => setWpForm((f) => ({ ...f, siteUrl: e.target.value }))}
+                      placeholder="https://yoursite.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Full address only, no trailing slash. Do not add /wp-admin or /wp-json.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Username</label>
+                    <input
+                      type="text"
+                      value={wpForm.username}
+                      onChange={(e) => setWpForm((f) => ({ ...f, username: e.target.value }))}
+                      placeholder="admin"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      autoComplete="username"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">WordPress Password (login)</label>
+                    <input
+                      type="password"
+                      value={wpForm.password}
+                      onChange={(e) => setWpForm((f) => ({ ...f, password: e.target.value }))}
+                      placeholder="Your WordPress account password"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      autoComplete="current-password"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Application Password (optional)</label>
+                    <input
+                      type="password"
+                      value={wpForm.applicationPassword}
+                      onChange={(e) => setWpForm((f) => ({ ...f, applicationPassword: e.target.value }))}
+                      placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Users → your profile → Application Passwords.</p>
+                  </div>
+                  {wpConnectError && (
+                    <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                      <AlertCircle size={18} />
+                      <span>{wpConnectError}</span>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             <div className="flex gap-3 mt-6">
               <button

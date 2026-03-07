@@ -1,5 +1,15 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Save } from 'lucide-react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Camera,
+  CheckCircle2,
+  Globe,
+  Image as ImageIcon,
+  Mail,
+  MapPin,
+  Phone,
+  Save,
+  User,
+} from 'lucide-react';
 import { AppUser, normalizeUser } from '../utils/userSession';
 
 type ProfileProps = {
@@ -13,6 +23,10 @@ type ProfileForm = {
   email: string;
   phone: string;
   country: string;
+  avatar: string;
+  cover: string;
+  bio: string;
+  website: string;
 };
 
 type ProfileResponse = {
@@ -21,18 +35,21 @@ type ProfileResponse = {
   user?: Partial<AppUser> & { id?: string; email?: string };
 };
 
+const safeJson = async <T,>(response: Response): Promise<T | null> => {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+};
+
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
   ? ''
   : rawApiBaseUrl.replace(/\/$/, '');
 
-const PROFILE_FIELDS: Array<{ key: keyof ProfileForm; label: string; type: string; autoComplete: string }> = [
-  { key: 'name', label: 'Name', type: 'text', autoComplete: 'name' },
-  { key: 'username', label: 'Username', type: 'text', autoComplete: 'username' },
-  { key: 'email', label: 'Email', type: 'email', autoComplete: 'email' },
-  { key: 'phone', label: 'Phone', type: 'tel', autoComplete: 'tel' },
-  { key: 'country', label: 'Country', type: 'text', autoComplete: 'country-name' },
-];
+const defaultCover =
+  'linear-gradient(135deg, rgba(15,23,42,0.88), rgba(37,99,235,0.72) 42%, rgba(56,189,248,0.62) 100%)';
 
 function toProfileForm(user: AppUser | null): ProfileForm {
   return {
@@ -41,33 +58,64 @@ function toProfileForm(user: AppUser | null): ProfileForm {
     email: user?.email ?? '',
     phone: user?.phone ?? '',
     country: user?.country ?? '',
+    avatar: user?.avatar ?? '',
+    cover: user?.cover ?? '',
+    bio:
+      'Tell your audience what you do, what you build, and what kind of content they should expect from your profile.',
+    website: '',
   };
 }
+
+const readImageFile = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
 
 function Profile({ currentUser, onUserUpdated }: ProfileProps) {
   const [form, setForm] = useState<ProfileForm>(() => toProfileForm(currentUser));
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setForm(toProfileForm(currentUser));
   }, [currentUser]);
 
   const missingFields = useMemo(() => {
-    return PROFILE_FIELDS.filter((field) => !form[field.key].trim()).map((field) => field.label);
+    return ['name', 'username', 'email', 'phone', 'country'].filter(
+      (field) => !form[field as keyof Pick<ProfileForm, 'name' | 'username' | 'email' | 'phone' | 'country'>].trim(),
+    );
   }, [form]);
 
-  const inputClass = (value: string) =>
-    `w-full px-4 py-2 border rounded-lg focus:outline-none ${
-      value.trim()
-        ? 'border-gray-300 focus:ring-2 focus:ring-blue-500'
-        : 'border-red-500 focus:ring-2 focus:ring-red-300 bg-red-50'
-    }`;
+  const profileStrength = missingFields.length === 0 ? 'Profile complete' : 'Profile can be improved';
+  const profileSubtitle =
+    missingFields.length === 0
+      ? 'Your public details are filled in and ready to share.'
+      : `Still missing: ${missingFields.join(', ')}`;
 
   const handleChange = (field: keyof ProfileForm, value: string) => {
     setForm((previous) => ({ ...previous, [field]: value }));
     setSuccessMessage(null);
+  };
+
+  const handleImageUpload = async (
+    event: ChangeEvent<HTMLInputElement>,
+    field: 'avatar' | 'cover',
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const result = await readImageFile(file);
+      handleChange(field, result);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to process image');
+    }
   };
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
@@ -100,16 +148,17 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
           email: form.email.trim(),
           phone: form.phone.trim(),
           country: form.country.trim(),
+          avatar: form.avatar,
+          cover: form.cover,
         }),
       });
 
-      const payload = (await response.json()) as ProfileResponse;
-      if (
-        !response.ok ||
-        !payload.success ||
-        !payload.user?.id ||
-        !payload.user?.email
-      ) {
+      const payload = await safeJson<ProfileResponse>(response);
+      if (!payload) {
+        throw new Error('The server returned an empty response. Restart the backend and try again.');
+      }
+
+      if (!response.ok || !payload.success || !payload.user?.id || !payload.user?.email) {
         throw new Error(payload.error || 'Failed to save profile');
       }
 
@@ -120,10 +169,17 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
         username: payload.user.username ?? null,
         phone: payload.user.phone ?? null,
         country: payload.user.country ?? null,
+        role: payload.user.role === 'admin' ? 'admin' : 'user',
+        avatar: payload.user.avatar ?? null,
+        cover: payload.user.cover ?? null,
       });
 
       onUserUpdated(updatedUser);
-      setForm(toProfileForm(updatedUser));
+      setForm((previous) => ({
+        ...previous,
+        avatar: updatedUser.avatar ?? '',
+        cover: updatedUser.cover ?? '',
+      }));
       setSuccessMessage('Profile saved successfully.');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to save profile');
@@ -133,76 +189,239 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
   };
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="space-y-6 pb-8">
       <div>
-        <h1 className="text-4xl font-black text-gray-900 mb-2">Profile</h1>
-        <p className="text-gray-600">Update your account details. Empty fields are highlighted in red.</p>
+        <h1 className="text-4xl font-black tracking-[-0.04em] text-slate-950">Profile</h1>
+        <p className="mt-2 text-base text-slate-500">Shape how your Dakyworld hub profile appears across the workspace.</p>
       </div>
 
-      <div
-        className={`rounded-xl border p-4 flex items-start gap-3 ${
-          missingFields.length === 0 ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
-        }`}
-      >
-        {missingFields.length === 0 ? (
-          <CheckCircle2 className="text-green-600 mt-0.5" size={18} />
-        ) : (
-          <AlertCircle className="text-red-600 mt-0.5" size={18} />
-        )}
-        <div>
-          <p className="font-semibold text-gray-900">
-            {missingFields.length === 0 ? 'Profile complete' : 'Profile incomplete'}
-          </p>
-          {missingFields.length === 0 ? (
-            <p className="text-sm text-gray-600">All profile fields are filled in.</p>
-          ) : (
-            <p className="text-sm text-gray-600">Missing: {missingFields.join(', ')}</p>
-          )}
-        </div>
-      </div>
-
-      <form onSubmit={handleSave} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {PROFILE_FIELDS.map((field) => (
-            <div key={field.key}>
-              <label
-                htmlFor={`profile-${field.key}`}
-                className="block text-sm font-semibold text-gray-700 mb-2"
-              >
-                {field.label}
-              </label>
-              <input
-                id={`profile-${field.key}`}
-                type={field.type}
-                autoComplete={field.autoComplete}
-                value={form[field.key]}
-                onChange={(event) => handleChange(field.key, event.target.value)}
-                className={inputClass(form[field.key])}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_320px]">
+        <form onSubmit={handleSave} className="space-y-6">
+          <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white">
+            <div className="relative h-[230px] border-b border-slate-200 bg-slate-100">
+              <div
+                className="absolute inset-0"
+                style={
+                  form.cover
+                    ? {
+                        backgroundImage: `url("${form.cover}")`,
+                        backgroundSize: 'cover',
+                        backgroundPosition: 'center',
+                      }
+                    : { backgroundImage: defaultCover }
+                }
               />
+              <div className="absolute inset-0 bg-black/8" />
+
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(event) => void handleImageUpload(event, 'cover')}
+                className="hidden"
+              />
+
+              <button
+                type="button"
+                onClick={() => coverInputRef.current?.click()}
+                className="absolute right-5 top-5 inline-flex items-center gap-2 rounded-2xl bg-white/90 px-4 py-2 text-sm font-semibold text-slate-800 backdrop-blur"
+              >
+                <ImageIcon size={16} />
+                Change cover
+              </button>
             </div>
-          ))}
+
+            <div className="relative px-6 pb-6 pt-0 md:px-8">
+              <div className="-mt-14 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+                <div className="flex flex-col gap-5 sm:flex-row sm:items-end">
+                  <div className="relative h-28 w-28 shrink-0 rounded-full border-[6px] border-white bg-slate-200 shadow-sm">
+                    {form.avatar ? (
+                      <img src={form.avatar} alt={form.name || 'Profile'} className="h-full w-full rounded-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                        <User size={34} />
+                      </div>
+                    )}
+
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => void handleImageUpload(event, 'avatar')}
+                      className="hidden"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="absolute bottom-0 right-0 flex h-10 w-10 items-center justify-center rounded-full border-4 border-white bg-slate-950 text-white"
+                    >
+                      <Camera size={16} />
+                    </button>
+                  </div>
+
+                  <div className="min-w-0 pt-2">
+                    <div className="text-[2rem] font-black tracking-[-0.04em] text-slate-950">
+                      {form.name || 'Your name'}
+                    </div>
+                    <div className="mt-1 text-sm font-medium text-slate-500">
+                      @{form.username || 'username'} · Dakyworld hub member
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        form.country || 'Country',
+                        form.phone || 'Phone',
+                        form.email || 'Email',
+                      ].map((item) => (
+                        <span key={item} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700"
+                  >
+                    Edit photo
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    <Save size={16} />
+                    {isSaving ? 'Saving...' : 'Save profile'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6 md:p-8">
+            <h2 className="text-2xl font-black text-slate-950">About Me</h2>
+            <p className="mt-2 text-sm text-slate-500">Update your main details, bio, and contact information.</p>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              {[
+                { key: 'name', label: 'Name', type: 'text' },
+                { key: 'username', label: 'Username', type: 'text' },
+                { key: 'email', label: 'Email', type: 'email' },
+                { key: 'phone', label: 'Phone', type: 'tel' },
+                { key: 'country', label: 'Country', type: 'text' },
+                { key: 'website', label: 'Website', type: 'url' },
+              ].map((field) => (
+                <label key={field.key} className="block space-y-2">
+                  <span className="text-sm font-semibold text-slate-700">{field.label}</span>
+                  <input
+                    type={field.type}
+                    value={form[field.key as keyof Pick<ProfileForm, 'name' | 'username' | 'email' | 'phone' | 'country' | 'website'>]}
+                    onChange={(event) =>
+                      handleChange(
+                        field.key as keyof Pick<ProfileForm, 'name' | 'username' | 'email' | 'phone' | 'country' | 'website'>,
+                        event.target.value,
+                      )
+                    }
+                    className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-900 outline-none transition-colors focus:border-slate-400"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <label className="mt-4 block space-y-2">
+              <span className="text-sm font-semibold text-slate-700">Bio</span>
+              <textarea
+                rows={6}
+                value={form.bio}
+                onChange={(event) => handleChange('bio', event.target.value)}
+                className="min-h-[170px] w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition-colors focus:border-slate-400"
+              />
+            </label>
+
+            {(errorMessage || successMessage) && (
+              <div
+                className={`mt-5 rounded-2xl border px-4 py-3 text-sm ${
+                  errorMessage
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                }`}
+              >
+                {errorMessage || successMessage}
+              </div>
+            )}
+          </section>
+        </form>
+
+        <div className="space-y-6">
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="mt-0.5 text-emerald-600" size={20} />
+              <div>
+                <div className="text-lg font-black text-slate-950">{profileStrength}</div>
+                <p className="mt-1 text-sm leading-6 text-slate-500">{profileSubtitle}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6">
+            <h3 className="text-lg font-black text-slate-950">Location</h3>
+            <div className="mt-4 flex items-center gap-3 text-sm text-slate-600">
+              <MapPin size={16} className="text-slate-400" />
+              {form.country || 'Add your country'}
+            </div>
+          </section>
+
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6">
+            <h3 className="text-lg font-black text-slate-950">Connect</h3>
+            <div className="mt-4 space-y-3 text-sm text-slate-600">
+              <div className="flex items-center gap-3">
+                <Mail size={16} className="text-slate-400" />
+                {form.email || 'Add your email'}
+              </div>
+              <div className="flex items-center gap-3">
+                <Phone size={16} className="text-slate-400" />
+                {form.phone || 'Add your phone'}
+              </div>
+              <div className="flex items-center gap-3">
+                <Globe size={16} className="text-slate-400" />
+                {form.website || 'Add your website'}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6">
+            <h3 className="text-lg font-black text-slate-950">Profile Media</h3>
+            <div className="mt-4 space-y-3">
+              <button
+                type="button"
+                onClick={() => coverInputRef.current?.click()}
+                className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left"
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-slate-800">Cover image</span>
+                  <span className="block text-xs text-slate-500">Recommended wide banner image</span>
+                </span>
+                <ImageIcon size={18} className="text-slate-400" />
+              </button>
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left"
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-slate-800">Profile image</span>
+                  <span className="block text-xs text-slate-500">Recommended square image</span>
+                </span>
+                <Camera size={18} className="text-slate-400" />
+              </button>
+            </div>
+          </section>
         </div>
-
-        {errorMessage && (
-          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            {errorMessage}
-          </p>
-        )}
-        {successMessage && (
-          <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-            {successMessage}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={isSaving}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
-        >
-          <Save size={16} />
-          {isSaving ? 'Saving...' : 'Save profile'}
-        </button>
-      </form>
+      </div>
     </div>
   );
 }
