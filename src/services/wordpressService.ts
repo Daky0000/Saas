@@ -87,7 +87,7 @@ export const wordpressService = {
     return { success: true, message: data.message };
   },
 
-  async getStatus(): Promise<{ success: boolean; connected?: boolean; siteUrl?: string; error?: string }> {
+  async getStatus(): Promise<{ success: boolean; connected?: boolean; siteUrl?: string; connectionType?: 'make_webhook' | 'wordpress_api'; error?: string }> {
     const res = await fetch(`${API_BASE_URL}/api/wordpress/status`, {
       headers: authHeaders(),
     });

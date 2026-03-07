@@ -5,6 +5,9 @@ export type AppUser = {
   username: string | null;
   phone: string | null;
   country: string | null;
+  role: 'admin' | 'user';
+  avatar: string | null;
+  cover: string | null;
 };
 
 const AUTH_USER_KEY = 'auth_user';
@@ -17,6 +20,9 @@ export function normalizeUser(input: Partial<AppUser> & { id: string; email: str
     username: input.username ?? null,
     phone: input.phone ?? null,
     country: input.country ?? null,
+    role: input.role === 'admin' ? 'admin' : 'user',
+    avatar: input.avatar ?? null,
+    cover: input.cover ?? null,
   };
 }
 

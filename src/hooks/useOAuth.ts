@@ -14,8 +14,8 @@ export const useOAuthCallback = () => {
 
       if (error) {
         console.error('OAuth error:', error);
-        // Redirect to connects page with error
-        window.location.href = '/connects?error=' + encodeURIComponent(error);
+        // Redirect to integrations page with error
+        window.location.href = '/integrations?error=' + encodeURIComponent(error);
         return;
       }
 
@@ -27,16 +27,16 @@ export const useOAuthCallback = () => {
           const result = await oauthService.exchangeCodeForToken(platform, code, state);
 
           if (result.success) {
-            // Redirect to connects page with success
-            window.location.href = '/connects?success=true';
+            // Redirect to integrations page with success
+            window.location.href = '/integrations?success=true';
           } else {
             window.location.href =
-              '/connects?error=' + encodeURIComponent(result.error || 'Unknown error');
+              '/integrations?error=' + encodeURIComponent(result.error || 'Unknown error');
           }
         } catch (error) {
           console.error('OAuth callback error:', error);
           window.location.href =
-            '/connects?error=' + encodeURIComponent('Callback processing failed');
+            '/integrations?error=' + encodeURIComponent('Callback processing failed');
         } finally {
           setIsProcessing(false);
         }
