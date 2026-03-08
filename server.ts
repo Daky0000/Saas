@@ -157,6 +157,13 @@ async function ensureDatabase() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS auth_providers (
+      provider TEXT PRIMARY KEY,
+      config JSONB NOT NULL DEFAULT '{}',
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS payment_transactions (
       id TEXT PRIMARY KEY,
       amount NUMERIC(12,2) NOT NULL,
@@ -3151,6 +3158,252 @@ app.post('/api/integrations/validate', async (req: Request, res: Response) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Validation failed';
     return res.status(400).json({ success: false, error: message });
+  }
+});
+
+// ─── Social Login OAuth Flow ───────────────────────────────────────────────────
+
+const SOCIAL_PROVIDER_CONFIG: Record<string, { authUrl: string; tokenUrl: string; userInfoUrl: string; scopes: string }> = {
+  google: {
+    authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    userInfoUrl: 'https://www.googleapis.com/oauth2/v3/userinfo',
+    scopes: 'openid email profile',
+  },
+  github: {
+    authUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    userInfoUrl: 'https://api.github.com/user',
+    scopes: 'read:user user:email',
+  },
+  microsoft: {
+    authUrl: 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize',
+    tokenUrl: 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token',
+    userInfoUrl: 'https://graph.microsoft.com/v1.0/me',
+    scopes: 'openid email profile',
+  },
+};
+
+// GET /api/auth/:provider/start — redirect to provider's OAuth page
+app.get('/api/auth/:provider/start', async (req: Request, res: Response) => {
+  try {
+    const { provider } = req.params as { provider: string };
+    const cfg = SOCIAL_PROVIDER_CONFIG[provider];
+    if (!cfg) return res.status(404).json({ success: false, error: 'Unknown provider' });
+
+    const providerRow = await dbQuery('SELECT config, enabled FROM auth_providers WHERE provider = $1', [provider]).catch(() => ({ rows: [] }));
+    if (!providerRow.rows.length || !providerRow.rows[0].enabled) {
+      return res.status(403).json({ success: false, error: 'Provider not enabled' });
+    }
+    const config = providerRow.rows[0].config as Record<string, string>;
+    const clientId = config.clientId || '';
+    const redirectUri = config.redirectUri || '';
+    if (!clientId || !redirectUri) return res.status(400).json({ success: false, error: 'Provider not configured' });
+
+    const state = randomBytes(16).toString('hex');
+    // Store state temporarily (10 min TTL) in DB or a small in-memory map
+    (app.locals as Record<string, unknown>)[`oauth_state_${state}`] = { provider, expiry: Date.now() + 600_000 };
+
+    let authUrl = cfg.authUrl.replace('{tenantId}', config.tenantId || 'common');
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: cfg.scopes,
+      state,
+      access_type: 'offline',
+      prompt: 'select_account',
+    });
+    return res.redirect(`${authUrl}?${params.toString()}`);
+  } catch (error) {
+    console.error('Social auth start error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to start social login' });
+  }
+});
+
+// GET /auth/:provider/callback — handle OAuth callback, issue JWT
+app.get('/auth/:provider/callback', async (req: Request, res: Response) => {
+  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  try {
+    const { provider } = req.params as { provider: string };
+    const { code, state, error: oauthError } = req.query as Record<string, string>;
+    if (oauthError) return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(oauthError)}`);
+
+    // Validate state
+    const stateKey = `oauth_state_${state}`;
+    const storedState = (app.locals as Record<string, unknown>)[stateKey] as { provider: string; expiry: number } | undefined;
+    if (!storedState || storedState.provider !== provider || Date.now() > storedState.expiry) {
+      return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent('Invalid or expired state')}`);
+    }
+    delete (app.locals as Record<string, unknown>)[stateKey];
+
+    const cfg = SOCIAL_PROVIDER_CONFIG[provider];
+    if (!cfg) return res.redirect(`${FRONTEND_URL}/?auth_error=unknown_provider`);
+
+    const providerRow = await dbQuery('SELECT config FROM auth_providers WHERE provider = $1', [provider]).catch(() => ({ rows: [] }));
+    if (!providerRow.rows.length) return res.redirect(`${FRONTEND_URL}/?auth_error=provider_not_configured`);
+    const config = providerRow.rows[0].config as Record<string, string>;
+
+    // Exchange code for token
+    const tokenUrl = cfg.tokenUrl.replace('{tenantId}', config.tenantId || 'common');
+    const tokenRes = await axios.post<Record<string, string>>(tokenUrl, new URLSearchParams({
+      client_id: config.clientId || '',
+      client_secret: config.clientSecret || '',
+      code: code || '',
+      redirect_uri: config.redirectUri || '',
+      grant_type: 'authorization_code',
+    }).toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    });
+
+    const accessToken = tokenRes.data.access_token;
+    if (!accessToken) throw new Error('No access token received');
+
+    // Fetch user info
+    const userInfoUrl = cfg.userInfoUrl;
+    const userRes = await axios.get<Record<string, string>>(userInfoUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const userInfo = userRes.data;
+    const email = userInfo.email || userInfo.mail || `${userInfo.login || 'user'}@${provider}.social`;
+    const name = userInfo.name || userInfo.displayName || email.split('@')[0];
+    const socialId = userInfo.sub || userInfo.id || email;
+
+    if (!email) return res.redirect(`${FRONTEND_URL}/?auth_error=no_email`);
+
+    // Find or create user in DB
+    let userId: string;
+    let userRole = 'user';
+    if (hasDatabase()) {
+      const existing = await dbQuery('SELECT id, role FROM users WHERE email = $1', [email]);
+      if (existing.rows.length > 0) {
+        userId = existing.rows[0].id as string;
+        userRole = existing.rows[0].role as string;
+        await dbQuery('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userId]);
+      } else {
+        userId = randomUUID();
+        const username = `${provider}_${(socialId as string).slice(0, 8)}`;
+        await dbQuery(
+          `INSERT INTO users (id, name, username, email, password_hash, role, status, created_at, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, 'user', 'active', NOW(), NOW())`,
+          [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 10)],
+        );
+      }
+    } else {
+      // In-memory fallback
+      userId = randomUUID();
+    }
+
+    const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: '24h' });
+    return res.redirect(`${FRONTEND_URL}/?auth_token=${token}&auth_provider=${provider}`);
+  } catch (error) {
+    console.error('Social auth callback error:', error);
+    const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+    return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent('Social login failed')}`);
+  }
+});
+
+// ─── Auth Providers Routes ─────────────────────────────────────────────────────
+
+// GET /api/auth/providers — public: returns only enabled providers (for login page)
+app.get('/api/auth/providers', async (req: Request, res: Response) => {
+  try {
+    if (hasDatabase()) {
+      const result = await dbQuery('SELECT provider, config FROM auth_providers WHERE enabled = true ORDER BY provider');
+      return res.json({
+        success: true,
+        providers: result.rows.map((r: any) => ({
+          provider: r.provider as string,
+          // Only return public-safe fields (client_id / app_id, not secret)
+          clientId: (r.config as Record<string, string>).clientId || '',
+        })),
+      });
+    }
+    return res.json({ success: true, providers: [] });
+  } catch (error) {
+    console.error('Get auth providers error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch providers' });
+  }
+});
+
+// GET /api/admin/auth-providers — admin: returns all providers with full config
+app.get('/api/admin/auth-providers', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (hasDatabase()) {
+      const result = await dbQuery('SELECT provider, config, enabled, updated_at FROM auth_providers ORDER BY provider');
+      return res.json({ success: true, providers: result.rows });
+    }
+    return res.json({ success: true, providers: [] });
+  } catch (error) {
+    console.error('Get admin auth providers error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch auth providers' });
+  }
+});
+
+// PUT /api/admin/auth-providers/:provider — save/update provider config + enabled toggle
+app.put('/api/admin/auth-providers/:provider', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { provider } = req.params as { provider: string };
+    const { config, enabled } = req.body as { config: Record<string, string>; enabled: boolean };
+    if (!provider) return res.status(400).json({ success: false, error: 'Provider required' });
+    if (hasDatabase()) {
+      await dbQuery(
+        `INSERT INTO auth_providers (provider, config, enabled, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (provider) DO UPDATE
+           SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
+        [provider, JSON.stringify(config ?? {}), Boolean(enabled)],
+      );
+      return res.json({ success: true });
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Save auth provider error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to save auth provider' });
+  }
+});
+
+// ─── Integration Enabled List ──────────────────────────────────────────────────
+
+// GET /api/integrations/enabled — returns list of integration IDs admin has enabled
+app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
+  try {
+    if (hasDatabase()) {
+      const result = await dbQuery('SELECT platform FROM platform_configs WHERE enabled = true');
+      return res.json({ success: true, enabled: result.rows.map((r: any) => r.platform as string) });
+    }
+    return res.json({ success: true, enabled: [] });
+  } catch (error) {
+    console.error('Get enabled integrations error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch enabled integrations' });
+  }
+});
+
+// PATCH /api/admin/platform-configs/:platform/toggle — toggle enabled without changing config
+app.patch('/api/admin/platform-configs/:platform/toggle', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { platform } = req.params as { platform: string };
+    const { enabled } = req.body as { enabled: boolean };
+    if (!platform) return res.status(400).json({ success: false, error: 'Platform required' });
+    if (hasDatabase()) {
+      await dbQuery(
+        `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+         VALUES ($1, '{}', $2, NOW())
+         ON CONFLICT (platform) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()`,
+        [platform, Boolean(enabled)],
+      );
+      return res.json({ success: true, enabled: Boolean(enabled) });
+    }
+    return res.json({ success: true, enabled: Boolean(enabled) });
+  } catch (error) {
+    console.error('Toggle platform config error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to toggle integration' });
   }
 });
 
