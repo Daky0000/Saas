@@ -52,7 +52,7 @@ interface PaymentTransaction {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const CALLBACK_URL = 'https://contentflow-api.onrender.com/api/payments/hubtel/callback';
+const CALLBACK_URL = `${API_BASE_URL}/api/payments/hubtel/callback`;
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', maximumFractionDigits: 2 }).format(n);
