@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bot,
   Box,
@@ -303,25 +303,35 @@ interface SavedIntegrationConfig {
 
 type SavedConfigMap = Record<string, SavedIntegrationConfig>;
 
-const loadSavedConfigs = (): SavedConfigMap => {
-  if (typeof window === 'undefined') {
-    return {};
-  }
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
 
+const authHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('auth_token');
+  return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+};
+
+const isAdminUser = (): boolean => {
+  try {
+    const raw = localStorage.getItem('auth_user');
+    if (!raw) return false;
+    return (JSON.parse(raw) as { role?: string })?.role === 'admin';
+  } catch { return false; }
+};
+
+// Platforms that use OAuth (admin configures app credentials; users connect via OAuth)
+const OAUTH_PLATFORMS = new Set(['instagram', 'facebook', 'linkedin', 'twitter', 'tiktok']);
+
+const loadSavedConfigs = (): SavedConfigMap => {
+  if (typeof window === 'undefined') return {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as SavedConfigMap) : {};
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 };
 
-const saveConfigs = (configs: SavedConfigMap) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
+const saveLocalConfigs = (configs: SavedConfigMap) => {
+  if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
 };
 
 const Integrations = () => {
@@ -330,10 +340,30 @@ const Integrations = () => {
   const [savedConfigs, setSavedConfigs] = useState<SavedConfigMap>(() => loadSavedConfigs());
   const [activeIntegrationId, setActiveIntegrationId] = useState<string | null>(null);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const isAdmin = isAdminUser();
 
-  useEffect(() => {
-    saveConfigs(savedConfigs);
-  }, [savedConfigs]);
+  // Load backend configs for admin users
+  const loadBackendConfigs = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs`, { headers: authHeaders() });
+      if (!res.ok) return;
+      const data = await res.json() as { success: boolean; configs: Array<{ platform: string; config: Record<string, string>; enabled: boolean }> };
+      if (!data.success) return;
+      setSavedConfigs((prev) => {
+        const next = { ...prev };
+        for (const row of data.configs) {
+          next[row.platform] = { enabled: row.enabled, values: row.config };
+        }
+        saveLocalConfigs(next);
+        return next;
+      });
+    } catch { /* ignore */ }
+  }, [isAdmin]);
+
+  useEffect(() => { void loadBackendConfigs(); }, [loadBackendConfigs]);
 
   const activeIntegration = useMemo(
     () => INTEGRATIONS.find((integration) => integration.id === activeIntegrationId) ?? null,
@@ -341,13 +371,8 @@ const Integrations = () => {
   );
 
   useEffect(() => {
-    if (!activeIntegration) {
-      setDraftValues({});
-      return;
-    }
-
-    setDraftValues(savedConfigs[activeIntegration.id]?.values ?? {});
-  }, [activeIntegration, savedConfigs]);
+    if (!activeIntegration) setDraftValues({});
+  }, [activeIntegration]);
 
   const filteredIntegrations = useMemo(() => {
     const loweredQuery = query.trim().toLowerCase();
@@ -365,28 +390,64 @@ const Integrations = () => {
     });
   }, [activeCategory, query]);
 
+  const PRODUCTION_REDIRECT_URIS: Record<string, string> = {
+    instagram: 'https://marketing.dakyworld.com/auth/instagram/callback',
+    facebook: 'https://marketing.dakyworld.com/auth/facebook/callback',
+    linkedin: 'https://marketing.dakyworld.com/auth/linkedin/callback',
+    twitter: 'https://marketing.dakyworld.com/auth/twitter/callback',
+    tiktok: 'https://marketing.dakyworld.com/auth/tiktok/callback',
+  };
+
   const openConfigure = (integrationId: string) => {
     setActiveIntegrationId(integrationId);
+    setSaveError(null);
+    const saved = savedConfigs[integrationId]?.values ?? {};
+    // Pre-fill redirect URI with production URL if not already set
+    const prefilled = { ...saved };
+    const prodUri = PRODUCTION_REDIRECT_URIS[integrationId];
+    if (prodUri) {
+      if (!prefilled.redirectUri) prefilled.redirectUri = prodUri;
+    }
+    setDraftValues(prefilled);
   };
 
   const closeConfigure = () => {
     setActiveIntegrationId(null);
+    setSaveError(null);
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!activeIntegration) {
-      return;
-    }
+    if (!activeIntegration) return;
 
-    setSavedConfigs((current) => ({
-      ...current,
-      [activeIntegration.id]: {
-        enabled: true,
-        values: draftValues,
-      },
-    }));
-    closeConfigure();
+    setIsSaving(true);
+    setSaveError(null);
+
+    const isOAuth = OAUTH_PLATFORMS.has(activeIntegration.id);
+    const shouldSaveToBackend = isAdmin && isOAuth;
+
+    try {
+      if (shouldSaveToBackend) {
+        const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${activeIntegration.id}`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({ config: draftValues, enabled: true }),
+        });
+        const data = await res.json() as { success: boolean; error?: string };
+        if (!data.success) throw new Error(data.error || 'Failed to save');
+      }
+
+      setSavedConfigs((current) => {
+        const next = { ...current, [activeIntegration.id]: { enabled: true, values: draftValues } };
+        saveLocalConfigs(next);
+        return next;
+      });
+      closeConfigure();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -563,20 +624,31 @@ const Integrations = () => {
                   ))}
                 </div>
 
-                <div className="mt-8 flex items-center justify-end gap-3 border-t border-slate-200 pt-5">
-                  <button
-                    type="button"
-                    onClick={closeConfigure}
-                    className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800"
-                  >
-                    Save integration
-                  </button>
+                <div className="mt-8 space-y-4 border-t border-slate-200 pt-5">
+                  {isAdmin && OAUTH_PLATFORMS.has(activeIntegration.id) && (
+                    <p className="rounded-xl bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
+                      <strong>Admin:</strong> These credentials are saved to the backend and used for all users' OAuth flows.
+                    </p>
+                  )}
+                  {saveError && (
+                    <p className="rounded-xl bg-red-50 px-4 py-2.5 text-xs text-red-600">{saveError}</p>
+                  )}
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={closeConfigure}
+                      className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {isSaving ? 'Saving…' : 'Save integration'}
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>

@@ -149,6 +149,33 @@ async function ensureDatabase() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_configs (
+      platform TEXT PRIMARY KEY,
+      config JSONB NOT NULL DEFAULT '{}',
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS payment_transactions (
+      id TEXT PRIMARY KEY,
+      amount NUMERIC(12,2) NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'GHS',
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      provider TEXT NOT NULL DEFAULT 'hubtel',
+      client_reference TEXT UNIQUE,
+      provider_reference TEXT,
+      customer_name TEXT,
+      customer_email TEXT,
+      customer_phone TEXT,
+      checkout_url TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
   dbReady = true;
 }
 
@@ -232,6 +259,35 @@ const inMemoryUserIdByEmail = new Map<string, string>();
 const inMemoryUserIdByUsername = new Map<string, string>();
 const inMemoryPricingPlansById = new Map<string, DbPricingPlan>();
 const inMemoryCardTemplatesById = new Map<string, DbCardTemplate>();
+
+type PlatformConfigRow = { platform: string; config: Record<string, string>; enabled: boolean; updated_at: string };
+type PaymentTransactionRow = {
+  id: string; amount: number; currency: string; description: string | null;
+  status: string; provider: string; client_reference: string | null;
+  provider_reference: string | null; customer_name: string | null;
+  customer_email: string | null; customer_phone: string | null;
+  checkout_url: string | null; metadata: Record<string, unknown> | null;
+  created_at: string; updated_at: string;
+};
+const inMemoryPlatformConfigs = new Map<string, PlatformConfigRow>();
+const inMemoryPaymentTransactions: PaymentTransactionRow[] = [];
+
+async function getPlatformConfig(platform: string): Promise<Record<string, string>> {
+  if (hasDatabase()) {
+    const result = await dbQuery('SELECT config FROM platform_configs WHERE platform = $1', [platform]);
+    if (result.rows.length > 0) return result.rows[0].config as Record<string, string>;
+    return {};
+  }
+  return inMemoryPlatformConfigs.get(platform)?.config ?? {};
+}
+
+async function isPlatformEnabled(platform: string): Promise<boolean> {
+  if (hasDatabase()) {
+    const result = await dbQuery('SELECT enabled FROM platform_configs WHERE platform = $1', [platform]);
+    return result.rows.length > 0 ? Boolean(result.rows[0].enabled) : false;
+  }
+  return inMemoryPlatformConfigs.get(platform)?.enabled ?? false;
+}
 
 function upsertInMemoryUser(input: {
   id: string;
@@ -1306,16 +1362,16 @@ app.get('/api/analytics/:platform', async (req: Request, res: Response) => {
   }
 });
 
-// OAuth Exchange Functions
+// OAuth Exchange Functions — credentials read from DB first, then env vars
 async function exchangeInstagramCode(code: string) {
+  const cfg = await getPlatformConfig('instagram');
   const data = new URLSearchParams({
-    client_id: process.env.VITE_INSTAGRAM_APP_ID || '',
-    client_secret: process.env.INSTAGRAM_APP_SECRET || '',
+    client_id: cfg.appId || process.env.VITE_INSTAGRAM_APP_ID || '',
+    client_secret: cfg.appSecret || process.env.INSTAGRAM_APP_SECRET || '',
     grant_type: 'authorization_code',
-    redirect_uri: resolveRedirectUri(process.env.VITE_INSTAGRAM_REDIRECT_URI),
+    redirect_uri: cfg.redirectUri || resolveRedirectUri(process.env.VITE_INSTAGRAM_REDIRECT_URI),
     code,
   });
-
   const response = await axios.post('https://api.instagram.com/oauth/access_token', data, {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
@@ -1323,34 +1379,37 @@ async function exchangeInstagramCode(code: string) {
 }
 
 async function exchangeTwitterCode(code: string) {
+  const cfg = await getPlatformConfig('twitter');
   const response = await axios.post('https://api.twitter.com/2/oauth2/token', {
-    client_id: process.env.VITE_TWITTER_CLIENT_ID,
-    client_secret: process.env.TWITTER_CLIENT_SECRET,
+    client_id: cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID,
+    client_secret: cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET,
     code,
     grant_type: 'authorization_code',
-    redirect_uri: process.env.VITE_TWITTER_REDIRECT_URI,
-    code_verifier: 'challenge', // Add proper PKCE verification
+    redirect_uri: cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI,
+    code_verifier: 'challenge',
   });
   return response.data;
 }
 
 async function exchangeLinkedInCode(code: string) {
+  const cfg = await getPlatformConfig('linkedin');
   const response = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', {
     grant_type: 'authorization_code',
     code,
-    redirect_uri: process.env.VITE_LINKEDIN_REDIRECT_URI,
-    client_id: process.env.VITE_LINKEDIN_CLIENT_ID,
-    client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+    redirect_uri: cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI,
+    client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID,
+    client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET,
   });
   return response.data;
 }
 
 async function exchangeFacebookCode(code: string) {
+  const cfg = await getPlatformConfig('facebook');
   const response = await axios.get('https://graph.facebook.com/v18.0/oauth/access_token', {
     params: {
-      client_id: process.env.VITE_FACEBOOK_APP_ID,
-      client_secret: process.env.FACEBOOK_APP_SECRET,
-      redirect_uri: process.env.VITE_FACEBOOK_REDIRECT_URI,
+      client_id: cfg.appId || process.env.VITE_FACEBOOK_APP_ID,
+      client_secret: cfg.appSecret || process.env.FACEBOOK_APP_SECRET,
+      redirect_uri: cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI,
       code,
     },
   });
@@ -1358,12 +1417,13 @@ async function exchangeFacebookCode(code: string) {
 }
 
 async function exchangeTikTokCode(code: string) {
+  const cfg = await getPlatformConfig('tiktok');
   const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', {
-    client_key: process.env.VITE_TIKTOK_CLIENT_ID,
-    client_secret: process.env.TIKTOK_CLIENT_SECRET,
+    client_key: cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID,
+    client_secret: cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET,
     code,
     grant_type: 'authorization_code',
-    redirect_uri: process.env.VITE_TIKTOK_REDIRECT_URI,
+    redirect_uri: cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI,
   });
   return response.data;
 }
@@ -2608,6 +2668,328 @@ app.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Delete card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete card template' });
+  }
+});
+
+// ─── Platform Config Routes (Admin) ───────────────────────────────────────────
+
+// GET /api/admin/platform-configs  — returns all configs with secrets masked
+app.get('/api/admin/platform-configs', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const mask = (v: string | undefined) => (v && v.length > 4 ? '••••' + v.slice(-4) : v ? '••••' : '');
+
+    const SECRET_FIELDS = ['appSecret', 'clientSecret', 'apiKey', 'accessToken', 'signingSecret', 'applicationPassword'];
+
+    const maskConfig = (cfg: Record<string, string>) => {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(cfg)) {
+        out[k] = SECRET_FIELDS.includes(k) ? mask(v) : v;
+      }
+      return out;
+    };
+
+    if (hasDatabase()) {
+      const result = await dbQuery('SELECT platform, config, enabled, updated_at FROM platform_configs ORDER BY platform');
+      const rows = result.rows.map((r: any) => ({ ...r, config: maskConfig(r.config) }));
+      return res.json({ success: true, configs: rows });
+    }
+
+    const configs = Array.from(inMemoryPlatformConfigs.values()).map((r) => ({
+      ...r,
+      config: maskConfig(r.config),
+    }));
+    return res.json({ success: true, configs });
+  } catch (error) {
+    console.error('Get platform configs error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch platform configs' });
+  }
+});
+
+// GET /api/admin/platform-configs/:platform — returns raw config including secrets (admin only)
+app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { platform } = req.params;
+
+    if (hasDatabase()) {
+      const result = await dbQuery('SELECT platform, config, enabled, updated_at FROM platform_configs WHERE platform = $1', [platform]);
+      if (result.rows.length === 0) return res.json({ success: true, config: null });
+      return res.json({ success: true, config: result.rows[0] });
+    }
+
+    const cfg = inMemoryPlatformConfigs.get(platform);
+    return res.json({ success: true, config: cfg ?? null });
+  } catch (error) {
+    console.error('Get platform config error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch platform config' });
+  }
+});
+
+// PUT /api/admin/platform-configs/:platform — save/update platform config
+app.put('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { platform } = req.params;
+    const { config, enabled } = req.body as { config: Record<string, string>; enabled: boolean };
+
+    if (!config || typeof config !== 'object') {
+      return res.status(400).json({ success: false, error: 'config object is required' });
+    }
+
+    const now = new Date().toISOString();
+
+    if (hasDatabase()) {
+      await dbQuery(
+        `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (platform) DO UPDATE
+           SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
+        [platform, JSON.stringify(config), Boolean(enabled)]
+      );
+    } else {
+      inMemoryPlatformConfigs.set(platform, { platform, config, enabled: Boolean(enabled), updated_at: now });
+    }
+
+    return res.json({ success: true, message: 'Platform config saved' });
+  } catch (error) {
+    console.error('Save platform config error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to save platform config' });
+  }
+});
+
+// ─── Hubtel Payment Routes ─────────────────────────────────────────────────────
+
+async function getHubtelConfig(): Promise<{ clientId: string; clientSecret: string; merchantAccountNumber: string } | null> {
+  const cfg = await getPlatformConfig('hubtel');
+  const clientId = cfg.clientId || process.env.HUBTEL_CLIENT_ID || '';
+  const clientSecret = cfg.clientSecret || process.env.HUBTEL_CLIENT_SECRET || '';
+  const merchantAccountNumber = cfg.merchantAccountNumber || process.env.HUBTEL_MERCHANT_ACCOUNT_NUMBER || '';
+  if (!clientId || !clientSecret) return null;
+  return { clientId, clientSecret, merchantAccountNumber };
+}
+
+// POST /api/payments/hubtel/initiate — start a Hubtel checkout
+app.post('/api/payments/hubtel/initiate', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const {
+      amount,
+      description,
+      customerName,
+      customerEmail,
+      customerMsisdn,
+    } = req.body as {
+      amount: number;
+      description: string;
+      customerName: string;
+      customerEmail: string;
+      customerMsisdn: string;
+    };
+
+    if (!amount || !customerName || !customerMsisdn) {
+      return res.status(400).json({ success: false, error: 'amount, customerName, and customerMsisdn are required' });
+    }
+
+    const hubtel = await getHubtelConfig();
+    if (!hubtel) {
+      return res.status(503).json({ success: false, error: 'Hubtel is not configured. Add credentials in Admin > Payments.' });
+    }
+
+    const clientReference = randomUUID();
+    const backendUrl = process.env.BACKEND_PUBLIC_URL || `https://contentflow-api.onrender.com`;
+
+    const payload = {
+      totalAmount: Number(amount),
+      description: description || 'Payment',
+      callbackUrl: `${backendUrl}/api/payments/hubtel/callback`,
+      returnUrl: `${process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com'}/payments/success`,
+      cancellationUrl: `${process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com'}/payments/cancel`,
+      merchantAccountNumber: hubtel.merchantAccountNumber,
+      clientReference,
+    };
+
+    const response = await axios.post('https://payproxyapi.hubtel.com/items/initiate', payload, {
+      auth: { username: hubtel.clientId, password: hubtel.clientSecret },
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const checkoutUrl: string = response.data?.data?.checkoutUrl || response.data?.checkoutUrl || '';
+
+    const txn: PaymentTransactionRow = {
+      id: randomUUID(),
+      amount: Number(amount),
+      currency: 'GHS',
+      description: description || null,
+      status: 'pending',
+      provider: 'hubtel',
+      client_reference: clientReference,
+      provider_reference: null,
+      customer_name: customerName,
+      customer_email: customerEmail || null,
+      customer_phone: customerMsisdn,
+      checkout_url: checkoutUrl,
+      metadata: response.data || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (hasDatabase()) {
+      await dbQuery(
+        `INSERT INTO payment_transactions
+           (id, amount, currency, description, status, provider, client_reference, customer_name, customer_email, customer_phone, checkout_url, metadata)
+         VALUES ($1,$2,$3,$4,'pending','hubtel',$5,$6,$7,$8,$9,$10)`,
+        [txn.id, txn.amount, txn.currency, txn.description, clientReference, customerName, customerEmail || null, customerMsisdn, checkoutUrl, JSON.stringify(txn.metadata)]
+      );
+    } else {
+      inMemoryPaymentTransactions.unshift(txn);
+    }
+
+    return res.json({ success: true, checkoutUrl, clientReference });
+  } catch (error: any) {
+    console.error('Hubtel initiate error:', error?.response?.data || error);
+    return res.status(502).json({ success: false, error: error?.response?.data?.message || 'Failed to initiate payment' });
+  }
+});
+
+// POST /api/payments/hubtel/callback — Hubtel posts here after payment
+app.post('/api/payments/hubtel/callback', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as any;
+    const clientReference: string = body?.Data?.ClientReference || body?.clientReference || '';
+    const status: string = (body?.Data?.Status || body?.status || 'failed').toLowerCase();
+    const providerRef: string = body?.Data?.TransactionId || body?.transactionId || '';
+
+    const mappedStatus = status === 'successful' || status === 'success' ? 'successful' : status === 'pending' ? 'pending' : 'failed';
+
+    if (clientReference) {
+      if (hasDatabase()) {
+        await dbQuery(
+          `UPDATE payment_transactions SET status = $1, provider_reference = $2, updated_at = NOW(), metadata = metadata || $3::jsonb
+           WHERE client_reference = $4`,
+          [mappedStatus, providerRef, JSON.stringify({ hubtelCallback: body }), clientReference]
+        );
+      } else {
+        const txn = inMemoryPaymentTransactions.find((t) => t.client_reference === clientReference);
+        if (txn) { txn.status = mappedStatus; txn.provider_reference = providerRef; txn.updated_at = new Date().toISOString(); }
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Hubtel callback error:', error);
+    return res.status(500).json({ success: false, error: 'Callback processing failed' });
+  }
+});
+
+// GET /api/payments/hubtel/verify/:clientReference — verify a payment status
+app.get('/api/payments/hubtel/verify/:clientReference', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { clientReference } = req.params;
+    const hubtel = await getHubtelConfig();
+
+    if (hubtel) {
+      try {
+        const response = await axios.get(`https://api.hubtel.com/checkout/v1.1/merchant/transactions/status?clientReference=${clientReference}`, {
+          auth: { username: hubtel.clientId, password: hubtel.clientSecret },
+        });
+        const remoteStatus = (response.data?.data?.status || '').toLowerCase();
+        const mappedStatus = remoteStatus === 'successful' || remoteStatus === 'success' ? 'successful' : remoteStatus === 'pending' ? 'pending' : 'failed';
+
+        if (hasDatabase()) {
+          await dbQuery(`UPDATE payment_transactions SET status = $1, updated_at = NOW() WHERE client_reference = $2`, [mappedStatus, clientReference]);
+        } else {
+          const txn = inMemoryPaymentTransactions.find((t) => t.client_reference === clientReference);
+          if (txn) txn.status = mappedStatus;
+        }
+        return res.json({ success: true, status: mappedStatus, data: response.data });
+      } catch {
+        // fall through to DB lookup
+      }
+    }
+
+    // Fallback: return local status
+    if (hasDatabase()) {
+      const result = await dbQuery('SELECT status FROM payment_transactions WHERE client_reference = $1', [clientReference]);
+      if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Transaction not found' });
+      return res.json({ success: true, status: result.rows[0].status });
+    }
+
+    const txn = inMemoryPaymentTransactions.find((t) => t.client_reference === clientReference);
+    if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found' });
+    return res.json({ success: true, status: txn.status });
+  } catch (error) {
+    console.error('Verify payment error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to verify payment' });
+  }
+});
+
+// GET /api/admin/payments — list all transactions
+app.get('/api/admin/payments', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    if (hasDatabase()) {
+      const result = await dbQuery(
+        `SELECT id, amount, currency, description, status, provider, client_reference, provider_reference,
+                customer_name, customer_email, customer_phone, created_at, updated_at
+         FROM payment_transactions ORDER BY created_at DESC LIMIT 200`
+      );
+      return res.json({ success: true, transactions: result.rows });
+    }
+
+    return res.json({ success: true, transactions: inMemoryPaymentTransactions.slice(0, 200) });
+  } catch (error) {
+    console.error('List payments error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch transactions' });
+  }
+});
+
+// GET /api/admin/payments/stats — revenue stats
+app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    if (hasDatabase()) {
+      const result = await dbQuery(`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE status = 'successful')::int AS successful,
+          COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+          COALESCE(SUM(amount) FILTER (WHERE status = 'successful'), 0)::numeric AS revenue
+        FROM payment_transactions
+      `);
+      return res.json({ success: true, stats: result.rows[0] });
+    }
+
+    const all = inMemoryPaymentTransactions;
+    return res.json({
+      success: true,
+      stats: {
+        total: all.length,
+        successful: all.filter((t) => t.status === 'successful').length,
+        pending: all.filter((t) => t.status === 'pending').length,
+        failed: all.filter((t) => t.status === 'failed').length,
+        revenue: all.filter((t) => t.status === 'successful').reduce((s, t) => s + t.amount, 0),
+      },
+    });
+  } catch (error) {
+    console.error('Payment stats error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch payment stats' });
   }
 });
 
