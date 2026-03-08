@@ -24,6 +24,7 @@ import Auth from './pages/Auth';
 import OAuthCallback from './pages/OAuthCallback';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
+import Landing from './pages/Landing';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { useOAuthCallback } from './hooks/useOAuth';
@@ -210,7 +211,8 @@ function App() {
     }
 
     if (!loggedIn) {
-      if (pathname !== '/login') {
+      const publicPaths = ['/', '/privacy', '/terms', '/login'];
+      if (!publicPaths.includes(pathname)) {
         navigatePath('/login', true);
       }
       return () => {
@@ -243,7 +245,8 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        if (pathname !== '/login') {
+        const publicPaths = ['/', '/privacy', '/terms', '/login'];
+        if (!publicPaths.includes(pathname)) {
           navigatePath('/login', true);
         }
         return;
@@ -285,6 +288,7 @@ function App() {
   };
 
   const currentPathname = window.location.pathname;
+  if (currentPathname === '/' || currentPathname === '') return <Landing onLoginClick={() => navigatePath('/login', true)} />;
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
 
