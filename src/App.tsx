@@ -288,9 +288,12 @@ function App() {
   };
 
   const currentPathname = window.location.pathname;
-  if (currentPathname === '/' || currentPathname === '') return <Landing onLoginClick={() => navigatePath('/login', true)} />;
+  // Public pages — only serve to unauthenticated visitors
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
+  if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
+    return <Landing onLoginClick={() => navigatePath('/login', true)} />;
+  }
 
   if (!isAuthenticated && !isOAuthCallback) {
     return <Auth onLogin={handleLogin} />;
