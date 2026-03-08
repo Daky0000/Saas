@@ -6,6 +6,7 @@
     "scripts": {
         "dev": "node scripts/use-source-index.mjs && vite",
         "dev:api": "ts-node server.ts",
+        "start": "tsx server.ts",
         "build": "node scripts/use-source-index.mjs && tsc && vite build && node scripts/sync-pages.mjs",
         "build:dist": "node scripts/use-source-index.mjs && tsc && vite build",
         "sync:pages": "node scripts/sync-pages.mjs",
@@ -22,6 +23,7 @@
         "cors": "^2.8.6",
         "dotenv": "^17.3.1",
         "express": "^5.2.1",
+        "tsx": "^4.19.2",
         "form-data": "^4.0.5",
         "html2canvas": "^1.4.1",
         "jsonwebtoken": "^9.0.3",
@@ -47,7 +49,6 @@
         "postcss": "^8.4.31",
         "tailwindcss": "^3.3.5",
         "ts-node": "^10.9.2",
-        "tsx": "^4.21.0",
         "typescript": "^5.9.3",
         "vite": "^5.0.2"
     }
