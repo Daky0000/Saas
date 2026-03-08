@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { fabric } from 'fabric';
 import {
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Trash2, Copy, ArrowUp, ArrowDown, Eye, EyeOff,
-  ChevronDown, ChevronUp, ImagePlus, Layers,
+  ChevronDown, ChevronUp, ImagePlus, Layers, X,
 } from 'lucide-react';
 import ColorPicker from './ColorPicker';
 
@@ -19,7 +19,7 @@ interface PropsPanelProps {
   onFlipV: () => void;
   onSetBgSolid: (color: string) => void;
   onSetBgGradient: (from: string, to: string, angle: number) => void;
-  onSetBgImage: () => void;
+  onSetBgImage: (url: string) => void;
   bgColor?: string;
   artboardW?: number;
   artboardH?: number;
@@ -139,12 +139,32 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }:
   bgColor: string;
   onSetBgSolid: (c: string) => void;
   onSetBgGradient: (from: string, to: string, angle: number) => void;
-  onSetBgImage: () => void;
+  onSetBgImage: (url: string) => void;
 }) {
   const [tab, setTab] = useState<'solid' | 'gradient' | 'image'>('solid');
   const [gradFrom, setGradFrom] = useState('#e6332a');
   const [gradTo, setGradTo] = useState('#1e293b');
   const [gradAngle, setGradAngle] = useState(90);
+  const [bgImagePreview, setBgImagePreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const url = ev.target?.result as string;
+      setBgImagePreview(url);
+      onSetBgImage(url);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }, [onSetBgImage]);
+
+  const clearBgImage = useCallback(() => {
+    setBgImagePreview(null);
+    onSetBgImage('');
+  }, [onSetBgImage]);
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -185,10 +205,34 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }:
       )}
 
       {tab === 'image' && (
-        <button type="button" onClick={onSetBgImage}
-          className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-zinc-200 py-6 text-sm font-semibold text-zinc-400 transition hover:border-zinc-300 hover:text-zinc-600">
-          <ImagePlus size={18} /> Upload background image
-        </button>
+        <div>
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+          {bgImagePreview ? (
+            <div className="relative overflow-hidden rounded-2xl border border-zinc-200">
+              <img src={bgImagePreview} alt="Background" className="h-32 w-full object-cover" />
+              <div className="absolute inset-0 flex items-end justify-between bg-gradient-to-t from-black/50 to-transparent p-3">
+                <span className="text-[11px] font-semibold text-white/80">Background image</span>
+                <div className="flex gap-1.5">
+                  <button type="button" onClick={() => fileInputRef.current?.click()}
+                    className="rounded-lg bg-white/20 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/30">
+                    Change
+                  </button>
+                  <button type="button" onClick={clearBgImage} title="Remove"
+                    className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 text-white backdrop-blur-sm transition hover:bg-red-500/70">
+                    <X size={11} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+              className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-zinc-200 py-8 transition hover:border-zinc-300 hover:bg-zinc-50">
+              <ImagePlus size={20} className="text-zinc-400" />
+              <span className="text-xs font-semibold text-zinc-500">Upload background image</span>
+              <span className="text-[10px] text-zinc-300">PNG, JPG, WEBP</span>
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
