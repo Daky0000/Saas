@@ -1,4 +1,4 @@
-import { ChevronDown, CreditCard, KeyRound, LayoutGrid, Scale, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
+import { ChevronDown, CreditCard, FileText, KeyRound, LayoutGrid, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -7,15 +7,28 @@ import AdminCardsManagement from '../components/admin/AdminCardsManagement';
 import PaymentManagement from '../components/admin/PaymentManagement';
 import AdminIntegrationsManagement from '../components/admin/AdminIntegrationsManagement';
 import AdminAuthProviders from '../components/admin/AdminAuthProviders';
-import PrivacyPolicy from './PrivacyPolicy';
-import TermsOfService from './TermsOfService';
+import AdminPagesManagement from '../components/admin/AdminPagesManagement';
 
 type AdminProps = {
   currentUser: AppUser | null;
 };
 
 const Admin = ({ currentUser }: AdminProps) => {
-  type AdminTab = 'users' | 'pricing' | 'cards' | 'payments' | 'integrations' | 'auth-providers' | 'settings' | 'audit' | 'legal-privacy' | 'legal-terms';
+  type AdminTab =
+    | 'users'
+    | 'pricing'
+    | 'cards'
+    | 'payments'
+    | 'integrations'
+    | 'auth-providers'
+    | 'settings'
+    | 'audit'
+    | 'pages-home'
+    | 'pages-tools'
+    | 'pages-pricing-public'
+    | 'pages-login'
+    | 'pages-privacy'
+    | 'pages-terms';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -26,8 +39,12 @@ const Admin = ({ currentUser }: AdminProps) => {
     'auth-providers': '/admin/auth-providers',
     settings: '/admin/settings',
     audit: '/admin/audit',
-    'legal-privacy': '/admin/legal/privacy',
-    'legal-terms': '/admin/legal/terms',
+    'pages-home': '/admin/pages/home',
+    'pages-tools': '/admin/pages/tools',
+    'pages-pricing-public': '/admin/pages/pricing',
+    'pages-login': '/admin/pages/login',
+    'pages-privacy': '/admin/pages/privacy',
+    'pages-terms': '/admin/pages/terms',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -37,9 +54,8 @@ const Admin = ({ currentUser }: AdminProps) => {
   const getInitialTab = (): AdminTab => PATH_TO_TAB[window.location.pathname] ?? 'users';
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
-  const [legalOpen, setLegalOpen] = useState(() => {
-    const path = window.location.pathname;
-    return path === '/admin/legal/privacy' || path === '/admin/legal/terms';
+  const [pagesOpen, setPagesOpen] = useState(() => {
+    return window.location.pathname.startsWith('/admin/pages');
   });
   const currentAdminRole = 'Admin' as const;
 
@@ -59,19 +75,23 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
   ];
 
-  const legalItems = [
-    { id: 'legal-privacy' as const, label: 'Privacy Policy' },
-    { id: 'legal-terms' as const, label: 'Terms of Service' },
+  const pagesItems: { id: AdminTab; label: string }[] = [
+    { id: 'pages-home', label: 'Homepage' },
+    { id: 'pages-tools', label: 'Tools' },
+    { id: 'pages-pricing-public', label: 'Pricing Page' },
+    { id: 'pages-login', label: 'Login / Signup' },
+    { id: 'pages-privacy', label: 'Privacy Policy' },
+    { id: 'pages-terms', label: 'Terms of Service' },
   ];
 
-  const isLegalActive = activeTab === 'legal-privacy' || activeTab === 'legal-terms';
+  const isPagesActive = activeTab.startsWith('pages-');
 
   useEffect(() => {
     const onPop = () => {
       const tab = PATH_TO_TAB[window.location.pathname];
       if (tab) {
         setActiveTab(tab);
-        setLegalOpen(tab === 'legal-privacy' || tab === 'legal-terms');
+        setPagesOpen(tab.startsWith('pages-'));
       }
     };
     window.addEventListener('popstate', onPop);
@@ -114,26 +134,26 @@ const Admin = ({ currentUser }: AdminProps) => {
               );
             })}
 
-            {/* Legal accordion — sits directly after Audit Log */}
+            {/* Pages accordion */}
             <div>
               <button
                 type="button"
-                onClick={() => setLegalOpen((prev) => !prev)}
+                onClick={() => setPagesOpen((prev) => !prev)}
                 className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-                  isLegalActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
+                  isPagesActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
                 }`}
               >
-                <Scale size={18} />
-                <span className="flex-1">Legal</span>
+                <FileText size={18} />
+                <span className="flex-1">Pages</span>
                 <ChevronDown
                   size={15}
-                  className={`transition-transform duration-200 ${legalOpen || isLegalActive ? 'rotate-180' : ''}`}
+                  className={`transition-transform duration-200 ${pagesOpen || isPagesActive ? 'rotate-180' : ''}`}
                 />
               </button>
 
-              {(legalOpen || isLegalActive) && (
+              {(pagesOpen || isPagesActive) && (
                 <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
-                  {legalItems.map((item) => (
+                  {pagesItems.map((item) => (
                     <button
                       key={item.id}
                       type="button"
@@ -200,15 +220,8 @@ const Admin = ({ currentUser }: AdminProps) => {
                 <p className="text-slate-600">Audit Log coming soon...</p>
               </div>
             )}
-            {activeTab === 'legal-privacy' && (
-              <div className="rounded-2xl border border-slate-200 bg-white p-8">
-                <PrivacyPolicy embedded />
-              </div>
-            )}
-            {activeTab === 'legal-terms' && (
-              <div className="rounded-2xl border border-slate-200 bg-white p-8">
-                <TermsOfService embedded />
-              </div>
+            {activeTab.startsWith('pages-') && (
+              <AdminPagesManagement activePage={activeTab} />
             )}
           </main>
         </div>
