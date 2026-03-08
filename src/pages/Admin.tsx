@@ -1,17 +1,19 @@
-import { CreditCard, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
+import { CreditCard, KeyRound, LayoutGrid, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
 import { useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
 import PricingManagement from '../components/admin/PricingManagement';
 import AdminCardsManagement from '../components/admin/AdminCardsManagement';
 import PaymentManagement from '../components/admin/PaymentManagement';
+import AdminIntegrationsManagement from '../components/admin/AdminIntegrationsManagement';
+import AdminAuthProviders from '../components/admin/AdminAuthProviders';
 
 type AdminProps = {
   currentUser: AppUser | null;
 };
 
 const Admin = ({ currentUser }: AdminProps) => {
-  const [activeTab, setActiveTab] = useState<'users' | 'pricing' | 'cards' | 'payments' | 'settings' | 'audit'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'pricing' | 'cards' | 'payments' | 'integrations' | 'auth-providers' | 'settings' | 'audit'>('users');
   const currentAdminRole = 'Admin' as const;
 
   const adminItems = [
@@ -19,6 +21,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true },
     { id: 'cards', label: 'Card Templates', icon: Image, active: true },
     { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
+    { id: 'integrations', label: 'Integrations', icon: LayoutGrid, active: true },
+    { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
   ];
@@ -96,6 +100,8 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'pricing' && <PricingManagement />}
             {activeTab === 'cards' && <AdminCardsManagement />}
             {activeTab === 'payments' && <PaymentManagement />}
+            {activeTab === 'integrations' && <AdminIntegrationsManagement />}
+            {activeTab === 'auth-providers' && <AdminAuthProviders />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>

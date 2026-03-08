@@ -384,6 +384,8 @@ const Integrations = () => {
   // OAuth state: map of platformId → { configured: bool, connected: bool, handle: string, loading: bool }
   const [oauthStatus, setOauthStatus] = useState<Record<string, { configured: boolean; connected: boolean; handle?: string; loading: boolean }>>({});
   const [oauthConnecting, setOauthConnecting] = useState<string | null>(null);
+  // Admin-enabled integration IDs — null means not yet loaded, undefined means loading failed (show all)
+  const [enabledIds, setEnabledIds] = useState<Set<string> | null>(null);
   const isAdmin = isAdminUser();
 
   // ── Load backend admin configs ─────────────────────────────────────────────
@@ -449,10 +451,28 @@ const Integrations = () => {
     setOauthStatus(results);
   }, []);
 
+  // ── Load admin-enabled integration list ────────────────────────────────────
+  const loadEnabledIds = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/integrations/enabled`, { headers: authHeaders() });
+      if (!res.ok) { setEnabledIds(null); return; }
+      const data = await res.json() as { success: boolean; enabled: string[] };
+      if (data.success) {
+        setEnabledIds(new Set(data.enabled));
+      } else {
+        setEnabledIds(null);
+      }
+    } catch {
+      // If endpoint unreachable, show all integrations (graceful degradation)
+      setEnabledIds(null);
+    }
+  }, []);
+
   useEffect(() => {
     void loadBackendConfigs();
     void loadOAuthStatus();
-  }, [loadBackendConfigs, loadOAuthStatus]);
+    void loadEnabledIds();
+  }, [loadBackendConfigs, loadOAuthStatus, loadEnabledIds]);
 
   // ── Handle OAuth callback result ───────────────────────────────────────────
   useEffect(() => {
@@ -479,11 +499,14 @@ const Integrations = () => {
   const filteredIntegrations = useMemo(() => {
     const q = query.trim().toLowerCase();
     return INTEGRATIONS.filter((i) => {
+      // Non-admin users only see integrations admin has enabled.
+      // If enabledIds is null (still loading or endpoint failed), admins see all; users see all as fallback.
+      if (!isAdmin && enabledIds !== null && !enabledIds.has(i.id)) return false;
       const matchesCategory = activeCategory === 'All integrations' || i.category === activeCategory;
       const matchesQuery = !q || `${i.name} ${i.description} ${i.category}`.toLowerCase().includes(q);
       return matchesCategory && matchesQuery;
     });
-  }, [activeCategory, query]);
+  }, [activeCategory, query, isAdmin, enabledIds]);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -633,6 +656,15 @@ const Integrations = () => {
             </button>
           ))}
         </div>
+
+        {/* Empty state for non-admin when no integrations enabled */}
+        {!isAdmin && enabledIds !== null && filteredIntegrations.length === 0 && (
+          <div className="mt-6 flex flex-col items-center justify-center rounded-[24px] border border-dashed border-slate-300 py-16 text-center">
+            <SlidersHorizontal size={32} className="text-slate-300" />
+            <p className="mt-4 font-semibold text-slate-500">No integrations available</p>
+            <p className="mt-1 text-sm text-slate-400">Your admin hasn't enabled any integrations yet.</p>
+          </div>
+        )}
 
         <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {filteredIntegrations.map((integration) => {
