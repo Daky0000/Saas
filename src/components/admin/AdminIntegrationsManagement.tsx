@@ -95,6 +95,10 @@ interface IntegrationField {
   placeholder: string;
   type: 'text' | 'password' | 'url' | 'textarea';
   helpText: string;
+  /** Linked documentation URL rendered inside the help text */
+  docUrl?: string;
+  /** Visible anchor text for the doc link */
+  docLabel?: string;
 }
 
 interface IntegrationDef {
@@ -123,9 +127,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Developer tools',
     accentClass: 'bg-[#1d2327] text-white',
     fields: [
-      { id: 'siteUrl', label: 'Site URL', placeholder: 'https://your-site.com', type: 'url', helpText: 'Full URL of the WordPress installation.' },
+      { id: 'siteUrl', label: 'Site URL', placeholder: 'https://your-site.com', type: 'url', helpText: 'Full URL of the WordPress installation.', docUrl: 'https://developer.wordpress.org/rest-api/', docLabel: 'WordPress REST API docs' },
       { id: 'username', label: 'Username', placeholder: 'Admin username', type: 'text', helpText: 'A WordPress user with permission to publish.' },
-      { id: 'applicationPassword', label: 'Application password', placeholder: 'xxxx xxxx xxxx xxxx xxxx xxxx', type: 'password', helpText: 'Generate under Users → Profile → Application Passwords.' },
+      { id: 'applicationPassword', label: 'Application password', placeholder: 'xxxx xxxx xxxx xxxx xxxx xxxx', type: 'password', helpText: 'Generate under Users → Profile → Application Passwords.', docUrl: 'https://wordpress.org/support/article/application-passwords/', docLabel: 'How to generate' },
     ],
   },
   {
@@ -136,9 +140,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     accentClass: 'bg-gradient-to-br from-pink-500 via-fuchsia-500 to-orange-400 text-white',
     isOAuth: true,
     fields: [
-      { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'Meta app identifier from developers.facebook.com.' },
-      { id: 'appSecret', label: 'App secret', placeholder: 'Meta app secret', type: 'password', helpText: 'Keep secure — use the production secret when live.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/instagram/callback', type: 'url', helpText: 'Must match the callback URL in your Meta app settings.' },
+      { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'App identifier from the Meta developer console.', docUrl: 'https://developers.facebook.com/apps/', docLabel: 'Meta developers' },
+      { id: 'appSecret', label: 'App secret', placeholder: 'Meta app secret', type: 'password', helpText: 'Keep secure — use the production secret when live.', docUrl: 'https://developers.facebook.com/docs/instagram-api/', docLabel: 'Instagram API docs' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/instagram/callback', type: 'url', helpText: 'Must match the callback URL in your Meta app settings.', docUrl: 'https://developers.facebook.com/docs/instagram-api/getting-started', docLabel: 'Getting started guide' },
     ],
   },
   {
@@ -149,9 +153,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     accentClass: 'bg-[#1877f2] text-white',
     isOAuth: true,
     fields: [
-      { id: 'appId', label: 'App ID', placeholder: 'Facebook App ID', type: 'text', helpText: 'Meta app ID tied to your Facebook page product.' },
-      { id: 'appSecret', label: 'App secret', placeholder: 'Facebook app secret', type: 'password', helpText: 'Required to exchange authorization codes securely.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/facebook/callback', type: 'url', helpText: 'Must match the redirect URI registered in your Facebook app.' },
+      { id: 'appId', label: 'App ID', placeholder: 'Facebook App ID', type: 'text', helpText: 'Create an app and copy the App ID from the Meta developer console.', docUrl: 'https://developers.facebook.com/apps/', docLabel: 'Meta developers' },
+      { id: 'appSecret', label: 'App secret', placeholder: 'Facebook app secret', type: 'password', helpText: 'Required to exchange authorization codes securely.', docUrl: 'https://developers.facebook.com/docs/graph-api/overview/', docLabel: 'Graph API docs' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/facebook/callback', type: 'url', helpText: 'Register this URI under Facebook Login → Valid OAuth Redirect URIs.', docUrl: 'https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow/', docLabel: 'OAuth flow guide' },
     ],
   },
   {
@@ -162,9 +166,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     accentClass: 'bg-[#0a66c2] text-white',
     isOAuth: true,
     fields: [
-      { id: 'clientId', label: 'Client ID', placeholder: 'LinkedIn Client ID', type: 'text', helpText: 'Client ID from your LinkedIn developer app.' },
-      { id: 'clientSecret', label: 'Client secret', placeholder: 'LinkedIn client secret', type: 'password', helpText: 'Used to exchange the OAuth authorization code.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/linkedin/callback', type: 'url', helpText: 'Same callback URI configured inside LinkedIn.' },
+      { id: 'clientId', label: 'Client ID', placeholder: 'LinkedIn Client ID', type: 'text', helpText: 'Client ID shown on your LinkedIn app overview page.', docUrl: 'https://www.linkedin.com/developers/apps', docLabel: 'LinkedIn developer apps' },
+      { id: 'clientSecret', label: 'Client secret', placeholder: 'LinkedIn client secret', type: 'password', helpText: 'Used to exchange the OAuth authorization code.', docUrl: 'https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow', docLabel: 'Authorization code flow' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/linkedin/callback', type: 'url', helpText: 'Add this URI under Auth → Authorized Redirect URLs for your app.', docUrl: 'https://www.linkedin.com/developers/apps', docLabel: 'LinkedIn developer apps' },
     ],
   },
   {
@@ -175,9 +179,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     accentClass: 'bg-[#111111] text-white',
     isOAuth: true,
     fields: [
-      { id: 'clientKey', label: 'Client key', placeholder: 'TikTok client key', type: 'text', helpText: 'Client key issued by TikTok developers.' },
-      { id: 'clientSecret', label: 'Client secret', placeholder: 'TikTok client secret', type: 'password', helpText: 'Required for exchanging codes and refreshing tokens.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/tiktok/callback', type: 'url', helpText: 'Must match the URI registered in TikTok developer settings.' },
+      { id: 'clientKey', label: 'Client key', placeholder: 'TikTok client key', type: 'text', helpText: 'Client key issued by the TikTok developer portal.', docUrl: 'https://developers.tiktok.com/', docLabel: 'TikTok developers' },
+      { id: 'clientSecret', label: 'Client secret', placeholder: 'TikTok client secret', type: 'password', helpText: 'Required for exchanging codes and refreshing tokens.', docUrl: 'https://developers.tiktok.com/doc/login-kit-web/', docLabel: 'Login Kit docs' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/tiktok/callback', type: 'url', helpText: 'Register this URI under your TikTok app → Manage app.', docUrl: 'https://developers.tiktok.com/doc/login-kit-web/', docLabel: 'TikTok OAuth setup' },
     ],
   },
   {
@@ -188,9 +192,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     accentClass: 'bg-black text-white',
     isOAuth: true,
     fields: [
-      { id: 'clientId', label: 'Client ID', placeholder: 'X OAuth 2 client ID', type: 'text', helpText: 'OAuth 2 client ID from your X developer app.' },
-      { id: 'clientSecret', label: 'Client secret', placeholder: 'X client secret', type: 'password', helpText: 'Required for secure authorization code exchange.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/twitter/callback', type: 'url', helpText: 'This redirect URI must match your X developer setup.' },
+      { id: 'clientId', label: 'Client ID', placeholder: 'X OAuth 2 client ID', type: 'text', helpText: 'OAuth 2.0 Client ID from your X developer app settings.', docUrl: 'https://developer.x.com/en/portal/dashboard', docLabel: 'X developer portal' },
+      { id: 'clientSecret', label: 'Client secret', placeholder: 'X client secret', type: 'password', helpText: 'Required for secure authorization code exchange.', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'OAuth 2.0 guide' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/twitter/callback', type: 'url', helpText: 'Add this under App Settings → User authentication settings.', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'X OAuth setup' },
     ],
   },
   {
@@ -201,9 +205,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     accentClass: 'bg-black text-white',
     isOAuth: true,
     fields: [
-      { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'Same Meta app that handles Instagram — enable Threads API in the app.' },
-      { id: 'appSecret', label: 'App secret', placeholder: 'Meta app secret', type: 'password', helpText: 'Same Meta app secret used for Instagram.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/threads/callback', type: 'url', helpText: 'Register this URI in your Meta app Threads product settings.' },
+      { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'Same Meta app as Instagram — enable the Threads API product inside it.', docUrl: 'https://developers.facebook.com/docs/threads/', docLabel: 'Threads API docs' },
+      { id: 'appSecret', label: 'App secret', placeholder: 'Meta app secret', type: 'password', helpText: 'Same Meta app secret used for Instagram.', docUrl: 'https://developers.facebook.com/docs/threads/get-started/', docLabel: 'Getting started guide' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://yourdomain.com/auth/threads/callback', type: 'url', helpText: 'Register this URI in your Meta app under the Threads API product.', docUrl: 'https://developers.facebook.com/docs/threads/get-started/', docLabel: 'Threads OAuth setup' },
     ],
   },
   {
@@ -213,9 +217,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Communication',
     accentClass: 'bg-[#f5df4d] text-[#1f1f1f]',
     fields: [
-      { id: 'apiKey', label: 'API key', placeholder: 'Mailchimp API key', type: 'password', helpText: 'Found under Account → Extras → API keys.' },
-      { id: 'serverPrefix', label: 'Server prefix', placeholder: 'us21', type: 'text', helpText: 'Data center prefix from your Mailchimp account (e.g. us21).' },
-      { id: 'audienceId', label: 'Audience ID', placeholder: 'Primary audience ID', type: 'text', helpText: 'The audience new leads should sync into.' },
+      { id: 'apiKey', label: 'API key', placeholder: 'Mailchimp API key', type: 'password', helpText: 'Found under Account → Extras → API keys.', docUrl: 'https://mailchimp.com/help/about-api-keys/', docLabel: 'Mailchimp API key guide' },
+      { id: 'serverPrefix', label: 'Server prefix', placeholder: 'us21', type: 'text', helpText: 'Data center prefix from your Mailchimp account (e.g. us21).', docUrl: 'https://mailchimp.com/developer/marketing/docs/fundamentals/', docLabel: 'Mailchimp API fundamentals' },
+      { id: 'audienceId', label: 'Audience ID', placeholder: 'Primary audience ID', type: 'text', helpText: 'Found under Audience → Manage Audience → Settings → Audience name and defaults.', docUrl: 'https://mailchimp.com/help/find-audience-id/', docLabel: 'How to find Audience ID' },
     ],
   },
   {
@@ -225,9 +229,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Productivity',
     accentClass: 'bg-black text-white',
     fields: [
-      { id: 'applicationId', label: 'Application ID', placeholder: 'Square application ID', type: 'text', helpText: 'Application identifier from your Square developer dashboard.' },
-      { id: 'accessToken', label: 'Access token', placeholder: 'Production access token', type: 'password', helpText: 'Use a production token for live charges.' },
-      { id: 'locationId', label: 'Location ID', placeholder: 'Main Square location ID', type: 'text', helpText: 'Which Square business location to use.' },
+      { id: 'applicationId', label: 'Application ID', placeholder: 'Square application ID', type: 'text', helpText: 'Application ID from your Square developer dashboard.', docUrl: 'https://developer.squareup.com/apps', docLabel: 'Square developer apps' },
+      { id: 'accessToken', label: 'Access token', placeholder: 'Production access token', type: 'password', helpText: 'Use a production token for live charges.', docUrl: 'https://developer.squareup.com/docs/build-basics/access-tokens', docLabel: 'Access token guide' },
+      { id: 'locationId', label: 'Location ID', placeholder: 'Main Square location ID', type: 'text', helpText: 'Which Square business location to process payments for.', docUrl: 'https://developer.squareup.com/docs/locations-api', docLabel: 'Locations API docs' },
     ],
   },
   {
@@ -237,9 +241,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Productivity',
     accentClass: 'bg-[#ff6a2a] text-white',
     fields: [
-      { id: 'webhookUrl', label: 'Webhook URL', placeholder: 'https://hooks.zapier.com/hooks/catch/...', type: 'url', helpText: 'Paste the Zapier webhook that should receive events.' },
+      { id: 'webhookUrl', label: 'Webhook URL', placeholder: 'https://hooks.zapier.com/hooks/catch/...', type: 'url', helpText: 'Paste the Zapier catch-hook URL that should receive events.', docUrl: 'https://zapier.com/help/create/code-webhooks/trigger-zaps-from-webhooks', docLabel: 'Zapier webhook guide' },
       { id: 'zapName', label: 'Zap name', placeholder: 'New lead sync', type: 'text', helpText: 'Descriptive name so teammates know which automation is connected.' },
-      { id: 'secretKey', label: 'Secret key', placeholder: 'Optional verification secret', type: 'password', helpText: 'Add this if your Zap validates inbound requests.' },
+      { id: 'secretKey', label: 'Secret key', placeholder: 'Optional verification secret', type: 'password', helpText: 'Add this if your Zap validates inbound request signatures.' },
     ],
   },
   {
@@ -249,8 +253,8 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Developer tools',
     accentClass: 'bg-[#4050b5] text-white',
     fields: [
-      { id: 'apiKey', label: 'API key', placeholder: 'lin_api_...', type: 'password', helpText: 'Generate in Linear Settings → API.' },
-      { id: 'teamKey', label: 'Team key', placeholder: 'ENG', type: 'text', helpText: 'Linear team key where issues should be created.' },
+      { id: 'apiKey', label: 'API key', placeholder: 'lin_api_...', type: 'password', helpText: 'Generate a personal API key in Linear Settings → API.', docUrl: 'https://linear.app/settings/api', docLabel: 'Linear API settings' },
+      { id: 'teamKey', label: 'Team key', placeholder: 'ENG', type: 'text', helpText: 'Abbreviation of the Linear team where issues will be created.', docUrl: 'https://developers.linear.app/docs/graphql/working-with-the-graphql-api', docLabel: 'Linear API docs' },
       { id: 'projectId', label: 'Project or label', placeholder: 'Launch operations', type: 'text', helpText: 'Optional default project or label for new tickets.' },
     ],
   },
@@ -261,9 +265,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Developer tools',
     accentClass: 'bg-black text-white',
     fields: [
-      { id: 'siteId', label: 'Site ID', placeholder: 'Framer site ID', type: 'text', helpText: 'Site or workspace identifier from Framer.' },
-      { id: 'publishToken', label: 'Publishing token', placeholder: 'Framer API token', type: 'password', helpText: 'Allows content pushes into Framer.' },
-      { id: 'collection', label: 'Target collection', placeholder: 'Blog posts', type: 'text', helpText: 'CMS collection that should receive updates.' },
+      { id: 'siteId', label: 'Site ID', placeholder: 'Framer site ID', type: 'text', helpText: 'Site or workspace identifier found in Framer project settings.', docUrl: 'https://www.framer.com/developers/', docLabel: 'Framer developers' },
+      { id: 'publishToken', label: 'Publishing token', placeholder: 'Framer API token', type: 'password', helpText: 'Allows content pushes into Framer CMS.', docUrl: 'https://www.framer.com/developers/', docLabel: 'Framer API docs' },
+      { id: 'collection', label: 'Target collection', placeholder: 'Blog posts', type: 'text', helpText: 'CMS collection that should receive new content.' },
     ],
   },
   {
@@ -273,9 +277,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Productivity',
     accentClass: 'bg-black text-white',
     fields: [
-      { id: 'apiKey', label: 'API key', placeholder: 'sk-...', type: 'password', helpText: 'API key from platform.openai.com.' },
-      { id: 'model', label: 'Model', placeholder: 'gpt-4o-mini', type: 'text', helpText: 'Model used for your workflow (e.g. gpt-4o, gpt-4o-mini).' },
-      { id: 'systemPrompt', label: 'System prompt', placeholder: 'You are a brand voice assistant...', type: 'textarea', helpText: 'Optional base prompt for every generated request.' },
+      { id: 'apiKey', label: 'API key', placeholder: 'sk-...', type: 'password', helpText: 'Generate an API key in the OpenAI developer platform.', docUrl: 'https://platform.openai.com/api-keys', docLabel: 'OpenAI API keys' },
+      { id: 'model', label: 'Model', placeholder: 'gpt-4o-mini', type: 'text', helpText: 'Model used for your workflow (e.g. gpt-4o, gpt-4o-mini).', docUrl: 'https://platform.openai.com/docs/models', docLabel: 'Available models' },
+      { id: 'systemPrompt', label: 'System prompt', placeholder: 'You are a brand voice assistant...', type: 'textarea', helpText: 'Optional base prompt used for every generated request.' },
     ],
   },
   {
@@ -285,9 +289,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Developer tools',
     accentClass: 'bg-[#4f67ff] text-white',
     fields: [
-      { id: 'apiToken', label: 'API token', placeholder: 'Webflow API token', type: 'password', helpText: 'Generate in Webflow Workspace Settings → Integrations → API.' },
-      { id: 'siteId', label: 'Site ID', placeholder: 'Primary Webflow site ID', type: 'text', helpText: 'Site where content should be published.' },
-      { id: 'collectionId', label: 'Collection ID', placeholder: 'Blog collection ID', type: 'text', helpText: 'CMS collection used for new content.' },
+      { id: 'apiToken', label: 'API token', placeholder: 'Webflow API token', type: 'password', helpText: 'Generate under Workspace Settings → Integrations → API access.', docUrl: 'https://developers.webflow.com/', docLabel: 'Webflow developer docs' },
+      { id: 'siteId', label: 'Site ID', placeholder: 'Primary Webflow site ID', type: 'text', helpText: 'Site where content should be published.', docUrl: 'https://developers.webflow.com/reference/list-sites', docLabel: 'List sites reference' },
+      { id: 'collectionId', label: 'Collection ID', placeholder: 'Blog collection ID', type: 'text', helpText: 'CMS collection that will receive new content.', docUrl: 'https://developers.webflow.com/reference/list-collections', docLabel: 'List collections reference' },
     ],
   },
   {
@@ -297,9 +301,9 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     category: 'Productivity',
     accentClass: 'bg-[#6658ff] text-white',
     fields: [
-      { id: 'publishableKey', label: 'Publishable key', placeholder: 'pk_live_...', type: 'text', helpText: 'Use your live key for production payments.' },
-      { id: 'secretKey', label: 'Secret key', placeholder: 'sk_live_...', type: 'password', helpText: 'Used server-side. Never expose this key to the browser.' },
-      { id: 'signingSecret', label: 'Webhook secret', placeholder: 'whsec_...', type: 'password', helpText: 'Needed if Stripe events post back into your backend.' },
+      { id: 'publishableKey', label: 'Publishable key', placeholder: 'pk_live_...', type: 'text', helpText: 'Use your live key for production payments.', docUrl: 'https://dashboard.stripe.com/apikeys', docLabel: 'Stripe API keys' },
+      { id: 'secretKey', label: 'Secret key', placeholder: 'sk_live_...', type: 'password', helpText: 'Used server-side only — never expose this to the browser.', docUrl: 'https://stripe.com/docs/keys', docLabel: 'API key best practices' },
+      { id: 'signingSecret', label: 'Webhook secret', placeholder: 'whsec_...', type: 'password', helpText: 'Needed to verify Stripe events sent to your webhook endpoint.', docUrl: 'https://dashboard.stripe.com/webhooks', docLabel: 'Stripe webhooks' },
     ],
   },
 ];
@@ -629,7 +633,12 @@ const AdminIntegrationsManagement = () => {
                         className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none focus:border-slate-400"
                       />
                     )}
-                    <p className="text-xs text-slate-400">{field.helpText}</p>
+                    <p className="text-xs text-slate-400">
+                      {field.helpText}
+                      {field.docUrl && (
+                        <> — <a href={field.docUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-violet-600 underline-offset-2 hover:underline">{field.docLabel}</a></>
+                      )}
+                    </p>
                   </label>
                 ))}
               </div>
