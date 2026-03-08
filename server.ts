@@ -334,16 +334,16 @@ function seedInMemoryUsers() {
     id: 'admin-1',
     name: 'Dan Ayipah',
     username: 'daky',
-    email: 'officialdakyworld@gmail.com',
+    email: 'danayipah@gmail.com',
     password: 'DanAyipah#1',
     role: 'admin',
   });
   upsertInMemoryUser({
     id: 'platform-user-1',
-    name: 'Platform User',
+    name: 'User One',
     username: 'user',
-    email: 'user@dakyworldhub.com',
-    password: 'user',
+    email: 'dakyayipah@gmail.com',
+    password: 'User',
     role: 'user',
   });
 }
@@ -581,15 +581,15 @@ async function ensureSeedUsers() {
   await ensureSeedUser({
     name: 'Dan Ayipah',
     username: 'daky',
-    email: 'officialdakyworld@gmail.com',
+    email: 'danayipah@gmail.com',
     password: 'DanAyipah#1',
     role: 'admin',
   });
   await ensureSeedUser({
-    name: 'Platform User',
+    name: 'User One',
     username: 'user',
-    email: 'user@dakyworldhub.com',
-    password: 'user',
+    email: 'dakyayipah@gmail.com',
+    password: 'User',
     role: 'user',
   });
 }
