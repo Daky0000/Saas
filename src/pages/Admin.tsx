@@ -40,7 +40,7 @@ const Admin = ({ currentUser }: AdminProps) => {
   return (
     <div className="min-h-screen bg-[#f5f6fa]">
       <div className="flex min-h-screen">
-        <aside className="hidden w-[280px] shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
+        <aside className="hidden w-[280px] shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col h-screen sticky top-0">
           <div className="border-b border-slate-200 px-6 py-6">
             <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-slate-700">
               <Shield size={14} />
@@ -50,7 +50,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             <p className="mt-2 text-sm leading-6 text-slate-500">Platform controls, users, permissions, and account governance.</p>
           </div>
 
-          <nav className="flex-1 px-4 py-5 space-y-1 overflow-y-auto">
+          <nav className="flex-1 min-h-0 px-4 py-5 space-y-1 overflow-y-auto">
             {adminItems.map((item) => {
               const Icon = item.icon;
               return (
