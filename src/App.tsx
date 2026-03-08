@@ -213,7 +213,7 @@ function App() {
     }
 
     if (!loggedIn) {
-      const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing-public'];
+      const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing'];
       if (!publicPaths.includes(pathname)) {
         navigatePath('/login', true);
       }
@@ -247,7 +247,7 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing-public'];
+        const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing'];
         if (!publicPaths.includes(pathname)) {
           navigatePath('/login', true);
         }
@@ -294,7 +294,7 @@ function App() {
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
   if (currentPathname === '/tools') return <Tools onLoginClick={() => navigatePath('/login', true)} />;
-  if (currentPathname === '/pricing-public') return <PublicPricing onLoginClick={() => navigatePath('/login', true)} />;
+  if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={() => navigatePath('/login', true)} />;
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={() => navigatePath('/login', true)} />;
   }

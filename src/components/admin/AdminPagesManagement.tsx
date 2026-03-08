@@ -468,7 +468,7 @@ export default function AdminPagesManagement({ activePage }: Props) {
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center">
         <p className="text-slate-500 text-sm">
           <strong className="text-slate-800">Public Pricing Page</strong> is available at{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">/pricing-public</code>.
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">/pricing</code>.
         </p>
         <p className="text-slate-400 text-sm mt-3">
           Plans are managed under <strong className="text-slate-600">Pricing Plans</strong> in the sidebar — any active plans appear on the public pricing page automatically.

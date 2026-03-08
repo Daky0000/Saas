@@ -8,7 +8,7 @@ export default function PublicFooter() {
         <div className="flex items-center gap-6">
           <a href="/" className="hover:text-zinc-700 transition-colors">Home</a>
           <a href="/tools" className="hover:text-zinc-700 transition-colors">Tools</a>
-          <a href="/pricing-public" className="hover:text-zinc-700 transition-colors">Pricing</a>
+          <a href="/pricing" className="hover:text-zinc-700 transition-colors">Pricing</a>
           <a href="/privacy" className="hover:text-zinc-700 transition-colors">Privacy</a>
           <a href="/terms" className="hover:text-zinc-700 transition-colors">Terms</a>
         </div>
