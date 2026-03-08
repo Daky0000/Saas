@@ -133,6 +133,8 @@ async function ensureDatabase() {
       billing_period TEXT NOT NULL DEFAULT 'monthly',
       features TEXT[] DEFAULT '{}',
       is_active BOOLEAN DEFAULT TRUE,
+      discount_percentage DECIMAL(5,2) DEFAULT 0,
+      is_on_sale BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -187,6 +189,26 @@ async function ensureDatabase() {
     CREATE TABLE IF NOT EXISTS page_content (
       slug TEXT PRIMARY KEY,
       content JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  // Migrate: add discount columns to existing pricing_plans tables
+  await pool.query(`
+    ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS discount_percentage DECIMAL(5,2) DEFAULT 0;
+    ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS is_on_sale BOOLEAN DEFAULT FALSE;
+  `).catch(() => { /* ignore if columns already exist or table doesn't exist yet */ });
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_designs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT 'Untitled Design',
+      canvas_width INTEGER NOT NULL DEFAULT 1080,
+      canvas_height INTEGER NOT NULL DEFAULT 1080,
+      canvas_data JSONB NOT NULL DEFAULT '{}',
+      thumbnail_url TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
@@ -254,6 +276,8 @@ type DbPricingPlan = {
   billing_period: 'monthly' | 'yearly';
   features: string[];
   is_active: boolean;
+  discount_percentage: number;
+  is_on_sale: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -2088,7 +2112,7 @@ app.get('/api/pricing/plans', async (req: Request, res: Response) => {
       console.log(`GET /api/pricing/plans - Returning ${plans.length} in-memory plans`);
     } else {
       const result = await dbQuery<DbPricingPlan>(
-        'SELECT id, name, description, price, billing_period, features, is_active, created_at, updated_at FROM pricing_plans ORDER BY created_at DESC'
+        'SELECT id, name, description, price, billing_period, features, is_active, discount_percentage, is_on_sale, created_at, updated_at FROM pricing_plans ORDER BY created_at DESC'
       );
       plans = result.rows;
       console.log(`GET /api/pricing/plans - Returning ${plans.length} database plans`);
@@ -2106,6 +2130,8 @@ app.get('/api/pricing/plans', async (req: Request, res: Response) => {
         billingPeriod: p.billing_period,
         features: Array.isArray(p.features) ? p.features : [],
         isActive: p.is_active,
+        discountPercentage: parseFloat(String(p.discount_percentage ?? 0)),
+        isOnSale: p.is_on_sale ?? false,
         createdAt: p.created_at,
         updatedAt: p.updated_at,
       })),
@@ -2121,7 +2147,7 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
 
-    const { name, description, price, billingPeriod, features } = req.body;
+    const { name, description, price, billingPeriod, features, discountPercentage, isOnSale } = req.body;
     if (!name || !description || price === undefined) {
       return res
         .status(400)
@@ -2130,6 +2156,8 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
 
     const id = randomUUID();
     const now = new Date().toISOString();
+    const discPct = Number(discountPercentage ?? 0);
+    const onSale = Boolean(isOnSale ?? false);
 
     if (!hasDatabase()) {
       const plan: DbPricingPlan = {
@@ -2140,6 +2168,8 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
         billing_period: (billingPeriod || 'monthly') as 'monthly' | 'yearly',
         features: Array.isArray(features) ? features : [],
         is_active: true,
+        discount_percentage: discPct,
+        is_on_sale: onSale,
         created_at: now,
         updated_at: now,
       };
@@ -2155,13 +2185,15 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
           billingPeriod: plan.billing_period,
           features: plan.features,
           isActive: plan.is_active,
+          discountPercentage: plan.discount_percentage,
+          isOnSale: plan.is_on_sale,
           createdAt: plan.created_at,
           updatedAt: plan.updated_at,
         },
       });
     } else {
       const result = await dbQuery<DbPricingPlan>(
-        'INSERT INTO pricing_plans (id, name, description, price, billing_period, features, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+        'INSERT INTO pricing_plans (id, name, description, price, billing_period, features, is_active, discount_percentage, is_on_sale, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING *',
         [
           id,
           name,
@@ -2170,7 +2202,8 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
           billingPeriod || 'monthly',
           features || [],
           true,
-          now,
+          discPct,
+          onSale,
           now,
         ]
       );
@@ -2186,6 +2219,8 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
           billingPeriod: plan.billing_period,
           features: Array.isArray(plan.features) ? plan.features : [],
           isActive: plan.is_active,
+          discountPercentage: parseFloat(String(plan.discount_percentage ?? 0)),
+          isOnSale: plan.is_on_sale ?? false,
           createdAt: plan.created_at,
           updatedAt: plan.updated_at,
         },
@@ -2203,7 +2238,7 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
     if (!admin) return;
 
     const { id } = req.params;
-    const { name, description, price, billingPeriod, features, isActive } = req.body;
+    const { name, description, price, billingPeriod, features, isActive, discountPercentage, isOnSale } = req.body;
 
     if (!name || !description || price === undefined) {
       return res
@@ -2212,6 +2247,8 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
     }
 
     const now = new Date().toISOString();
+    const discPct = Number(discountPercentage ?? 0);
+    const onSale = Boolean(isOnSale ?? false);
 
     if (!hasDatabase()) {
       const existing = inMemoryPricingPlansById.get(id);
@@ -2227,6 +2264,8 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
         billing_period: (billingPeriod || 'monthly') as 'monthly' | 'yearly',
         features: Array.isArray(features) ? features : [],
         is_active: isActive !== undefined ? isActive : existing.is_active,
+        discount_percentage: discPct,
+        is_on_sale: onSale,
         updated_at: now,
       };
       inMemoryPricingPlansById.set(id, updated);
@@ -2241,13 +2280,15 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
           billingPeriod: updated.billing_period,
           features: updated.features,
           isActive: updated.is_active,
+          discountPercentage: updated.discount_percentage,
+          isOnSale: updated.is_on_sale,
           createdAt: updated.created_at,
           updatedAt: updated.updated_at,
         },
       });
     } else {
       const result = await dbQuery<DbPricingPlan>(
-        'UPDATE pricing_plans SET name = $1, description = $2, price = $3, billing_period = $4, features = $5, is_active = $6, updated_at = $7 WHERE id = $8 RETURNING *',
+        'UPDATE pricing_plans SET name = $1, description = $2, price = $3, billing_period = $4, features = $5, is_active = $6, discount_percentage = $7, is_on_sale = $8, updated_at = $9 WHERE id = $10 RETURNING *',
         [
           name,
           description,
@@ -2255,6 +2296,8 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
           billingPeriod || 'monthly',
           features || [],
           isActive !== undefined ? isActive : true,
+          discPct,
+          onSale,
           now,
           id,
         ]
@@ -2275,6 +2318,8 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
           billingPeriod: plan.billing_period,
           features: Array.isArray(plan.features) ? plan.features : [],
           isActive: plan.is_active,
+          discountPercentage: parseFloat(String(plan.discount_percentage ?? 0)),
+          isOnSale: plan.is_on_sale ?? false,
           createdAt: plan.created_at,
           updatedAt: plan.updated_at,
         },
@@ -2680,6 +2725,178 @@ app.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Delete card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete card template' });
+  }
+});
+
+// ─── User Designs Routes ──────────────────────────────────────────────────────
+
+interface DbDesign {
+  id: string;
+  user_id: string;
+  name: string;
+  canvas_width: number;
+  canvas_height: number;
+  canvas_data: object;
+  thumbnail_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const inMemoryDesigns = new Map<string, DbDesign>();
+
+// GET /api/designs — list current user's designs
+app.get('/api/designs', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    if (hasDatabase()) {
+      const result = await dbQuery(
+        'SELECT * FROM user_designs WHERE user_id = $1 ORDER BY updated_at DESC',
+        [auth.userId],
+      );
+      return res.json({ success: true, designs: result.rows });
+    } else {
+      const designs = Array.from(inMemoryDesigns.values())
+        .filter((d) => d.user_id === auth.userId)
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+      return res.json({ success: true, designs });
+    }
+  } catch (error) {
+    console.error('Get designs error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch designs' });
+  }
+});
+
+// GET /api/designs/:id — get a single design
+app.get('/api/designs/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { id } = req.params;
+
+    if (hasDatabase()) {
+      const result = await dbQuery(
+        'SELECT * FROM user_designs WHERE id = $1 AND user_id = $2',
+        [id, auth.userId],
+      );
+      if (result.rows.length === 0)
+        return res.status(404).json({ success: false, error: 'Design not found' });
+      return res.json({ success: true, design: result.rows[0] });
+    } else {
+      const design = inMemoryDesigns.get(id);
+      if (!design || design.user_id !== auth.userId)
+        return res.status(404).json({ success: false, error: 'Design not found' });
+      return res.json({ success: true, design });
+    }
+  } catch (error) {
+    console.error('Get design error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch design' });
+  }
+});
+
+// POST /api/designs — create a new design
+app.post('/api/designs', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, canvas_width, canvas_height, canvas_data, thumbnail_url } = req.body;
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    const design: DbDesign = {
+      id,
+      user_id: auth.userId,
+      name: name || 'Untitled Design',
+      canvas_width: canvas_width || 1080,
+      canvas_height: canvas_height || 1080,
+      canvas_data: canvas_data || {},
+      thumbnail_url: thumbnail_url || null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    if (hasDatabase()) {
+      await dbQuery(
+        `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+        [id, auth.userId, design.name, design.canvas_width, design.canvas_height, JSON.stringify(design.canvas_data), design.thumbnail_url, now],
+      );
+    } else {
+      inMemoryDesigns.set(id, design);
+    }
+
+    return res.status(201).json({ success: true, design });
+  } catch (error) {
+    console.error('Create design error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to create design' });
+  }
+});
+
+// PUT /api/designs/:id — update a design
+app.put('/api/designs/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { id } = req.params;
+    const { name, canvas_width, canvas_height, canvas_data, thumbnail_url } = req.body;
+    const now = new Date().toISOString();
+
+    if (hasDatabase()) {
+      const result = await dbQuery(
+        `UPDATE user_designs
+         SET name = COALESCE($1, name),
+             canvas_width = COALESCE($2, canvas_width),
+             canvas_height = COALESCE($3, canvas_height),
+             canvas_data = COALESCE($4, canvas_data),
+             thumbnail_url = COALESCE($5, thumbnail_url),
+             updated_at = $6
+         WHERE id = $7 AND user_id = $8
+         RETURNING *`,
+        [name, canvas_width, canvas_height, canvas_data ? JSON.stringify(canvas_data) : null, thumbnail_url, now, id, auth.userId],
+      );
+      if (result.rows.length === 0)
+        return res.status(404).json({ success: false, error: 'Design not found' });
+      return res.json({ success: true, design: result.rows[0] });
+    } else {
+      const design = inMemoryDesigns.get(id);
+      if (!design || design.user_id !== auth.userId)
+        return res.status(404).json({ success: false, error: 'Design not found' });
+      const updated: DbDesign = {
+        ...design,
+        ...(name !== undefined && { name }),
+        ...(canvas_width !== undefined && { canvas_width }),
+        ...(canvas_height !== undefined && { canvas_height }),
+        ...(canvas_data !== undefined && { canvas_data }),
+        ...(thumbnail_url !== undefined && { thumbnail_url }),
+        updated_at: now,
+      };
+      inMemoryDesigns.set(id, updated);
+      return res.json({ success: true, design: updated });
+    }
+  } catch (error) {
+    console.error('Update design error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update design' });
+  }
+});
+
+// DELETE /api/designs/:id — delete a design
+app.delete('/api/designs/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { id } = req.params;
+
+    if (hasDatabase()) {
+      await dbQuery('DELETE FROM user_designs WHERE id = $1 AND user_id = $2', [id, auth.userId]);
+    } else {
+      const design = inMemoryDesigns.get(id);
+      if (design && design.user_id === auth.userId) inMemoryDesigns.delete(id);
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Delete design error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to delete design' });
   }
 });
 

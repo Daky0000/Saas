@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Check } from 'lucide-react';
+import { ArrowRight, Check, Tag } from 'lucide-react';
 import { pricingService } from '../services/pricingService';
 import { PricingPlan } from '../types/pricing';
 import PublicNav from '../components/landing/PublicNav';
@@ -12,6 +12,10 @@ type BillingCycle = 'monthly' | 'yearly';
 function formatPrice(price: number) {
   if (price === 0) return 'Free';
   return `$${price.toFixed(0)}`;
+}
+
+function discountedPrice(price: number, pct: number) {
+  return price * (1 - pct / 100);
 }
 
 // ─── Plan card ────────────────────────────────────────────────────────────────
@@ -27,40 +31,77 @@ function PlanCard({
 }) {
   const isFree = plan.price === 0;
   const yearlyDiscount = cycle === 'yearly' && !isFree;
+  const hasDiscount = (plan.discountPercentage ?? 0) > 0;
+  const finalPrice = hasDiscount ? discountedPrice(plan.price, plan.discountPercentage) : plan.price;
+
+  const isFeatured = plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business');
 
   return (
     <div
       className={`relative flex flex-col rounded-3xl border p-8 transition-all duration-300 ${
-        plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')
+        isFeatured
           ? 'border-[#e6332a] bg-[#e6332a] text-white shadow-xl shadow-red-100'
           : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-md'
       }`}
     >
-      {(plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')) && (
+      {/* Sale badge (takes priority over "Most popular") */}
+      {plan.isOnSale ? (
+        <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+          <div className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-1 text-xs font-bold uppercase tracking-widest text-white whitespace-nowrap">
+            <Tag size={10} />
+            On Sale
+          </div>
+        </div>
+      ) : isFeatured ? (
         <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900 px-4 py-1 text-xs font-bold uppercase tracking-widest text-white whitespace-nowrap">
           Most popular
         </div>
-      )}
+      ) : null}
 
-      <div className="mb-6">
-        <h3 className={`text-lg font-black tracking-[-0.02em] mb-1 ${plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')) ? 'text-white' : 'text-zinc-900'}`}>
-          {plan.name}
-        </h3>
-        <p className={`text-sm leading-relaxed ${plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')) ? 'text-white/70' : 'text-zinc-500'}`}>
-          {plan.description}
-        </p>
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h3 className={`text-lg font-black tracking-[-0.02em] mb-1 ${isFeatured ? 'text-white' : 'text-zinc-900'}`}>
+            {plan.name}
+          </h3>
+          <p className={`text-sm leading-relaxed ${isFeatured ? 'text-white/70' : 'text-zinc-500'}`}>
+            {plan.description}
+          </p>
+        </div>
+        {hasDiscount && (
+          <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black ${isFeatured ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+            -{Math.round(plan.discountPercentage)}%
+          </span>
+        )}
       </div>
 
       <div className="mb-6">
-        <span className={`text-5xl font-black tracking-[-0.04em] ${plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')) ? 'text-white' : 'text-zinc-900'}`}>
-          {formatPrice(plan.price)}
-        </span>
-        {!isFree && (
-          <span className={`text-sm ml-1.5 ${plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')) ? 'text-white/60' : 'text-zinc-400'}`}>
-            / {cycle === 'monthly' ? 'mo' : 'yr'}
-          </span>
+        {hasDiscount ? (
+          <>
+            <div className={`text-sm line-through mb-0.5 ${isFeatured ? 'text-white/50' : 'text-zinc-400'}`}>
+              {formatPrice(plan.price)} / {cycle === 'monthly' ? 'mo' : 'yr'}
+            </div>
+            <div className="flex items-end gap-1.5">
+              <span className={`text-5xl font-black tracking-[-0.04em] ${isFeatured ? 'text-white' : 'text-zinc-900'}`}>
+                ${finalPrice.toFixed(0)}
+              </span>
+              <span className={`text-sm mb-1 ${isFeatured ? 'text-white/60' : 'text-zinc-400'}`}>
+                / {cycle === 'monthly' ? 'mo' : 'yr'}
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <span className={`text-5xl font-black tracking-[-0.04em] ${isFeatured ? 'text-white' : 'text-zinc-900'}`}>
+              {formatPrice(plan.price)}
+            </span>
+            {!isFree && (
+              <span className={`text-sm ml-1.5 ${isFeatured ? 'text-white/60' : 'text-zinc-400'}`}>
+                / {cycle === 'monthly' ? 'mo' : 'yr'}
+              </span>
+            )}
+          </>
         )}
-        {yearlyDiscount && (
+        {yearlyDiscount && !hasDiscount && (
           <div className="mt-1 text-xs font-semibold text-emerald-400">Save ~20% vs monthly</div>
         )}
       </div>
@@ -70,13 +111,9 @@ function PlanCard({
           <li key={i} className="flex items-start gap-2.5 text-sm">
             <Check
               size={16}
-              className={`mt-0.5 shrink-0 ${
-                plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business'))
-                  ? 'text-white'
-                  : 'text-[#e6332a]'
-              }`}
+              className={`mt-0.5 shrink-0 ${isFeatured ? 'text-white' : 'text-[#e6332a]'}`}
             />
-            <span className={plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business')) ? 'text-white/80' : 'text-zinc-600'}>
+            <span className={isFeatured ? 'text-white/80' : 'text-zinc-600'}>
               {f}
             </span>
           </li>
@@ -87,7 +124,7 @@ function PlanCard({
         type="button"
         onClick={onGetStarted}
         className={`group w-full flex items-center justify-center gap-2 font-bold py-3.5 rounded-2xl text-sm transition-colors ${
-          plan.price > 0 && (plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business'))
+          isFeatured
             ? 'bg-white text-[#e6332a] hover:bg-zinc-50'
             : 'bg-[#e6332a] text-white hover:bg-[#cc2921]'
         }`}
@@ -110,6 +147,8 @@ const FALLBACK_PLANS: PricingPlan[] = [
     billingPeriod: 'monthly',
     features: ['3 social accounts', '10 scheduled posts/month', 'Basic analytics', 'Card templates'],
     isActive: true,
+    discountPercentage: 0,
+    isOnSale: false,
     createdAt: '',
     updatedAt: '',
   },
@@ -127,6 +166,8 @@ const FALLBACK_PLANS: PricingPlan[] = [
       'Priority support',
     ],
     isActive: true,
+    discountPercentage: 0,
+    isOnSale: false,
     createdAt: '',
     updatedAt: '',
   },
@@ -145,6 +186,8 @@ const FALLBACK_PLANS: PricingPlan[] = [
       'Dedicated support',
     ],
     isActive: true,
+    discountPercentage: 0,
+    isOnSale: false,
     createdAt: '',
     updatedAt: '',
   },
@@ -233,24 +276,31 @@ export default function PublicPricing({ onLoginClick }: PublicPricingProps) {
         </p>
 
         {/* Billing toggle */}
-        <div className="relative flex items-center gap-1 rounded-2xl bg-zinc-100 p-1.5">
-          {(['monthly', 'yearly'] as BillingCycle[]).map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setCycle(c)}
-              className={`px-5 py-2 rounded-xl text-sm font-bold transition-all ${
-                cycle === c
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {c === 'monthly' ? 'Monthly' : 'Yearly'}
-              {c === 'yearly' && (
-                <span className="ml-1.5 text-[10px] font-bold text-[#e6332a]">−20%</span>
-              )}
-            </button>
-          ))}
+        <div className="relative flex flex-col items-center gap-2">
+          <div className="flex items-center gap-1 rounded-2xl border-2 border-zinc-200 bg-zinc-100 p-1.5 shadow-inner">
+            {(['monthly', 'yearly'] as BillingCycle[]).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCycle(c)}
+                className={`flex min-w-[120px] items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all duration-200 ${
+                  cycle === c
+                    ? 'bg-white text-zinc-900 shadow-md'
+                    : 'text-zinc-500 hover:text-zinc-700'
+                }`}
+              >
+                {c === 'monthly' ? 'Monthly' : 'Yearly'}
+                {c === 'yearly' && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${cycle === 'yearly' ? 'bg-emerald-500 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                    −20%
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-zinc-400">
+            {cycle === 'yearly' ? '✓ Annual billing — saving ~20%' : 'Switch to annual to save ~20%'}
+          </p>
         </div>
       </section>
 

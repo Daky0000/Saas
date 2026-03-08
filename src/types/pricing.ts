@@ -6,6 +6,8 @@ export interface PricingPlan {
   billingPeriod: 'monthly' | 'yearly';
   features: string[];
   isActive: boolean;
+  discountPercentage: number;
+  isOnSale: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -16,6 +18,8 @@ export interface CreatePricingPlanInput {
   price: number;
   billingPeriod: 'monthly' | 'yearly';
   features: string[];
+  discountPercentage?: number;
+  isOnSale?: boolean;
 }
 
 export interface UpdatePricingPlanInput {
@@ -25,6 +29,8 @@ export interface UpdatePricingPlanInput {
   billingPeriod: 'monthly' | 'yearly';
   features: string[];
   isActive: boolean;
+  discountPercentage?: number;
+  isOnSale?: boolean;
 }
 
 export interface PricingPlanResponse {

@@ -17,6 +17,8 @@ const PricingManagement = () => {
     price: 0,
     billingPeriod: 'monthly',
     features: [],
+    discountPercentage: 0,
+    isOnSale: false,
   });
 
   const [newFeature, setNewFeature] = useState('');
@@ -72,6 +74,8 @@ const PricingManagement = () => {
           billingPeriod: formData.billingPeriod,
           features: formData.features,
           isActive: formData.isActive ?? true,
+          discountPercentage: formData.discountPercentage ?? 0,
+          isOnSale: formData.isOnSale ?? false,
         });
         setSuccessMessage('Pricing plan updated successfully');
       } else {
@@ -80,7 +84,7 @@ const PricingManagement = () => {
       }
       setIsFormOpen(false);
       setEditingId(null);
-      setFormData({ name: '', description: '', price: 0, billingPeriod: 'monthly', features: [] });
+      setFormData({ name: '', description: '', price: 0, billingPeriod: 'monthly', features: [], discountPercentage: 0, isOnSale: false });
       await fetchPlans();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to save pricing plan');
@@ -97,6 +101,8 @@ const PricingManagement = () => {
       billingPeriod: plan.billingPeriod,
       features: [...plan.features],
       isActive: plan.isActive,
+      discountPercentage: plan.discountPercentage ?? 0,
+      isOnSale: plan.isOnSale ?? false,
     });
     setIsFormOpen(true);
   };
@@ -128,7 +134,7 @@ const PricingManagement = () => {
   const closeForm = () => {
     setIsFormOpen(false);
     setEditingId(null);
-    setFormData({ name: '', description: '', price: 0, billingPeriod: 'monthly', features: [] });
+    setFormData({ name: '', description: '', price: 0, billingPeriod: 'monthly', features: [], discountPercentage: 0, isOnSale: false });
   };
 
   return (
@@ -141,7 +147,7 @@ const PricingManagement = () => {
         <button
           onClick={() => {
             setEditingId(null);
-            setFormData({ name: '', description: '', price: 0, billingPeriod: 'monthly', features: [] });
+            setFormData({ name: '', description: '', price: 0, billingPeriod: 'monthly', features: [], discountPercentage: 0, isOnSale: false });
             setIsFormOpen(true);
           }}
           className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
@@ -223,6 +229,52 @@ const PricingManagement = () => {
                 rows={3}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
               />
+            </div>
+
+            {/* Discount / Sale */}
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="mb-3 text-sm font-bold text-amber-800">Discount / Sale</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Discount %
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={formData.discountPercentage ?? 0}
+                    onChange={(e) => setFormData({ ...formData, discountPercentage: Number(e.target.value) })}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {formData.discountPercentage ? `Original price shown as crossed-out, discounted price shown` : 'Enter % to show a crossed-out original price'}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Mark as "On Sale"
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={formData.isOnSale ?? false}
+                        onChange={(e) => setFormData({ ...formData, isOnSale: e.target.checked })}
+                      />
+                      <div className={`h-6 w-11 rounded-full transition-colors ${formData.isOnSale ? 'bg-amber-500' : 'bg-slate-300'}`} />
+                      <div className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${formData.isOnSale ? 'translate-x-5' : ''}`} />
+                    </div>
+                    <span className="text-sm font-medium text-slate-700">
+                      {formData.isOnSale ? 'On Sale badge shown' : 'No badge'}
+                    </span>
+                  </label>
+                  <p className="mt-1 text-xs text-slate-500">Shows a prominent "Sale" badge on the plan card</p>
+                </div>
+              </div>
             </div>
 
             <div>
