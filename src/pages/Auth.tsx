@@ -399,6 +399,12 @@ function Auth({ onLogin }: AuthProps) {
                   Sign up
                 </button>
               </p>
+
+              <p className="text-center text-xs text-gray-400 mt-6">
+                <a href="/privacy" className="hover:text-gray-600 hover:underline">Privacy Policy</a>
+                {' · '}
+                <a href="/terms" className="hover:text-gray-600 hover:underline">Terms of Service</a>
+              </p>
             </div>
           ) : (
             // SIGNUP FORM
@@ -536,6 +542,13 @@ function Auth({ onLogin }: AuthProps) {
                 >
                   Log in
                 </button>
+              </p>
+
+              <p className="text-center text-xs text-gray-400 mt-6">
+                By creating an account, you agree to our{' '}
+                <a href="/terms" className="hover:text-gray-600 hover:underline">Terms of Service</a>
+                {' and '}
+                <a href="/privacy" className="hover:text-gray-600 hover:underline">Privacy Policy</a>.
               </p>
             </div>
           )}
