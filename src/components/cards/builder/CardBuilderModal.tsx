@@ -7,6 +7,7 @@ import {
 import LayersPanel from './LayersPanel';
 import PropertiesPanel from './PropertiesPanel';
 import FloatingToolbar from './FloatingToolbar';
+import ImageUploadModal from './ImageUploadModal';
 import { CANVAS_PRESETS, CanvasPreset } from './canvasPresets';
 import { designService, UserDesign } from '../../../services/designService';
 
@@ -37,7 +38,6 @@ export default function CardBuilderModal({
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const bgImageInputRef = useRef<HTMLInputElement>(null);
 
   // ── Design metadata ─────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ export default function CardBuilderModal({
   const [zoomLevel, setZoomLevel] = useState(1);
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
+  const [showImageModal, setShowImageModal] = useState(false);
 
   // ── Snapshot / history helpers ──────────────────────────────────────────────
   const snapshot = useCallback(() => {
@@ -347,27 +348,20 @@ export default function CardBuilderModal({
     c.add(line); c.setActiveObject(line); c.requestRenderAll();
   }, [preset, canvasScale]);
 
-  const handleUploadImage = useCallback(() => { fileInputRef.current?.click(); }, []);
+  const handleUploadImage = useCallback(() => { setShowImageModal(true); }, []);
   const handleBgImageUpload = useCallback(() => { bgImageInputRef.current?.click(); }, []);
 
-  const onFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file || !fabricRef.current) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const url = ev.target?.result as string;
-        fabric.Image.fromURL(url, (img) => {
-          const c = fabricRef.current!;
-          const maxW = Math.min(preset.w * canvasScale * 0.5, 400);
-          if ((img.width ?? 1) > maxW) img.scale(maxW / (img.width ?? maxW));
-          const pos = canvasCenter(img.getScaledWidth(), img.getScaledHeight());
-          img.set(pos);
-          c.add(img); c.setActiveObject(img); c.requestRenderAll();
-        });
-      };
-      reader.readAsDataURL(file);
-      e.target.value = '';
+  const addImageFromUrl = useCallback(
+    (url: string) => {
+      const c = fabricRef.current;
+      if (!c) return;
+      fabric.Image.fromURL(url, (img) => {
+        const maxW = Math.min(preset.w * canvasScale * 0.5, 400);
+        if ((img.width ?? 1) > maxW) img.scale(maxW / (img.width ?? maxW));
+        const pos = canvasCenter(img.getScaledWidth(), img.getScaledHeight());
+        img.set(pos);
+        c.add(img); c.setActiveObject(img); c.requestRenderAll();
+      }, { crossOrigin: 'anonymous' });
     },
     [canvasCenter, preset, canvasScale],
   );
@@ -546,8 +540,7 @@ export default function CardBuilderModal({
       className="fixed inset-0 z-[9999] flex flex-col bg-zinc-100"
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
-      {/* Hidden file inputs */}
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
+      {/* Hidden file input for background image */}
       <input ref={bgImageInputRef} type="file" accept="image/*" className="hidden" onChange={onBgImageChange} />
 
       {/* ── Top Toolbar ──────────────────────────────────────────────────────── */}
@@ -720,10 +713,20 @@ export default function CardBuilderModal({
               onSetBgGradient={setBackgroundGradient}
               onSetBgImage={handleBgImageUpload}
               bgColor={bgColor}
+              artboardW={preset.w}
+              artboardH={preset.h}
             />
           </div>
         </aside>
       </div>
+
+      {/* ── Image Upload Modal ───────────────────────────────────────────────── */}
+      {showImageModal && (
+        <ImageUploadModal
+          onConfirm={(url) => { addImageFromUrl(url); setShowImageModal(false); }}
+          onClose={() => setShowImageModal(false)}
+        />
+      )}
 
       {/* ── Keyboard shortcut hint bar ───────────────────────────────────────── */}
       <div className="flex h-7 shrink-0 items-center gap-5 border-t border-zinc-200 bg-white px-4">
