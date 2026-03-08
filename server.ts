@@ -2990,6 +2990,170 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
   }
 });
 
+// ── Integration helpers ────────────────────────────────────────────────────────
+
+const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
+  instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
+  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'pages_manage_posts,pages_read_user_content,pages_manage_metadata', idField: 'appId' },
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile,w_member_social,r_basicprofile,r_emailaddress', idField: 'clientId' },
+  twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
+  tiktok:    { authUrl: 'https://www.tiktok.com/oauth/authorize', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
+};
+
+// GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
+app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const platform = req.params.platform.toLowerCase();
+    const { state } = req.query as { state?: string };
+    if (!state) return res.status(400).json({ success: false, error: 'Missing state' });
+
+    const meta = OAUTH_AUTH_URLS[platform];
+    if (!meta) return res.status(400).json({ success: false, error: 'Unsupported platform' });
+
+    const cfg = await getPlatformConfig(platform);
+    const clientId = cfg[meta.idField];
+    const redirectUri = cfg.redirectUri;
+
+    if (!clientId || !redirectUri) {
+      return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
+    }
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      state,
+      scope: meta.scopes,
+    });
+
+    return res.json({ success: true, url: `${meta.authUrl}?${params.toString()}` });
+  } catch (err) {
+    console.error('Authorize URL error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to build authorization URL' });
+  }
+});
+
+// GET /api/oauth/:platform/configured — check if admin has configured platform credentials
+app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const platform = req.params.platform.toLowerCase();
+    const meta = OAUTH_AUTH_URLS[platform];
+    if (!meta) return res.json({ success: true, configured: false });
+
+    const cfg = await getPlatformConfig(platform);
+    const clientId = cfg[meta.idField];
+    const configured = Boolean(clientId && cfg.redirectUri);
+
+    return res.json({ success: true, configured });
+  } catch {
+    return res.json({ success: true, configured: false });
+  }
+});
+
+// POST /api/integrations/validate — server-side credential validation
+app.post('/api/integrations/validate', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { platform, credentials } = req.body as { platform: string; credentials: Record<string, string> };
+
+    switch (platform) {
+      case 'wordpress': {
+        const { siteUrl, username, applicationPassword } = credentials;
+        const base = siteUrl.replace(/\/$/, '');
+        const resp = await axios.get(`${base}/wp-json/wp/v2/users/me`, {
+          auth: { username, password: applicationPassword },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, handle: resp.data?.name || username });
+        if (resp.status === 401) throw new Error('Invalid WordPress credentials');
+        throw new Error(`WordPress site returned ${resp.status}`);
+      }
+      case 'mailchimp': {
+        const { apiKey, serverPrefix } = credentials;
+        const resp = await axios.get(`https://${serverPrefix}.api.mailchimp.com/3.0/`, {
+          auth: { username: 'anystring', password: apiKey },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true });
+        throw new Error('Invalid Mailchimp API key or server prefix');
+      }
+      case 'chatgpt': {
+        const { apiKey } = credentials;
+        const resp = await axios.get('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true });
+        throw new Error('Invalid OpenAI API key');
+      }
+      case 'webflow': {
+        const { apiToken } = credentials;
+        const resp = await axios.get('https://api.webflow.com/v2/sites', {
+          headers: { Authorization: `Bearer ${apiToken}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true });
+        throw new Error('Invalid Webflow API token');
+      }
+      case 'stripe': {
+        const { secretKey } = credentials;
+        const resp = await axios.get('https://api.stripe.com/v1/account', {
+          headers: { Authorization: `Bearer ${secretKey}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true });
+        throw new Error('Invalid Stripe secret key');
+      }
+      case 'linear': {
+        const { apiKey } = credentials;
+        const resp = await axios.post(
+          'https://api.linear.app/graphql',
+          { query: '{ viewer { id name } }' },
+          { headers: { Authorization: apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 8000 }
+        );
+        if (resp.status === 200 && !resp.data?.errors) return res.json({ success: true });
+        throw new Error('Invalid Linear API key');
+      }
+      case 'square': {
+        const { accessToken } = credentials;
+        const resp = await axios.get('https://connect.squareup.com/v2/locations', {
+          headers: { Authorization: `Bearer ${accessToken}`, 'Square-Version': '2024-01-18' },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true });
+        throw new Error('Invalid Square access token');
+      }
+      case 'zapier': {
+        const { webhookUrl } = credentials;
+        if (!webhookUrl?.startsWith('https://')) throw new Error('Invalid webhook URL');
+        const resp = await axios.post(webhookUrl, { test: true, source: 'ContentFlow' }, { validateStatus: () => true, timeout: 8000 });
+        if (resp.status < 400) return res.json({ success: true });
+        throw new Error(`Webhook returned status ${resp.status}`);
+      }
+      default:
+        // No validation available (Framer, Brave, etc.) — accept as-is
+        return res.json({ success: true });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Validation failed';
+    return res.status(400).json({ success: false, error: message });
+  }
+});
+
 // Health check
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
