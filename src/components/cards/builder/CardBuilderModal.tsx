@@ -38,7 +38,6 @@ export default function CardBuilderModal({
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const bgImageInputRef = useRef<HTMLInputElement>(null);
 
   // ── Design metadata ─────────────────────────────────────────────────────────
   const [designId, setDesignId] = useState<string | null>(existingDesign?.id ?? null);
@@ -71,6 +70,7 @@ export default function CardBuilderModal({
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [showImageModal, setShowImageModal] = useState(false);
+  const [showBgImageModal, setShowBgImageModal] = useState(false);
 
   // ── Snapshot / history helpers ──────────────────────────────────────────────
   const snapshot = useCallback(() => {
@@ -349,7 +349,7 @@ export default function CardBuilderModal({
   }, [preset, canvasScale]);
 
   const handleUploadImage = useCallback(() => { setShowImageModal(true); }, []);
-  const handleBgImageUpload = useCallback(() => { bgImageInputRef.current?.click(); }, []);
+  const handleBgImageUpload = useCallback(() => { setShowBgImageModal(true); }, []);
 
   const addImageFromUrl = useCallback(
     (url: string) => {
@@ -366,24 +366,17 @@ export default function CardBuilderModal({
     [canvasCenter, preset, canvasScale],
   );
 
-  const onBgImageChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file || !fabricRef.current) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const url = ev.target?.result as string;
-        const c = fabricRef.current!;
-        fabric.Image.fromURL(url, (img) => {
-          c.setBackgroundImage(img, c.requestRenderAll.bind(c), {
-            scaleX: (c.width ?? preset.w) / (img.width ?? 1),
-            scaleY: (c.height ?? preset.h) / (img.height ?? 1),
-          });
-          snapshot();
+  const setBgImageFromUrl = useCallback(
+    (url: string) => {
+      const c = fabricRef.current;
+      if (!c) return;
+      fabric.Image.fromURL(url, (img) => {
+        c.setBackgroundImage(img, c.requestRenderAll.bind(c), {
+          scaleX: (c.width ?? preset.w) / (img.width ?? 1),
+          scaleY: (c.height ?? preset.h) / (img.height ?? 1),
         });
-      };
-      reader.readAsDataURL(file);
-      e.target.value = '';
+        snapshot();
+      }, { crossOrigin: 'anonymous' });
     },
     [preset, snapshot],
   );
@@ -540,9 +533,6 @@ export default function CardBuilderModal({
       className="fixed inset-0 z-[9999] flex flex-col bg-zinc-100"
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
-      {/* Hidden file input for background image */}
-      <input ref={bgImageInputRef} type="file" accept="image/*" className="hidden" onChange={onBgImageChange} />
-
       {/* ── Top Toolbar ──────────────────────────────────────────────────────── */}
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-4 shadow-sm">
         <button type="button" onClick={onClose}
@@ -725,6 +715,12 @@ export default function CardBuilderModal({
         <ImageUploadModal
           onConfirm={(url) => { addImageFromUrl(url); setShowImageModal(false); }}
           onClose={() => setShowImageModal(false)}
+        />
+      )}
+      {showBgImageModal && (
+        <ImageUploadModal
+          onConfirm={(url) => { setBgImageFromUrl(url); setShowBgImageModal(false); }}
+          onClose={() => setShowBgImageModal(false)}
         />
       )}
 
