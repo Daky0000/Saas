@@ -9,7 +9,7 @@ type PublicNavProps = {
 const NAV_LINKS = [
   { label: 'Home', href: '/' },
   { label: 'Tools', href: '/tools' },
-  { label: 'Pricing', href: '/pricing-public' },
+  { label: 'Pricing', href: '/pricing' },
 ];
 
 export default function PublicNav({ onLoginClick, activePath = '/' }: PublicNavProps) {

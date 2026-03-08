@@ -212,7 +212,7 @@ export default function PublicPricing({ onLoginClick }: PublicPricingProps) {
 
   return (
     <div className="bg-white text-zinc-900 min-h-screen font-sans">
-      <PublicNav onLoginClick={onLoginClick} activePath="/pricing-public" />
+      <PublicNav onLoginClick={onLoginClick} activePath="/pricing" />
 
       {/* ── Hero ── */}
       <section className="relative flex flex-col items-center justify-center px-6 pt-36 pb-12 text-center overflow-hidden">
