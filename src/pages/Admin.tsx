@@ -1,4 +1,4 @@
-import { CreditCard, KeyRound, LayoutGrid, Scale, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
+import { ChevronDown, CreditCard, KeyRound, LayoutGrid, Scale, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
 import { useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -16,20 +16,26 @@ type AdminProps = {
 
 const Admin = ({ currentUser }: AdminProps) => {
   const [activeTab, setActiveTab] = useState<'users' | 'pricing' | 'cards' | 'payments' | 'integrations' | 'auth-providers' | 'settings' | 'audit' | 'legal-privacy' | 'legal-terms'>('users');
+  const [legalOpen, setLegalOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
 
   const adminItems = [
-    { id: 'users', label: 'User Management', icon: Users, active: true, group: 'main' },
-    { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true, group: 'main' },
-    { id: 'cards', label: 'Card Templates', icon: Image, active: true, group: 'main' },
-    { id: 'payments', label: 'Payments', icon: CreditCard, active: true, group: 'main' },
-    { id: 'integrations', label: 'Integrations', icon: LayoutGrid, active: true, group: 'main' },
-    { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true, group: 'main' },
-    { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false, group: 'main' },
-    { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false, group: 'main' },
-    { id: 'legal-privacy', label: 'Privacy Policy', icon: Scale, active: true, group: 'legal' },
-    { id: 'legal-terms', label: 'Terms of Service', icon: Scale, active: true, group: 'legal' },
+    { id: 'users', label: 'User Management', icon: Users, active: true },
+    { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true },
+    { id: 'cards', label: 'Card Templates', icon: Image, active: true },
+    { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
+    { id: 'integrations', label: 'Integrations', icon: LayoutGrid, active: true },
+    { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
+    { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
+    { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
   ];
+
+  const legalItems = [
+    { id: 'legal-privacy' as const, label: 'Privacy Policy' },
+    { id: 'legal-terms' as const, label: 'Terms of Service' },
+  ];
+
+  const isLegalActive = activeTab === 'legal-privacy' || activeTab === 'legal-terms';
 
   return (
     <div className="min-h-screen bg-[#f5f6fa]">
@@ -45,7 +51,7 @@ const Admin = ({ currentUser }: AdminProps) => {
           </div>
 
           <nav className="flex-1 px-4 py-5 space-y-1 overflow-y-auto">
-            {adminItems.filter((i) => i.group === 'main').map((item) => {
+            {adminItems.map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -67,27 +73,43 @@ const Admin = ({ currentUser }: AdminProps) => {
               );
             })}
 
-            <div className="pt-4 pb-1 px-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Legal</p>
-            </div>
-            {adminItems.filter((i) => i.group === 'legal').map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveTab(item.id as typeof activeTab)}
-                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-                    activeTab === item.id
-                      ? 'bg-slate-950 text-white'
-                      : 'text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <Icon size={18} />
-                  {item.label}
-                </button>
-              );
-            })}
+            {/* Legal accordion */}
+            <button
+              type="button"
+              onClick={() => {
+                setLegalOpen((prev) => !prev);
+                if (!legalOpen && !isLegalActive) setActiveTab('legal-privacy');
+              }}
+              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+                isLegalActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Scale size={18} />
+              <span className="flex-1">Legal</span>
+              <ChevronDown
+                size={15}
+                className={`transition-transform duration-200 ${legalOpen || isLegalActive ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {(legalOpen || isLegalActive) && (
+              <div className="ml-4 space-y-0.5 border-l-2 border-slate-100 pl-3">
+                {legalItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveTab(item.id)}
+                    className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                      activeTab === item.id
+                        ? 'bg-slate-100 text-slate-950'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </nav>
 
           <div className="border-t border-slate-200 px-4 py-4">
