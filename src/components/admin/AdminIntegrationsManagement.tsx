@@ -321,19 +321,22 @@ const AdminIntegrationsManagement = () => {
     setSaveError(null);
     setSaveSuccess(null);
     try {
-      const currentEnabled = platformRows[activeId]?.enabled ?? false;
+      // Auto-enable the integration when credentials are saved for the first time
+      const wasEnabled = platformRows[activeId]?.enabled ?? false;
+      const hasCredentials = Object.values(draftValues).some((v) => v.trim().length > 0);
+      const shouldEnable = wasEnabled || hasCredentials;
       const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${activeId}`, {
         method: 'PUT',
         headers: authHeaders(),
-        body: JSON.stringify({ config: draftValues, enabled: currentEnabled }),
+        body: JSON.stringify({ config: draftValues, enabled: shouldEnable }),
       });
       const data = await res.json() as { success: boolean; error?: string };
       if (!data.success) throw new Error(data.error || 'Save failed');
       setPlatformRows((prev) => ({
         ...prev,
-        [activeId]: { platform: activeId, config: draftValues, enabled: prev[activeId]?.enabled ?? false },
+        [activeId]: { platform: activeId, config: draftValues, enabled: shouldEnable },
       }));
-      setSaveSuccess('Configuration saved successfully.');
+      setSaveSuccess(`Configuration saved${shouldEnable && !wasEnabled ? ' and enabled for users' : ''}.`);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed');
     }

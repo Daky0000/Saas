@@ -3043,12 +3043,9 @@ app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response
   }
 });
 
-// GET /api/oauth/:platform/configured — check if admin has configured platform credentials
+// GET /api/oauth/:platform/configured — check if admin has configured platform credentials (public)
 app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) => {
   try {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-
     const platform = req.params.platform.toLowerCase();
     const meta = OAUTH_AUTH_URLS[platform];
     if (!meta) return res.json({ success: true, configured: false });
