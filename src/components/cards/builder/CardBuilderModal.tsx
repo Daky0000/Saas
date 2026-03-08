@@ -70,7 +70,6 @@ export default function CardBuilderModal({
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [showImageModal, setShowImageModal] = useState(false);
-  const [showBgImageModal, setShowBgImageModal] = useState(false);
 
   // ── Snapshot / history helpers ──────────────────────────────────────────────
   const snapshot = useCallback(() => {
@@ -349,7 +348,6 @@ export default function CardBuilderModal({
   }, [preset, canvasScale]);
 
   const handleUploadImage = useCallback(() => { setShowImageModal(true); }, []);
-  const handleBgImageUpload = useCallback(() => { setShowBgImageModal(true); }, []);
 
   const addImageFromUrl = useCallback(
     (url: string) => {
@@ -370,6 +368,12 @@ export default function CardBuilderModal({
     (url: string) => {
       const c = fabricRef.current;
       if (!c) return;
+      if (!url) {
+        // Clear background image
+        c.setBackgroundImage('', c.requestRenderAll.bind(c));
+        snapshot();
+        return;
+      }
       fabric.Image.fromURL(url, (img) => {
         c.setBackgroundImage(img, c.requestRenderAll.bind(c), {
           scaleX: (c.width ?? preset.w) / (img.width ?? 1),
@@ -701,7 +705,7 @@ export default function CardBuilderModal({
               onFlipV={flipV}
               onSetBgSolid={setBackground}
               onSetBgGradient={setBackgroundGradient}
-              onSetBgImage={handleBgImageUpload}
+              onSetBgImage={setBgImageFromUrl}
               bgColor={bgColor}
               artboardW={preset.w}
               artboardH={preset.h}
@@ -717,13 +721,6 @@ export default function CardBuilderModal({
           onClose={() => setShowImageModal(false)}
         />
       )}
-      {showBgImageModal && (
-        <ImageUploadModal
-          onConfirm={(url) => { setBgImageFromUrl(url); setShowBgImageModal(false); }}
-          onClose={() => setShowBgImageModal(false)}
-        />
-      )}
-
       {/* ── Keyboard shortcut hint bar ───────────────────────────────────────── */}
       <div className="flex h-7 shrink-0 items-center gap-5 border-t border-zinc-200 bg-white px-4">
         {[
