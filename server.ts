@@ -364,17 +364,14 @@ function normalizeUsername(value: string) {
   return value.trim().toLowerCase();
 }
 
-ensureDatabase().catch((err) => {
-  dbReady = false;
-  seedInMemoryUsers();
-  console.error('Database initialization failed:', err);
-});
-ensureSeedUsers().catch((err) => {
-  console.error('Seed user initialization failed:', err);
-});
-ensureSeedPricingPlans().catch((err) => {
-  console.error('Seed pricing plans initialization failed:', err);
-});
+ensureDatabase()
+  .then(() => ensureSeedUsers())
+  .then(() => ensureSeedPricingPlans())
+  .catch((err) => {
+    dbReady = false;
+    seedInMemoryUsers();
+    console.error('Database initialization failed:', err);
+  });
 
 function titleRole(role: string) {
   switch (role) {
