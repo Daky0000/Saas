@@ -12,11 +12,12 @@ type AuthResponse = {
   user?: Partial<AppUser> & { id?: string; email?: string };
 };
 
-const safeJson = async <T,>(response: Response): Promise<T | null> => {
+const safeJson = async <T,>(response: Response): Promise<{ data: T | null; rawText: string }> => {
+  const rawText = await response.text().catch(() => '');
   try {
-    return (await response.json()) as T;
+    return { data: JSON.parse(rawText) as T, rawText };
   } catch {
-    return null;
+    return { data: null, rawText };
   }
 };
 
@@ -31,14 +32,14 @@ function Auth({ onLogin }: AuthProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Login form state
-  const [loginIdentifier, setLoginIdentifier] = useState('alex.jordan@gmail.com');
+  const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
 
   // Signup form state
-  const [signupName, setSignupName] = useState('Alex Jordan');
-  const [signupUsername, setSignupUsername] = useState('alex.jordan');
-  const [signupEmail, setSignupEmail] = useState('alex.jordan@gmail.com');
+  const [signupName, setSignupName] = useState('');
+  const [signupUsername, setSignupUsername] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
 
@@ -63,9 +64,9 @@ function Auth({ onLogin }: AuthProps) {
         }),
       });
 
-      const payload = await safeJson<AuthResponse>(response);
+      const { data: payload, rawText } = await safeJson<AuthResponse>(response);
       if (!payload) {
-        throw new Error('The server returned an empty response. Restart the backend and try again.');
+        throw new Error(`Server error (${response.status}): ${rawText.slice(0, 200) || 'empty response'}`);
       }
 
       if (!response.ok || !payload.success || !payload.token || !payload.user?.id || !payload.user?.email) {
@@ -133,9 +134,9 @@ function Auth({ onLogin }: AuthProps) {
         }),
       });
 
-      const payload = await safeJson<AuthResponse>(response);
+      const { data: payload, rawText } = await safeJson<AuthResponse>(response);
       if (!payload) {
-        throw new Error('The server returned an empty response. Restart the backend and try again.');
+        throw new Error(`Server error (${response.status}): ${rawText.slice(0, 200) || 'empty response'}`);
       }
 
       if (!response.ok || !payload.success || !payload.token || !payload.user?.id || !payload.user?.email) {
