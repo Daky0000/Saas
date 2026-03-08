@@ -50,7 +50,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             <p className="mt-2 text-sm leading-6 text-slate-500">Platform controls, users, permissions, and account governance.</p>
           </div>
 
-          <nav className="flex-1 min-h-0 px-4 py-5 space-y-1 overflow-y-auto">
+          <nav className="flex-1 min-h-0 px-4 py-5 overflow-y-auto flex flex-col gap-1">
             {adminItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -73,43 +73,42 @@ const Admin = ({ currentUser }: AdminProps) => {
               );
             })}
 
-            {/* Legal accordion */}
-            <button
-              type="button"
-              onClick={() => {
-                setLegalOpen((prev) => !prev);
-                if (!legalOpen && !isLegalActive) setActiveTab('legal-privacy');
-              }}
-              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-                isLegalActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
-              }`}
-            >
-              <Scale size={18} />
-              <span className="flex-1">Legal</span>
-              <ChevronDown
-                size={15}
-                className={`transition-transform duration-200 ${legalOpen || isLegalActive ? 'rotate-180' : ''}`}
-              />
-            </button>
+            {/* Legal accordion — sits directly after Audit Log */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setLegalOpen((prev) => !prev)}
+                className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+                  isLegalActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <Scale size={18} />
+                <span className="flex-1">Legal</span>
+                <ChevronDown
+                  size={15}
+                  className={`transition-transform duration-200 ${legalOpen || isLegalActive ? 'rotate-180' : ''}`}
+                />
+              </button>
 
-            {(legalOpen || isLegalActive) && (
-              <div className="ml-4 space-y-0.5 border-l-2 border-slate-100 pl-3">
-                {legalItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveTab(item.id)}
-                    className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                      activeTab === item.id
-                        ? 'bg-slate-100 text-slate-950'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
+              {(legalOpen || isLegalActive) && (
+                <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
+                  {legalItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveTab(item.id)}
+                      className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                        activeTab === item.id
+                          ? 'bg-slate-100 text-slate-950'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </nav>
 
           <div className="border-t border-slate-200 px-4 py-4">
