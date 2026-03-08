@@ -131,7 +131,9 @@ function App() {
   }, []);
 
   const getPageFromPath = useCallback((pathname: string): PageType | null => {
-    return PATH_TO_PAGE.get(pathname) ?? null;
+    if (PATH_TO_PAGE.has(pathname)) return PATH_TO_PAGE.get(pathname)!;
+    if (pathname.startsWith('/admin')) return 'admin';
+    return null;
   }, []);
 
   const navigatePath = useCallback((path: string, replace = false) => {
