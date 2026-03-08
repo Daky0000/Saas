@@ -250,9 +250,14 @@ function Auth({ onLogin }: AuthProps) {
                 </div>
 
                 {errorMessage && (
-                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                    {errorMessage}
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {errorMessage}
+                    </p>
+                    <p className="text-xs text-gray-400 px-1">
+                      API: {API_BASE_URL || '(none — relative)'}
+                    </p>
+                  </div>
                 )}
 
                 <button
