@@ -22,6 +22,8 @@ import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
 import Auth from './pages/Auth';
 import OAuthCallback from './pages/OAuthCallback';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { useOAuthCallback } from './hooks/useOAuth';
@@ -279,6 +281,10 @@ function App() {
     const storedUser = setStoredUser(user);
     setAuthUser(storedUser);
   };
+
+  const currentPathname = window.location.pathname;
+  if (currentPathname === '/privacy') return <PrivacyPolicy />;
+  if (currentPathname === '/terms') return <TermsOfService />;
 
   if (!isAuthenticated && !isOAuthCallback) {
     return <Auth onLogin={handleLogin} />;
