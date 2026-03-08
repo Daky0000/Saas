@@ -579,11 +579,17 @@ const Integrations = () => {
       // Non-admin users only see integrations admin has enabled.
       // If enabledIds is null (still loading or endpoint failed), admins see all; users see all as fallback.
       if (!isAdmin && enabledIds !== null && !enabledIds.has(i.id)) return false;
+      // Non-admin users: hide OAuth platforms that have finished loading but are not configured by admin.
+      // This prevents showing the "Admin needs to configure" warning — unconfigured platforms are simply hidden.
+      if (!isAdmin && i.isOAuth) {
+        const status = oauthStatus[i.id];
+        if (status && !status.loading && !status.configured) return false;
+      }
       const matchesCategory = activeCategory === 'All integrations' || i.category === activeCategory;
       const matchesQuery = !q || `${i.name} ${i.description} ${i.category}`.toLowerCase().includes(q);
       return matchesCategory && matchesQuery;
     });
-  }, [activeCategory, query, isAdmin, enabledIds]);
+  }, [activeCategory, query, isAdmin, enabledIds, oauthStatus]);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -796,16 +802,12 @@ const Integrations = () => {
                             className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors">
                             <Link2Off size={13} /> Disconnect
                           </button>
-                        ) : isOAuthConfigured ? (
+                        ) : (
                           <button type="button" onClick={() => void handleOAuthConnect(integration.id)} disabled={isConnecting}
                             className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-60 transition-colors">
                             {isConnecting ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
                             {isConnecting ? 'Connecting…' : `Connect with ${integration.name}`}
                           </button>
-                        ) : (
-                          <span className="text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 font-medium">
-                            Admin needs to configure this platform first
-                          </span>
                         )}
                       </>
                     ) : (
