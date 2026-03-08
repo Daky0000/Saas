@@ -1,5 +1,5 @@
 import { ChevronDown, CreditCard, KeyRound, LayoutGrid, Scale, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
 import PricingManagement from '../components/admin/PricingManagement';
@@ -15,9 +15,38 @@ type AdminProps = {
 };
 
 const Admin = ({ currentUser }: AdminProps) => {
-  const [activeTab, setActiveTab] = useState<'users' | 'pricing' | 'cards' | 'payments' | 'integrations' | 'auth-providers' | 'settings' | 'audit' | 'legal-privacy' | 'legal-terms'>('users');
-  const [legalOpen, setLegalOpen] = useState(false);
+  type AdminTab = 'users' | 'pricing' | 'cards' | 'payments' | 'integrations' | 'auth-providers' | 'settings' | 'audit' | 'legal-privacy' | 'legal-terms';
+
+  const TAB_PATHS: Record<AdminTab, string> = {
+    users: '/admin/users',
+    pricing: '/admin/pricing',
+    cards: '/admin/cards',
+    payments: '/admin/payments',
+    integrations: '/admin/integrations',
+    'auth-providers': '/admin/auth-providers',
+    settings: '/admin/settings',
+    audit: '/admin/audit',
+    'legal-privacy': '/admin/legal/privacy',
+    'legal-terms': '/admin/legal/terms',
+  };
+
+  const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
+    Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as AdminTab])
+  );
+
+  const getInitialTab = (): AdminTab => PATH_TO_TAB[window.location.pathname] ?? 'users';
+
+  const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
+  const [legalOpen, setLegalOpen] = useState(() => {
+    const path = window.location.pathname;
+    return path === '/admin/legal/privacy' || path === '/admin/legal/terms';
+  });
   const currentAdminRole = 'Admin' as const;
+
+  const navigateTab = (tab: AdminTab) => {
+    setActiveTab(tab);
+    window.history.pushState({}, '', TAB_PATHS[tab]);
+  };
 
   const adminItems = [
     { id: 'users', label: 'User Management', icon: Users, active: true },
@@ -36,6 +65,18 @@ const Admin = ({ currentUser }: AdminProps) => {
   ];
 
   const isLegalActive = activeTab === 'legal-privacy' || activeTab === 'legal-terms';
+
+  useEffect(() => {
+    const onPop = () => {
+      const tab = PATH_TO_TAB[window.location.pathname];
+      if (tab) {
+        setActiveTab(tab);
+        setLegalOpen(tab === 'legal-privacy' || tab === 'legal-terms');
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#f5f6fa]">
@@ -58,7 +99,7 @@ const Admin = ({ currentUser }: AdminProps) => {
                   key={item.id}
                   type="button"
                   disabled={!item.active}
-                  onClick={() => item.active && setActiveTab(item.id as typeof activeTab)}
+                  onClick={() => item.active && navigateTab(item.id as AdminTab)}
                   className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
                     activeTab === item.id && item.active
                       ? 'bg-slate-950 text-white'
@@ -96,7 +137,7 @@ const Admin = ({ currentUser }: AdminProps) => {
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => setActiveTab(item.id)}
+                      onClick={() => navigateTab(item.id)}
                       className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                         activeTab === item.id
                           ? 'bg-slate-100 text-slate-950'
