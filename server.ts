@@ -16,7 +16,7 @@ const WORDPRESS_ENCRYPTION_KEY = (() => {
 })();
 
 const app = express();
-const PORT = process.env.BACKEND_PORT || 5000;
+const PORT = process.env.PORT || process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const DATABASE_URL = process.env.DATABASE_URL;
 const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
