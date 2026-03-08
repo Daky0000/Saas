@@ -442,8 +442,8 @@ function userToManagedUser(user: DbUserRow) {
     role: titleRole(user.role),
     status: titleStatus(user.status),
     avatar: user.avatar_url || `https://ui-avatars.com/api/?background=eff6ff&color=1d4ed8&name=${encodeURIComponent(user.full_name || user.username || user.email)}`,
-    dateJoined: user.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-    lastLogin: user.last_login_at || 'Never',
+    dateJoined: user.created_at ? new Date(user.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+    lastLogin: user.last_login_at ? new Date(user.last_login_at).toISOString().slice(0, 16).replace('T', ' ') : 'Never',
     recentActions: ['User record synced from database'],
   };
 }
