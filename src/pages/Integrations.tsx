@@ -709,7 +709,12 @@ const Integrations = () => {
                     {/* OAuth platforms */}
                     {integration.isOAuth && !isAdmin ? (
                       <>
-                        {isConnected ? (
+                        {/* While status is loading (oAuth is undefined = not fetched yet, or loading=true), show spinner */}
+                        {(!oAuth || oAuth.loading) ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
+                            <Loader2 size={13} className="animate-spin" /> Checking…
+                          </span>
+                        ) : isConnected ? (
                           <button type="button" onClick={() => void handleOAuthDisconnect(integration.id)}
                             className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors">
                             <Link2Off size={13} /> Disconnect
