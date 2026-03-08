@@ -3000,11 +3000,12 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
 // ── Integration helpers ────────────────────────────────────────────────────────
 
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
-  instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
-  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'pages_manage_posts,pages_read_user_content,pages_manage_metadata', idField: 'appId' },
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile,w_member_social,r_basicprofile,r_emailaddress', idField: 'clientId' },
+  instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media,instagram_basic,instagram_content_publish', idField: 'appId' },
+  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile,w_member_social,r_emailaddress', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/oauth/authorize', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
+  threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
 
 // GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
@@ -3401,6 +3402,99 @@ app.patch('/api/admin/platform-configs/:platform/toggle', async (req: Request, r
   } catch (error) {
     console.error('Toggle platform config error:', error);
     return res.status(500).json({ success: false, error: 'Failed to toggle integration' });
+  }
+});
+
+// GET /api/admin/platform-configs/:platform/test — test/validate platform credentials
+app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const platform = req.params.platform.toLowerCase();
+    const cfg = await getPlatformConfig(platform);
+
+    switch (platform) {
+      case 'wordpress': {
+        const { siteUrl, username, applicationPassword } = cfg;
+        if (!siteUrl || !username || !applicationPassword) {
+          return res.json({ success: false, error: 'Missing WordPress credentials' });
+        }
+        const base = siteUrl.replace(/\/$/, '');
+        const resp = await axios.get(`${base}/wp-json/wp/v2/users/me`, {
+          auth: { username, password: applicationPassword },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, message: `Connected as ${resp.data?.name || username}` });
+        return res.json({ success: false, error: `WordPress returned ${resp.status}` });
+      }
+      case 'mailchimp': {
+        const { apiKey, serverPrefix } = cfg;
+        if (!apiKey || !serverPrefix) return res.json({ success: false, error: 'Missing Mailchimp credentials' });
+        const resp = await axios.get(`https://${serverPrefix}.api.mailchimp.com/3.0/`, {
+          auth: { username: 'anystring', password: apiKey },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, message: 'Mailchimp credentials valid' });
+        return res.json({ success: false, error: 'Invalid Mailchimp API key or server prefix' });
+      }
+      case 'chatgpt': {
+        const { apiKey } = cfg;
+        if (!apiKey) return res.json({ success: false, error: 'Missing OpenAI API key' });
+        const resp = await axios.get('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, message: 'OpenAI credentials valid' });
+        return res.json({ success: false, error: 'Invalid OpenAI API key' });
+      }
+      case 'webflow': {
+        const { apiToken } = cfg;
+        if (!apiToken) return res.json({ success: false, error: 'Missing Webflow API token' });
+        const resp = await axios.get('https://api.webflow.com/v2/sites', {
+          headers: { Authorization: `Bearer ${apiToken}`, 'accept-version': '1.0.0' },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, message: 'Webflow credentials valid' });
+        return res.json({ success: false, error: 'Invalid Webflow API token' });
+      }
+      case 'stripe': {
+        const { secretKey } = cfg;
+        if (!secretKey) return res.json({ success: false, error: 'Missing Stripe secret key' });
+        const resp = await axios.get('https://api.stripe.com/v1/balance', {
+          headers: { Authorization: `Bearer ${secretKey}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, message: 'Stripe credentials valid' });
+        return res.json({ success: false, error: 'Invalid Stripe secret key' });
+      }
+      case 'linear': {
+        const { apiKey } = cfg;
+        if (!apiKey) return res.json({ success: false, error: 'Missing Linear API key' });
+        const resp = await axios.post('https://api.linear.app/graphql', { query: '{ viewer { id name } }' }, {
+          headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200 && resp.data?.data?.viewer) return res.json({ success: true, message: `Connected as ${resp.data.data.viewer.name}` });
+        return res.json({ success: false, error: 'Invalid Linear API key' });
+      }
+      default: {
+        // For OAuth platforms (instagram, facebook, etc.) — check credentials are set
+        const meta = OAUTH_AUTH_URLS[platform];
+        if (!meta) return res.json({ success: false, error: 'Unsupported platform' });
+        const clientId = cfg[meta.idField];
+        if (!clientId || !cfg.redirectUri) return res.json({ success: false, error: 'Credentials not configured' });
+        return res.json({ success: true, message: 'Credentials are saved. Test the OAuth flow by clicking "Test OAuth" on the user page.' });
+      }
+    }
+  } catch (err) {
+    console.error('Platform test error:', err);
+    return res.status(500).json({ success: false, error: 'Test failed' });
   }
 });
 
