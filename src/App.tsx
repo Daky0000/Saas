@@ -25,6 +25,8 @@ import OAuthCallback from './pages/OAuthCallback';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import Landing from './pages/Landing';
+import Tools from './pages/Tools';
+import PublicPricing from './pages/PublicPricing';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { useOAuthCallback } from './hooks/useOAuth';
@@ -211,7 +213,7 @@ function App() {
     }
 
     if (!loggedIn) {
-      const publicPaths = ['/', '/privacy', '/terms', '/login'];
+      const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing-public'];
       if (!publicPaths.includes(pathname)) {
         navigatePath('/login', true);
       }
@@ -245,7 +247,7 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        const publicPaths = ['/', '/privacy', '/terms', '/login'];
+        const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing-public'];
         if (!publicPaths.includes(pathname)) {
           navigatePath('/login', true);
         }
@@ -288,9 +290,11 @@ function App() {
   };
 
   const currentPathname = window.location.pathname;
-  // Public pages — only serve to unauthenticated visitors
+  // Public pages — always accessible regardless of auth state
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
+  if (currentPathname === '/tools') return <Tools onLoginClick={() => navigatePath('/login', true)} />;
+  if (currentPathname === '/pricing-public') return <PublicPricing onLoginClick={() => navigatePath('/login', true)} />;
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={() => navigatePath('/login', true)} />;
   }
