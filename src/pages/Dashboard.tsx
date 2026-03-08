@@ -64,7 +64,7 @@ interface StatCardProps {
 
 function StatCard({ label, value, change, positive, icon: Icon, iconBg, iconColor }: StatCardProps) {
   return (
-    <div className="group flex flex-col justify-between rounded-3xl border border-slate-100 bg-white p-5 shadow-sm transition hover:shadow-md">
+    <div className="group flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-5 shadow-md transition hover:shadow-md">
       <div className="flex items-start justify-between">
         <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${iconBg}`}>
           <Icon size={20} className={iconColor} />
@@ -86,7 +86,7 @@ function StatCard({ label, value, change, positive, icon: Icon, iconBg, iconColo
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{value: number}>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-xl border border-slate-100 bg-white px-3 py-2 shadow-lg text-xs">
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg text-xs">
       <p className="font-bold text-slate-700">{label}</p>
       <p className="text-slate-500">{payload[0].value}</p>
     </div>
@@ -134,7 +134,7 @@ function Dashboard({ currentUser }: DashboardProps) {
       </div>
 
       {/* ── Overview hero card ── */}
-      <div className="rounded-[28px] bg-slate-950 p-6 md:p-8 text-white overflow-hidden relative">
+      <div className="rounded-[28px] bg-slate-950 p-6 md:p-8 text-white overflow-hidden relative shadow-xl">
         <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full bg-[#e6332a]/20 blur-3xl" />
         <div className="pointer-events-none absolute top-10 right-32 h-32 w-32 rounded-full bg-blue-500/10 blur-2xl" />
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
@@ -203,7 +203,7 @@ function Dashboard({ currentUser }: DashboardProps) {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
 
         {/* Posts this week bar chart (3/5) */}
-        <div className="xl:col-span-3 rounded-[24px] border border-slate-100 bg-white p-6 shadow-sm">
+        <div className="xl:col-span-3 rounded-[24px] border border-slate-200 bg-white p-6 shadow-md">
           <div className="flex items-center justify-between mb-6">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Posts Published</p>
@@ -225,7 +225,7 @@ function Dashboard({ currentUser }: DashboardProps) {
         </div>
 
         {/* Engagement rate line chart (2/5) */}
-        <div className="xl:col-span-2 rounded-[24px] border border-slate-100 bg-white p-6 shadow-sm">
+        <div className="xl:col-span-2 rounded-[24px] border border-slate-200 bg-white p-6 shadow-md">
           <div className="mb-6">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Engagement Rate</p>
             <h3 className="mt-0.5 text-lg font-black text-slate-900">This Week</h3>
@@ -253,7 +253,7 @@ function Dashboard({ currentUser }: DashboardProps) {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
 
         {/* Connected platforms (2/5) */}
-        <div className="xl:col-span-2 rounded-[24px] border border-slate-100 bg-white p-6 shadow-sm">
+        <div className="xl:col-span-2 rounded-[24px] border border-slate-200 bg-white p-6 shadow-md">
           <div className="flex items-center justify-between mb-5">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Platforms</p>
@@ -292,7 +292,7 @@ function Dashboard({ currentUser }: DashboardProps) {
         </div>
 
         {/* Recent activity (3/5) */}
-        <div className="xl:col-span-3 rounded-[24px] border border-slate-100 bg-white p-6 shadow-sm">
+        <div className="xl:col-span-3 rounded-[24px] border border-slate-200 bg-white p-6 shadow-md">
           <div className="flex items-center justify-between mb-5">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Activity</p>
