@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { fabric } from 'fabric';
 import {
-  AlignLeft, AlignCenter, AlignRight,
-  Bold, Italic, Underline,
-  Layers, Eye, EyeOff, Trash2, Copy, ArrowUp, ArrowDown,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  Trash2, Copy, ArrowUp, ArrowDown, Eye, EyeOff,
+  ChevronDown, ChevronUp, ImagePlus, Layers,
 } from 'lucide-react';
+import ColorPicker from './ColorPicker';
 
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface PropsPanelProps {
   canvas: fabric.Canvas | null;
   selectedObjects: fabric.Object[];
@@ -15,69 +17,179 @@ interface PropsPanelProps {
   onSendBackward: () => void;
   onFlipH: () => void;
   onFlipV: () => void;
+  onSetBgSolid: (color: string) => void;
+  onSetBgGradient: (from: string, to: string, angle: number) => void;
+  onSetBgImage: () => void;
+  bgColor?: string;
 }
 
 const FONTS = [
-  'Inter', 'Georgia', 'Times New Roman', 'Arial', 'Helvetica',
-  'Courier New', 'Verdana', 'Trebuchet MS', 'Impact',
+  'Inter', 'Arial', 'Helvetica', 'Georgia', 'Times New Roman',
+  'Verdana', 'Trebuchet MS', 'Impact', 'Courier New',
 ];
 
-interface FieldProps { label: string; children: React.ReactNode }
-function Field({ label, children }: FieldProps) {
+const FONT_WEIGHTS: { value: string; label: string }[] = [
+  { value: '100', label: '100 – Thin' },
+  { value: '200', label: '200 – ExtraLight' },
+  { value: '300', label: '300 – Light' },
+  { value: '400', label: '400 – Normal' },
+  { value: '500', label: '500 – Medium' },
+  { value: '600', label: '600 – SemiBold' },
+  { value: '700', label: '700 – Bold' },
+  { value: '800', label: '800 – ExtraBold' },
+  { value: '900', label: '900 – Black' },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
+
+// ── Color swatch + picker popover ─────────────────────────────────────────────
+function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{label}</label>
-      {children}
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 w-full"
+      >
+        <span className="h-4 w-4 shrink-0 rounded-full border border-zinc-300" style={{ background: value || '#000' }} />
+        <span className="flex-1 truncate text-left">{label || value}</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1.5">
+          <ColorPicker value={value || '#000000'} onChange={onChange} />
+        </div>
+      )}
     </div>
   );
 }
 
-function NumberInput({
-  value,
-  onChange,
-  min,
-  max,
-  step = 1,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
+// ── Number input ──────────────────────────────────────────────────────────────
+function Num({ value, onChange, min, max, step = 1, unit }: {
+  value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number; unit?: string;
 }) {
   return (
-    <input
-      type="number"
-      value={Math.round(value)}
-      min={min}
-      max={max}
-      step={step}
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
-    />
-  );
-}
-
-function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex items-center gap-2">
+    <div className="relative flex items-center">
       <input
-        type="color"
-        value={value || '#000000'}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-10 cursor-pointer rounded-lg border border-zinc-200"
+        type="number"
+        value={isNaN(value) ? '' : Math.round(value * 100) / 100}
+        min={min} max={max} step={step}
+        onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) onChange(clamp(v, min ?? -Infinity, max ?? Infinity)); }}
+        className="w-full rounded-lg border border-zinc-200 bg-white py-1.5 pl-2.5 pr-8 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
       />
-      <input
-        type="text"
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="#000000"
-        className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
-      />
+      {unit && <span className="pointer-events-none absolute right-2 text-[10px] text-zinc-400">{unit}</span>}
     </div>
   );
 }
 
+// ── Toggle button ─────────────────────────────────────────────────────────────
+function Tog({ active, onClick, children, title }: { active?: boolean; onClick: () => void; children: React.ReactNode; title?: string }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`flex h-8 items-center justify-center rounded-lg border px-2.5 text-sm transition ${
+        active ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── Section header ────────────────────────────────────────────────────────────
+function SectionHead({ label, bullet }: { label: string; bullet?: boolean }) {
+  return (
+    <p className={`text-[10px] font-bold uppercase tracking-widest ${bullet ? 'flex items-center gap-1.5' : ''} text-zinc-400`}>
+      {bullet && <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-300" />}
+      {label}
+    </p>
+  );
+}
+
+// ── Artboard / empty state ─────────────────────────────────────────────────────
+function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }: {
+  bgColor: string;
+  onSetBgSolid: (c: string) => void;
+  onSetBgGradient: (from: string, to: string, angle: number) => void;
+  onSetBgImage: () => void;
+}) {
+  const [tab, setTab] = useState<'solid' | 'gradient' | 'image'>('solid');
+  const [gradFrom, setGradFrom] = useState('#e6332a');
+  const [gradTo, setGradTo] = useState('#1e293b');
+  const [gradAngle, setGradAngle] = useState(90);
+
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      <SectionHead label="Artboard Background" />
+      {/* Tabs */}
+      <div className="flex rounded-xl border border-zinc-200 bg-zinc-50 p-0.5">
+        {(['solid', 'gradient', 'image'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold capitalize transition ${
+              tab === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'solid' && (
+        <div>
+          <p className="mb-2 text-[10px] text-zinc-400">Background Color</p>
+          <ColorSwatch value={bgColor} onChange={onSetBgSolid} label="Pick color" />
+        </div>
+      )}
+
+      {tab === 'gradient' && (
+        <div className="flex flex-col gap-3">
+          <div>
+            <p className="mb-1.5 text-[10px] text-zinc-400">From</p>
+            <ColorSwatch value={gradFrom} onChange={(c) => { setGradFrom(c); onSetBgGradient(c, gradTo, gradAngle); }} />
+          </div>
+          <div>
+            <p className="mb-1.5 text-[10px] text-zinc-400">To</p>
+            <ColorSwatch value={gradTo} onChange={(c) => { setGradTo(c); onSetBgGradient(gradFrom, c, gradAngle); }} />
+          </div>
+          <div>
+            <p className="mb-1.5 text-[10px] text-zinc-400">Angle (°)</p>
+            <Num value={gradAngle} onChange={(v) => { setGradAngle(v); onSetBgGradient(gradFrom, gradTo, v); }} min={0} max={360} unit="°" />
+          </div>
+        </div>
+      )}
+
+      {tab === 'image' && (
+        <button
+          type="button"
+          onClick={onSetBgImage}
+          className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-zinc-200 py-6 text-sm font-semibold text-zinc-400 transition hover:border-zinc-300 hover:text-zinc-600"
+        >
+          <ImagePlus size={18} />
+          Upload background image
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
 export default function PropertiesPanel({
   canvas,
   selectedObjects,
@@ -87,32 +199,36 @@ export default function PropertiesPanel({
   onSendBackward,
   onFlipH,
   onFlipV,
+  onSetBgSolid,
+  onSetBgGradient,
+  onSetBgImage,
+  bgColor = '#ffffff',
 }: PropsPanelProps) {
-  // Local state mirrors the selected object's properties, refreshes on selection change
-  const [, forceUpdate] = useState(0);
-  const refresh = () => forceUpdate((n) => n + 1);
+  const [, refresh] = useState(0);
+  const [typoExpanded, setTypoExpanded] = useState(false);
+  const [strokeExpanded, setStrokeExpanded] = useState(false);
 
   useEffect(() => {
     if (!canvas) return;
-    const handler = () => refresh();
-    canvas.on('object:modified', handler);
-    canvas.on('object:scaling', handler);
-    canvas.on('object:moving', handler);
-    canvas.on('object:rotating', handler);
-    return () => {
-      canvas.off('object:modified', handler);
-      canvas.off('object:scaling', handler);
-      canvas.off('object:moving', handler);
-      canvas.off('object:rotating', handler);
-    };
+    const h = () => refresh((n) => n + 1);
+    const evts = ['object:modified', 'object:scaling', 'object:moving', 'object:rotating'] as const;
+    evts.forEach((ev) => canvas.on(ev, h));
+    return () => evts.forEach((ev) => canvas.off(ev, h));
   }, [canvas]);
 
+  // ── Empty / artboard state ────────────────────────────────────────────────
   if (!canvas || selectedObjects.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div>
-          <Layers size={28} className="mx-auto mb-3 text-zinc-300" />
-          <p className="text-sm text-zinc-400">Select an element to edit its properties</p>
+      <div className="h-full overflow-y-auto">
+        <ArtboardPanel
+          bgColor={bgColor}
+          onSetBgSolid={onSetBgSolid}
+          onSetBgGradient={onSetBgGradient}
+          onSetBgImage={onSetBgImage}
+        />
+        <div className="flex flex-col items-center justify-center px-6 py-8 text-center">
+          <Layers size={26} className="mb-3 text-zinc-200" />
+          <p className="text-sm text-zinc-400">Select an element to edit properties</p>
         </div>
       </div>
     );
@@ -121,35 +237,21 @@ export default function PropertiesPanel({
   const obj = selectedObjects[0];
   const isText = obj instanceof fabric.IText || obj instanceof fabric.Text;
   const isImage = obj instanceof fabric.Image;
-  const isShape = obj instanceof fabric.Rect || obj instanceof fabric.Circle || obj instanceof fabric.Line || obj instanceof fabric.Ellipse;
-
+  const isShape = !isText && !isImage && (obj instanceof fabric.Rect || obj instanceof fabric.Circle || obj instanceof fabric.Line || obj instanceof fabric.Ellipse);
   const zoom = canvas.getZoom();
 
   const set = (key: string, value: unknown) => {
-    selectedObjects.forEach((o) => {
-      (o as fabric.Object & Record<string, unknown>).set(key, value);
-    });
+    selectedObjects.forEach((o) => (o as fabric.Object & Record<string, unknown>).set(key, value));
     canvas.requestRenderAll();
-    refresh();
+    refresh((n) => n + 1);
   };
 
-  const setPos = (axis: 'left' | 'top', value: number) => {
-    obj.set(axis, value / zoom);
-    canvas.requestRenderAll();
-    refresh();
-  };
-
+  const setPos = (axis: 'left' | 'top', value: number) => { obj.set(axis, value / zoom); canvas.requestRenderAll(); refresh((n) => n + 1); };
   const setSize = (dim: 'scaleX' | 'scaleY', px: number) => {
     const orig = dim === 'scaleX' ? (obj.width ?? 1) : (obj.height ?? 1);
     obj.set(dim, px / orig);
     canvas.requestRenderAll();
-    refresh();
-  };
-
-  const toggleVisible = () => {
-    obj.set('visible', !obj.visible);
-    canvas.requestRenderAll();
-    refresh();
+    refresh((n) => n + 1);
   };
 
   const displayLeft = Math.round((obj.left ?? 0) * zoom);
@@ -157,269 +259,292 @@ export default function PropertiesPanel({
   const displayW = Math.round((obj.getScaledWidth?.() ?? obj.width ?? 0) * zoom);
   const displayH = Math.round((obj.getScaledHeight?.() ?? obj.height ?? 0) * zoom);
 
+  const txt = obj as fabric.IText;
+
   return (
-    <div className="h-full overflow-y-auto p-4 flex flex-col gap-5">
-      {/* Object actions */}
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          onClick={onDuplicate}
-          title="Duplicate"
-          className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 transition"
-        >
-          <Copy size={13} /> Duplicate
-        </button>
-        <button
-          type="button"
-          onClick={toggleVisible}
-          title={obj.visible ? 'Hide' : 'Show'}
-          className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 transition"
-        >
-          {obj.visible ? <Eye size={13} /> : <EyeOff size={13} />}
-        </button>
-        <button
-          type="button"
-          onClick={onBringForward}
-          title="Bring Forward"
-          className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 transition"
-        >
-          <ArrowUp size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={onSendBackward}
-          title="Send Backward"
-          className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 transition"
-        >
-          <ArrowDown size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          title="Delete"
-          className="flex items-center gap-1.5 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 transition ml-auto"
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
+    <div className="h-full overflow-y-auto">
+      <div className="flex flex-col gap-5 p-4">
 
-      {/* Position & Size */}
-      <div>
-        <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Position & Size</p>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="X">
-            <NumberInput value={displayLeft} onChange={(v) => setPos('left', v)} />
-          </Field>
-          <Field label="Y">
-            <NumberInput value={displayTop} onChange={(v) => setPos('top', v)} />
-          </Field>
-          <Field label="W">
-            <NumberInput value={displayW} onChange={(v) => setSize('scaleX', v)} min={1} />
-          </Field>
-          <Field label="H">
-            <NumberInput value={displayH} onChange={(v) => setSize('scaleY', v)} min={1} />
-          </Field>
+        {/* ── Actions ── */}
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={onDuplicate} title="Duplicate" className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">
+            <Copy size={12} /> Copy
+          </button>
+          <button type="button" onClick={() => { obj.set('visible', !obj.visible); canvas.requestRenderAll(); refresh((n) => n + 1); }}
+            title={obj.visible ? 'Hide' : 'Show'} className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">
+            {obj.visible !== false ? <Eye size={12} /> : <EyeOff size={12} />}
+          </button>
+          <button type="button" onClick={onBringForward} title="Bring Forward" className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">
+            <ArrowUp size={12} />
+          </button>
+          <button type="button" onClick={onSendBackward} title="Send Backward" className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">
+            <ArrowDown size={12} />
+          </button>
+          <button type="button" onClick={onDelete} title="Delete" className="ml-auto flex items-center gap-1.5 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-50">
+            <Trash2 size={12} />
+          </button>
         </div>
-        <div className="mt-2">
-          <Field label="Rotation (°)">
-            <NumberInput value={obj.angle ?? 0} onChange={(v) => set('angle', v)} min={0} max={360} />
-          </Field>
-        </div>
-      </div>
 
-      {/* Opacity */}
-      <div>
-        <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Opacity</p>
-        <div className="flex items-center gap-3">
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={obj.opacity ?? 1}
+        {/* ── Position & Size ── */}
+        <div>
+          <SectionHead label="Position & Size" />
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <div><p className="mb-1 text-[10px] text-zinc-400">X</p><Num value={displayLeft} onChange={(v) => setPos('left', v)} /></div>
+            <div><p className="mb-1 text-[10px] text-zinc-400">Y</p><Num value={displayTop} onChange={(v) => setPos('top', v)} /></div>
+            <div><p className="mb-1 text-[10px] text-zinc-400">W</p><Num value={displayW} onChange={(v) => setSize('scaleX', v)} min={1} /></div>
+            <div><p className="mb-1 text-[10px] text-zinc-400">H</p><Num value={displayH} onChange={(v) => setSize('scaleY', v)} min={1} /></div>
+          </div>
+          <div className="mt-2">
+            <p className="mb-1 text-[10px] text-zinc-400">Rotation</p>
+            <Num value={obj.angle ?? 0} onChange={(v) => set('angle', v)} min={0} max={360} unit="°" />
+          </div>
+        </div>
+
+        {/* ── Opacity ── */}
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <SectionHead label="Opacity" />
+            <span className="text-xs font-semibold text-zinc-500">{Math.round((obj.opacity ?? 1) * 100)}%</span>
+          </div>
+          <input type="range" min={0} max={1} step={0.01} value={obj.opacity ?? 1}
             onChange={(e) => set('opacity', parseFloat(e.target.value))}
-            className="flex-1"
-          />
-          <span className="w-10 text-right text-xs text-zinc-500">
-            {Math.round((obj.opacity ?? 1) * 100)}%
-          </span>
+            className="w-full accent-slate-900" />
         </div>
+
+        {/* ── Typography (text) ── */}
+        {isText && (
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3">
+            {/* Section header */}
+            <button
+              type="button"
+              onClick={() => setTypoExpanded((e) => !e)}
+              className="flex w-full items-center justify-between"
+            >
+              <span className="text-xs font-bold text-zinc-700">Typography</span>
+              {typoExpanded ? <ChevronUp size={14} className="text-zinc-400" /> : <ChevronDown size={14} className="text-zinc-400" />}
+            </button>
+
+            <div className="mt-3 flex flex-col gap-2.5">
+              {/* Font family */}
+              <div>
+                <p className="mb-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Font family
+                </p>
+                <select
+                  value={txt.fontFamily ?? 'Inter'}
+                  onChange={(e) => set('fontFamily', e.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                >
+                  {FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+
+              {/* Font weight */}
+              <div>
+                <p className="mb-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Font weight
+                </p>
+                <select
+                  value={txt.fontWeight?.toString() ?? '400'}
+                  onChange={(e) => set('fontWeight', e.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                >
+                  {FONT_WEIGHTS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+                </select>
+              </div>
+
+              {/* Font size */}
+              <div>
+                <p className="mb-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Font size
+                </p>
+                <Num value={txt.fontSize ?? 24} onChange={(v) => set('fontSize', v)} min={6} max={400} unit="PX" />
+              </div>
+
+              {/* Text align */}
+              <div>
+                <p className="mb-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Text align
+                </p>
+                <div className="flex gap-1">
+                  {[
+                    { align: 'left', icon: <AlignLeft size={13} /> },
+                    { align: 'center', icon: <AlignCenter size={13} /> },
+                    { align: 'right', icon: <AlignRight size={13} /> },
+                    { align: 'justify', icon: <AlignJustify size={13} /> },
+                  ].map(({ align, icon }) => (
+                    <Tog key={align} active={txt.textAlign === align} onClick={() => set('textAlign', align)}>
+                      {icon}
+                    </Tog>
+                  ))}
+                </div>
+              </div>
+
+              {/* Text color */}
+              <div>
+                <p className="mb-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Text color
+                </p>
+                <ColorSwatch
+                  value={(txt.fill as string) ?? '#000000'}
+                  onChange={(v) => set('fill', v)}
+                  label={(txt.fill as string)?.slice(0, 12) ?? '#000000'}
+                />
+              </div>
+
+              {/* Show more / less */}
+              <button
+                type="button"
+                onClick={() => setTypoExpanded((e) => !e)}
+                className="flex items-center justify-center gap-1 rounded-lg border border-zinc-200 py-1.5 text-[11px] font-semibold text-zinc-500 transition hover:bg-zinc-50"
+              >
+                {typoExpanded ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show more</>}
+              </button>
+
+              {/* Expanded properties */}
+              {typoExpanded && (
+                <div className="flex flex-col gap-2.5 border-t border-zinc-200 pt-2.5">
+                  {/* Line height */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-zinc-500">Line height</p>
+                    <Num value={txt.lineHeight ?? 1.2} onChange={(v) => set('lineHeight', v)} min={0.5} max={5} step={0.05} unit="PX" />
+                  </div>
+
+                  {/* Letter spacing */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-zinc-500">Letter spacing</p>
+                    <Num value={txt.charSpacing ?? 0} onChange={(v) => set('charSpacing', v)} min={-200} max={800} unit="PX" />
+                  </div>
+
+                  {/* Word spacing (visual only – not a Fabric.js native property) */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-zinc-500">Word spacing</p>
+                    <Num value={0} onChange={() => {}} unit="PX" />
+                  </div>
+
+                  {/* Line decoration */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-zinc-500">Line decoration</p>
+                    <div className="flex gap-1">
+                      <Tog active={!txt.underline && !txt.overline && !txt.linethrough} onClick={() => { set('underline', false); set('overline', false); set('linethrough', false); }} title="None">
+                        <span className="text-[11px] font-bold">—</span>
+                      </Tog>
+                      <Tog active={!!txt.underline} onClick={() => set('underline', !txt.underline)} title="Underline">
+                        <span className="text-[11px] underline font-bold">T</span>
+                      </Tog>
+                      <Tog active={!!txt.overline} onClick={() => set('overline', !txt.overline)} title="Overline">
+                        <span className="text-[11px] overline font-bold">T</span>
+                      </Tog>
+                      <Tog active={!!txt.linethrough} onClick={() => set('linethrough', !txt.linethrough)} title="Strikethrough">
+                        <span className="text-[11px] line-through font-bold">T</span>
+                      </Tog>
+                    </div>
+                  </div>
+
+                  {/* Text transform (visual only) */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-zinc-500">Text transform</p>
+                    <div className="flex gap-1">
+                      {[
+                        { label: '—', title: 'None' },
+                        { label: 'Aa', title: 'Capitalize' },
+                        { label: 'AA', title: 'Uppercase' },
+                        { label: 'aa', title: 'Lowercase' },
+                      ].map(({ label, title }) => (
+                        <Tog key={label} onClick={() => {}} title={title}>
+                          <span className="text-[10px] font-bold">{label}</span>
+                        </Tog>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Font style */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-zinc-500">Font style</p>
+                    <div className="flex gap-1">
+                      <Tog active={txt.fontStyle !== 'italic'} onClick={() => set('fontStyle', 'normal')} title="Normal">
+                        <span className="text-[11px] font-bold">—</span>
+                      </Tog>
+                      <Tog active={txt.fontStyle === 'italic'} onClick={() => set('fontStyle', txt.fontStyle === 'italic' ? 'normal' : 'italic')} title="Italic">
+                        <span className="text-[11px] italic font-bold">I</span>
+                      </Tog>
+                    </div>
+                  </div>
+
+                  {/* Text stroke */}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setStrokeExpanded((e) => !e)}
+                      className="flex w-full items-center justify-between text-[10px] text-zinc-500"
+                    >
+                      <span>Text stroke</span>
+                      {strokeExpanded ? <ChevronUp size={11} /> : <span className="text-zinc-400">+</span>}
+                    </button>
+                    {strokeExpanded && (
+                      <div className="mt-2 flex flex-col gap-2">
+                        <div>
+                          <p className="mb-1 text-[10px] text-zinc-400">Stroke color</p>
+                          <ColorSwatch
+                            value={(txt.stroke as string) ?? '#000000'}
+                            onChange={(v) => set('stroke', v)}
+                          />
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[10px] text-zinc-400">Stroke width</p>
+                          <Num value={txt.strokeWidth ?? 0} onChange={(v) => set('strokeWidth', v)} min={0} max={20} unit="PX" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Fill & Stroke (shapes) ── */}
+        {isShape && (
+          <div>
+            <SectionHead label="Fill & Stroke" />
+            <div className="mt-2 flex flex-col gap-2.5">
+              <div>
+                <p className="mb-1 text-[10px] text-zinc-400">Fill color</p>
+                <ColorSwatch value={((obj as fabric.Rect).fill as string) ?? '#cccccc'} onChange={(v) => set('fill', v)} />
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] text-zinc-400">Stroke color</p>
+                <ColorSwatch value={((obj as fabric.Rect).stroke as string) ?? '#000000'} onChange={(v) => set('stroke', v)} />
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] text-zinc-400">Stroke width</p>
+                <Num value={(obj as fabric.Rect).strokeWidth ?? 0} onChange={(v) => set('strokeWidth', v)} min={0} max={50} unit="PX" />
+              </div>
+              {obj instanceof fabric.Rect && (
+                <div>
+                  <p className="mb-1 text-[10px] text-zinc-400">Corner radius</p>
+                  <Num value={(obj as fabric.Rect).rx ?? 0} onChange={(v) => { set('rx', v); set('ry', v); }} min={0} max={500} unit="PX" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Image ── */}
+        {isImage && (
+          <div>
+            <SectionHead label="Image" />
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={onFlipH} className="flex-1 rounded-lg border border-zinc-200 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">Flip H</button>
+              <button type="button" onClick={onFlipV} className="flex-1 rounded-lg border border-zinc-200 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">Flip V</button>
+            </div>
+          </div>
+        )}
+
+        {selectedObjects.length > 1 && (
+          <p className="text-center text-xs text-zinc-400">{selectedObjects.length} objects selected</p>
+        )}
       </div>
-
-      {/* Text properties */}
-      {isText && (
-        <div className="flex flex-col gap-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Text</p>
-
-          <Field label="Font Family">
-            <select
-              value={(obj as fabric.IText).fontFamily ?? 'Inter'}
-              onChange={(e) => set('fontFamily', e.target.value)}
-              className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
-            >
-              {FONTS.map((f) => (
-                <option key={f} value={f} style={{ fontFamily: f }}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Size">
-              <NumberInput
-                value={(obj as fabric.IText).fontSize ?? 24}
-                onChange={(v) => set('fontSize', v)}
-                min={6}
-                max={400}
-              />
-            </Field>
-            <Field label="Line Height">
-              <NumberInput
-                value={(obj as fabric.IText).lineHeight ?? 1.2}
-                onChange={(v) => set('lineHeight', v)}
-                min={0.5}
-                max={4}
-                step={0.05}
-              />
-            </Field>
-          </div>
-
-          <Field label="Letter Spacing">
-            <NumberInput
-              value={(obj as fabric.IText).charSpacing ?? 0}
-              onChange={(v) => set('charSpacing', v)}
-              min={-200}
-              max={800}
-            />
-          </Field>
-
-          <Field label="Text Color">
-            <ColorInput
-              value={((obj as fabric.IText).fill as string) ?? '#000000'}
-              onChange={(v) => set('fill', v)}
-            />
-          </Field>
-
-          {/* Style toggles */}
-          <div className="flex gap-1.5">
-            {[
-              { icon: <Bold size={14} />, prop: 'fontWeight', on: 'bold', off: 'normal', tip: 'Bold' },
-              { icon: <Italic size={14} />, prop: 'fontStyle', on: 'italic', off: 'normal', tip: 'Italic' },
-              { icon: <Underline size={14} />, prop: 'underline', on: true, off: false, tip: 'Underline' },
-            ].map(({ icon, prop, on, off, tip }) => {
-              const active = (obj as fabric.IText & Record<string, unknown>)[prop] === on;
-              return (
-                <button
-                  key={prop}
-                  type="button"
-                  title={tip}
-                  onClick={() => set(prop, active ? off : on)}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg border text-sm transition ${
-                    active
-                      ? 'border-slate-900 bg-slate-900 text-white'
-                      : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                  }`}
-                >
-                  {icon}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Alignment */}
-          <div className="flex gap-1.5">
-            {[
-              { icon: <AlignLeft size={14} />, align: 'left' },
-              { icon: <AlignCenter size={14} />, align: 'center' },
-              { icon: <AlignRight size={14} />, align: 'right' },
-            ].map(({ icon, align }) => {
-              const active = (obj as fabric.IText).textAlign === align;
-              return (
-                <button
-                  key={align}
-                  type="button"
-                  onClick={() => set('textAlign', align)}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg border text-sm transition ${
-                    active
-                      ? 'border-slate-900 bg-slate-900 text-white'
-                      : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                  }`}
-                >
-                  {icon}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Shape / Fill properties */}
-      {isShape && (
-        <div className="flex flex-col gap-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Fill & Stroke</p>
-          <Field label="Fill Color">
-            <ColorInput
-              value={((obj as fabric.Rect).fill as string) ?? '#cccccc'}
-              onChange={(v) => set('fill', v)}
-            />
-          </Field>
-          <Field label="Stroke Color">
-            <ColorInput
-              value={((obj as fabric.Rect).stroke as string) ?? '#000000'}
-              onChange={(v) => set('stroke', v)}
-            />
-          </Field>
-          <Field label="Stroke Width">
-            <NumberInput
-              value={(obj as fabric.Rect).strokeWidth ?? 0}
-              onChange={(v) => set('strokeWidth', v)}
-              min={0}
-              max={50}
-            />
-          </Field>
-          {(obj instanceof fabric.Rect) && (
-            <Field label="Corner Radius">
-              <NumberInput
-                value={(obj as fabric.Rect).rx ?? 0}
-                onChange={(v) => { set('rx', v); set('ry', v); }}
-                min={0}
-                max={500}
-              />
-            </Field>
-          )}
-        </div>
-      )}
-
-      {/* Image properties */}
-      {isImage && (
-        <div className="flex flex-col gap-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Image</p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onFlipH}
-              className="flex-1 rounded-lg border border-zinc-200 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 transition"
-            >
-              Flip H
-            </button>
-            <button
-              type="button"
-              onClick={onFlipV}
-              className="flex-1 rounded-lg border border-zinc-200 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 transition"
-            >
-              Flip V
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Multi-selection note */}
-      {selectedObjects.length > 1 && (
-        <p className="text-xs text-zinc-400 text-center">
-          {selectedObjects.length} objects selected
-        </p>
-      )}
     </div>
   );
 }

@@ -2,10 +2,11 @@ import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react
 import { fabric } from 'fabric';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
-  MousePointer2, ZoomIn, ZoomOut, Maximize2,
+  ZoomIn, ZoomOut, Maximize2,
 } from 'lucide-react';
-import ElementsPanel from './ElementsPanel';
+import LayersPanel from './LayersPanel';
 import PropertiesPanel from './PropertiesPanel';
+import FloatingToolbar from './FloatingToolbar';
 import { CANVAS_PRESETS, CanvasPreset } from './canvasPresets';
 import { designService, UserDesign } from '../../../services/designService';
 
@@ -23,7 +24,6 @@ interface CardBuilderModalProps {
   onSaved?: (design: UserDesign) => void;
 }
 
-// ─── Zoom level display ───────────────────────────────────────────────────────
 function fmtZoom(z: number) {
   return `${Math.round(z * 100)}%`;
 }
@@ -34,11 +34,11 @@ export default function CardBuilderModal({
   onClose,
   onSaved,
 }: CardBuilderModalProps) {
-  // ── Canvas DOM ref ──────────────────────────────────────────────────────────
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bgImageInputRef = useRef<HTMLInputElement>(null);
 
   // ── Design metadata ─────────────────────────────────────────────────────────
   const [designId, setDesignId] = useState<string | null>(existingDesign?.id ?? null);
@@ -69,13 +69,14 @@ export default function CardBuilderModal({
   const [savedPulse, setSavedPulse] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [canvasScale, setCanvasScale] = useState(1);
+  const [bgColor, setBgColor] = useState('#ffffff');
 
   // ── Snapshot / history helpers ──────────────────────────────────────────────
   const snapshot = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
     const json = JSON.stringify(c.toJSON(['data']));
-    if (undoStack.current[undoStack.current.length - 1] === json) return; // no change
+    if (undoStack.current[undoStack.current.length - 1] === json) return;
     undoStack.current.push(json);
     if (undoStack.current.length > MAX_HISTORY) undoStack.current.shift();
     redoStack.current = [];
@@ -116,7 +117,7 @@ export default function CardBuilderModal({
     const wrap = wrapperRef.current;
     if (!c || !wrap) return;
 
-    const padding = 64;
+    const padding = 120; // extra space for floating toolbar
     const availW = wrap.clientWidth - padding;
     const availH = wrap.clientHeight - padding;
     const scale = Math.min(availW / preset.w, availH / preset.h, 1);
@@ -144,7 +145,6 @@ export default function CardBuilderModal({
 
     fabricRef.current = canvas;
 
-    // Selection events
     const onSelect = () => {
       const active = canvas.getActiveObjects();
       setSelectedObjects([...active]);
@@ -153,23 +153,21 @@ export default function CardBuilderModal({
     canvas.on('selection:created', onSelect);
     canvas.on('selection:updated', onSelect);
     canvas.on('selection:cleared', onClear);
-
-    // History events
     canvas.on('object:added', snapshot);
     canvas.on('object:modified', snapshot);
     canvas.on('object:removed', snapshot);
 
-    // Load existing design or snapshot initial state
     if (existingDesign?.canvas_data && Object.keys(existingDesign.canvas_data).length > 0) {
       canvas.loadFromJSON(existingDesign.canvas_data, () => {
         canvas.requestRenderAll();
-        // Initial snapshot after load
         const json = JSON.stringify(canvas.toJSON(['data']));
         undoStack.current = [json];
         setCanUndo(false);
+        // Sync bgColor from loaded canvas
+        const bg = canvas.backgroundColor;
+        if (typeof bg === 'string') setBgColor(bg);
       });
     } else {
-      // fresh canvas — take initial snapshot
       const json = JSON.stringify(canvas.toJSON(['data']));
       undoStack.current = [json];
     }
@@ -187,16 +185,35 @@ export default function CardBuilderModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Scale on mount & resize
-  useLayoutEffect(() => {
-    scaleCanvasToFit();
-  }, [scaleCanvasToFit]);
+  useLayoutEffect(() => { scaleCanvasToFit(); }, [scaleCanvasToFit]);
 
   useEffect(() => {
     const ro = new ResizeObserver(() => scaleCanvasToFit());
     if (wrapperRef.current) ro.observe(wrapperRef.current);
     return () => ro.disconnect();
   }, [scaleCanvasToFit]);
+
+  // ── Scroll wheel zoom ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const c = fabricRef.current;
+      if (!c) return;
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const newZ = Math.max(0.1, Math.min(4, c.getZoom() * delta));
+      c.setZoom(newZ);
+      c.setWidth(preset.w * newZ);
+      c.setHeight(preset.h * newZ);
+      setZoomLevel(newZ);
+      setCanvasScale(newZ);
+      c.requestRenderAll();
+    };
+    wrapper.addEventListener('wheel', onWheel, { passive: false });
+    return () => wrapper.removeEventListener('wheel', onWheel);
+  }, [preset]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -207,7 +224,6 @@ export default function CardBuilderModal({
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
 
       const ctrl = e.ctrlKey || e.metaKey;
-
       if (ctrl && e.key === 'z') { e.preventDefault(); undo(); }
       if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
       if (ctrl && e.key === 's') { e.preventDefault(); void handleSave(); }
@@ -223,7 +239,6 @@ export default function CardBuilderModal({
           setSelectedObjects([]);
         }
       }
-      // Arrow keys nudge
       const nudge = e.shiftKey ? 10 : 1;
       const obj = c.getActiveObject();
       if (obj) {
@@ -231,20 +246,16 @@ export default function CardBuilderModal({
         if (e.key === 'ArrowRight') { obj.set('left', (obj.left ?? 0) + nudge); c.requestRenderAll(); }
         if (e.key === 'ArrowUp')    { obj.set('top',  (obj.top  ?? 0) - nudge); c.requestRenderAll(); }
         if (e.key === 'ArrowDown')  { obj.set('top',  (obj.top  ?? 0) + nudge); c.requestRenderAll(); }
-        if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
-          e.preventDefault();
-          snapshot();
-        }
+        if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) { e.preventDefault(); snapshot(); }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [undo, redo]);
 
   // ── Clipboard ───────────────────────────────────────────────────────────────
   const clipboardRef = useRef<fabric.Object | null>(null);
-
   const copySelection = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
@@ -252,7 +263,6 @@ export default function CardBuilderModal({
     if (!obj) return;
     obj.clone((cloned: fabric.Object) => { clipboardRef.current = cloned; });
   }, []);
-
   const paste = useCallback(() => {
     const c = fabricRef.current;
     if (!c || !clipboardRef.current) return;
@@ -314,36 +324,16 @@ export default function CardBuilderModal({
     const c = fabricRef.current;
     if (!c) return;
     const pos = canvasCenter(200, 120);
-    const rect = new fabric.Rect({
-      ...pos,
-      width: 200,
-      height: 120,
-      fill: '#e6332a',
-      rx: 12,
-      ry: 12,
-      stroke: 'transparent',
-      strokeWidth: 0,
-    });
-    c.add(rect);
-    c.setActiveObject(rect);
-    c.requestRenderAll();
+    const rect = new fabric.Rect({ ...pos, width: 200, height: 120, fill: '#e6332a', rx: 12, ry: 12, stroke: 'transparent', strokeWidth: 0 });
+    c.add(rect); c.setActiveObject(rect); c.requestRenderAll();
   }, [canvasCenter]);
 
   const addCircle = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
     const pos = canvasCenter(120, 120);
-    const circle = new fabric.Ellipse({
-      ...pos,
-      rx: 60,
-      ry: 60,
-      fill: '#2563eb',
-      stroke: 'transparent',
-      strokeWidth: 0,
-    });
-    c.add(circle);
-    c.setActiveObject(circle);
-    c.requestRenderAll();
+    const circle = new fabric.Ellipse({ ...pos, rx: 60, ry: 60, fill: '#2563eb', stroke: 'transparent', strokeWidth: 0 });
+    c.add(circle); c.setActiveObject(circle); c.requestRenderAll();
   }, [canvasCenter]);
 
   const addLine = useCallback(() => {
@@ -354,14 +344,11 @@ export default function CardBuilderModal({
       [cx - 150, preset.h * canvasScale * 0.5, cx + 150, preset.h * canvasScale * 0.5],
       { stroke: '#1e293b', strokeWidth: 3, selectable: true },
     );
-    c.add(line);
-    c.setActiveObject(line);
-    c.requestRenderAll();
+    c.add(line); c.setActiveObject(line); c.requestRenderAll();
   }, [preset, canvasScale]);
 
-  const handleUploadImage = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  const handleUploadImage = useCallback(() => { fileInputRef.current?.click(); }, []);
+  const handleBgImageUpload = useCallback(() => { bgImageInputRef.current?.click(); }, []);
 
   const onFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -372,57 +359,81 @@ export default function CardBuilderModal({
         const url = ev.target?.result as string;
         fabric.Image.fromURL(url, (img) => {
           const c = fabricRef.current!;
-          // Scale to max 400px wide
           const maxW = Math.min(preset.w * canvasScale * 0.5, 400);
-          if ((img.width ?? 1) > maxW) {
-            img.scale(maxW / (img.width ?? maxW));
-          }
+          if ((img.width ?? 1) > maxW) img.scale(maxW / (img.width ?? maxW));
           const pos = canvasCenter(img.getScaledWidth(), img.getScaledHeight());
           img.set(pos);
-          c.add(img);
-          c.setActiveObject(img);
-          c.requestRenderAll();
+          c.add(img); c.setActiveObject(img); c.requestRenderAll();
         });
       };
       reader.readAsDataURL(file);
-      // Reset so same file can be re-selected
       e.target.value = '';
     },
     [canvasCenter, preset, canvasScale],
   );
 
+  const onBgImageChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !fabricRef.current) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const url = ev.target?.result as string;
+        const c = fabricRef.current!;
+        fabric.Image.fromURL(url, (img) => {
+          c.setBackgroundImage(img, c.requestRenderAll.bind(c), {
+            scaleX: (c.width ?? preset.w) / (img.width ?? 1),
+            scaleY: (c.height ?? preset.h) / (img.height ?? 1),
+          });
+          snapshot();
+        });
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    },
+    [preset, snapshot],
+  );
+
+  // ── Background ───────────────────────────────────────────────────────────────
   const setBackground = useCallback((color: string) => {
     const c = fabricRef.current;
     if (!c) return;
-    c.setBackgroundColor(color, () => {
-      c.requestRenderAll();
-      snapshot();
+    c.setBackgroundColor(color, () => { c.requestRenderAll(); snapshot(); });
+    setBgColor(color);
+  }, [snapshot]);
+
+  const setBackgroundGradient = useCallback((from: string, to: string, angle: number) => {
+    const c = fabricRef.current;
+    if (!c) return;
+    const rad = (angle * Math.PI) / 180;
+    const x2 = 0.5 + Math.cos(rad) * 0.5;
+    const y2 = 0.5 + Math.sin(rad) * 0.5;
+    const grad = new fabric.Gradient({
+      type: 'linear',
+      gradientUnits: 'percentage',
+      coords: { x1: 1 - x2, y1: 1 - y2, x2, y2 },
+      colorStops: [
+        { offset: 0, color: from },
+        { offset: 1, color: to },
+      ],
     });
+    c.setBackgroundColor(grad as unknown as string, () => { c.requestRenderAll(); snapshot(); });
   }, [snapshot]);
 
   // ── Zoom controls ───────────────────────────────────────────────────────────
-  const zoomIn = useCallback(() => {
+  const applyZoom = useCallback((newZ: number) => {
     const c = fabricRef.current;
     if (!c) return;
-    const newZ = Math.min(c.getZoom() * 1.25, 4);
     c.setZoom(newZ);
     c.setWidth(preset.w * newZ);
     c.setHeight(preset.h * newZ);
     setZoomLevel(newZ);
+    setCanvasScale(newZ);
     c.requestRenderAll();
   }, [preset]);
 
-  const zoomOut = useCallback(() => {
-    const c = fabricRef.current;
-    if (!c) return;
-    const newZ = Math.max(c.getZoom() / 1.25, 0.1);
-    c.setZoom(newZ);
-    c.setWidth(preset.w * newZ);
-    c.setHeight(preset.h * newZ);
-    setZoomLevel(newZ);
-    c.requestRenderAll();
-  }, [preset]);
-
+  const zoomIn = useCallback(() => applyZoom(Math.min(fabricRef.current?.getZoom() ?? 1 * 1.25, 4) * 1.25), [applyZoom]);
+  const zoomOut = useCallback(() => applyZoom(Math.max((fabricRef.current?.getZoom() ?? 1) / 1.25, 0.1)), [applyZoom]);
   const zoomFit = useCallback(() => scaleCanvasToFit(), [scaleCanvasToFit]);
 
   // ── Object manipulation ─────────────────────────────────────────────────────
@@ -442,9 +453,7 @@ export default function CardBuilderModal({
     if (!obj) return;
     obj.clone((cloned: fabric.Object) => {
       cloned.set({ left: (cloned.left ?? 0) + 20, top: (cloned.top ?? 0) + 20 });
-      c.add(cloned);
-      c.setActiveObject(cloned);
-      c.requestRenderAll();
+      c.add(cloned); c.setActiveObject(cloned); c.requestRenderAll();
     });
   }, []);
 
@@ -506,17 +515,8 @@ export default function CardBuilderModal({
     setSaving(true);
     try {
       const canvasData = c.toJSON(['data']);
-      // Generate thumbnail
       const thumbnailUrl = c.toDataURL({ format: 'jpeg', quality: 0.5, multiplier: 0.3 });
-
-      const payload = {
-        name: designName,
-        canvas_width: preset.w,
-        canvas_height: preset.h,
-        canvas_data: canvasData,
-        thumbnail_url: thumbnailUrl,
-      };
-
+      const payload = { name: designName, canvas_width: preset.w, canvas_height: preset.h, canvas_data: canvasData, thumbnail_url: thumbnailUrl };
       let saved: UserDesign;
       if (designId) {
         saved = await designService.update(designId, payload);
@@ -534,14 +534,9 @@ export default function CardBuilderModal({
     }
   }, [designId, designName, preset, saving, onSaved]);
 
-  // ── Preset change ────────────────────────────────────────────────────────────
+  // ── Preset change ─────────────────────────────────────────────────────────
   const applyPreset = useCallback(
-    (p: CanvasPreset) => {
-      setPreset(p);
-      setShowPresets(false);
-      // Re-scale next tick (state needs to settle)
-      setTimeout(() => scaleCanvasToFit(), 0);
-    },
+    (p: CanvasPreset) => { setPreset(p); setShowPresets(false); setTimeout(() => scaleCanvasToFit(), 0); },
     [scaleCanvasToFit],
   );
 
@@ -551,28 +546,18 @@ export default function CardBuilderModal({
       className="fixed inset-0 z-[9999] flex flex-col bg-zinc-100"
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={onFileChange}
-      />
+      {/* Hidden file inputs */}
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
+      <input ref={bgImageInputRef} type="file" accept="image/*" className="hidden" onChange={onBgImageChange} />
 
       {/* ── Top Toolbar ──────────────────────────────────────────────────────── */}
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-4 shadow-sm">
-        {/* Close */}
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 transition"
-          title="Exit builder"
-        >
+        <button type="button" onClick={onClose}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+          title="Exit builder">
           <X size={18} />
         </button>
 
-        {/* Divider */}
         <div className="h-6 w-px bg-zinc-200" />
 
         {/* Design name */}
@@ -586,195 +571,157 @@ export default function CardBuilderModal({
 
         {/* Canvas preset selector */}
         <div className="relative">
-          <button
-            type="button"
-            onClick={() => setShowPresets((p) => !p)}
-            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 transition"
-          >
+          <button type="button" onClick={() => setShowPresets((p) => !p)}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100">
             {preset.label}
-            <span className="text-zinc-400">
-              {preset.w}×{preset.h}
-            </span>
+            <span className="text-zinc-400">{preset.w}×{preset.h}</span>
             <ChevronDown size={12} />
           </button>
           {showPresets && (
-            <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-2xl border border-zinc-200 bg-white shadow-xl p-1">
+            <div className="absolute left-0 top-full z-50 mt-1 min-w-[200px] rounded-2xl border border-zinc-200 bg-white p-1 shadow-xl">
               {CANVAS_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => applyPreset(p)}
-                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-zinc-50 ${
-                    preset.id === p.id ? 'font-bold text-zinc-900' : 'text-zinc-700'
-                  }`}
-                >
+                <button key={p.id} type="button" onClick={() => applyPreset(p)}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-zinc-50 ${preset.id === p.id ? 'font-bold text-zinc-900' : 'text-zinc-700'}`}>
                   <span>{p.label}</span>
-                  <span className="text-xs text-zinc-400">
-                    {p.w}×{p.h}
-                  </span>
+                  <span className="text-xs text-zinc-400">{p.w}×{p.h}</span>
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Divider */}
         <div className="h-6 w-px bg-zinc-200" />
 
         {/* Undo / Redo */}
-        <button
-          type="button"
-          onClick={undo}
-          disabled={!canUndo}
-          title={`Undo (${mod}+Z)`}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 transition"
-        >
+        <button type="button" onClick={undo} disabled={!canUndo} title={`Undo (${mod}+Z)`}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 disabled:opacity-30">
           <Undo2 size={16} />
         </button>
-        <button
-          type="button"
-          onClick={redo}
-          disabled={!canRedo}
-          title={`Redo (${mod}+Y)`}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 transition"
-        >
+        <button type="button" onClick={redo} disabled={!canRedo} title={`Redo (${mod}+Y)`}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 disabled:opacity-30">
           <Redo2 size={16} />
         </button>
 
-        {/* Divider */}
         <div className="h-6 w-px bg-zinc-200" />
 
         {/* Zoom controls */}
-        <button
-          type="button"
-          onClick={zoomOut}
-          title="Zoom out"
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 transition"
-        >
+        <button type="button" onClick={zoomOut} title="Zoom out"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100">
           <ZoomOut size={15} />
         </button>
-        <span className="min-w-[44px] text-center text-xs font-semibold text-zinc-500">
-          {fmtZoom(zoomLevel)}
-        </span>
-        <button
-          type="button"
-          onClick={zoomIn}
-          title="Zoom in"
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 transition"
-        >
+        <span className="min-w-[44px] text-center text-xs font-semibold text-zinc-500">{fmtZoom(zoomLevel)}</span>
+        <button type="button" onClick={zoomIn} title="Zoom in"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100">
           <ZoomIn size={15} />
         </button>
-        <button
-          type="button"
-          onClick={zoomFit}
-          title="Fit to screen"
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 transition"
-        >
+        <button type="button" onClick={zoomFit} title="Fit to screen"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100">
           <Maximize2 size={15} />
         </button>
 
-        {/* Spacer */}
         <div className="flex-1" />
-
-        {/* Cursor tool indicator */}
-        <div className="hidden md:flex items-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-1.5 text-xs text-zinc-500">
-          <MousePointer2 size={12} />
-          Select
-        </div>
 
         {/* Export */}
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={exportPNG}
-            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition"
-            title="Export as PNG"
-          >
-            <Download size={13} />
-            PNG
+          <button type="button" onClick={exportPNG}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50" title="Export PNG">
+            <Download size={13} /> PNG
           </button>
-          <button
-            type="button"
-            onClick={exportJPG}
-            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition"
-            title="Export as JPG"
-          >
-            <Download size={13} />
-            JPG
+          <button type="button" onClick={exportJPG}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50" title="Export JPG">
+            <Download size={13} /> JPG
           </button>
         </div>
 
         {/* Save */}
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={saving}
-          className={`flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold transition ${
-            savedPulse
-              ? 'bg-emerald-500 text-white'
-              : 'bg-slate-900 text-white hover:bg-slate-700'
-          } disabled:opacity-60`}
-          title={`Save (${mod}+S)`}
-        >
-          {saving ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <Save size={14} />
-          )}
+        <button type="button" onClick={() => void handleSave()} disabled={saving}
+          className={`flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold transition disabled:opacity-60 ${
+            savedPulse ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-white hover:bg-slate-700'
+          }`}
+          title={`Save (${mod}+S)`}>
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
           {savedPulse ? 'Saved!' : 'Save'}
         </button>
       </header>
 
       {/* ── Body (3 columns) ─────────────────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1">
-        {/* Left sidebar — Elements */}
-        <aside className="w-56 shrink-0 border-r border-zinc-200 bg-white">
+
+        {/* Left sidebar — Layers */}
+        <aside className="flex w-52 shrink-0 flex-col border-r border-zinc-200 bg-white">
           <div className="border-b border-zinc-100 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-widest text-zinc-400">Elements</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-zinc-400">Layers</p>
           </div>
-          <ElementsPanel
-            onAddText={addText}
-            onAddRect={addRect}
-            onAddCircle={addCircle}
-            onAddLine={addLine}
-            onUploadImage={handleUploadImage}
-            onSetBackground={setBackground}
-          />
+          <div className="flex-1 overflow-y-auto">
+            <LayersPanel
+              canvas={fabricRef.current}
+              selectedObjects={selectedObjects}
+            />
+          </div>
         </aside>
 
         {/* Center — Canvas workspace */}
         <div
           ref={wrapperRef}
-          className="flex flex-1 items-center justify-center overflow-auto bg-zinc-200"
+          className="relative flex flex-1 items-center justify-center overflow-auto bg-zinc-200"
           style={{ backgroundImage: 'radial-gradient(circle, #a1a1aa 1px, transparent 1px)', backgroundSize: '24px 24px' }}
           onClick={() => setShowPresets(false)}
         >
-          <div
-            className="relative shadow-2xl"
-            style={{
-              width: preset.w * canvasScale,
-              height: preset.h * canvasScale,
-            }}
-          >
-            <canvas ref={canvasElRef} />
+          {/* Artboard container with name label */}
+          <div className="flex flex-col items-center gap-2">
+            {/* Artboard name label */}
+            <button
+              type="button"
+              onClick={() => {
+                const c = fabricRef.current;
+                if (c) { c.discardActiveObject(); c.requestRenderAll(); setSelectedObjects([]); }
+              }}
+              className="rounded-md px-2 py-0.5 text-xs font-medium text-zinc-400 transition hover:bg-zinc-300/40 hover:text-zinc-600"
+              title="Click to edit artboard background"
+            >
+              {designName} — {preset.w}×{preset.h}
+            </button>
+
+            {/* Canvas artboard */}
+            <div
+              className="relative shadow-2xl"
+              style={{ width: preset.w * canvasScale, height: preset.h * canvasScale }}
+            >
+              <canvas ref={canvasElRef} />
+            </div>
           </div>
+
+          {/* Floating toolbar — fixed to bottom-center of canvas area */}
+          <FloatingToolbar
+            onAddText={addText}
+            onUploadImage={handleUploadImage}
+            onAddRect={addRect}
+            onAddCircle={addCircle}
+            onAddLine={addLine}
+          />
         </div>
 
         {/* Right sidebar — Properties */}
-        <aside className="w-64 shrink-0 border-l border-zinc-200 bg-white">
+        <aside className="flex w-64 shrink-0 flex-col border-l border-zinc-200 bg-white">
           <div className="border-b border-zinc-100 px-4 py-3">
             <p className="text-xs font-bold uppercase tracking-widest text-zinc-400">Properties</p>
           </div>
-          <PropertiesPanel
-            canvas={fabricRef.current}
-            selectedObjects={selectedObjects}
-            onDelete={deleteSelected}
-            onDuplicate={duplicateSelection}
-            onBringForward={bringForward}
-            onSendBackward={sendBackward}
-            onFlipH={flipH}
-            onFlipV={flipV}
-          />
+          <div className="flex-1 overflow-y-auto">
+            <PropertiesPanel
+              canvas={fabricRef.current}
+              selectedObjects={selectedObjects}
+              onDelete={deleteSelected}
+              onDuplicate={duplicateSelection}
+              onBringForward={bringForward}
+              onSendBackward={sendBackward}
+              onFlipH={flipH}
+              onFlipV={flipV}
+              onSetBgSolid={setBackground}
+              onSetBgGradient={setBackgroundGradient}
+              onSetBgImage={handleBgImageUpload}
+              bgColor={bgColor}
+            />
+          </div>
         </aside>
       </div>
 
@@ -788,11 +735,10 @@ export default function CardBuilderModal({
           ['Delete', 'Remove'],
           ['Arrow keys', 'Nudge'],
           [`Shift+Arrow`, 'Nudge ×10'],
+          ['Ctrl+Scroll', 'Zoom'],
         ].map(([key, label]) => (
           <span key={key} className="flex items-center gap-1.5 text-[10px] text-zinc-400">
-            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">
-              {key}
-            </kbd>
+            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">{key}</kbd>
             {label}
           </span>
         ))}
