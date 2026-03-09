@@ -63,11 +63,10 @@ function applyOpacity(color: string, opacity: number): string {
   return `rgba(${r},${g},${b},${opacity / 100})`;
 }
 
-// ── Color swatch + picker popover — smart positioning ────────────────────────
+// ── Color swatch + picker popover — fixed positioning (escapes overflow:hidden) ─
 function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
   const [open, setOpen] = useState(false);
-  const [openUp, setOpenUp] = useState(false);
-  const [openLeft, setOpenLeft] = useState(false);
+  const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -82,9 +81,10 @@ function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: 
   const handleToggle = () => {
     if (!open && ref.current) {
       const rect = ref.current.getBoundingClientRect();
-      const pw = 244, ph = 380;
-      setOpenLeft(rect.left + pw > window.innerWidth - 8);
-      setOpenUp(rect.bottom + ph > window.innerHeight - 8);
+      const pw = 244, ph = 400;
+      const left = rect.left + pw > window.innerWidth - 8 ? rect.right - pw : rect.left;
+      const top = rect.bottom + ph > window.innerHeight - 8 ? rect.top - ph - 4 : rect.bottom + 4;
+      setPickerPos({ top, left });
     }
     setOpen((o) => !o);
   };
@@ -105,9 +105,7 @@ function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: 
         <span className="flex-1 truncate text-left">{label || value}</span>
       </button>
       {open && (
-        <div
-          className={`absolute z-[9999] ${openUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} ${openLeft ? 'right-0' : 'left-0'}`}
-        >
+        <div style={{ position: 'fixed', top: pickerPos.top, left: pickerPos.left, zIndex: 9999 }}>
           <ColorPicker value={value || '#000000'} onChange={onChange} />
         </div>
       )}
@@ -118,8 +116,7 @@ function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: 
 // ── Mini color swatch (for gradient stop rows) ────────────────────────────────
 function MiniColorSwatch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
-  const [openUp, setOpenUp] = useState(false);
-  const [openLeft, setOpenLeft] = useState(false);
+  const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -135,9 +132,10 @@ function MiniColorSwatch({ value, onChange }: { value: string; onChange: (v: str
     e.stopPropagation();
     if (!open && ref.current) {
       const rect = ref.current.getBoundingClientRect();
-      const pw = 244, ph = 380;
-      setOpenLeft(rect.left + pw > window.innerWidth - 8);
-      setOpenUp(rect.bottom + ph > window.innerHeight - 8);
+      const pw = 244, ph = 400;
+      const left = rect.left + pw > window.innerWidth - 8 ? rect.right - pw : rect.left;
+      const top = rect.bottom + ph > window.innerHeight - 8 ? rect.top - ph - 4 : rect.bottom + 4;
+      setPickerPos({ top, left });
     }
     setOpen((o) => !o);
   };
@@ -151,7 +149,7 @@ function MiniColorSwatch({ value, onChange }: { value: string; onChange: (v: str
         style={{ background: value }}
       />
       {open && (
-        <div className={`absolute z-[9999] ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} ${openLeft ? 'right-0' : 'left-0'}`}>
+        <div style={{ position: 'fixed', top: pickerPos.top, left: pickerPos.left, zIndex: 9999 }}>
           <ColorPicker value={value} onChange={onChange} />
         </div>
       )}
@@ -396,11 +394,12 @@ function GradientEditor({
 }
 
 // ── Artboard background panel ─────────────────────────────────────────────────
-function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }: {
+function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage, canvas }: {
   bgColor: string;
   onSetBgSolid: (c: string) => void;
   onSetBgGradient: (stops: GradientStop[], type: 'linear' | 'radial', angle: number) => void;
   onSetBgImage: (url: string) => void;
+  canvas?: fabric.Canvas | null;
 }) {
   const [tab, setTab] = useState<'solid' | 'gradient' | 'image'>('solid');
   const [gradStops, setGradStops] = useState<GradientStop[]>([
@@ -411,6 +410,42 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }:
   const [gradAngle, setGradAngle] = useState(90);
   const [bgImagePreview, setBgImagePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Seed gradient state from existing canvas background on mount
+  useEffect(() => {
+    if (!canvas) return;
+    const bg = canvas.backgroundColor;
+    if (!bg || typeof bg === 'string') return;
+    const grad = bg as unknown as {
+      type: string;
+      colorStops: Array<{ offset: number; color: string }>;
+      coords: { x1?: number; y1?: number; x2?: number; y2?: number };
+    };
+    if (!grad.colorStops || grad.colorStops.length < 2) return;
+    const stops: GradientStop[] = grad.colorStops.map((cs, i) => {
+      const opacityMatch = cs.color.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/);
+      const opacity = opacityMatch ? Math.round(parseFloat(opacityMatch[1]) * 100) : 100;
+      let hexColor = cs.color;
+      if (cs.color.startsWith('rgba') || cs.color.startsWith('rgb')) {
+        const m = cs.color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (m) hexColor = '#' + [m[1], m[2], m[3]].map((n) => parseInt(n).toString(16).padStart(2, '0')).join('');
+      }
+      return { id: `g${i}`, offset: cs.offset, color: hexColor, opacity };
+    });
+    setGradStops(stops);
+    if (grad.type === 'radial') setGradType('radial');
+    // Recover angle from coords
+    if (grad.type === 'linear' && grad.coords.x1 !== undefined && canvas) {
+      const W = (canvas.width ?? 1080) / canvas.getZoom();
+      const H = (canvas.height ?? 1080) / canvas.getZoom();
+      const sinA = ((grad.coords.x2 ?? 0) - (grad.coords.x1 ?? 0)) / W;
+      const cosA = ((grad.coords.y1 ?? 0) - (grad.coords.y2 ?? 0)) / H;
+      const recovered = Math.round((Math.atan2(sinA, cosA) * 180) / Math.PI);
+      setGradAngle(((recovered % 360) + 360) % 360);
+    }
+    setTab('gradient');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvas]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -437,10 +472,10 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }:
         {(['solid', 'gradient', 'image'] as const).map((t) => (
           <button key={t} type="button" onClick={() => {
             setTab(t);
-            // Apply the selected background type immediately so the canvas
-            // always reflects the active tab without needing a further interaction.
+            if (t === 'solid') onSetBgSolid(bgColor);
+            // When switching to gradient, apply the current (already-seeded) stops
+            // without re-reading from canvas, so user edits aren't overridden.
             if (t === 'gradient') onSetBgGradient(gradStops, gradType, gradAngle);
-            else if (t === 'solid') onSetBgSolid(bgColor);
           }}
             className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold capitalize transition ${
               tab === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
@@ -551,7 +586,7 @@ export default function PropertiesPanel({
   if (!canvas || selectedObjects.length === 0) {
     return (
       <div className="h-full overflow-y-auto">
-        <ArtboardPanel bgColor={bgColor} onSetBgSolid={onSetBgSolid} onSetBgGradient={onSetBgGradient} onSetBgImage={onSetBgImage} />
+        <ArtboardPanel bgColor={bgColor} onSetBgSolid={onSetBgSolid} onSetBgGradient={onSetBgGradient} onSetBgImage={onSetBgImage} canvas={canvas} />
         <div className="flex flex-col items-center justify-center px-6 py-8 text-center">
           <Layers size={26} className="mb-3 text-zinc-200" />
           <p className="text-sm text-zinc-400">Select an element to edit properties</p>

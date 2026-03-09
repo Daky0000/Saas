@@ -83,9 +83,11 @@ export default function CardBuilderModal({
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [showImageModal, setShowImageModal] = useState(false);
+  const skipSnapshotRef = useRef(false);
 
   // ── Snapshot / history helpers ──────────────────────────────────────────────
   const snapshot = useCallback(() => {
+    if (skipSnapshotRef.current) return;
     const c = fabricRef.current;
     if (!c) return;
     const json = JSON.stringify(c.toJSON(['data']));
@@ -103,7 +105,9 @@ export default function CardBuilderModal({
     const current = undoStack.current.pop()!;
     redoStack.current.push(current);
     const prev = undoStack.current[undoStack.current.length - 1];
+    skipSnapshotRef.current = true;
     c.loadFromJSON(JSON.parse(prev), () => {
+      skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
       setCanRedo(redoStack.current.length > 0);
@@ -116,7 +120,9 @@ export default function CardBuilderModal({
     if (!c || redoStack.current.length === 0) return;
     const next = redoStack.current.pop()!;
     undoStack.current.push(next);
+    skipSnapshotRef.current = true;
     c.loadFromJSON(JSON.parse(next), () => {
+      skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
       setCanRedo(redoStack.current.length > 0);

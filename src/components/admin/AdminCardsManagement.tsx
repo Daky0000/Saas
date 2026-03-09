@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2, Globe, Upload } from 'lucide-react';
+import { Plus, Edit2, Trash2, Upload } from 'lucide-react';
 import {
   AdminCardTemplate,
   FabricDesignData,
@@ -7,6 +7,28 @@ import {
 } from '../../types/cardTemplate';
 import { cardTemplateService } from '../../services/cardTemplateService';
 import AdminFabricBuilder from './AdminFabricBuilder';
+
+// ── Toggle switch ─────────────────────────────────────────────────────────────
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onChange}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-50 ${
+        checked ? 'bg-green-500' : 'bg-slate-200'
+      }`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+          checked ? 'translate-x-4' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  );
+}
 
 // ── JSON import modal ─────────────────────────────────────────────────────────
 function JsonImportModal({ onImport, onClose }: {
@@ -88,7 +110,13 @@ const AdminCardsManagement = () => {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [builderName, setBuilderName] = useState('');
+  const [builderDescription, setBuilderDescription] = useState('');
+  const [builderIsPublished, setBuilderIsPublished] = useState(false);
+  const [builderCoverImageUrl, setBuilderCoverImageUrl] = useState<string | null>(null);
   const [builderExistingData, setBuilderExistingData] = useState<FabricDesignData | null>(null);
+
+  // Per-card toggle saving state
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
   const [showJsonImport, setShowJsonImport] = useState(false);
@@ -108,9 +136,19 @@ const AdminCardsManagement = () => {
   useEffect(() => { void fetchTemplates(); }, []);
 
   // ── Open builder ──────────────────────────────────────────────────────────
-  const openBuilder = (id: string | null, name: string, existingData: FabricDesignData | null) => {
+  const openBuilder = (
+    id: string | null,
+    name: string,
+    description: string,
+    isPublished: boolean,
+    existingData: FabricDesignData | null,
+    coverImageUrl?: string | null,
+  ) => {
     setEditingId(id);
     setBuilderName(name);
+    setBuilderDescription(description);
+    setBuilderIsPublished(isPublished);
+    setBuilderCoverImageUrl(coverImageUrl ?? null);
     setBuilderExistingData(existingData);
     setIsBuilderOpen(true);
   };
@@ -119,20 +157,20 @@ const AdminCardsManagement = () => {
     if (!newName.trim()) { setErrorMessage('Please enter a template name'); return; }
     setErrorMessage(null);
     setIsFormOpen(false);
-    openBuilder(null, newName.trim(), null);
+    openBuilder(null, newName.trim(), newDesc.trim(), false, null);
     setNewName('');
     setNewDesc('');
   };
 
   // ── Save Draft ────────────────────────────────────────────────────────────
-  const handleSaveDraft = async (data: FabricDesignData) => {
+  const handleSaveDraft = async (data: FabricDesignData, desc: string) => {
     try {
       setIsSaving(true);
       if (editingId) {
-        await cardTemplateService.updateTemplate(editingId, { name: builderName, description: newDesc, designData: data });
+        await cardTemplateService.updateTemplate(editingId, { name: builderName, description: desc, designData: data });
         setSuccessMessage('Template saved');
       } else {
-        const created = await cardTemplateService.createTemplate({ name: builderName, description: newDesc, designData: data });
+        const created = await cardTemplateService.createTemplate({ name: builderName, description: desc, designData: data });
         setEditingId(created.id);
         setSuccessMessage('Template saved as draft');
       }
@@ -145,19 +183,20 @@ const AdminCardsManagement = () => {
   };
 
   // ── Publish ───────────────────────────────────────────────────────────────
-  const handlePublish = async (data: FabricDesignData, thumbnailUrl: string) => {
+  const handlePublish = async (data: FabricDesignData, thumbnailUrl: string, desc: string) => {
     try {
       setIsSaving(true);
       setErrorMessage(null);
       let templateId = editingId;
       if (templateId) {
-        await cardTemplateService.updateTemplate(templateId, { name: builderName, description: newDesc, designData: data });
+        await cardTemplateService.updateTemplate(templateId, { name: builderName, description: desc, designData: data });
       } else {
-        const created = await cardTemplateService.createTemplate({ name: builderName, description: newDesc, designData: data });
+        const created = await cardTemplateService.createTemplate({ name: builderName, description: desc, designData: data });
         templateId = created.id;
         setEditingId(created.id);
       }
       await cardTemplateService.publishTemplate(templateId!, { coverImageUrl: thumbnailUrl });
+      setBuilderIsPublished(true);
       setSuccessMessage(`"${builderName}" published successfully`);
       setIsBuilderOpen(false);
       setBuilderExistingData(null);
@@ -170,9 +209,45 @@ const AdminCardsManagement = () => {
     }
   };
 
+  // ── Unpublish (from builder button) ──────────────────────────────────────
+  const handleUnpublish = async () => {
+    if (!editingId) return;
+    try {
+      setIsSaving(true);
+      await cardTemplateService.unpublishTemplate(editingId);
+      setBuilderIsPublished(false);
+      setSuccessMessage(`"${builderName}" unpublished`);
+      await fetchTemplates();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to unpublish template');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ── Toggle publish from card list ─────────────────────────────────────────
+  const handleTogglePublish = async (template: AdminCardTemplate) => {
+    try {
+      setTogglingId(template.id);
+      setErrorMessage(null);
+      if (template.isPublished) {
+        await cardTemplateService.unpublishTemplate(template.id);
+        setSuccessMessage(`"${template.name}" unpublished`);
+      } else {
+        await cardTemplateService.publishTemplate(template.id, { coverImageUrl: template.coverImageUrl ?? '' });
+        setSuccessMessage(`"${template.name}" published`);
+      }
+      await fetchTemplates();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to update template');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   const handleEdit = (template: AdminCardTemplate) => {
     const existing = isFabricDesign(template.designData) ? template.designData : null;
-    openBuilder(template.id, template.name, existing);
+    openBuilder(template.id, template.name, template.description, template.isPublished, existing, template.coverImageUrl);
   };
 
   const handleDelete = async (id: string) => {
@@ -218,9 +293,13 @@ const AdminCardsManagement = () => {
       <AdminFabricBuilder
         templateId={editingId}
         templateName={builderName}
+        templateDescription={builderDescription}
+        isPublished={builderIsPublished}
         existingDesignData={builderExistingData}
+        existingCoverImageUrl={builderCoverImageUrl ?? undefined}
         onSaveDraft={handleSaveDraft}
         onPublish={handlePublish}
+        onUnpublish={handleUnpublish}
         onClose={() => { setIsBuilderOpen(false); setBuilderExistingData(null); }}
         isSaving={isSaving}
       />
@@ -276,17 +355,27 @@ const AdminCardsManagement = () => {
                   )}
                 </div>
               )}
-              {template.isPublished && (
-                <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-green-500 px-2.5 py-1 text-xs font-semibold text-white">
-                  <Globe size={11} /> Published
-                </span>
-              )}
             </div>
             <div className="p-4">
-              <h3 className="font-semibold text-slate-900">{template.name}</h3>
-              {template.description && (
-                <p className="mt-1 text-sm text-slate-500 line-clamp-2">{template.description}</p>
-              )}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-slate-900 truncate">{template.name}</h3>
+                  {template.description && (
+                    <p className="mt-1 text-sm text-slate-500 line-clamp-2">{template.description}</p>
+                  )}
+                </div>
+                {/* Publish toggle */}
+                <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                  <Toggle
+                    checked={template.isPublished}
+                    onChange={() => void handleTogglePublish(template)}
+                    disabled={togglingId === template.id}
+                  />
+                  <span className={`text-[10px] font-semibold ${template.isPublished ? 'text-green-600' : 'text-slate-400'}`}>
+                    {togglingId === template.id ? '…' : template.isPublished ? 'Published' : 'Draft'}
+                  </span>
+                </div>
+              </div>
               <p className="mt-2 text-xs text-slate-400">
                 {new Date(template.createdAt).toLocaleDateString()}
                 {isFabricDesign(template.designData) && (
@@ -297,7 +386,7 @@ const AdminCardsManagement = () => {
                 <button onClick={() => handleEdit(template)}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition">
                   <Edit2 size={14} />
-                  {template.isPublished ? 'Edit / Re-publish' : 'Edit / Publish'}
+                  Edit
                 </button>
                 <button onClick={() => void handleDelete(template.id)}
                   className="flex items-center justify-center rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-500 hover:bg-red-100 transition">
