@@ -4,10 +4,18 @@ import {
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Trash2, Copy, ArrowUp, ArrowDown, Eye, EyeOff,
   ChevronDown, ChevronUp, ImagePlus, Layers, X,
+  Plus, Minus, ArrowLeftRight, RefreshCw,
 } from 'lucide-react';
 import ColorPicker from './ColorPicker';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+export interface GradientStop {
+  id: string;
+  offset: number;   // 0–1
+  color: string;    // hex e.g. '#ff0000'
+  opacity: number;  // 0–100
+}
+
 interface PropsPanelProps {
   canvas: fabric.Canvas | null;
   selectedObjects: fabric.Object[];
@@ -18,7 +26,7 @@ interface PropsPanelProps {
   onFlipH: () => void;
   onFlipV: () => void;
   onSetBgSolid: (color: string) => void;
-  onSetBgGradient: (from: string, to: string, angle: number) => void;
+  onSetBgGradient: (stops: GradientStop[], type: 'linear' | 'radial', angle: number) => void;
   onSetBgImage: (url: string) => void;
   bgColor?: string;
   artboardW?: number;
@@ -44,6 +52,16 @@ const FONT_WEIGHTS: { value: string; label: string }[] = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
+
+function applyOpacity(color: string, opacity: number): string {
+  if (opacity >= 100) return color;
+  const hex = color.replace('#', '');
+  if (hex.length !== 6) return color;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${opacity / 100})`;
+}
 
 // ── Color swatch + picker popover — smart positioning ────────────────────────
 function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
@@ -97,6 +115,50 @@ function ColorSwatch({ value, onChange, label }: { value: string; onChange: (v: 
   );
 }
 
+// ── Mini color swatch (for gradient stop rows) ────────────────────────────────
+function MiniColorSwatch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
+  const [openLeft, setOpenLeft] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const pw = 244, ph = 380;
+      setOpenLeft(rect.left + pw > window.innerWidth - 8);
+      setOpenUp(rect.bottom + ph > window.innerHeight - 8);
+    }
+    setOpen((o) => !o);
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="h-5 w-5 rounded border border-zinc-300 shadow-sm transition hover:border-zinc-400"
+        style={{ background: value }}
+      />
+      {open && (
+        <div className={`absolute z-[9999] ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} ${openLeft ? 'right-0' : 'left-0'}`}>
+          <ColorPicker value={value} onChange={onChange} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Number input ──────────────────────────────────────────────────────────────
 function Num({ value, onChange, min, max, step = 1, unit }: {
   value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number; unit?: string;
@@ -134,16 +196,217 @@ function SectionHead({ label }: { label: string }) {
   return <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">{label}</p>;
 }
 
+// ── Gradient editor ───────────────────────────────────────────────────────────
+function GradientEditor({
+  stops, type, angle, onChange,
+}: {
+  stops: GradientStop[];
+  type: 'linear' | 'radial';
+  angle: number;
+  onChange: (stops: GradientStop[], type: 'linear' | 'radial', angle: number) => void;
+}) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const [selectedId, setSelectedId] = useState<string>(stops[0]?.id ?? '');
+  const draggingRef = useRef<string | null>(null);
+
+  // Keep refs current so drag handlers don't capture stale closures
+  const stopsRef = useRef(stops);
+  const typeRef = useRef(type);
+  const angleRef = useRef(angle);
+  stopsRef.current = stops;
+  typeRef.current = type;
+  angleRef.current = angle;
+
+  const sortedStops = [...stops].sort((a, b) => a.offset - b.offset);
+  const gradCSS = type === 'linear'
+    ? `linear-gradient(${angle}deg, ${sortedStops.map((s) => `${applyOpacity(s.color, s.opacity)} ${(s.offset * 100).toFixed(1)}%`).join(', ')})`
+    : `radial-gradient(circle, ${sortedStops.map((s) => `${applyOpacity(s.color, s.opacity)} ${(s.offset * 100).toFixed(1)}%`).join(', ')})`;
+
+  const update = (id: string, patch: Partial<GradientStop>) => {
+    onChange(stopsRef.current.map((s) => (s.id === id ? { ...s, ...patch } : s)), typeRef.current, angleRef.current);
+  };
+
+  const addStop = useCallback(() => {
+    const sorted = [...stopsRef.current].sort((a, b) => a.offset - b.offset);
+    let maxGap = 0, insertAt = 0.5;
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const gap = sorted[i + 1].offset - sorted[i].offset;
+      if (gap > maxGap) { maxGap = gap; insertAt = (sorted[i].offset + sorted[i + 1].offset) / 2; }
+    }
+    const ns: GradientStop = { id: Math.random().toString(36).slice(2), offset: insertAt, color: '#888888', opacity: 100 };
+    onChange([...stopsRef.current, ns], typeRef.current, angleRef.current);
+    setSelectedId(ns.id);
+  }, [onChange]);
+
+  const removeStop = (id: string) => {
+    if (stopsRef.current.length <= 2) return;
+    const next = stopsRef.current.filter((s) => s.id !== id);
+    onChange(next, typeRef.current, angleRef.current);
+    if (selectedId === id) setSelectedId(next[0].id);
+  };
+
+  const handleStopMouseDown = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setSelectedId(id);
+    draggingRef.current = id;
+    const onMove = (me: MouseEvent) => {
+      if (!barRef.current || !draggingRef.current) return;
+      const rect = barRef.current.getBoundingClientRect();
+      const offset = clamp((me.clientX - rect.left) / rect.width, 0, 1);
+      onChange(
+        stopsRef.current.map((s) => (s.id === draggingRef.current ? { ...s, offset } : s)),
+        typeRef.current,
+        angleRef.current,
+      );
+    };
+    const onUp = () => {
+      draggingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Type + actions row */}
+      <div className="flex items-center gap-1.5">
+        <select
+          value={type}
+          onChange={(e) => onChange(stopsRef.current, e.target.value as 'linear' | 'radial', angleRef.current)}
+          className="flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
+        >
+          <option value="linear">Linear</option>
+          <option value="radial">Radial</option>
+        </select>
+        <button type="button" title="Reverse gradient"
+          onClick={() => onChange(stopsRef.current.map((s) => ({ ...s, offset: 1 - s.offset })), typeRef.current, angleRef.current)}
+          className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 transition hover:bg-zinc-50">
+          <ArrowLeftRight size={12} />
+        </button>
+        <button type="button" title="Rotate 45°"
+          onClick={() => onChange(stopsRef.current, typeRef.current, (angleRef.current + 45) % 360)}
+          className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 transition hover:bg-zinc-50">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+
+      {/* Gradient bar + draggable handles */}
+      <div className="relative pt-3">
+        <div
+          ref={barRef}
+          className="h-7 w-full rounded-lg border border-zinc-200"
+          style={{ background: gradCSS }}
+        />
+        {stops.map((s) => (
+          <div
+            key={s.id}
+            onMouseDown={(e) => handleStopMouseDown(e, s.id)}
+            style={{ left: `${s.offset * 100}%`, top: 0 }}
+            className="absolute -translate-x-1/2 cursor-ew-resize select-none"
+          >
+            <div
+              className={`h-5 w-4 rounded-md border-2 shadow-md transition-[border-color] ${
+                selectedId === s.id ? 'border-blue-500 ring-1 ring-blue-300' : 'border-white'
+              }`}
+              style={{ background: s.color }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Stops list header */}
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Stops</p>
+        <button type="button" onClick={addStop}
+          className="flex h-5 w-5 items-center justify-center rounded-md border border-zinc-200 text-zinc-500 transition hover:bg-zinc-100">
+          <Plus size={10} />
+        </button>
+      </div>
+
+      {/* Stops rows */}
+      <div className="flex flex-col gap-1">
+        {sortedStops.map((s) => (
+          <div
+            key={s.id}
+            onClick={() => setSelectedId(s.id)}
+            className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 cursor-pointer transition ${
+              selectedId === s.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'
+            }`}
+          >
+            {/* Position % */}
+            <input
+              type="number" min={0} max={100}
+              value={Math.round(s.offset * 100)}
+              onChange={(e) => { const v = clamp(parseInt(e.target.value) || 0, 0, 100); update(s.id, { offset: v / 100 }); }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-9 rounded border border-zinc-200 bg-white px-1 py-0.5 text-center text-[11px] text-zinc-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
+            <span className="shrink-0 text-[10px] text-zinc-400">%</span>
+
+            {/* Color swatch */}
+            <MiniColorSwatch value={s.color} onChange={(c) => update(s.id, { color: c })} />
+
+            {/* Hex */}
+            <input
+              type="text"
+              value={s.color.replace('#', '').toUpperCase()}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
+                if (v.length === 6) update(s.id, { color: '#' + v });
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="min-w-0 flex-1 rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[11px] text-zinc-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
+
+            {/* Opacity */}
+            <input
+              type="number" min={0} max={100}
+              value={s.opacity}
+              onChange={(e) => { const v = clamp(parseInt(e.target.value) || 0, 0, 100); update(s.id, { opacity: v }); }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-9 rounded border border-zinc-200 bg-white px-1 py-0.5 text-center text-[11px] text-zinc-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
+            <span className="shrink-0 text-[10px] text-zinc-400">%</span>
+
+            {/* Remove */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); removeStop(s.id); }}
+              disabled={stops.length <= 2}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-200 text-zinc-400 transition hover:border-red-200 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              <Minus size={10} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Angle (linear only) */}
+      {type === 'linear' && (
+        <div>
+          <p className="mb-1 text-[10px] text-zinc-400">Angle</p>
+          <Num value={angle} onChange={(v) => onChange(stopsRef.current, typeRef.current, v)} min={0} max={360} unit="°" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Artboard background panel ─────────────────────────────────────────────────
 function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }: {
   bgColor: string;
   onSetBgSolid: (c: string) => void;
-  onSetBgGradient: (from: string, to: string, angle: number) => void;
+  onSetBgGradient: (stops: GradientStop[], type: 'linear' | 'radial', angle: number) => void;
   onSetBgImage: (url: string) => void;
 }) {
   const [tab, setTab] = useState<'solid' | 'gradient' | 'image'>('solid');
-  const [gradFrom, setGradFrom] = useState('#e6332a');
-  const [gradTo, setGradTo] = useState('#1e293b');
+  const [gradStops, setGradStops] = useState<GradientStop[]>([
+    { id: 'a', offset: 0, color: '#e6332a', opacity: 100 },
+    { id: 'b', offset: 1, color: '#1e293b', opacity: 100 },
+  ]);
+  const [gradType, setGradType] = useState<'linear' | 'radial'>('linear');
   const [gradAngle, setGradAngle] = useState(90);
   const [bgImagePreview, setBgImagePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -188,20 +451,17 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }:
       )}
 
       {tab === 'gradient' && (
-        <div className="flex flex-col gap-3">
-          <div>
-            <p className="mb-1.5 text-[10px] text-zinc-400">From</p>
-            <ColorSwatch value={gradFrom} onChange={(c) => { setGradFrom(c); onSetBgGradient(c, gradTo, gradAngle); }} />
-          </div>
-          <div>
-            <p className="mb-1.5 text-[10px] text-zinc-400">To</p>
-            <ColorSwatch value={gradTo} onChange={(c) => { setGradTo(c); onSetBgGradient(gradFrom, c, gradAngle); }} />
-          </div>
-          <div>
-            <p className="mb-1.5 text-[10px] text-zinc-400">Angle (°)</p>
-            <Num value={gradAngle} onChange={(v) => { setGradAngle(v); onSetBgGradient(gradFrom, gradTo, v); }} min={0} max={360} unit="°" />
-          </div>
-        </div>
+        <GradientEditor
+          stops={gradStops}
+          type={gradType}
+          angle={gradAngle}
+          onChange={(stops, type, angle) => {
+            setGradStops(stops);
+            setGradType(type);
+            setGradAngle(angle);
+            onSetBgGradient(stops, type, angle);
+          }}
+        />
       )}
 
       {tab === 'image' && (
@@ -335,6 +595,11 @@ export default function PropertiesPanel({
   const displayW = Math.round((obj.getScaledWidth?.() ?? obj.width ?? 0) * zoom);
   const displayH = Math.round((obj.getScaledHeight?.() ?? obj.height ?? 0) * zoom);
   const txt = obj as fabric.IText;
+
+  // Image preview src
+  const imagePreviewSrc = isImage
+    ? ((obj as fabric.Image).getElement() as HTMLImageElement)?.src ?? ''
+    : '';
 
   return (
     <div className="h-full overflow-y-auto">
@@ -583,6 +848,13 @@ export default function PropertiesPanel({
         {/* ── Image ── */}
         {isImage && (
           <div>
+            {/* Thumbnail preview */}
+            {imagePreviewSrc && (
+              <div className="mb-3 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+                <img src={imagePreviewSrc} alt="" className="h-24 w-full object-contain" />
+              </div>
+            )}
+
             <SectionHead label="Image" />
             <div className="mt-2 flex flex-col gap-3">
 

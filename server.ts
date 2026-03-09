@@ -3549,6 +3549,53 @@ app.get('/api/auth/providers', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/auth/facebook/token — verify FB JS SDK access token, sign in / register user
+app.post('/api/auth/facebook/token', async (req: Request, res: Response) => {
+  try {
+    const { accessToken } = req.body as { accessToken?: string };
+    if (!accessToken) return res.status(400).json({ success: false, error: 'Access token required' });
+
+    // Verify token and fetch profile via Graph API
+    const graphRes = await axios.get<{ id: string; name?: string; email?: string }>(
+      'https://graph.facebook.com/me',
+      { params: { fields: 'id,name,email', access_token: accessToken } },
+    );
+    const { id: fbId, name: fbName, email: fbEmail } = graphRes.data;
+    if (!fbId) return res.status(401).json({ success: false, error: 'Could not verify Facebook token' });
+
+    const email = fbEmail || `fb_${fbId}@facebook.social`;
+    const name  = fbName  || email.split('@')[0];
+
+    let userId: string;
+    let userRole = 'user';
+
+    if (hasDatabase()) {
+      const existing = await dbQuery('SELECT id, role FROM users WHERE email = $1', [email]);
+      if (existing.rows.length > 0) {
+        userId   = existing.rows[0].id as string;
+        userRole = existing.rows[0].role as string;
+        await dbQuery('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userId]);
+      } else {
+        userId = randomUUID();
+        const username = `fb_${fbId.slice(0, 8)}`;
+        await dbQuery(
+          `INSERT INTO users (id, name, username, email, password_hash, role, status, created_at, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, 'user', 'active', NOW(), NOW())`,
+          [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 10)],
+        );
+      }
+    } else {
+      userId = randomUUID();
+    }
+
+    const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: '7d' });
+    return res.json({ success: true, token, user: { id: userId, email, name, role: userRole } });
+  } catch (error) {
+    console.error('Facebook token auth error:', error);
+    return res.status(401).json({ success: false, error: 'Facebook authentication failed' });
+  }
+});
+
 // GET /api/admin/auth-providers — admin: returns all providers with full config
 app.get('/api/admin/auth-providers', async (req: Request, res: Response) => {
   try {

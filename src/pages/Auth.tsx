@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { AppUser, normalizeUser } from '../utils/userSession';
 
 type AuthProps = {
@@ -12,6 +12,22 @@ type AuthResponse = {
   user?: Partial<AppUser> & { id?: string; email?: string };
 };
 
+// ── Facebook SDK types ────────────────────────────────────────────────────────
+declare global {
+  interface Window {
+    fbAsyncInit?: () => void;
+    FB?: {
+      init(params: { appId: string; cookie: boolean; xfbml: boolean; version: string }): void;
+      login(cb: (res: FBLoginResponse) => void, opts?: { scope: string }): void;
+      AppEvents: { logPageView(): void };
+    };
+  }
+}
+interface FBLoginResponse {
+  status: 'connected' | 'not_authorized' | 'unknown';
+  authResponse?: { accessToken: string; userID: string };
+}
+
 const safeJson = async <T,>(response: Response): Promise<{ data: T | null; rawText: string }> => {
   const rawText = await response.text().catch(() => '');
   try {
@@ -20,6 +36,8 @@ const safeJson = async <T,>(response: Response): Promise<{ data: T | null; rawTe
     return { data: null, rawText };
   }
 };
+
+const FB_APP_ID = (import.meta.env.VITE_FACEBOOK_APP_ID as string | undefined) || '';
 
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
@@ -67,11 +85,23 @@ const PROVIDER_UI: Record<string, { label: string; icon: React.ReactNode; classN
   },
 };
 
+// ── Facebook Icon SVG ─────────────────────────────────────────────────────────
+function FacebookIcon() {
+  return (
+    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.236 2.686.236v2.97h-1.513c-1.491 0-1.956.93-1.956 1.886v2.268h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
+    </svg>
+  );
+}
+
 function Auth({ onLogin }: AuthProps) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
+  const [fbReady, setFbReady] = useState(false);
+  const [fbLoginLoading, setFbLoginLoading] = useState(false);
+  const fbInitialized = useRef(false);
 
   // Login form state
   const [loginIdentifier, setLoginIdentifier] = useState('');
@@ -84,6 +114,75 @@ function Auth({ onLogin }: AuthProps) {
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
+
+  // ── Load Facebook JS SDK (exactly per Facebook's recommended snippet) ────────
+  useEffect(() => {
+    if (!FB_APP_ID || fbInitialized.current) return;
+    fbInitialized.current = true;
+
+    window.fbAsyncInit = function () {
+      window.FB!.init({
+        appId  : FB_APP_ID,
+        cookie : true,
+        xfbml  : true,
+        version: 'v18.0',
+      });
+      window.FB!.AppEvents.logPageView();
+      setFbReady(true);
+    };
+
+    // Load SDK script (same async snippet Facebook provides)
+    (function (d, s, id) {
+      if (d.getElementById(id)) {
+        if (window.FB) setFbReady(true);
+        return;
+      }
+      const js = d.createElement(s) as HTMLScriptElement;
+      const fjs = d.getElementsByTagName(s)[0];
+      js.id  = id;
+      js.src = 'https://connect.facebook.net/en_US/sdk.js';
+      fjs.parentNode?.insertBefore(js, fjs);
+    }(document, 'script', 'facebook-jssdk'));
+  }, []);
+
+  // ── Handle Facebook login via SDK popup ───────────────────────────────────
+  const handleFacebookLogin = () => {
+    if (!window.FB || !fbReady) return;
+    setFbLoginLoading(true);
+    setErrorMessage(null);
+
+    window.FB.login((response) => {
+      if (response.status === 'connected' && response.authResponse) {
+        const { accessToken } = response.authResponse;
+        fetch(`${API_BASE_URL}/api/auth/facebook/token`, {
+          method : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body   : JSON.stringify({ accessToken }),
+        })
+          .then((r) => r.json())
+          .then((data: AuthResponse & { user?: { id: string; email: string; name?: string; role?: string } }) => {
+            if (data.success && data.token && data.user) {
+              localStorage.setItem('auth_token', data.token);
+              onLogin(normalizeUser({
+                id      : data.user.id,
+                email   : data.user.email,
+                name    : data.user.name ?? null,
+                username: null,
+                phone   : null,
+                country : null,
+                role    : data.user.role === 'admin' ? 'admin' : 'user',
+              }));
+            } else {
+              setErrorMessage(data.error || 'Facebook login failed');
+            }
+          })
+          .catch(() => setErrorMessage('Facebook authentication failed. Please try again.'))
+          .finally(() => setFbLoginLoading(false));
+      } else {
+        setFbLoginLoading(false);
+      }
+    }, { scope: 'email,public_profile' });
+  };
 
   // Fetch enabled social providers from backend
   useEffect(() => {
@@ -354,7 +453,7 @@ function Auth({ onLogin }: AuthProps) {
                 </button>
               </form>
 
-              {socialProviders.length > 0 && (
+              {(socialProviders.length > 0 || FB_APP_ID) && (
                 <>
                   <div className="mt-6">
                     <div className="relative">
@@ -382,6 +481,17 @@ function Auth({ onLogin }: AuthProps) {
                         </button>
                       );
                     })}
+                    {FB_APP_ID && (
+                      <button
+                        type="button"
+                        onClick={handleFacebookLogin}
+                        disabled={!fbReady || fbLoginLoading}
+                        className="w-full py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <FacebookIcon />
+                        {fbLoginLoading ? 'Connecting...' : 'Continue with Facebook'}
+                      </button>
+                    )}
                   </div>
                 </>
               )}
@@ -498,7 +608,7 @@ function Auth({ onLogin }: AuthProps) {
                 </button>
               </form>
 
-              {socialProviders.length > 0 && (
+              {(socialProviders.length > 0 || FB_APP_ID) && (
                 <>
                   <div className="mt-6">
                     <div className="relative">
@@ -526,6 +636,17 @@ function Auth({ onLogin }: AuthProps) {
                         </button>
                       );
                     })}
+                    {FB_APP_ID && (
+                      <button
+                        type="button"
+                        onClick={handleFacebookLogin}
+                        disabled={!fbReady || fbLoginLoading}
+                        className="w-full py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <FacebookIcon />
+                        {fbLoginLoading ? 'Connecting...' : 'Sign up with Facebook'}
+                      </button>
+                    )}
                   </div>
                 </>
               )}
