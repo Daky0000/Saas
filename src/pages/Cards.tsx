@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, Clock } from 'lucide-react';
 import AdvancedTemplateCard from '../components/AdvancedTemplateCard';
 import PrebuiltTemplates from '../components/PrebuiltTemplates';
 import { cardTemplates, cloneCardTemplate } from '../data/cardTemplates';
-import { CardTemplate, AdminCardTemplate } from '../types/cardTemplate';
+import { CardTemplate, AdminCardTemplate, isFabricDesign, FabricDesignData } from '../types/cardTemplate';
 import { cardTemplateService } from '../services/cardTemplateService';
 import { designService, UserDesign } from '../services/designService';
 import CardBuilderModal from '../components/cards/builder/CardBuilderModal';
@@ -117,6 +117,7 @@ const Cards = () => {
   // Builder modal
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editingDesign, setEditingDesign] = useState<UserDesign | null>(null);
+  const [templateInitData, setTemplateInitData] = useState<{ fabricData: FabricDesignData; name: string } | null>(null);
 
   // Fetch published templates
   useEffect(() => {
@@ -154,6 +155,7 @@ const Cards = () => {
   const handleBuilderClose = () => {
     setBuilderOpen(false);
     setEditingDesign(null);
+    setTemplateInitData(null);
   };
 
   const handleDesignSaved = (saved: UserDesign) => {
@@ -177,7 +179,15 @@ const Cards = () => {
   };
 
   const handleSelectPublishedTemplate = (template: AdminCardTemplate) => {
-    setSelectedTemplate(cloneCardTemplate(template.designData));
+    if (isFabricDesign(template.designData)) {
+      // Fabric.js template — open directly in the canvas builder
+      setTemplateInitData({ fabricData: template.designData, name: template.name });
+      setEditingDesign(null);
+      setBuilderOpen(true);
+    } else {
+      // Legacy CSS template
+      setSelectedTemplate(cloneCardTemplate(template.designData as CardTemplate));
+    }
   };
 
   // ── Builder open (full-screen) ──────────────────────────────────────────────
@@ -185,6 +195,10 @@ const Cards = () => {
     return (
       <CardBuilderModal
         existingDesign={editingDesign}
+        initialCanvasData={templateInitData
+          ? { fabricJson: templateInitData.fabricData.fabricJson, canvasWidth: templateInitData.fabricData.canvasWidth, canvasHeight: templateInitData.fabricData.canvasHeight }
+          : null}
+        initialDesignName={templateInitData?.name}
         onClose={handleBuilderClose}
         onSaved={handleDesignSaved}
       />
@@ -320,13 +334,16 @@ const Cards = () => {
                 Curated templates ready to customize
               </p>
             </div>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {publishedTemplates.map((template) => (
-                <div
+                <button
                   key={template.id}
-                  className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
+                  type="button"
+                  onClick={() => handleSelectPublishedTemplate(template)}
+                  className="group text-left focus:outline-none"
                 >
-                  <div className="relative aspect-square overflow-hidden bg-slate-100">
+                  {/* Image with hover overlay */}
+                  <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-100 shadow-sm transition duration-300 group-hover:shadow-lg">
                     {template.coverImageUrl ? (
                       <img
                         src={template.coverImageUrl}
@@ -338,23 +355,23 @@ const Cards = () => {
                         <span className="text-sm">No preview</span>
                       </div>
                     )}
+                    {/* Hover overlay */}
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-200 group-hover:bg-black/40 group-hover:opacity-100">
+                      <span className="rounded-full bg-white px-5 py-2 text-sm font-bold text-slate-900 shadow-md">
+                        Use Card
+                      </span>
+                    </div>
                   </div>
-                  <div className="p-4">
-                    <h3 className="font-semibold text-slate-900">{template.name}</h3>
+                  {/* Name + description */}
+                  <div className="mt-2.5 px-0.5">
+                    <p className="truncate text-sm font-semibold text-slate-900">{template.name}</p>
                     {template.description && (
-                      <p className="mt-1 text-sm text-slate-500 line-clamp-2">
+                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
                         {template.description}
                       </p>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => handleSelectPublishedTemplate(template)}
-                      className="mt-4 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 active:scale-95"
-                    >
-                      Use Template
-                    </button>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
             <hr className="mt-10 border-slate-200" />
@@ -364,13 +381,13 @@ const Cards = () => {
         {isLoadingTemplates && (
           <section>
             <div className="mb-5 h-6 w-40 animate-pulse rounded-lg bg-slate-200" />
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3].map((n) => (
-                <div key={n} className="overflow-hidden rounded-2xl border border-slate-200">
-                  <div className="aspect-square animate-pulse bg-slate-100" />
-                  <div className="space-y-2 p-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {[1, 2, 3, 4].map((n) => (
+                <div key={n}>
+                  <div className="aspect-square animate-pulse rounded-2xl bg-slate-100" />
+                  <div className="mt-2.5 space-y-1.5 px-0.5">
                     <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
-                    <div className="h-9 w-full animate-pulse rounded-xl bg-slate-100" />
+                    <div className="h-3 w-1/2 animate-pulse rounded bg-slate-100" />
                   </div>
                 </div>
               ))}
