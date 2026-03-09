@@ -3,6 +3,7 @@ import {
   AlertCircle,
   BarChart4,
   FileText,
+  Image,
   LogOut,
   Menu,
   Palette,
@@ -20,6 +21,7 @@ import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
 import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
+import Media from './pages/Media';
 import Auth from './pages/Auth';
 import OAuthCallback from './pages/OAuthCallback';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -39,7 +41,7 @@ import {
   setStoredUser,
 } from './utils/userSession';
 
-type PageType = 'dashboard' | 'posts' | 'cards' | 'integrations' | 'pricing' | 'admin' | 'analytics' | 'profile';
+type PageType = 'dashboard' | 'posts' | 'cards' | 'integrations' | 'pricing' | 'admin' | 'analytics' | 'profile' | 'media';
 
 type AuthMeResponse = {
   success: boolean;
@@ -68,6 +70,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   admin: '/admin/users',
   analytics: '/analytics',
   profile: '/profile',
+  media: '/media',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -323,6 +326,7 @@ function App() {
     { id: 'posts' as const, label: 'Posts', icon: FileText },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
     { id: 'integrations' as const, label: 'Integrations', icon: Share2 },
+    { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
     { id: 'profile' as const, label: 'Profile', icon: Settings },
@@ -350,6 +354,8 @@ function App() {
         return <Analytics />;
       case 'profile':
         return <Profile currentUser={authUser} onUserUpdated={handleUserUpdated} />;
+      case 'media':
+        return <Media />;
       default:
         return <Dashboard currentUser={authUser} />;
     }

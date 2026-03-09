@@ -8,6 +8,7 @@ import PaymentManagement from '../components/admin/PaymentManagement';
 import AdminIntegrationsManagement from '../components/admin/AdminIntegrationsManagement';
 import AdminAuthProviders from '../components/admin/AdminAuthProviders';
 import AdminPagesManagement from '../components/admin/AdminPagesManagement';
+import AdminMediaManagement from '../components/admin/AdminMediaManagement';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -28,7 +29,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'pages-pricing-public'
     | 'pages-login'
     | 'pages-privacy'
-    | 'pages-terms';
+    | 'pages-terms'
+    | 'media';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -45,6 +47,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     'pages-login': '/admin/pages/login',
     'pages-privacy': '/admin/pages/privacy',
     'pages-terms': '/admin/pages/terms',
+    media: '/admin/media',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -71,6 +74,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
     { id: 'integrations', label: 'Integrations', icon: LayoutGrid, active: true },
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
+    { id: 'media', label: 'Media', icon: Image, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
   ];
@@ -210,6 +214,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'payments' && <PaymentManagement />}
             {activeTab === 'integrations' && <AdminIntegrationsManagement />}
             {activeTab === 'auth-providers' && <AdminAuthProviders />}
+            {activeTab === 'media' && <AdminMediaManagement />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>
