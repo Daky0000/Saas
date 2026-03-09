@@ -580,14 +580,16 @@ const Integrations = () => {
   const filteredIntegrations = useMemo(() => {
     const q = query.trim().toLowerCase();
     return INTEGRATIONS.filter((i) => {
-      // Non-admin users only see integrations admin has enabled.
-      // If enabledIds is null (still loading or endpoint failed), admins see all; users see all as fallback.
-      if (!isAdmin && enabledIds !== null && !enabledIds.has(i.id)) return false;
-      // Non-admin users: hide OAuth platforms that have finished loading but are not configured by admin.
-      // This prevents showing the "Admin needs to configure" warning — unconfigured platforms are simply hidden.
-      if (!isAdmin && i.isOAuth) {
-        const status = oauthStatus[i.id];
-        if (status && !status.loading && !status.configured) return false;
+      if (!isAdmin) {
+        if (i.isOAuth) {
+          // Only show OAuth integrations confirmed configured by admin (hide while loading or unconfigured).
+          const status = oauthStatus[i.id];
+          if (!status || status.loading || !status.configured) return false;
+        } else {
+          // Only show non-OAuth integrations admin has explicitly enabled.
+          // If enabledIds is null (still loading or endpoint failed), hide by default.
+          if (!enabledIds || !enabledIds.has(i.id)) return false;
+        }
       }
       const matchesCategory = activeCategory === 'All integrations' || i.category === activeCategory;
       const matchesQuery = !q || `${i.name} ${i.description} ${i.category}`.toLowerCase().includes(q);
