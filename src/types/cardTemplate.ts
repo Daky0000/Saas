@@ -132,12 +132,24 @@ export const createStyleConfig = (overrides: Partial<StyleConfig> = {}): StyleCo
   ...overrides,
 });
 
+// ── Fabric.js design data (new builder format) ────────────────────────────────
+export interface FabricDesignData {
+  fabricVersion: true;
+  canvasWidth: number;
+  canvasHeight: number;
+  fabricJson: Record<string, unknown>;
+}
+
+export function isFabricDesign(data: CardTemplate | FabricDesignData | Record<string, unknown>): data is FabricDesignData {
+  return (data as FabricDesignData).fabricVersion === true;
+}
+
 // Admin Card Template Types
 export interface AdminCardTemplate {
   id: string;
   name: string;
   description: string;
-  designData: CardTemplate;
+  designData: CardTemplate | FabricDesignData;
   coverImageUrl?: string;
   isPublished: boolean;
   createdAt: string;
@@ -147,13 +159,13 @@ export interface AdminCardTemplate {
 export interface CreateAdminCardTemplateInput {
   name: string;
   description?: string;
-  designData: CardTemplate;
+  designData: CardTemplate | FabricDesignData;
 }
 
 export interface UpdateAdminCardTemplateInput {
   name: string;
   description?: string;
-  designData: CardTemplate;
+  designData: CardTemplate | FabricDesignData;
 }
 
 export interface PublishCardTemplateInput {

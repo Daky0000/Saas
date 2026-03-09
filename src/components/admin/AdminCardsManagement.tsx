@@ -1,53 +1,103 @@
 import { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2, Globe } from 'lucide-react';
+import { Plus, Edit2, Trash2, Globe, Upload } from 'lucide-react';
 import {
   AdminCardTemplate,
-  CreateAdminCardTemplateInput,
-  CardTemplate,
-  createStyleConfig,
+  FabricDesignData,
+  isFabricDesign,
 } from '../../types/cardTemplate';
 import { cardTemplateService } from '../../services/cardTemplateService';
-import CardBuilder from './CardBuilder';
+import AdminFabricBuilder from './AdminFabricBuilder';
 
+// ── JSON import modal ─────────────────────────────────────────────────────────
+function JsonImportModal({ onImport, onClose }: {
+  onImport: (items: Array<{ name: string; description: string; designData: FabricDesignData }>) => void;
+  onClose: () => void;
+}) {
+  const [raw, setRaw] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleApply = () => {
+    setError(null);
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      const items = (arr as Record<string, unknown>[]).map((item, i) => {
+        if (!item.name) throw new Error(`Item ${i + 1}: missing "name"`);
+        if (!item.designData) throw new Error(`Item ${i + 1}: missing "designData"`);
+        const dd = item.designData as Record<string, unknown>;
+        if (dd.fabricVersion !== true) throw new Error(`Item ${i + 1}: "designData" must have fabricVersion: true`);
+        return {
+          name: String(item.name),
+          description: String(item.description ?? ''),
+          designData: dd as unknown as FabricDesignData,
+        };
+      });
+      onImport(items);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Invalid JSON');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="flex w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl">
+        <div className="border-b px-6 py-5">
+          <h2 className="text-xl font-bold text-slate-900">Import Templates from JSON</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Paste a JSON array of template objects. Each must have <code className="rounded bg-slate-100 px-1 text-xs">name</code>, optional <code className="rounded bg-slate-100 px-1 text-xs">description</code>, and <code className="rounded bg-slate-100 px-1 text-xs">designData</code> (FabricDesignData with <code className="rounded bg-slate-100 px-1 text-xs">fabricVersion: true</code>).
+          </p>
+        </div>
+        <div className="p-6">
+          <textarea
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            placeholder='[{ "name": "Template 1", "designData": { "fabricVersion": true, ... } }]'
+            rows={14}
+            className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+          <div className="mt-4 flex justify-end gap-3">
+            <button type="button" onClick={onClose}
+              className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition">
+              Cancel
+            </button>
+            <button type="button" onClick={handleApply}
+              className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition">
+              Import Templates
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 const AdminCardsManagement = () => {
   const [templates, setTemplates] = useState<AdminCardTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isBuilderOpen, setIsBuilderOpen] = useState(false);
-  const [builderTemplate, setBuilderTemplate] = useState<CardTemplate | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<CreateAdminCardTemplateInput>({
-    name: '',
-    description: '',
-    designData: createDefaultCardTemplate(),
-  });
-  const [isSaving, setIsSaving] = useState(false);
 
-  function createDefaultCardTemplate(): CardTemplate {
-    return {
-      id: 'default',
-      name: 'New Template',
-      description: '',
-      aspectRatio: '1:1',
-      background: createStyleConfig({
-        backgroundType: 'gradient',
-        backgroundGradientFrom: '#1e293b',
-        backgroundGradientTo: '#0f172a',
-        backgroundGradientAngle: 135,
-      }),
-      decorations: [],
-      elements: [],
-    };
-  }
+  // New template form
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+
+  // Builder
+  const [isBuilderOpen, setIsBuilderOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [builderName, setBuilderName] = useState('');
+  const [builderExistingData, setBuilderExistingData] = useState<FabricDesignData | null>(null);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [showJsonImport, setShowJsonImport] = useState(false);
 
   const fetchTemplates = async () => {
     try {
       setIsLoading(true);
       setErrorMessage(null);
-      const data = await cardTemplateService.getTemplates();
-      setTemplates(data);
+      setTemplates(await cardTemplateService.getTemplates());
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to load card templates');
     } finally {
@@ -55,51 +105,34 @@ const AdminCardsManagement = () => {
     }
   };
 
-  useEffect(() => {
-    void fetchTemplates();
-  }, []);
+  useEffect(() => { void fetchTemplates(); }, []);
 
-  const openBuilder = (
-    template: CardTemplate,
-    id: string | null,
-    name: string,
-    description: string
-  ) => {
+  // ── Open builder ──────────────────────────────────────────────────────────
+  const openBuilder = (id: string | null, name: string, existingData: FabricDesignData | null) => {
     setEditingId(id);
-    setFormData({ name, description, designData: template });
-    setBuilderTemplate(template);
+    setBuilderName(name);
+    setBuilderExistingData(existingData);
     setIsBuilderOpen(true);
   };
 
   const handleStartBuilder = () => {
-    if (!formData.name.trim()) {
-      setErrorMessage('Please enter a template name');
-      return;
-    }
+    if (!newName.trim()) { setErrorMessage('Please enter a template name'); return; }
     setErrorMessage(null);
     setIsFormOpen(false);
-    setBuilderTemplate(formData.designData);
-    setIsBuilderOpen(true);
+    openBuilder(null, newName.trim(), null);
+    setNewName('');
+    setNewDesc('');
   };
 
-  // Save draft — create or update without publishing
-  const handleBuilderSave = async (designedTemplate: CardTemplate) => {
+  // ── Save Draft ────────────────────────────────────────────────────────────
+  const handleSaveDraft = async (data: FabricDesignData) => {
     try {
       setIsSaving(true);
       if (editingId) {
-        await cardTemplateService.updateTemplate(editingId, {
-          name: formData.name,
-          description: formData.description,
-          designData: designedTemplate,
-        });
-        setSuccessMessage('Template saved successfully');
+        await cardTemplateService.updateTemplate(editingId, { name: builderName, description: newDesc, designData: data });
+        setSuccessMessage('Template saved');
       } else {
-        const created = await cardTemplateService.createTemplate({
-          name: formData.name,
-          description: formData.description,
-          designData: designedTemplate,
-        });
-        // Store the new ID so subsequent saves/publishes use it
+        const created = await cardTemplateService.createTemplate({ name: builderName, description: newDesc, designData: data });
         setEditingId(created.id);
         setSuccessMessage('Template saved as draft');
       }
@@ -111,42 +144,24 @@ const AdminCardsManagement = () => {
     }
   };
 
-  // Save + publish in one step (called from within the builder toolbar)
-  const handleBuilderPublish = async (
-    designedTemplate: CardTemplate,
-    previewImageUrl: string
-  ) => {
+  // ── Publish ───────────────────────────────────────────────────────────────
+  const handlePublish = async (data: FabricDesignData, thumbnailUrl: string) => {
     try {
       setIsSaving(true);
       setErrorMessage(null);
-
       let templateId = editingId;
-
-      // Step 1 — save/update the design first
       if (templateId) {
-        await cardTemplateService.updateTemplate(templateId, {
-          name: formData.name,
-          description: formData.description,
-          designData: designedTemplate,
-        });
+        await cardTemplateService.updateTemplate(templateId, { name: builderName, description: newDesc, designData: data });
       } else {
-        const created = await cardTemplateService.createTemplate({
-          name: formData.name,
-          description: formData.description,
-          designData: designedTemplate,
-        });
+        const created = await cardTemplateService.createTemplate({ name: builderName, description: newDesc, designData: data });
         templateId = created.id;
         setEditingId(created.id);
       }
-
-      // Step 2 — publish with the uploaded preview image
-      await cardTemplateService.publishTemplate(templateId!, { coverImageUrl: previewImageUrl });
-
-      setSuccessMessage(`"${formData.name}" published successfully`);
+      await cardTemplateService.publishTemplate(templateId!, { coverImageUrl: thumbnailUrl });
+      setSuccessMessage(`"${builderName}" published successfully`);
       setIsBuilderOpen(false);
-      setBuilderTemplate(null);
+      setBuilderExistingData(null);
       setEditingId(null);
-      setFormData({ name: '', description: '', designData: createDefaultCardTemplate() });
       await fetchTemplates();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to publish template');
@@ -156,7 +171,8 @@ const AdminCardsManagement = () => {
   };
 
   const handleEdit = (template: AdminCardTemplate) => {
-    openBuilder(template.designData, template.id, template.name, template.description);
+    const existing = isFabricDesign(template.designData) ? template.designData : null;
+    openBuilder(template.id, template.name, existing);
   };
 
   const handleDelete = async (id: string) => {
@@ -171,11 +187,43 @@ const AdminCardsManagement = () => {
     }
   };
 
+  // ── JSON bulk import ──────────────────────────────────────────────────────
+  const handleJsonImport = async (items: Array<{ name: string; description: string; designData: FabricDesignData }>) => {
+    setShowJsonImport(false);
+    setIsSaving(true);
+    setErrorMessage(null);
+    let count = 0;
+    for (const item of items) {
+      try {
+        await cardTemplateService.createTemplate({ name: item.name, description: item.description, designData: item.designData });
+        count++;
+      } catch { /* skip individual failures */ }
+    }
+    setSuccessMessage(`Imported ${count} template${count !== 1 ? 's' : ''}`);
+    await fetchTemplates();
+    setIsSaving(false);
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-blue-500" />
       </div>
+    );
+  }
+
+  // Builder is open — full screen
+  if (isBuilderOpen) {
+    return (
+      <AdminFabricBuilder
+        templateId={editingId}
+        templateName={builderName}
+        existingDesignData={builderExistingData}
+        onSaveDraft={handleSaveDraft}
+        onPublish={handlePublish}
+        onClose={() => { setIsBuilderOpen(false); setBuilderExistingData(null); }}
+        isSaving={isSaving}
+      />
     );
   }
 
@@ -185,94 +233,74 @@ const AdminCardsManagement = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">Card Templates</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Build and publish templates for the user dashboard.
-          </p>
+          <p className="mt-1 text-sm text-slate-500">Build and publish templates for the user dashboard.</p>
         </div>
-        <button
-          onClick={() => {
-            setEditingId(null);
-            setFormData({ name: '', description: '', designData: createDefaultCardTemplate() });
-            setIsFormOpen(true);
-          }}
-          className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition"
-        >
-          <Plus size={18} />
-          New Template
-        </button>
-      </div>
-
-      {/* Publish workflow hint */}
-      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-4 text-sm text-blue-800">
-        <span className="font-semibold">Publish workflow: </span>
-        Build your template in the editor &rarr; click <strong>Download Preview</strong> to export
-        the canvas &rarr; click <strong>Upload Preview</strong> to attach the image &rarr; click{' '}
-        <strong>Publish Template</strong> to make it live in the user gallery.
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowJsonImport(true)}
+            className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Upload size={16} />
+            Import JSON
+          </button>
+          <button
+            onClick={() => { setNewName(''); setNewDesc(''); setIsFormOpen(true); }}
+            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition"
+          >
+            <Plus size={18} />
+            New Template
+          </button>
+        </div>
       </div>
 
       {/* Alerts */}
       {errorMessage && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {errorMessage}
-        </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{errorMessage}</div>
       )}
       {successMessage && (
-        <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700">
-          {successMessage}
-        </div>
+        <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700">{successMessage}</div>
       )}
 
       {/* Templates grid */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
         {templates.map((template) => (
-          <div
-            key={template.id}
-            className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition"
-          >
-            {/* Preview image */}
+          <div key={template.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition">
             <div className="relative aspect-video bg-slate-100">
               {template.coverImageUrl ? (
-                <img
-                  src={template.coverImageUrl}
-                  alt={template.name}
-                  className="h-full w-full object-cover"
-                />
+                <img src={template.coverImageUrl} alt={template.name} className="h-full w-full object-cover" />
               ) : (
-                <div className="flex h-full items-center justify-center text-slate-400">
-                  <p className="text-sm">No preview image</p>
+                <div className="flex h-full flex-col items-center justify-center gap-1 text-slate-400">
+                  <p className="text-sm">No preview</p>
+                  {isFabricDesign(template.designData) && (
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-600">Fabric.js</span>
+                  )}
                 </div>
               )}
               {template.isPublished && (
                 <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-green-500 px-2.5 py-1 text-xs font-semibold text-white">
-                  <Globe size={11} />
-                  Published
+                  <Globe size={11} /> Published
                 </span>
               )}
             </div>
-
-            {/* Card body */}
             <div className="p-4">
               <h3 className="font-semibold text-slate-900">{template.name}</h3>
               {template.description && (
                 <p className="mt-1 text-sm text-slate-500 line-clamp-2">{template.description}</p>
               )}
               <p className="mt-2 text-xs text-slate-400">
-                Created {new Date(template.createdAt).toLocaleDateString()}
+                {new Date(template.createdAt).toLocaleDateString()}
+                {isFabricDesign(template.designData) && (
+                  <span className="ml-2 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-500">Fabric</span>
+                )}
               </p>
-
-              {/* Actions */}
               <div className="mt-4 flex gap-2">
-                <button
-                  onClick={() => handleEdit(template)}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition"
-                >
+                <button onClick={() => handleEdit(template)}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition">
                   <Edit2 size={14} />
                   {template.isPublished ? 'Edit / Re-publish' : 'Edit / Publish'}
                 </button>
-                <button
-                  onClick={() => handleDelete(template.id)}
-                  className="flex items-center justify-center rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-500 hover:bg-red-100 transition"
-                >
+                <button onClick={() => void handleDelete(template.id)}
+                  className="flex items-center justify-center rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-500 hover:bg-red-100 transition">
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -287,72 +315,35 @@ const AdminCardsManagement = () => {
         </div>
       )}
 
-      {/* ── New Template Form Modal ── */}
+      {/* New Template Form Modal */}
       {isFormOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
             <div className="border-b px-6 py-5">
               <h2 className="text-xl font-bold text-slate-900">New Card Template</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Name your template, then continue to the design editor.
-              </p>
+              <p className="mt-1 text-sm text-slate-500">Name your template, then open the Fabric.js design editor.</p>
             </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleStartBuilder();
-              }}
-              className="space-y-5 p-6"
-            >
+            <form onSubmit={(e) => { e.preventDefault(); handleStartBuilder(); }} className="space-y-5 p-6">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                  Template Name *
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Template Name *</label>
+                <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
                   className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="e.g. Motivational Quote Card"
-                  autoFocus
-                />
+                  placeholder="e.g. Marketing Quote Card" autoFocus />
               </div>
-
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                  Description
-                </label>
-                <textarea
-                  value={formData.description || ''}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, description: e.target.value }))
-                  }
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Description</label>
+                <textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)}
                   className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Brief description shown in the template gallery"
-                  rows={3}
-                />
+                  placeholder="Brief description shown in the gallery" rows={3} />
               </div>
-
-              <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800">
-                The next screen opens the full design editor where you can build the template,
-                download a preview, and publish it.
-              </div>
-
               <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsFormOpen(false)}
-                  className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
-                >
+                <button type="button" onClick={() => setIsFormOpen(false)}
+                  className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition disabled:opacity-50"
-                >
-                  Continue to Editor
+                <button type="submit"
+                  className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition">
+                  Open Editor
                 </button>
               </div>
             </form>
@@ -360,18 +351,11 @@ const AdminCardsManagement = () => {
         </div>
       )}
 
-      {/* ── Card Builder ── */}
-      {isBuilderOpen && builderTemplate && (
-        <CardBuilder
-          template={builderTemplate}
-          templateName={formData.name}
-          onSave={handleBuilderSave}
-          onPublish={handleBuilderPublish}
-          onCancel={() => {
-            setIsBuilderOpen(false);
-            setBuilderTemplate(null);
-          }}
-          isLoading={isSaving}
+      {/* JSON Import Modal */}
+      {showJsonImport && (
+        <JsonImportModal
+          onImport={(items) => void handleJsonImport(items)}
+          onClose={() => setShowJsonImport(false)}
         />
       )}
     </div>

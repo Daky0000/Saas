@@ -13,7 +13,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5000/api/auth/login -X POST -H \"Content-Type: application/json\" -d '{\"\"identifier\"\":\"\"test\"\",\"\"password\"\":\"\"test\"\"}')",
       "Bash(curl -s http://localhost:5000/api/auth/login -X POST -H \"Content-Type: application/json\" -d '{\"\"identifier\"\":\"\"test@test.com\"\",\"\"password\"\":\"\"test123\"\"}')",
       "Bash(git add -A)",
-      "Bash(grep -E \"\\\\.tsx$\")"
+      "Bash(grep -E \"\\\\.tsx$\")",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npm run build)"
     ]
   }
 }
