@@ -15,7 +15,8 @@
       "Bash(git add -A)",
       "Bash(grep -E \"\\\\.tsx$\")",
       "Bash(npx tsc --noEmit)",
-      "Bash(npm run build)"
+      "Bash(npm run build)",
+      "Bash(ls d:/Saas/.env*)"
     ]
   }
 }
