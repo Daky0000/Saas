@@ -175,6 +175,7 @@ export default function CardBuilderModal({
     canvas.on('object:added', snapshot);
     canvas.on('object:modified', snapshot);
     canvas.on('object:removed', snapshot);
+    canvas.on('text:editing:exited', snapshot);
 
     const startJson = existingDesign?.canvas_data
       ?? (initialCanvasData?.fabricJson && Object.keys(initialCanvasData.fabricJson).length > 0
@@ -207,6 +208,7 @@ export default function CardBuilderModal({
       canvas.off('object:added', snapshot);
       canvas.off('object:modified', snapshot);
       canvas.off('object:removed', snapshot);
+      canvas.off('text:editing:exited', snapshot);
       canvas.dispose();
       fabricRef.current = null;
     };
@@ -751,6 +753,7 @@ export default function CardBuilderModal({
               onSetBgSolid={setBackground}
               onSetBgGradient={setBackgroundGradient}
               onSetBgImage={setBgImageFromUrl}
+              onSnapshot={snapshot}
               bgColor={bgColor}
               artboardW={preset.w}
               artboardH={preset.h}

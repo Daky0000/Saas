@@ -25,8 +25,8 @@ interface AdminFabricBuilderProps {
   isPublished?: boolean;
   existingDesignData?: FabricDesignData | null;
   existingCoverImageUrl?: string;
-  onSaveDraft: (data: FabricDesignData, desc: string) => Promise<void>;
-  onPublish: (data: FabricDesignData, thumbnailUrl: string, desc: string) => Promise<void>;
+  onSaveDraft: (data: FabricDesignData, desc: string, name: string) => Promise<void>;
+  onPublish: (data: FabricDesignData, thumbnailUrl: string, desc: string, name: string) => Promise<void>;
   onUnpublish?: () => Promise<void>;
   onClose: () => void;
   isSaving?: boolean;
@@ -81,6 +81,7 @@ export default function AdminFabricBuilder({
   const [showImageModal, setShowImageModal] = useState(false);
 
   // Card details panel state
+  const [name, setName] = useState(templateName);
   const [description, setDescription] = useState(templateDescription);
   const [isPublished, setIsPublished] = useState(initialIsPublished);
   const [customPreviewImage, setCustomPreviewImage] = useState<string | null>(existingCoverImageUrl ?? null);
@@ -170,6 +171,7 @@ export default function AdminFabricBuilder({
     canvas.on('object:added',    snapshot);
     canvas.on('object:modified', snapshot);
     canvas.on('object:removed',  snapshot);
+    canvas.on('text:editing:exited', snapshot);
 
     if (existingDesignData?.fabricJson && Object.keys(existingDesignData.fabricJson).length > 0) {
       skipSnapshotRef.current = true;
@@ -197,6 +199,7 @@ export default function AdminFabricBuilder({
       canvas.off('object:added',    snapshot);
       canvas.off('object:modified', snapshot);
       canvas.off('object:removed',  snapshot);
+      canvas.off('text:editing:exited', snapshot);
       canvas.dispose();
       fabricRef.current = null;
     };
@@ -432,9 +435,9 @@ export default function AdminFabricBuilder({
   const handleSaveDraft = useCallback(async () => {
     if (isSaving || publishingState !== 'idle') return;
     setPublishingState('saving');
-    try { await onSaveDraft(getDesignData(), description); }
+    try { await onSaveDraft(getDesignData(), description, name); }
     finally { setPublishingState('idle'); }
-  }, [isSaving, publishingState, onSaveDraft, getDesignData, description]);
+  }, [isSaving, publishingState, onSaveDraft, getDesignData, description, name]);
 
   // ── Publish ──────────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
@@ -444,7 +447,7 @@ export default function AdminFabricBuilder({
     // Step 1: Auto-save first
     setPublishingState('saving');
     try {
-      await onSaveDraft(getDesignData(), description);
+      await onSaveDraft(getDesignData(), description, name);
     } catch {
       setPublishingState('idle');
       return;
@@ -456,12 +459,12 @@ export default function AdminFabricBuilder({
       const data = getDesignData();
       const multiplier = preset.w / (preset.w * canvasScale);
       const thumbnailUrl = customPreviewImage || c.toDataURL({ format: 'jpeg', quality: 0.85, multiplier });
-      await onPublish(data, thumbnailUrl, description);
+      await onPublish(data, thumbnailUrl, description, name);
       setIsPublished(true);
       setPublishingState('done');
       setTimeout(() => setPublishingState('idle'), 2000);
     } catch { setPublishingState('idle'); }
-  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onSaveDraft, onPublish, description, customPreviewImage]);
+  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onSaveDraft, onPublish, description, name, customPreviewImage]);
 
   // ── Unpublish ─────────────────────────────────────────────────────────────────
   const handleUnpublish = useCallback(async () => {
@@ -631,10 +634,15 @@ export default function AdminFabricBuilder({
             <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Card Details</p>
           </div>
           <div className="border-b border-zinc-100 p-4 space-y-3">
-            {/* Title (read-only) */}
+            {/* Title (editable) */}
             <div>
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Title</p>
-              <p className="truncate text-sm font-semibold text-zinc-800">{templateName}</p>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Template name…"
+                className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm font-semibold text-zinc-800 placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-slate-300"
+              />
             </div>
             {/* Description */}
             <div>
@@ -705,6 +713,7 @@ export default function AdminFabricBuilder({
               onSetBgSolid={setBackground}
               onSetBgGradient={setBackgroundGradient}
               onSetBgImage={setBgImageFromUrl}
+              onSnapshot={snapshot}
               bgColor={bgColor}
               artboardW={preset.w}
               artboardH={preset.h}

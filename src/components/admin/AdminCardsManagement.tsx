@@ -165,14 +165,14 @@ const AdminCardsManagement = () => {
   };
 
   // ── Save Draft ────────────────────────────────────────────────────────────
-  const handleSaveDraft = async (data: FabricDesignData, desc: string) => {
+  const handleSaveDraft = async (data: FabricDesignData, desc: string, name: string) => {
     try {
       setIsSaving(true);
       if (editingIdRef.current) {
-        await cardTemplateService.updateTemplate(editingIdRef.current, { name: builderName, description: desc, designData: data });
+        await cardTemplateService.updateTemplate(editingIdRef.current, { name, description: desc, designData: data });
         setSuccessMessage('Template saved');
       } else {
-        const created = await cardTemplateService.createTemplate({ name: builderName, description: desc, designData: data });
+        const created = await cardTemplateService.createTemplate({ name, description: desc, designData: data });
         editingIdRef.current = created.id;
         setEditingId(created.id);
         setSuccessMessage('Template saved as draft');
@@ -187,7 +187,7 @@ const AdminCardsManagement = () => {
   };
 
   // ── Publish (builder already saved draft before calling this) ─────────────
-  const handlePublish = async (data: FabricDesignData, thumbnailUrl: string, desc: string) => {
+  const handlePublish = async (data: FabricDesignData, thumbnailUrl: string, desc: string, name: string) => {
     try {
       setIsSaving(true);
       setErrorMessage(null);
@@ -195,14 +195,14 @@ const AdminCardsManagement = () => {
       let templateId = editingIdRef.current;
       if (!templateId) {
         // Fallback: create if somehow not saved yet
-        const created = await cardTemplateService.createTemplate({ name: builderName, description: desc, designData: data });
+        const created = await cardTemplateService.createTemplate({ name, description: desc, designData: data });
         templateId = created.id;
         editingIdRef.current = created.id;
         setEditingId(created.id);
       }
       await cardTemplateService.publishTemplate(templateId, { coverImageUrl: thumbnailUrl });
       setBuilderIsPublished(true);
-      setSuccessMessage(`"${builderName}" published successfully`);
+      setSuccessMessage(`"${name}" published successfully`);
       setIsBuilderOpen(false);
       setBuilderExistingData(null);
       editingIdRef.current = null;
