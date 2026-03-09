@@ -5,7 +5,7 @@ import {
   ZoomIn, ZoomOut, Maximize2,
 } from 'lucide-react';
 import LayersPanel from './LayersPanel';
-import PropertiesPanel from './PropertiesPanel';
+import PropertiesPanel, { GradientStop } from './PropertiesPanel';
 import FloatingToolbar from './FloatingToolbar';
 import ImageUploadModal from './ImageUploadModal';
 import { CANVAS_PRESETS, CanvasPreset } from './canvasPresets';
@@ -393,21 +393,29 @@ export default function CardBuilderModal({
     setBgColor(color);
   }, [snapshot]);
 
-  const setBackgroundGradient = useCallback((from: string, to: string, angle: number) => {
+  const setBackgroundGradient = useCallback((
+    stops: GradientStop[],
+    type: 'linear' | 'radial',
+    angle: number,
+  ) => {
     const c = fabricRef.current;
     if (!c) return;
     const rad = (angle * Math.PI) / 180;
     const x2 = 0.5 + Math.cos(rad) * 0.5;
     const y2 = 0.5 + Math.sin(rad) * 0.5;
-    const grad = new fabric.Gradient({
-      type: 'linear',
-      gradientUnits: 'percentage',
-      coords: { x1: 1 - x2, y1: 1 - y2, x2, y2 },
-      colorStops: [
-        { offset: 0, color: from },
-        { offset: 1, color: to },
-      ],
-    });
+    const colorStops = [...stops]
+      .sort((a, b) => a.offset - b.offset)
+      .map((s) => {
+        const hex = s.color.replace('#', '');
+        const color = s.opacity < 100 && hex.length === 6
+          ? `rgba(${parseInt(hex.slice(0,2),16)},${parseInt(hex.slice(2,4),16)},${parseInt(hex.slice(4,6),16)},${s.opacity/100})`
+          : s.color;
+        return { offset: s.offset, color };
+      });
+    const coords = type === 'linear'
+      ? { x1: 1 - x2, y1: 1 - y2, x2, y2 }
+      : { r1: 0, r2: 0.5, x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 };
+    const grad = new fabric.Gradient({ type, gradientUnits: 'percentage', coords, colorStops });
     c.setBackgroundColor(grad as unknown as string, () => { c.requestRenderAll(); snapshot(); });
   }, [snapshot]);
 
