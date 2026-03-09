@@ -28,6 +28,7 @@ interface PropsPanelProps {
   onSetBgSolid: (color: string) => void;
   onSetBgGradient: (stops: GradientStop[], type: 'linear' | 'radial', angle: number) => void;
   onSetBgImage: (url: string) => void;
+  onSnapshot?: () => void;
   bgColor?: string;
   artboardW?: number;
   artboardH?: number;
@@ -543,7 +544,7 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage, c
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function PropertiesPanel({
   canvas, selectedObjects, onDelete, onDuplicate, onBringForward, onSendBackward,
-  onFlipH, onFlipV, onSetBgSolid, onSetBgGradient, onSetBgImage,
+  onFlipH, onFlipV, onSetBgSolid, onSetBgGradient, onSetBgImage, onSnapshot,
   bgColor = '#ffffff', artboardW = 1080, artboardH = 1080,
 }: PropsPanelProps) {
   const [, refresh] = useState(0);
@@ -605,14 +606,15 @@ export default function PropertiesPanel({
     selectedObjects.forEach((o) => (o as fabric.Object & Record<string, unknown>).set(key, value));
     canvas.requestRenderAll();
     refresh((n) => n + 1);
+    onSnapshot?.();
   };
 
   const setPos = (axis: 'left' | 'top', value: number) => {
-    obj.set(axis, value / zoom); canvas.requestRenderAll(); refresh((n) => n + 1);
+    obj.set(axis, value / zoom); canvas.requestRenderAll(); refresh((n) => n + 1); onSnapshot?.();
   };
   const setSize = (dim: 'scaleX' | 'scaleY', px: number) => {
     const orig = dim === 'scaleX' ? (obj.width ?? 1) : (obj.height ?? 1);
-    obj.set(dim, px / orig); canvas.requestRenderAll(); refresh((n) => n + 1);
+    obj.set(dim, px / orig); canvas.requestRenderAll(); refresh((n) => n + 1); onSnapshot?.();
   };
 
   // Canvas logical dimensions (unscaled)
@@ -638,6 +640,7 @@ export default function PropertiesPanel({
     }
     canvas.requestRenderAll();
     refresh((n) => n + 1);
+    onSnapshot?.();
   };
 
   // Image position alignment
@@ -654,6 +657,7 @@ export default function PropertiesPanel({
     else if (vAlign === 'bottom') img.set('top', ch - sh);
     canvas.requestRenderAll();
     refresh((n) => n + 1);
+    onSnapshot?.();
   };
 
   // ── Apply gradient to text fill ─────────────────────────────────────────────
@@ -681,6 +685,7 @@ export default function PropertiesPanel({
     selectedObjects.forEach((o) => o.set('fill', grad as unknown as string));
     canvas.requestRenderAll();
     refresh((n) => n + 1);
+    onSnapshot?.();
   };
 
   const displayLeft = Math.round((obj.left ?? 0) * zoom);
@@ -704,7 +709,7 @@ export default function PropertiesPanel({
             className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">
             <Copy size={12} /> Copy
           </button>
-          <button type="button" onClick={() => { obj.set('visible', !obj.visible); canvas.requestRenderAll(); refresh((n) => n + 1); }}
+          <button type="button" onClick={() => { obj.set('visible', !obj.visible); canvas.requestRenderAll(); refresh((n) => n + 1); onSnapshot?.(); }}
             title={obj.visible ? 'Hide' : 'Show'}
             className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">
             {obj.visible !== false ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -825,6 +830,7 @@ export default function PropertiesPanel({
                           selectedObjects.forEach((o) => (o as fabric.Object).set('fill', solidColor));
                           canvas?.requestRenderAll();
                           refresh((n) => n + 1);
+                          onSnapshot?.();
                         } else {
                           // Apply current gradient immediately
                           applyTextGradient(textGradStops, textGradType, textGradAngle);
