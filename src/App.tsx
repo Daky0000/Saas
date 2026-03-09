@@ -121,6 +121,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isOAuthCallback, setIsOAuthCallback] = useState(false);
+  const [currentPathname, setCurrentPathname] = useState(window.location.pathname);
 
   useOAuthCallback();
 
@@ -242,6 +243,7 @@ function App() {
   useEffect(() => {
     const handlePopState = () => {
       const pathname = window.location.pathname;
+      setCurrentPathname(pathname);
       const callbackPath = pathname.startsWith('/auth/') && pathname.includes('callback');
       setIsOAuthCallback(callbackPath);
 
@@ -253,6 +255,7 @@ function App() {
         const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing'];
         if (!publicPaths.includes(pathname)) {
           navigatePath('/login', true);
+          setCurrentPathname('/login');
         }
         return;
       }
@@ -292,14 +295,14 @@ function App() {
     setAuthUser(storedUser);
   };
 
-  const currentPathname = window.location.pathname;
+  const goToLogin = () => { navigatePath('/login', true); setCurrentPathname('/login'); };
   // Public pages — always accessible regardless of auth state
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
-  if (currentPathname === '/tools') return <Tools onLoginClick={() => navigatePath('/login', true)} />;
-  if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={() => navigatePath('/login', true)} />;
+  if (currentPathname === '/tools') return <Tools onLoginClick={goToLogin} />;
+  if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={goToLogin} />;
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
-    return <Landing onLoginClick={() => navigatePath('/login', true)} />;
+    return <Landing onLoginClick={goToLogin} />;
   }
 
   if (!isAuthenticated && !isOAuthCallback) {

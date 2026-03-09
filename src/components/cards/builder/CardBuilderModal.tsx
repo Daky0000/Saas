@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react
 import { fabric } from 'fabric';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
-  ZoomIn, ZoomOut, Maximize2,
+  ZoomIn, ZoomOut, Maximize2, Grid3X3,
 } from 'lucide-react';
 import LayersPanel from './LayersPanel';
 import PropertiesPanel, { GradientStop } from './PropertiesPanel';
@@ -83,6 +83,7 @@ export default function CardBuilderModal({
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [showImageModal, setShowImageModal] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
   const skipSnapshotRef = useRef(false);
 
   // ── Snapshot / history helpers ──────────────────────────────────────────────
@@ -653,6 +654,20 @@ export default function CardBuilderModal({
           <Maximize2 size={15} />
         </button>
 
+        <div className="h-6 w-px bg-zinc-200" />
+
+        {/* Grid toggle */}
+        <button
+          type="button"
+          onClick={() => setShowGrid((v) => !v)}
+          title={showGrid ? 'Hide grid' : 'Show grid'}
+          className={`flex h-8 w-8 items-center justify-center rounded-lg transition ${
+            showGrid ? 'bg-blue-100 text-blue-600' : 'text-zinc-500 hover:bg-zinc-100'
+          }`}
+        >
+          <Grid3X3 size={15} />
+        </button>
+
         <div className="flex-1" />
 
         {/* Export */}
@@ -722,6 +737,16 @@ export default function CardBuilderModal({
               style={{ width: preset.w * canvasScale, height: preset.h * canvasScale }}
             >
               <canvas ref={canvasElRef} />
+              {/* Grid overlay — pointer-events:none so it never interferes with canvas interaction */}
+              {showGrid && (
+                <div
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    backgroundImage: `linear-gradient(rgba(99,102,241,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.18) 1px, transparent 1px)`,
+                    backgroundSize: `${50 * canvasScale}px ${50 * canvasScale}px`,
+                  }}
+                />
+              )}
             </div>
           </div>
 
