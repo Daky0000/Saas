@@ -214,6 +214,24 @@ async function ensureDatabase() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_images (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      file_name TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      file_type TEXT NOT NULL DEFAULT 'image/jpeg',
+      width INTEGER,
+      height INTEGER,
+      upload_date TIMESTAMPTZ DEFAULT NOW(),
+      url TEXT NOT NULL,
+      thumbnail_url TEXT,
+      tags TEXT[] DEFAULT '{}',
+      used_in JSONB DEFAULT '[]'
+    );
+  `);
+
   // Seed card templates once if the table is empty
   try {
     const { rows: existingRows } = await pool.query<{ id: string }>('SELECT id FROM card_templates LIMIT 1');
@@ -247,7 +265,8 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Types
 interface OAuthState {
@@ -3844,6 +3863,177 @@ app.put('/api/pages/:slug', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('page_content PUT error:', err);
     return res.status(500).json({ success: false, error: 'Failed to save page content' });
+  }
+});
+
+// ─── Media Library ───────────────────────────────────────────────────────────
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9.\-_]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
+}
+
+// Upload image to media library
+app.post('/api/media/upload', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { url, thumbnail_url, file_name, original_name, file_size, file_type, width, height } =
+    req.body as {
+      url: string; thumbnail_url?: string; file_name: string; original_name: string;
+      file_size: number; file_type: string; width?: number; height?: number;
+    };
+  if (!url || !file_name || !original_name || !file_type)
+    return res.status(400).json({ success: false, error: 'Missing required fields' });
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+  if (!allowedTypes.includes(file_type))
+    return res.status(400).json({ success: false, error: 'Unsupported image type' });
+  const MAX_SIZE = 10 * 1024 * 1024;
+  if (file_size > MAX_SIZE)
+    return res.status(400).json({ success: false, error: 'Image exceeds the maximum upload size of 10MB.' });
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    const id = randomUUID();
+    const safeName = sanitizeFileName(file_name);
+    const { rows } = await pool!.query(
+      `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'{}','[]') RETURNING *`,
+      [id, user.userId, safeName, original_name, file_size ?? 0, file_type, width ?? null, height ?? null, url, thumbnail_url ?? url]
+    );
+    return res.json({ success: true, image: rows[0] });
+  } catch (err) {
+    console.error('media upload error:', err);
+    return res.status(500).json({ success: false, error: 'Upload failed' });
+  }
+});
+
+// List user's media images
+app.get('/api/media', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.json({ success: true, images: [] });
+  const { search, tag } = req.query as { search?: string; tag?: string };
+  try {
+    const params: unknown[] = [user.userId];
+    let query = 'SELECT * FROM media_images WHERE user_id = $1';
+    if (search) { query += ` AND (file_name ILIKE $${params.length + 1} OR original_name ILIKE $${params.length + 1})`; params.push(`%${search}%`); }
+    if (tag) { query += ` AND $${params.length + 1} = ANY(tags)`; params.push(tag); }
+    query += ' ORDER BY upload_date DESC';
+    const { rows } = await pool!.query(query, params);
+    return res.json({ success: true, images: rows });
+  } catch (err) {
+    console.error('media list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch images' });
+  }
+});
+
+// Update image metadata (rename / tags)
+app.put('/api/media/:id', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { id } = req.params;
+  const { file_name, tags } = req.body as { file_name?: string; tags?: string[] };
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    const updates: string[] = [];
+    const params: unknown[] = [id, user.userId];
+    if (file_name !== undefined) { updates.push(`file_name = $${params.length + 1}`); params.push(sanitizeFileName(file_name)); }
+    if (tags !== undefined) { updates.push(`tags = $${params.length + 1}`); params.push(tags); }
+    if (!updates.length) return res.status(400).json({ success: false, error: 'Nothing to update' });
+    const { rows } = await pool!.query(
+      `UPDATE media_images SET ${updates.join(', ')} WHERE id = $1 AND user_id = $2 RETURNING *`,
+      params
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Image not found' });
+    return res.json({ success: true, image: rows[0] });
+  } catch (err) {
+    console.error('media update error:', err);
+    return res.status(500).json({ success: false, error: 'Update failed' });
+  }
+});
+
+// Delete single image
+app.delete('/api/media/:id', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { id } = req.params;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    await pool!.query('DELETE FROM media_images WHERE id = $1 AND user_id = $2', [id, user.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('media delete error:', err);
+    return res.status(500).json({ success: false, error: 'Delete failed' });
+  }
+});
+
+// Bulk delete
+app.post('/api/media/bulk-delete', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { ids } = req.body as { ids: string[] };
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ success: false, error: 'ids required' });
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    await pool!.query('DELETE FROM media_images WHERE id = ANY($1) AND user_id = $2', [ids, user.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('media bulk delete error:', err);
+    return res.status(500).json({ success: false, error: 'Bulk delete failed' });
+  }
+});
+
+// Admin: list all images
+app.get('/api/admin/media', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, images: [] });
+  const { search, userId } = req.query as { search?: string; userId?: string };
+  try {
+    const params: unknown[] = [];
+    const where: string[] = [];
+    if (userId) { where.push(`m.user_id = $${params.length + 1}`); params.push(userId); }
+    if (search) { where.push(`(m.file_name ILIKE $${params.length + 1} OR u.username ILIKE $${params.length + 1})`); params.push(`%${search}%`); }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { rows } = await pool!.query(
+      `SELECT m.*, u.username, u.email as user_email
+       FROM media_images m JOIN users u ON m.user_id = u.id
+       ${whereClause} ORDER BY m.upload_date DESC LIMIT 500`,
+      params
+    );
+    return res.json({ success: true, images: rows });
+  } catch (err) {
+    console.error('admin media list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch images' });
+  }
+});
+
+// Admin: stats
+app.get('/api/admin/media/stats', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, stats: { total_images: 0, total_size: 0, users_count: 0 } });
+  try {
+    const { rows } = await pool!.query(
+      `SELECT COUNT(*) as total_images, COALESCE(SUM(file_size),0) as total_size, COUNT(DISTINCT user_id) as users_count FROM media_images`
+    );
+    return res.json({ success: true, stats: rows[0] });
+  } catch (err) {
+    console.error('admin media stats error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch stats' });
+  }
+});
+
+// Admin: delete any image
+app.delete('/api/admin/media/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { id } = req.params;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    await pool!.query('DELETE FROM media_images WHERE id = $1', [id]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('admin media delete error:', err);
+    return res.status(500).json({ success: false, error: 'Delete failed' });
   }
 });
 

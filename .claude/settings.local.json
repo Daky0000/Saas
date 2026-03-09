@@ -18,7 +18,8 @@
       "Bash(npm run build)",
       "Bash(ls d:/Saas/.env*)",
       "Bash(cat d:/Saas/.github/workflows/*.yml)",
-      "Bash(cat d:/Saas/.github/workflows/*.yaml)"
+      "Bash(cat d:/Saas/.github/workflows/*.yaml)",
+      "Bash(/dev/null:*)"
     ]
   }
 }
