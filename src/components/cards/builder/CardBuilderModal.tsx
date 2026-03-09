@@ -182,17 +182,22 @@ export default function CardBuilderModal({
           : null);
 
     if (startJson) {
+      skipSnapshotRef.current = true;
       canvas.loadFromJSON(startJson, () => {
+        skipSnapshotRef.current = false;
         canvas.requestRenderAll();
         const json = JSON.stringify(canvas.toJSON(['data']));
         undoStack.current = [json];
+        redoStack.current = [];
         setCanUndo(false);
+        setCanRedo(false);
         const bg = canvas.backgroundColor;
         if (typeof bg === 'string') setBgColor(bg);
       });
     } else {
       const json = JSON.stringify(canvas.toJSON(['data']));
       undoStack.current = [json];
+      redoStack.current = [];
     }
 
     return () => {

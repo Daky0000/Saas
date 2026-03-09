@@ -172,17 +172,22 @@ export default function AdminFabricBuilder({
     canvas.on('object:removed',  snapshot);
 
     if (existingDesignData?.fabricJson && Object.keys(existingDesignData.fabricJson).length > 0) {
+      skipSnapshotRef.current = true;
       canvas.loadFromJSON(existingDesignData.fabricJson, () => {
+        skipSnapshotRef.current = false;
         canvas.requestRenderAll();
         const json = JSON.stringify(canvas.toJSON(['data']));
         undoStack.current = [json];
+        redoStack.current = [];
         setCanUndo(false);
+        setCanRedo(false);
         const bg = canvas.backgroundColor;
         if (typeof bg === 'string') setBgColor(bg);
       });
     } else {
       const json = JSON.stringify(canvas.toJSON(['data']));
       undoStack.current = [json];
+      redoStack.current = [];
     }
 
     return () => {
@@ -435,10 +440,20 @@ export default function AdminFabricBuilder({
   const handlePublish = useCallback(async () => {
     const c = fabricRef.current;
     if (!c || isSaving || publishingState !== 'idle') return;
+
+    // Step 1: Auto-save first
+    setPublishingState('saving');
+    try {
+      await onSaveDraft(getDesignData(), description);
+    } catch {
+      setPublishingState('idle');
+      return;
+    }
+
+    // Step 2: Publish
     setPublishingState('publishing');
     try {
       const data = getDesignData();
-      // Use custom preview image if uploaded, otherwise auto-generate from canvas
       const multiplier = preset.w / (preset.w * canvasScale);
       const thumbnailUrl = customPreviewImage || c.toDataURL({ format: 'jpeg', quality: 0.85, multiplier });
       await onPublish(data, thumbnailUrl, description);
@@ -446,7 +461,7 @@ export default function AdminFabricBuilder({
       setPublishingState('done');
       setTimeout(() => setPublishingState('idle'), 2000);
     } catch { setPublishingState('idle'); }
-  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onPublish, description, customPreviewImage]);
+  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onSaveDraft, onPublish, description, customPreviewImage]);
 
   // ── Unpublish ─────────────────────────────────────────────────────────────────
   const handleUnpublish = useCallback(async () => {
@@ -558,12 +573,13 @@ export default function AdminFabricBuilder({
               ? 'bg-emerald-500 text-white'
               : 'bg-slate-900 text-white hover:bg-slate-700'
           }`}>
-          {publishingState === 'publishing'
+          {(publishingState === 'publishing' || publishingState === 'saving')
             ? <Loader2 size={14} className="animate-spin" />
             : publishingState === 'done'
               ? null
               : <Send size={14} />}
-          {publishingState === 'publishing' ? 'Publishing…'
+          {publishingState === 'saving' ? 'Saving…'
+            : publishingState === 'publishing' ? 'Publishing…'
             : publishingState === 'done' ? 'Published!'
             : isPublished ? 'Re-publish' : 'Publish'}
         </button>

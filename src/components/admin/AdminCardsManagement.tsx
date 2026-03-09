@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Edit2, Trash2, Upload } from 'lucide-react';
 import {
   AdminCardTemplate,
@@ -109,6 +109,7 @@ const AdminCardsManagement = () => {
   // Builder
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const editingIdRef = useRef<string | null>(null);
   const [builderName, setBuilderName] = useState('');
   const [builderDescription, setBuilderDescription] = useState('');
   const [builderIsPublished, setBuilderIsPublished] = useState(false);
@@ -144,6 +145,7 @@ const AdminCardsManagement = () => {
     existingData: FabricDesignData | null,
     coverImageUrl?: string | null,
   ) => {
+    editingIdRef.current = id;
     setEditingId(id);
     setBuilderName(name);
     setBuilderDescription(description);
@@ -166,44 +168,49 @@ const AdminCardsManagement = () => {
   const handleSaveDraft = async (data: FabricDesignData, desc: string) => {
     try {
       setIsSaving(true);
-      if (editingId) {
-        await cardTemplateService.updateTemplate(editingId, { name: builderName, description: desc, designData: data });
+      if (editingIdRef.current) {
+        await cardTemplateService.updateTemplate(editingIdRef.current, { name: builderName, description: desc, designData: data });
         setSuccessMessage('Template saved');
       } else {
         const created = await cardTemplateService.createTemplate({ name: builderName, description: desc, designData: data });
+        editingIdRef.current = created.id;
         setEditingId(created.id);
         setSuccessMessage('Template saved as draft');
       }
       await fetchTemplates();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to save template');
+      throw error; // re-throw so builder can handle
     } finally {
       setIsSaving(false);
     }
   };
 
-  // ── Publish ───────────────────────────────────────────────────────────────
+  // ── Publish (builder already saved draft before calling this) ─────────────
   const handlePublish = async (data: FabricDesignData, thumbnailUrl: string, desc: string) => {
     try {
       setIsSaving(true);
       setErrorMessage(null);
-      let templateId = editingId;
-      if (templateId) {
-        await cardTemplateService.updateTemplate(templateId, { name: builderName, description: desc, designData: data });
-      } else {
+      // editingIdRef.current is always current (save draft sets it above)
+      let templateId = editingIdRef.current;
+      if (!templateId) {
+        // Fallback: create if somehow not saved yet
         const created = await cardTemplateService.createTemplate({ name: builderName, description: desc, designData: data });
         templateId = created.id;
+        editingIdRef.current = created.id;
         setEditingId(created.id);
       }
-      await cardTemplateService.publishTemplate(templateId!, { coverImageUrl: thumbnailUrl });
+      await cardTemplateService.publishTemplate(templateId, { coverImageUrl: thumbnailUrl });
       setBuilderIsPublished(true);
       setSuccessMessage(`"${builderName}" published successfully`);
       setIsBuilderOpen(false);
       setBuilderExistingData(null);
+      editingIdRef.current = null;
       setEditingId(null);
       await fetchTemplates();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to publish template');
+      throw error;
     } finally {
       setIsSaving(false);
     }
@@ -211,10 +218,10 @@ const AdminCardsManagement = () => {
 
   // ── Unpublish (from builder button) ──────────────────────────────────────
   const handleUnpublish = async () => {
-    if (!editingId) return;
+    if (!editingIdRef.current) return;
     try {
       setIsSaving(true);
-      await cardTemplateService.unpublishTemplate(editingId);
+      await cardTemplateService.unpublishTemplate(editingIdRef.current);
       setBuilderIsPublished(false);
       setSuccessMessage(`"${builderName}" unpublished`);
       await fetchTemplates();
@@ -300,7 +307,7 @@ const AdminCardsManagement = () => {
         onSaveDraft={handleSaveDraft}
         onPublish={handlePublish}
         onUnpublish={handleUnpublish}
-        onClose={() => { setIsBuilderOpen(false); setBuilderExistingData(null); }}
+        onClose={() => { setIsBuilderOpen(false); setBuilderExistingData(null); editingIdRef.current = null; setEditingId(null); }}
         isSaving={isSaving}
       />
     );
@@ -341,7 +348,7 @@ const AdminCardsManagement = () => {
       )}
 
       {/* Templates grid */}
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {templates.map((template) => (
           <div key={template.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition">
             <div className="relative aspect-video bg-slate-100">
