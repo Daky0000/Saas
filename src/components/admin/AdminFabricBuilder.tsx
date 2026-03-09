@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react
 import { fabric } from 'fabric';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
-  ZoomIn, ZoomOut, Maximize2, Send,
+  ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff,
 } from 'lucide-react';
 import LayersPanel from '../cards/builder/LayersPanel';
 import PropertiesPanel, { GradientStop } from '../cards/builder/PropertiesPanel';
@@ -21,9 +21,13 @@ export interface FabricDesignData {
 interface AdminFabricBuilderProps {
   templateId: string | null;
   templateName: string;
+  templateDescription?: string;
+  isPublished?: boolean;
   existingDesignData?: FabricDesignData | null;
-  onSaveDraft: (data: FabricDesignData) => Promise<void>;
-  onPublish: (data: FabricDesignData, thumbnailUrl: string) => Promise<void>;
+  existingCoverImageUrl?: string;
+  onSaveDraft: (data: FabricDesignData, desc: string) => Promise<void>;
+  onPublish: (data: FabricDesignData, thumbnailUrl: string, desc: string) => Promise<void>;
+  onUnpublish?: () => Promise<void>;
   onClose: () => void;
   isSaving?: boolean;
 }
@@ -38,9 +42,13 @@ function fmtZoom(z: number) { return `${Math.round(z * 100)}%`; }
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function AdminFabricBuilder({
   templateName,
+  templateDescription = '',
+  isPublished: initialIsPublished = false,
   existingDesignData,
+  existingCoverImageUrl,
   onSaveDraft,
   onPublish,
+  onUnpublish,
   onClose,
   isSaving = false,
 }: AdminFabricBuilderProps) {
@@ -66,14 +74,22 @@ export default function AdminFabricBuilder({
   const [canRedo, setCanRedo] = useState(false);
 
   const [selectedObjects, setSelectedObjects] = useState<fabric.Object[]>([]);
-  const [publishingState, setPublishingState] = useState<'idle' | 'saving' | 'publishing' | 'done'>('idle');
+  const [publishingState, setPublishingState] = useState<'idle' | 'saving' | 'publishing' | 'unpublishing' | 'done'>('idle');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [showImageModal, setShowImageModal] = useState(false);
 
+  // Card details panel state
+  const [description, setDescription] = useState(templateDescription);
+  const [isPublished, setIsPublished] = useState(initialIsPublished);
+  const [customPreviewImage, setCustomPreviewImage] = useState<string | null>(existingCoverImageUrl ?? null);
+  const previewFileInputRef = useRef<HTMLInputElement>(null);
+  const skipSnapshotRef = useRef(false);
+
   // ── History ─────────────────────────────────────────────────────────────────
   const snapshot = useCallback(() => {
+    if (skipSnapshotRef.current) return;
     const c = fabricRef.current;
     if (!c) return;
     const json = JSON.stringify(c.toJSON(['data']));
@@ -91,7 +107,9 @@ export default function AdminFabricBuilder({
     const current = undoStack.current.pop()!;
     redoStack.current.push(current);
     const prev = undoStack.current[undoStack.current.length - 1];
+    skipSnapshotRef.current = true;
     c.loadFromJSON(JSON.parse(prev), () => {
+      skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
       setCanRedo(redoStack.current.length > 0);
@@ -104,7 +122,9 @@ export default function AdminFabricBuilder({
     if (!c || redoStack.current.length === 0) return;
     const next = redoStack.current.pop()!;
     undoStack.current.push(next);
+    skipSnapshotRef.current = true;
     c.loadFromJSON(JSON.parse(next), () => {
+      skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
       setCanRedo(redoStack.current.length > 0);
@@ -407,9 +427,9 @@ export default function AdminFabricBuilder({
   const handleSaveDraft = useCallback(async () => {
     if (isSaving || publishingState !== 'idle') return;
     setPublishingState('saving');
-    try { await onSaveDraft(getDesignData()); }
+    try { await onSaveDraft(getDesignData(), description); }
     finally { setPublishingState('idle'); }
-  }, [isSaving, publishingState, onSaveDraft, getDesignData]);
+  }, [isSaving, publishingState, onSaveDraft, getDesignData, description]);
 
   // ── Publish ──────────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
@@ -418,14 +438,25 @@ export default function AdminFabricBuilder({
     setPublishingState('publishing');
     try {
       const data = getDesignData();
-      // Generate high-quality thumbnail directly from the canvas
+      // Use custom preview image if uploaded, otherwise auto-generate from canvas
       const multiplier = preset.w / (preset.w * canvasScale);
-      const thumbnailUrl = c.toDataURL({ format: 'jpeg', quality: 0.85, multiplier });
-      await onPublish(data, thumbnailUrl);
+      const thumbnailUrl = customPreviewImage || c.toDataURL({ format: 'jpeg', quality: 0.85, multiplier });
+      await onPublish(data, thumbnailUrl, description);
+      setIsPublished(true);
       setPublishingState('done');
       setTimeout(() => setPublishingState('idle'), 2000);
     } catch { setPublishingState('idle'); }
-  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onPublish]);
+  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onPublish, description, customPreviewImage]);
+
+  // ── Unpublish ─────────────────────────────────────────────────────────────────
+  const handleUnpublish = useCallback(async () => {
+    if (!onUnpublish || isSaving || publishingState !== 'idle') return;
+    setPublishingState('unpublishing');
+    try {
+      await onUnpublish();
+      setIsPublished(false);
+    } finally { setPublishingState('idle'); }
+  }, [onUnpublish, isSaving, publishingState]);
 
   // ── Export ───────────────────────────────────────────────────────────────────
   const exportPNG = useCallback(() => {
@@ -511,6 +542,15 @@ export default function AdminFabricBuilder({
           Save Draft
         </button>
 
+        {/* Unpublish (shown when already published) */}
+        {isPublished && onUnpublish && (
+          <button type="button" onClick={() => void handleUnpublish()} disabled={busy}
+            className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60">
+            {publishingState === 'unpublishing' ? <Loader2 size={14} className="animate-spin" /> : <EyeOff size={14} />}
+            {publishingState === 'unpublishing' ? 'Unpublishing…' : 'Unpublish'}
+          </button>
+        )}
+
         {/* Publish */}
         <button type="button" onClick={() => void handlePublish()} disabled={busy}
           className={`flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold transition disabled:opacity-60 ${
@@ -525,7 +565,7 @@ export default function AdminFabricBuilder({
               : <Send size={14} />}
           {publishingState === 'publishing' ? 'Publishing…'
             : publishingState === 'done' ? 'Published!'
-            : 'Publish Template'}
+            : isPublished ? 'Re-publish' : 'Publish'}
         </button>
       </header>
 
@@ -570,8 +610,71 @@ export default function AdminFabricBuilder({
 
         {/* Properties */}
         <aside className="flex w-64 shrink-0 flex-col border-l border-zinc-200 bg-white">
+          {/* Card Details */}
           <div className="border-b border-zinc-100 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-widest text-zinc-400">Properties</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Card Details</p>
+          </div>
+          <div className="border-b border-zinc-100 p-4 space-y-3">
+            {/* Title (read-only) */}
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Title</p>
+              <p className="truncate text-sm font-semibold text-zinc-800">{templateName}</p>
+            </div>
+            {/* Description */}
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Description</p>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                placeholder="Short description shown in the gallery…"
+                className="w-full resize-none rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+            {/* Preview image */}
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Preview Image</p>
+              <input
+                ref={previewFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => setCustomPreviewImage(ev.target?.result as string);
+                  reader.readAsDataURL(file);
+                  e.target.value = '';
+                }}
+              />
+              {customPreviewImage ? (
+                <div className="relative overflow-hidden rounded-xl border border-zinc-200">
+                  <img src={customPreviewImage} alt="Preview" className="h-24 w-full object-cover" />
+                  <div className="absolute inset-0 flex items-end justify-between bg-gradient-to-t from-black/40 to-transparent p-2">
+                    <button type="button" onClick={() => previewFileInputRef.current?.click()}
+                      className="rounded-lg bg-white/20 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/30">
+                      Change
+                    </button>
+                    <button type="button" onClick={() => setCustomPreviewImage(null)}
+                      className="rounded-lg bg-white/20 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm transition hover:bg-red-500/70">
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => previewFileInputRef.current?.click()}
+                  className="flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-zinc-200 py-4 transition hover:border-zinc-300 hover:bg-zinc-50">
+                  <ImagePlus size={16} className="text-zinc-400" />
+                  <span className="text-[10px] font-semibold text-zinc-500">Upload preview image</span>
+                  <span className="text-[9px] text-zinc-300">Auto-generated if not set</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="border-b border-zinc-100 px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Properties</p>
           </div>
           <div className="flex-1 overflow-y-auto">
             <PropertiesPanel

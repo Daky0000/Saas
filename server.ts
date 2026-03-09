@@ -2653,10 +2653,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
 
     const { id } = req.params;
     const { coverImageUrl } = req.body;
-
-    if (!coverImageUrl) {
-      return res.status(400).json({ success: false, error: 'coverImageUrl is required' });
-    }
+    const coverUrl = typeof coverImageUrl === 'string' ? coverImageUrl : '';
 
     const now = new Date().toISOString();
 
@@ -2668,7 +2665,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
 
       const updated: DbCardTemplate = {
         ...existing,
-        cover_image_url: coverImageUrl,
+        cover_image_url: coverUrl,
         is_published: true,
         updated_at: now,
       };
@@ -2690,7 +2687,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
     } else {
       await dbQuery(
         'UPDATE card_templates SET cover_image_url = $1, is_published = true, updated_at = $2 WHERE id = $3',
-        [coverImageUrl, now, id]
+        [coverUrl, now, id]
       );
 
       const result = await dbQuery<DbCardTemplate>(
@@ -2720,6 +2717,34 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
   } catch (error) {
     console.error('Publish card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to publish card template' });
+  }
+});
+
+app.post('/api/card-templates/:id/unpublish', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { id } = req.params;
+    const now = new Date().toISOString();
+
+    if (!hasDatabase()) {
+      const existing = inMemoryCardTemplatesById.get(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Card template not found' });
+      }
+      inMemoryCardTemplatesById.set(id, { ...existing, is_published: false, updated_at: now });
+      return res.json({ success: true });
+    } else {
+      await dbQuery(
+        'UPDATE card_templates SET is_published = false, updated_at = $1 WHERE id = $2',
+        [now, id]
+      );
+      return res.json({ success: true });
+    }
+  } catch (error) {
+    console.error('Unpublish card template error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to unpublish card template' });
   }
 });
 

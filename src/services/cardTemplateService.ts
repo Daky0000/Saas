@@ -147,6 +147,16 @@ export const cardTemplateService = {
     return payload.template;
   },
 
+  async unpublishTemplate(id: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/card-templates/${id}/unpublish`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await extractError(response, 'Failed to unpublish card template'));
+    }
+  },
+
   async deleteTemplate(id: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/api/card-templates/${id}`, {
       method: 'DELETE',
