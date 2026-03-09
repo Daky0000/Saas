@@ -19,7 +19,9 @@
       "Bash(ls d:/Saas/.env*)",
       "Bash(cat d:/Saas/.github/workflows/*.yml)",
       "Bash(cat d:/Saas/.github/workflows/*.yaml)",
-      "Bash(/dev/null:*)"
+      "Bash(/dev/null:*)",
+      "Bash(gh run list --limit 3)",
+      "Bash(cat .github/workflows/*.yml)"
     ]
   }
 }
