@@ -9,8 +9,12 @@ import {
   Phone,
   Save,
   User,
+  FileText,
+  Plus,
+  Loader2,
 } from 'lucide-react';
 import { AppUser, normalizeUser } from '../utils/userSession';
+import { blogService, type BlogPost } from '../services/blogService';
 
 type ProfileProps = {
   currentUser: AppUser | null;
@@ -81,10 +85,19 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
+  const [recentPosts, setRecentPosts] = useState<BlogPost[]>([]);
+  const [postsLoading, setPostsLoading] = useState(true);
 
   useEffect(() => {
     setForm(toProfileForm(currentUser));
   }, [currentUser]);
+
+  useEffect(() => {
+    blogService.listPosts({ status: 'published' })
+      .then((data) => setRecentPosts(data.slice(0, 6)))
+      .catch(() => setRecentPosts([]))
+      .finally(() => setPostsLoading(false));
+  }, []);
 
   const missingFields = useMemo(() => {
     return ['name', 'username', 'email', 'phone', 'country'].filter(
@@ -422,6 +435,72 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
           </section>
         </div>
       </div>
+
+      {/* Your Posts grid */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Your Posts</h2>
+          <a
+            href="/posts"
+            onClick={(e) => {
+              e.preventDefault();
+              window.history.pushState({}, '', '/posts');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+            className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            <Plus size={15} /> New Post
+          </a>
+        </div>
+
+        {postsLoading
+          ? <div className="flex items-center justify-center py-12">
+              <Loader2 className="animate-spin text-slate-300" size={28} />
+            </div>
+          : recentPosts.length === 0
+            ? <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-200 py-14">
+                <FileText size={32} className="text-slate-200" />
+                <p className="text-sm text-slate-400">No published posts yet.</p>
+                <a
+                  href="/posts"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.history.pushState({}, '', '/posts');
+                    window.dispatchEvent(new PopStateEvent('popstate'));
+                  }}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Go to Posts
+                </a>
+              </div>
+            : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {recentPosts.map((post) => (
+                  <div key={post.id} className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white hover:shadow-md transition-shadow">
+                    {post.featured_image
+                      ? <img src={post.featured_image} alt={post.title} className="h-44 w-full object-cover" />
+                      : <div className="flex h-44 items-center justify-center bg-slate-100">
+                          <FileText size={28} className="text-slate-300" />
+                        </div>
+                    }
+                    <div className="flex flex-1 flex-col p-4 gap-2">
+                      {post.category_name && (
+                        <span className="text-xs font-bold uppercase tracking-wide text-[#e6332a]">{post.category_name}</span>
+                      )}
+                      <h3 className="text-sm font-bold text-slate-900 line-clamp-2 leading-snug">{post.title || '(Untitled)'}</h3>
+                      {post.excerpt && (
+                        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{post.excerpt}</p>
+                      )}
+                      <div className="mt-auto flex items-center gap-2 pt-2">
+                        {post.tag_names?.slice(0, 2).map((tag) => (
+                          <span key={tag} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{tag}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+        }
+      </section>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react
 import { fabric } from 'fabric';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
-  ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff,
+  ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff, Grid3X3,
 } from 'lucide-react';
 import LayersPanel from '../cards/builder/LayersPanel';
 import PropertiesPanel, { GradientStop } from '../cards/builder/PropertiesPanel';
@@ -79,6 +79,7 @@ export default function AdminFabricBuilder({
   const [canvasScale, setCanvasScale] = useState(1);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [showImageModal, setShowImageModal] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
 
   // Card details panel state
   const [name, setName] = useState(templateName);
@@ -553,6 +554,14 @@ export default function AdminFabricBuilder({
           <Download size={13} /> PNG
         </button>
 
+        {/* Grid toggle */}
+        <button type="button" onClick={() => setShowGrid((v) => !v)} title={showGrid ? 'Hide grid' : 'Show grid'}
+          className={`flex h-9 w-9 items-center justify-center rounded-xl border transition ${
+            showGrid ? 'border-blue-300 bg-blue-50 text-blue-600' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'
+          }`}>
+          <Grid3X3 size={15} />
+        </button>
+
         {/* Save Draft */}
         <button type="button" onClick={() => void handleSaveDraft()} disabled={busy}
           className="flex items-center gap-2 rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-60">
@@ -616,6 +625,15 @@ export default function AdminFabricBuilder({
             </button>
             <div className="relative shadow-2xl" style={{ width: preset.w * canvasScale, height: preset.h * canvasScale }}>
               <canvas ref={canvasElRef} />
+              {showGrid && (
+                <div
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    backgroundImage: `linear-gradient(rgba(99,102,241,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.18) 1px, transparent 1px)`,
+                    backgroundSize: `${50 * canvasScale}px ${50 * canvasScale}px`,
+                  }}
+                />
+              )}
             </div>
           </div>
           <FloatingToolbar

@@ -1,0 +1,198 @@
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
+  ? ''
+  : rawApiBaseUrl.replace(/\/$/, '');
+
+function getToken() {
+  return localStorage.getItem('auth_token') || '';
+}
+
+function authHeaders(): Record<string, string> {
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
+}
+
+export interface BlogCategory {
+  id: string;
+  user_id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface BlogTag {
+  id: string;
+  user_id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface BlogPost {
+  id: string;
+  user_id: string;
+  title: string;
+  slug: string;
+  content: string;
+  excerpt: string;
+  featured_image: string;
+  status: 'draft' | 'published' | 'scheduled';
+  category_id: string | null;
+  category_name?: string;
+  tag_ids?: string[];
+  tag_names?: string[];
+  meta_title: string;
+  meta_description: string;
+  focus_keyword: string;
+  social_title: string;
+  social_description: string;
+  social_image: string;
+  scheduled_at: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BlogPostPayload {
+  title?: string;
+  slug?: string;
+  content?: string;
+  excerpt?: string;
+  featured_image?: string;
+  status?: 'draft' | 'published' | 'scheduled';
+  category_id?: string | null;
+  meta_title?: string;
+  meta_description?: string;
+  focus_keyword?: string;
+  social_title?: string;
+  social_description?: string;
+  social_image?: string;
+  scheduled_at?: string | null;
+  tag_ids?: string[];
+}
+
+export const blogService = {
+  // Categories
+  async listCategories(): Promise<BlogCategory[]> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/categories`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    return data.categories ?? [];
+  },
+
+  async createCategory(name: string): Promise<BlogCategory> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/categories`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to create category');
+    return data.category;
+  },
+
+  async updateCategory(id: string, name: string): Promise<BlogCategory> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/categories/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update category');
+    return data.category;
+  },
+
+  async deleteCategory(id: string): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/blog/categories/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  },
+
+  // Tags
+  async listTags(): Promise<BlogTag[]> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/tags`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    return data.tags ?? [];
+  },
+
+  async createTag(name: string): Promise<BlogTag> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/tags`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to create tag');
+    return data.tag;
+  },
+
+  async deleteTag(id: string): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/blog/tags/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  },
+
+  // Posts
+  async listPosts(params?: { status?: string; search?: string }): Promise<BlogPost[]> {
+    const qs = new URLSearchParams();
+    if (params?.status && params.status !== 'all') qs.set('status', params.status);
+    if (params?.search) qs.set('search', params.search);
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts?${qs}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    return data.posts ?? [];
+  },
+
+  async getPost(id: string): Promise<BlogPost> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Not found');
+    return data.post;
+  },
+
+  async createPost(payload: BlogPostPayload): Promise<BlogPost> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to create post');
+    return data.post;
+  },
+
+  async updatePost(id: string, payload: BlogPostPayload): Promise<BlogPost> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update post');
+    return data.post;
+  },
+
+  async deletePost(id: string): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  },
+
+  async duplicatePost(id: string): Promise<BlogPost> {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}/duplicate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to duplicate post');
+    return data.post;
+  },
+};
