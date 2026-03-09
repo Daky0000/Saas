@@ -228,9 +228,11 @@ async function ensureDatabase() {
       url TEXT NOT NULL,
       thumbnail_url TEXT,
       tags TEXT[] DEFAULT '{}',
-      used_in JSONB DEFAULT '[]'
+      used_in JSONB DEFAULT '[]',
+      category TEXT DEFAULT 'user'
     );
   `);
+  await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'user'`);
 
   // Seed card templates once if the table is empty
   try {
@@ -3876,10 +3878,10 @@ function sanitizeFileName(name: string): string {
 app.post('/api/media/upload', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const { url, thumbnail_url, file_name, original_name, file_size, file_type, width, height } =
+  const { url, thumbnail_url, file_name, original_name, file_size, file_type, width, height, category } =
     req.body as {
       url: string; thumbnail_url?: string; file_name: string; original_name: string;
-      file_size: number; file_type: string; width?: number; height?: number;
+      file_size: number; file_type: string; width?: number; height?: number; category?: string;
     };
   if (!url || !file_name || !original_name || !file_type)
     return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -3893,10 +3895,11 @@ app.post('/api/media/upload', async (req: Request, res: Response) => {
   try {
     const id = randomUUID();
     const safeName = sanitizeFileName(file_name);
+    const imgCategory = category === 'admin' ? 'admin' : 'user';
     const { rows } = await pool!.query(
-      `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'{}','[]') RETURNING *`,
-      [id, user.userId, safeName, original_name, file_size ?? 0, file_type, width ?? null, height ?? null, url, thumbnail_url ?? url]
+      `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in, category)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'{}','[]',$11) RETURNING *`,
+      [id, user.userId, safeName, original_name, file_size ?? 0, file_type, width ?? null, height ?? null, url, thumbnail_url ?? url, imgCategory]
     );
     return res.json({ success: true, image: rows[0] });
   } catch (err) {
@@ -4034,6 +4037,41 @@ app.delete('/api/admin/media/:id', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('admin media delete error:', err);
     return res.status(500).json({ success: false, error: 'Delete failed' });
+  }
+});
+
+// Get admin-category assets (accessible to authenticated users for template suggestions)
+app.get('/api/media/admin-assets', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    const { rows } = await pool!.query(
+      `SELECT id, file_name, file_type, width, height, url, thumbnail_url, tags, upload_date
+       FROM media_images WHERE category = 'admin' ORDER BY upload_date DESC LIMIT 200`
+    );
+    return res.json({ success: true, images: rows });
+  } catch (err) {
+    console.error('admin assets error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load admin assets' });
+  }
+});
+
+// Admin: update media category
+app.patch('/api/admin/media/:id/category', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { id } = req.params;
+  const { category } = req.body as { category: string };
+  const allowed = ['user', 'admin'];
+  if (!allowed.includes(category)) return res.status(400).json({ success: false, error: 'Invalid category' });
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
+  try {
+    const { rows } = await pool!.query('UPDATE media_images SET category=$1 WHERE id=$2 RETURNING *', [category, id]);
+    return res.json({ success: true, image: rows[0] });
+  } catch (err) {
+    console.error('admin media category error:', err);
+    return res.status(500).json({ success: false, error: 'Update failed' });
   }
 });
 

@@ -25,6 +25,7 @@ export interface MediaImage {
   thumbnail_url?: string;
   tags: string[];
   used_in: string[];
+  category?: string;
   // admin fields
   username?: string;
   user_email?: string;
@@ -39,6 +40,7 @@ export interface MediaUploadPayload {
   file_type: string;
   width?: number;
   height?: number;
+  category?: string;
 }
 
 export interface AdminMediaStats {
@@ -125,5 +127,23 @@ export const mediaService = {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
+  },
+
+  async adminSetCategory(id: string, category: 'user' | 'admin'): Promise<MediaImage> {
+    const res = await fetch(`${API_BASE_URL}/api/admin/media/${id}/category`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ category }),
+    });
+    const data = await handleResponse<{ success: boolean; image: MediaImage }>(res);
+    return data.image;
+  },
+
+  async listAdminAssets(): Promise<MediaImage[]> {
+    const res = await fetch(`${API_BASE_URL}/api/media/admin-assets`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    return (data.images as MediaImage[]) ?? [];
   },
 };
