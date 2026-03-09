@@ -7,6 +7,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Pool } from 'pg';
 import { randomUUID, randomBytes, createCipheriv, createDecipheriv, scryptSync } from 'crypto';
+import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.js';
 
 dotenv.config();
 
@@ -212,6 +213,24 @@ async function ensureDatabase() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  // Seed card templates once if the table is empty
+  try {
+    const { rows: existingRows } = await pool.query<{ id: string }>('SELECT id FROM card_templates LIMIT 1');
+    if (existingRows.length === 0) {
+      const now = new Date().toISOString();
+      for (const t of SAMPLE_TEMPLATES) {
+        const tid = randomUUID();
+        await pool.query(
+          'INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+          [tid, t.name, t.description, JSON.stringify(t.designData), '', true, now, now],
+        );
+      }
+      console.log(`Seeded ${SAMPLE_TEMPLATES.length} card templates.`);
+    }
+  } catch (e) {
+    console.warn('Card template seed skipped:', e);
+  }
 
   dbReady = true;
 }
