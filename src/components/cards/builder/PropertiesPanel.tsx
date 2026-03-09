@@ -218,9 +218,10 @@ function GradientEditor({
   angleRef.current = angle;
 
   const sortedStops = [...stops].sort((a, b) => a.offset - b.offset);
+  const stopStr = sortedStops.map((s) => `${applyOpacity(s.color, s.opacity)} ${(s.offset * 100).toFixed(1)}%`).join(', ');
   const gradCSS = type === 'linear'
-    ? `linear-gradient(${angle}deg, ${sortedStops.map((s) => `${applyOpacity(s.color, s.opacity)} ${(s.offset * 100).toFixed(1)}%`).join(', ')})`
-    : `radial-gradient(circle, ${sortedStops.map((s) => `${applyOpacity(s.color, s.opacity)} ${(s.offset * 100).toFixed(1)}%`).join(', ')})`;
+    ? `linear-gradient(${angle}deg, ${stopStr})`
+    : `radial-gradient(circle, ${stopStr})`;
 
   const update = (id: string, patch: Partial<GradientStop>) => {
     onChange(stopsRef.current.map((s) => (s.id === id ? { ...s, ...patch } : s)), typeRef.current, angleRef.current);
@@ -434,7 +435,13 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage }:
       <SectionHead label="Artboard Background" />
       <div className="flex rounded-xl border border-zinc-200 bg-zinc-50 p-0.5">
         {(['solid', 'gradient', 'image'] as const).map((t) => (
-          <button key={t} type="button" onClick={() => setTab(t)}
+          <button key={t} type="button" onClick={() => {
+            setTab(t);
+            // Apply the selected background type immediately so the canvas
+            // always reflects the active tab without needing a further interaction.
+            if (t === 'gradient') onSetBgGradient(gradStops, gradType, gradAngle);
+            else if (t === 'solid') onSetBgSolid(bgColor);
+          }}
             className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold capitalize transition ${
               tab === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
             }`}>
@@ -508,6 +515,15 @@ export default function PropertiesPanel({
   const [typoExpanded, setTypoExpanded] = useState(false);
   const [strokeExpanded, setStrokeExpanded] = useState(false);
 
+  // ── Text fill mode (solid vs gradient) ────────────────────────────────────
+  const [textFillMode, setTextFillMode] = useState<'solid' | 'gradient'>('solid');
+  const [textGradStops, setTextGradStops] = useState<GradientStop[]>([
+    { id: 'ta', offset: 0, color: '#6366f1', opacity: 100 },
+    { id: 'tb', offset: 1, color: '#ec4899', opacity: 100 },
+  ]);
+  const [textGradType, setTextGradType] = useState<'linear' | 'radial'>('linear');
+  const [textGradAngle, setTextGradAngle] = useState(90);
+
   useEffect(() => {
     if (!canvas) return;
     const h = () => refresh((n) => n + 1);
@@ -515,6 +531,21 @@ export default function PropertiesPanel({
     evts.forEach((ev) => canvas.on(ev, h));
     return () => evts.forEach((ev) => canvas.off(ev, h));
   }, [canvas]);
+
+  // Sync text fill mode when selection changes
+  useEffect(() => {
+    const obj = selectedObjects[0];
+    if (!obj || !(obj instanceof fabric.IText || obj instanceof fabric.Text)) {
+      setTextFillMode('solid');
+      return;
+    }
+    const fill = (obj as fabric.IText).fill;
+    if (fill && typeof fill === 'object' && 'type' in (fill as object)) {
+      setTextFillMode('gradient');
+    } else {
+      setTextFillMode('solid');
+    }
+  }, [selectedObjects]);
 
   // ── Empty / artboard state ────────────────────────────────────────────────
   if (!canvas || selectedObjects.length === 0) {
@@ -586,6 +617,33 @@ export default function PropertiesPanel({
     if (vAlign === 'top') img.set('top', 0);
     else if (vAlign === 'center') img.set('top', (ch - sh) / 2);
     else if (vAlign === 'bottom') img.set('top', ch - sh);
+    canvas.requestRenderAll();
+    refresh((n) => n + 1);
+  };
+
+  // ── Apply gradient to text fill ─────────────────────────────────────────────
+  const applyTextGradient = (stops: GradientStop[], gType: 'linear' | 'radial', gAngle: number) => {
+    if (!canvas) return;
+    const textObj = obj as fabric.IText;
+    const W = textObj.width ?? 200;
+    const H = textObj.height ?? 60;
+    const rad = (gAngle * Math.PI) / 180;
+    // CSS-compatible angle convention
+    const sinA = Math.sin(rad);
+    const cosA = Math.cos(rad);
+    const colorStops = [...stops]
+      .sort((a, b) => a.offset - b.offset)
+      .map((s) => ({ offset: s.offset, color: applyOpacity(s.color, s.opacity) }));
+    const coords = gType === 'linear'
+      ? {
+          x1: (0.5 - 0.5 * sinA) * W,
+          y1: (0.5 + 0.5 * cosA) * H,
+          x2: (0.5 + 0.5 * sinA) * W,
+          y2: (0.5 - 0.5 * cosA) * H,
+        }
+      : { r1: 0, r2: Math.max(W, H) / 2, x1: W / 2, y1: H / 2, x2: W / 2, y2: H / 2 };
+    const grad = new fabric.Gradient({ type: gType, gradientUnits: 'pixels', coords, colorStops });
+    selectedObjects.forEach((o) => o.set('fill', grad as unknown as string));
     canvas.requestRenderAll();
     refresh((n) => n + 1);
   };
@@ -713,16 +771,58 @@ export default function PropertiesPanel({
                 </div>
               </div>
 
-              {/* Text color */}
+              {/* Text fill (solid or gradient) */}
               <div>
-                <p className="mb-1 flex items-center gap-1 text-[10px] text-zinc-500">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Text color
+                <p className="mb-1.5 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400" /> Text fill
                 </p>
-                <ColorSwatch
-                  value={(txt.fill as string) ?? '#000000'}
-                  onChange={(v) => set('fill', v)}
-                  label={(txt.fill as string)?.slice(0, 14) ?? '#000000'}
-                />
+                {/* Mode toggle */}
+                <div className="mb-2 flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5">
+                  {(['solid', 'gradient'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => {
+                        setTextFillMode(m);
+                        if (m === 'solid') {
+                          // Revert to a solid color
+                          const solidColor = typeof txt.fill === 'string' ? txt.fill : '#000000';
+                          selectedObjects.forEach((o) => (o as fabric.Object).set('fill', solidColor));
+                          canvas?.requestRenderAll();
+                          refresh((n) => n + 1);
+                        } else {
+                          // Apply current gradient immediately
+                          applyTextGradient(textGradStops, textGradType, textGradAngle);
+                        }
+                      }}
+                      className={`flex-1 rounded-md py-1 text-[11px] font-semibold capitalize transition ${
+                        textFillMode === m ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+
+                {textFillMode === 'solid' ? (
+                  <ColorSwatch
+                    value={typeof txt.fill === 'string' ? (txt.fill ?? '#000000') : '#000000'}
+                    onChange={(v) => set('fill', v)}
+                    label={typeof txt.fill === 'string' ? (txt.fill?.slice(0, 14) ?? '#000000') : 'gradient'}
+                  />
+                ) : (
+                  <GradientEditor
+                    stops={textGradStops}
+                    type={textGradType}
+                    angle={textGradAngle}
+                    onChange={(stops, type, angle) => {
+                      setTextGradStops(stops);
+                      setTextGradType(type);
+                      setTextGradAngle(angle);
+                      applyTextGradient(stops, type, angle);
+                    }}
+                  />
+                )}
               </div>
 
               {/* Show more / less toggle */}

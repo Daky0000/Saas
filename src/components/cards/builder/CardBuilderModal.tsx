@@ -21,6 +21,9 @@ const MAX_HISTORY = 60;
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface CardBuilderModalProps {
   existingDesign?: UserDesign | null;
+  /** Pre-load canvas data from a template (creates a new user design) */
+  initialCanvasData?: { fabricJson: Record<string, unknown>; canvasWidth?: number; canvasHeight?: number } | null;
+  initialDesignName?: string;
   onClose: () => void;
   onSaved?: (design: UserDesign) => void;
 }
@@ -32,6 +35,8 @@ function fmtZoom(z: number) {
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function CardBuilderModal({
   existingDesign,
+  initialCanvasData,
+  initialDesignName,
   onClose,
   onSaved,
 }: CardBuilderModalProps) {
@@ -41,7 +46,9 @@ export default function CardBuilderModal({
 
   // ── Design metadata ─────────────────────────────────────────────────────────
   const [designId, setDesignId] = useState<string | null>(existingDesign?.id ?? null);
-  const [designName, setDesignName] = useState(existingDesign?.name ?? 'Untitled Design');
+  const [designName, setDesignName] = useState(
+    existingDesign?.name ?? initialDesignName ?? 'Untitled Design',
+  );
   const [preset, setPreset] = useState<CanvasPreset>(() => {
     if (existingDesign) {
       return (
@@ -49,6 +56,12 @@ export default function CardBuilderModal({
           (p) => p.w === existingDesign.canvas_width && p.h === existingDesign.canvas_height,
         ) ?? { id: 'custom', label: 'Custom', w: existingDesign.canvas_width, h: existingDesign.canvas_height }
       );
+    }
+    if (initialCanvasData) {
+      const w = initialCanvasData.canvasWidth ?? 1080;
+      const h = initialCanvasData.canvasHeight ?? 1080;
+      return CANVAS_PRESETS.find((p) => p.w === w && p.h === h)
+        ?? { id: 'custom', label: 'Custom', w, h };
     }
     return CANVAS_PRESETS[0];
   });
@@ -157,13 +170,17 @@ export default function CardBuilderModal({
     canvas.on('object:modified', snapshot);
     canvas.on('object:removed', snapshot);
 
-    if (existingDesign?.canvas_data && Object.keys(existingDesign.canvas_data).length > 0) {
-      canvas.loadFromJSON(existingDesign.canvas_data, () => {
+    const startJson = existingDesign?.canvas_data
+      ?? (initialCanvasData?.fabricJson && Object.keys(initialCanvasData.fabricJson).length > 0
+          ? initialCanvasData.fabricJson
+          : null);
+
+    if (startJson) {
+      canvas.loadFromJSON(startJson, () => {
         canvas.requestRenderAll();
         const json = JSON.stringify(canvas.toJSON(['data']));
         undoStack.current = [json];
         setCanUndo(false);
-        // Sync bgColor from loaded canvas
         const bg = canvas.backgroundColor;
         if (typeof bg === 'string') setBgColor(bg);
       });
@@ -400,9 +417,18 @@ export default function CardBuilderModal({
   ) => {
     const c = fabricRef.current;
     if (!c) return;
+    // Use logical canvas dimensions (not zoomed pixel dimensions) so the
+    // gradient spans the full artboard at any zoom level and export multiplier.
+    const W = (c.width  ?? preset.w) / c.getZoom();
+    const H = (c.height ?? preset.h) / c.getZoom();
     const rad = (angle * Math.PI) / 180;
-    const x2 = 0.5 + Math.cos(rad) * 0.5;
-    const y2 = 0.5 + Math.sin(rad) * 0.5;
+    // CSS-compatible angle convention: 0°=up, 90°=right, 180°=down, 270°=left
+    const sinA = Math.sin(rad);
+    const cosA = Math.cos(rad);
+    const x1 = (0.5 - 0.5 * sinA) * W;
+    const y1 = (0.5 + 0.5 * cosA) * H;
+    const x2 = (0.5 + 0.5 * sinA) * W;
+    const y2 = (0.5 - 0.5 * cosA) * H;
     const colorStops = [...stops]
       .sort((a, b) => a.offset - b.offset)
       .map((s) => {
@@ -413,9 +439,9 @@ export default function CardBuilderModal({
         return { offset: s.offset, color };
       });
     const coords = type === 'linear'
-      ? { x1: 1 - x2, y1: 1 - y2, x2, y2 }
-      : { r1: 0, r2: 0.5, x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 };
-    const grad = new fabric.Gradient({ type, gradientUnits: 'percentage', coords, colorStops });
+      ? { x1, y1, x2, y2 }
+      : { r1: 0, r2: Math.sqrt(W * W + H * H) / 2, x1: W / 2, y1: H / 2, x2: W / 2, y2: H / 2 };
+    const grad = new fabric.Gradient({ type, gradientUnits: 'pixels', coords, colorStops });
     c.setBackgroundColor(grad as unknown as string, () => { c.requestRenderAll(); snapshot(); });
   }, [snapshot]);
 

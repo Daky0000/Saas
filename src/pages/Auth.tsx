@@ -19,6 +19,7 @@ declare global {
     FB?: {
       init(params: { appId: string; cookie: boolean; xfbml: boolean; version: string }): void;
       login(cb: (res: FBLoginResponse) => void, opts?: { scope: string }): void;
+      getLoginStatus(cb: (res: FBLoginResponse) => void): void;
       AppEvents: { logPageView(): void };
     };
   }
@@ -101,6 +102,8 @@ function Auth({ onLogin }: AuthProps) {
   const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
   const [fbReady, setFbReady] = useState(false);
   const [fbLoginLoading, setFbLoginLoading] = useState(false);
+  const [fbStatus, setFbStatus] = useState<'connected' | 'not_authorized' | 'unknown' | null>(null);
+  const fbCachedToken = useRef<string | null>(null);
   const fbInitialized = useRef(false);
 
   // Login form state
@@ -115,7 +118,35 @@ function Auth({ onLogin }: AuthProps) {
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
 
-  // ── Load Facebook JS SDK (exactly per Facebook's recommended snippet) ────────
+  // ── Shared: exchange FB access token for app JWT ─────────────────────────
+  const exchangeFbToken = (accessToken: string) => {
+    fetch(`${API_BASE_URL}/api/auth/facebook/token`, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ accessToken }),
+    })
+      .then((r) => r.json())
+      .then((data: AuthResponse & { user?: { id: string; email: string; name?: string; role?: string } }) => {
+        if (data.success && data.token && data.user) {
+          localStorage.setItem('auth_token', data.token);
+          onLogin(normalizeUser({
+            id      : data.user.id,
+            email   : data.user.email,
+            name    : data.user.name ?? null,
+            username: null,
+            phone   : null,
+            country : null,
+            role    : data.user.role === 'admin' ? 'admin' : 'user',
+          }));
+        } else {
+          setErrorMessage(data.error || 'Facebook login failed');
+        }
+      })
+      .catch(() => setErrorMessage('Facebook authentication failed. Please try again.'))
+      .finally(() => setFbLoginLoading(false));
+  };
+
+  // ── Load Facebook JS SDK (exactly per Facebook's recommended snippet) ──────
   useEffect(() => {
     if (!FB_APP_ID || fbInitialized.current) return;
     fbInitialized.current = true;
@@ -128,7 +159,16 @@ function Auth({ onLogin }: AuthProps) {
         version: 'v18.0',
       });
       window.FB!.AppEvents.logPageView();
-      setFbReady(true);
+
+      // Check login status immediately after SDK init
+      window.FB!.getLoginStatus((response) => {
+        setFbStatus(response.status);
+        setFbReady(true);
+        // Cache the token if already connected so button click is instant
+        if (response.status === 'connected' && response.authResponse) {
+          fbCachedToken.current = response.authResponse.accessToken;
+        }
+      });
     };
 
     // Load SDK script (same async snippet Facebook provides)
@@ -145,40 +185,26 @@ function Auth({ onLogin }: AuthProps) {
     }(document, 'script', 'facebook-jssdk'));
   }, []);
 
-  // ── Handle Facebook login via SDK popup ───────────────────────────────────
+  // ── Handle Facebook button click ──────────────────────────────────────────
   const handleFacebookLogin = () => {
     if (!window.FB || !fbReady) return;
     setFbLoginLoading(true);
     setErrorMessage(null);
 
+    // Already connected — use cached token, no popup needed
+    if (fbStatus === 'connected' && fbCachedToken.current) {
+      exchangeFbToken(fbCachedToken.current);
+      return;
+    }
+
+    // Not connected — open the Facebook login popup
     window.FB.login((response) => {
       if (response.status === 'connected' && response.authResponse) {
-        const { accessToken } = response.authResponse;
-        fetch(`${API_BASE_URL}/api/auth/facebook/token`, {
-          method : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body   : JSON.stringify({ accessToken }),
-        })
-          .then((r) => r.json())
-          .then((data: AuthResponse & { user?: { id: string; email: string; name?: string; role?: string } }) => {
-            if (data.success && data.token && data.user) {
-              localStorage.setItem('auth_token', data.token);
-              onLogin(normalizeUser({
-                id      : data.user.id,
-                email   : data.user.email,
-                name    : data.user.name ?? null,
-                username: null,
-                phone   : null,
-                country : null,
-                role    : data.user.role === 'admin' ? 'admin' : 'user',
-              }));
-            } else {
-              setErrorMessage(data.error || 'Facebook login failed');
-            }
-          })
-          .catch(() => setErrorMessage('Facebook authentication failed. Please try again.'))
-          .finally(() => setFbLoginLoading(false));
+        fbCachedToken.current = response.authResponse.accessToken;
+        setFbStatus('connected');
+        exchangeFbToken(response.authResponse.accessToken);
       } else {
+        // User dismissed the popup or denied permission
         setFbLoginLoading(false);
       }
     }, { scope: 'email,public_profile' });
@@ -489,7 +515,11 @@ function Auth({ onLogin }: AuthProps) {
                         className="w-full py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <FacebookIcon />
-                        {fbLoginLoading ? 'Connecting...' : 'Continue with Facebook'}
+                        {fbLoginLoading
+                          ? 'Connecting...'
+                          : fbStatus === 'connected'
+                            ? 'Continue with Facebook'
+                            : 'Log in with Facebook'}
                       </button>
                     )}
                   </div>
@@ -644,7 +674,11 @@ function Auth({ onLogin }: AuthProps) {
                         className="w-full py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <FacebookIcon />
-                        {fbLoginLoading ? 'Connecting...' : 'Sign up with Facebook'}
+                        {fbLoginLoading
+                          ? 'Connecting...'
+                          : fbStatus === 'connected'
+                            ? 'Continue with Facebook'
+                            : 'Sign up with Facebook'}
                       </button>
                     )}
                   </div>
