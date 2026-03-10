@@ -143,7 +143,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Zap,
 };
 
-const ToolIcon = ({ name, size = 24 }: { name: string; size?: number }) => {
+const ToolIcon = ({ name, size = 20 }: { name: string; size?: number }) => {
   const Icon: LucideIcon = ICON_MAP[name] ?? Zap;
   return <Icon size={size} />;
 };
@@ -166,42 +166,55 @@ export default function Tools({ onLoginClick }: ToolsProps) {
   const { hero, tools, cta } = content;
 
   return (
-    <div className="bg-white text-zinc-900 min-h-screen font-sans">
+    <div className="bg-white text-[#0f0f11] min-h-screen font-sans">
       <PublicNav onLoginClick={onLoginClick} activePath="/tools" />
 
       {/* ── Hero ── */}
       <section className="relative flex flex-col items-center justify-center px-6 pt-36 pb-20 text-center overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-red-50/70 via-white to-white" />
+        {/* Grid background */}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.025]"
+          style={{ backgroundImage: 'linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '48px 48px' }}
+        />
+        {/* Glow */}
+        <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[350px] rounded-full bg-[#5b6cf9]/6 blur-3xl" />
 
-        <div className="relative mb-6 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-xs font-semibold uppercase tracking-widest text-zinc-500 shadow-sm">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#e6332a]" />
+        <div className="relative mb-6 inline-flex items-center gap-2 rounded-full border border-[#c7d0fe] bg-[#eef0fe] px-3.5 py-1.5 text-[12px] font-semibold text-[#5b6cf9]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#5b6cf9]" />
           {hero.badge}
         </div>
 
-        <h1 className="relative max-w-3xl text-5xl sm:text-6xl md:text-7xl font-black tracking-[-0.04em] leading-[0.95] mb-6">
+        <h1 className="relative max-w-3xl font-black tracking-[-0.05em] leading-[0.93] mb-6">
           {hero.headline.split('\n').map((line, i) => (
-            <span key={i} className={`block ${i > 0 ? 'text-[#e6332a]' : 'text-zinc-900'}`}>
+            <span
+              key={i}
+              className={`block text-5xl sm:text-6xl md:text-7xl ${
+                i === 0
+                  ? 'text-[#0f0f11]'
+                  : 'text-transparent bg-clip-text bg-gradient-to-r from-[#5b6cf9] to-[#818cf8]'
+              }`}
+            >
               {line}
             </span>
           ))}
         </h1>
 
-        <p className="relative max-w-xl text-base sm:text-lg text-zinc-500 leading-relaxed mb-10">
+        <p className="relative max-w-xl text-[16px] text-[#6b7280] leading-[1.7] mb-10">
           {hero.subheadline}
         </p>
 
         <button
           type="button"
           onClick={onLoginClick}
-          className="relative group flex items-center gap-2 bg-[#e6332a] hover:bg-[#cc2921] text-white font-bold px-7 py-4 rounded-2xl text-sm transition-colors shadow-md shadow-red-100"
+          className="relative group flex items-center gap-2 bg-[#5b6cf9] hover:bg-[#4f63f7] text-white font-semibold px-6 py-3 rounded-lg text-[15px] transition-all duration-150 shadow-md shadow-blue-200/70 hover:shadow-lg"
         >
           Try it free
-          <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+          <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
         </button>
       </section>
 
       {/* ── Tools list ── */}
-      <section className="max-w-6xl mx-auto px-6 py-16 md:py-24 flex flex-col gap-20">
+      <section className="max-w-[1100px] mx-auto px-6 py-16 md:py-24 flex flex-col gap-16">
         {tools.map((tool, i) => (
           <div
             key={i}
@@ -210,18 +223,18 @@ export default function Tools({ onLoginClick }: ToolsProps) {
             }`}
           >
             {/* Visual card */}
-            <div className="w-full md:w-1/2 rounded-3xl border border-zinc-100 bg-zinc-50 p-10 flex flex-col items-start gap-4 shrink-0">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-red-50 text-[#e6332a]">
-                <ToolIcon name={tool.icon} size={26} />
+            <div className="w-full md:w-[48%] rounded-2xl border border-[#e5e7eb] bg-[#fafafa] hover:border-[#c7d0fe] transition-colors duration-200 p-8 flex flex-col items-start gap-4 shrink-0">
+              <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-[#eef0fe] text-[#5b6cf9]">
+                <ToolIcon name={tool.icon} />
               </div>
               <div>
-                <div className="text-xs font-bold uppercase tracking-widest text-[#e6332a] mb-1">{tool.name}</div>
-                <div className="text-2xl font-black tracking-[-0.03em] text-zinc-900">{tool.tagline}</div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#5b6cf9] mb-1">{tool.name}</div>
+                <div className="text-[22px] font-black tracking-[-0.03em] text-[#0f0f11] leading-tight">{tool.tagline}</div>
               </div>
-              <ul className="mt-2 flex flex-col gap-2.5">
+              <ul className="mt-1 flex flex-col gap-2.5">
                 {tool.bullets.map((b, j) => (
-                  <li key={j} className="flex items-start gap-2.5 text-sm text-zinc-600">
-                    <CheckCircle2 size={16} className="text-[#e6332a] mt-0.5 shrink-0" />
+                  <li key={j} className="flex items-start gap-2.5 text-[14px] text-[#6b7280]">
+                    <CheckCircle2 size={15} className="text-[#5b6cf9] mt-0.5 shrink-0" />
                     {b}
                   </li>
                 ))}
@@ -230,17 +243,17 @@ export default function Tools({ onLoginClick }: ToolsProps) {
 
             {/* Text side */}
             <div className="flex flex-col justify-center gap-4">
-              <h2 className="text-3xl sm:text-4xl font-black tracking-[-0.03em] text-zinc-900">
+              <h2 className="text-3xl sm:text-[36px] font-black tracking-[-0.04em] text-[#0f0f11] leading-tight">
                 {tool.name}
               </h2>
-              <p className="text-zinc-500 text-base leading-relaxed max-w-lg">{tool.description}</p>
+              <p className="text-[#6b7280] text-[15px] leading-relaxed max-w-lg">{tool.description}</p>
               <button
                 type="button"
                 onClick={onLoginClick}
-                className="group inline-flex items-center gap-2 text-sm font-bold text-[#e6332a] hover:text-[#cc2921] transition-colors w-fit"
+                className="group inline-flex items-center gap-2 text-[14px] font-semibold text-[#5b6cf9] hover:text-[#4f63f7] transition-colors w-fit"
               >
                 Get started
-                <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
+                <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
               </button>
             </div>
           </div>
@@ -248,20 +261,23 @@ export default function Tools({ onLoginClick }: ToolsProps) {
       </section>
 
       {/* ── CTA Banner ── */}
-      <section className="max-w-4xl mx-auto px-6 pb-24 md:pb-32 text-center">
-        <div className="rounded-3xl border border-zinc-100 bg-zinc-50 p-12 md:p-16 relative overflow-hidden">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 rounded-full bg-[#e6332a]" />
-          <h2 className="text-3xl sm:text-4xl font-black tracking-[-0.03em] text-zinc-900 mb-4">
+      <section className="max-w-[1000px] mx-auto px-6 pb-24 md:pb-32">
+        <div className="rounded-2xl border border-[#c7d0fe] bg-gradient-to-br from-[#eef0fe] via-white to-[#f5f3ff] p-12 md:p-14 text-center relative overflow-hidden">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.04]"
+            style={{ backgroundImage: 'radial-gradient(#5b6cf9 1px, transparent 0)', backgroundSize: '24px 24px' }}
+          />
+          <h2 className="relative text-3xl sm:text-4xl font-black tracking-[-0.04em] text-[#0f0f11] mb-4 leading-tight">
             {cta.headline}
           </h2>
-          <p className="text-zinc-500 text-base sm:text-lg mb-8 max-w-md mx-auto">{cta.subheadline}</p>
+          <p className="relative text-[#6b7280] text-[15px] mb-8 max-w-md mx-auto">{cta.subheadline}</p>
           <button
             type="button"
             onClick={onLoginClick}
-            className="group inline-flex items-center gap-2 bg-[#e6332a] hover:bg-[#cc2921] text-white font-bold px-8 py-4 rounded-2xl text-sm transition-colors shadow-md shadow-red-100"
+            className="relative group inline-flex items-center gap-2 bg-[#5b6cf9] hover:bg-[#4f63f7] text-white font-semibold px-7 py-3.5 rounded-lg text-[15px] transition-all duration-150 shadow-md shadow-blue-200/70 hover:shadow-lg"
           >
             {cta.buttonText}
-            <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+            <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
           </button>
         </div>
       </section>
