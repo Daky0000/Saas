@@ -75,6 +75,8 @@ function getPlatformIcon(id: string): ReactNode {
     case 'twitter':   return <TwitterXIcon />;
     case 'threads':   return <ThreadsIcon />;
     case 'mailchimp': return <MailchimpIcon />;
+    case 'apify':     return <FlaskConical size={20} />;
+    case 'manus':     return <Bot size={20} />;
     case 'chatgpt':   return <Bot size={20} />;
     case 'stripe':    return <CreditCard size={20} />;
     case 'square':    return <Box size={20} />;
@@ -456,6 +458,36 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
       { id: 'publishableKey', label: 'Publishable key', placeholder: 'pk_live_...', type: 'text', helpText: 'Safe for client-side use. Use pk_live_ for production, pk_test_ for testing.', envVar: 'VITE_STRIPE_PUBLISHABLE_KEY', docUrl: 'https://dashboard.stripe.com/apikeys', docLabel: 'Stripe API keys' },
       { id: 'secretKey', label: 'Secret key', placeholder: 'sk_live_...', type: 'password', helpText: 'Server-side only — never expose this in the browser or commit to git.', envVar: 'STRIPE_SECRET_KEY', docUrl: 'https://stripe.com/docs/keys', docLabel: 'API key best practices' },
       { id: 'signingSecret', label: 'Webhook signing secret', placeholder: 'whsec_...', type: 'password', helpText: 'Verifies that webhook events are genuinely from Stripe.', envVar: 'STRIPE_SIGNING_SECRET', docUrl: 'https://dashboard.stripe.com/webhooks', docLabel: 'Stripe webhooks' },
+    ],
+  },
+  {
+    id: 'apify',
+    name: 'Apify',
+    description: 'API token based integration for Apify actors and automations.',
+    category: 'Developer tools',
+    accentClass: 'bg-[#0f172a] text-white',
+    steps: [
+      { text: 'Log in to Apify Console and open Settings → Integrations to generate an API token.', docUrl: 'https://docs.apify.com/platform/integrations/api' },
+      { text: 'Enable this integration so it appears for users in the Integrations page.' },
+      { text: 'Users will paste their Apify API token when configuring the integration.' },
+    ],
+    fields: [
+      { id: 'note', label: 'Note', placeholder: 'Apify is user-configured', type: 'text', helpText: 'No admin credentials are required. Enable the integration to show it to users.' },
+    ],
+  },
+  {
+    id: 'manus',
+    name: 'Manus',
+    description: 'API key based integration for Manus tasks and content automation.',
+    category: 'Productivity',
+    accentClass: 'bg-[#111827] text-white',
+    steps: [
+      { text: 'Create a Manus API key in your Manus account.' },
+      { text: 'Enable this integration so it appears for users in the Integrations page.' },
+      { text: 'Users will paste their API key when configuring the integration.' },
+    ],
+    fields: [
+      { id: 'note', label: 'Note', placeholder: 'Manus is user-configured', type: 'text', helpText: 'No admin credentials are required. Enable the integration to show it to users.' },
     ],
   },
 ];
