@@ -23,6 +23,9 @@ export interface MediaImage {
   upload_date: string;
   url: string;
   thumbnail_url?: string;
+  alt_text?: string;
+  caption?: string;
+  description?: string;
   tags: string[];
   used_in: string[];
   category?: string;
@@ -77,7 +80,16 @@ export const mediaService = {
     return (data.images as MediaImage[]) ?? [];
   },
 
-  async update(id: string, patch: { file_name?: string; tags?: string[] }): Promise<MediaImage> {
+  async update(
+    id: string,
+    patch: {
+      file_name?: string;
+      tags?: string[];
+      alt_text?: string;
+      caption?: string;
+      description?: string;
+    }
+  ): Promise<MediaImage> {
     const res = await fetch(`${API_BASE_URL}/api/media/${id}`, {
       method: 'PUT',
       headers: authHeaders(),

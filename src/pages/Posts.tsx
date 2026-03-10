@@ -13,6 +13,7 @@ import { blogService, type BlogPost, type BlogCategory, type BlogTag, type BlogP
 import { distributionService, type ConnectedPlatform, type PublishingLog } from '../services/distributionService';
 import MediaLibraryModal from '../components/media/MediaLibraryModal';
 import SeoScoreBadge from '../components/SeoScoreBadge';
+import type { AppUser } from '../utils/userSession';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 type PostsView = 'posts' | 'editor' | 'categories' | 'tags' | 'automation';
@@ -60,12 +61,13 @@ interface PostEditorProps {
   postId: string | null;
   categories: BlogCategory[];
   tags: BlogTag[];
+  profileWebsite: string;
   onSaved: (post: BlogPost) => void;
   onBack: () => void;
   onMetaRefresh: () => Promise<void>;
 }
 
-function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
+function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
@@ -76,7 +78,8 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [metaTitle, setMetaTitle] = useState('');
   const [metaDescription, setMetaDescription] = useState('');
-  const [focusKeyword, setFocusKeyword] = useState('');
+  const [focusKeywords, setFocusKeywords] = useState<string[]>([]);
+  const [keywordDraft, setKeywordDraft] = useState('');
   const [socialTitle, setSocialTitle] = useState('');
   const [socialDescription, setSocialDescription] = useState('');
   const [socialImage, setSocialImage] = useState('');
@@ -141,7 +144,12 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
         setSelectedTagIds(post.tag_ids ?? []);
         setMetaTitle(post.meta_title ?? '');
         setMetaDescription(post.meta_description ?? '');
-        setFocusKeyword((post.focus_keyword ?? '').trim());
+        const keywords = (post.focus_keyword ?? '')
+          .split(',')
+          .map((kw) => kw.trim())
+          .filter(Boolean);
+        setFocusKeywords(keywords);
+        setKeywordDraft('');
         setSocialTitle(post.social_title ?? '');
         setSocialDescription(post.social_description ?? '');
         setSocialImage(post.social_image ?? '');
@@ -183,7 +191,7 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
       const payload: BlogPostPayload = {
         title, slug, content: editor?.getHTML() ?? '', excerpt, featured_image: featuredImage,
         status: finalStatus, category_id: categoryId || null,
-        meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeyword.trim(),
+        meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeywords.join(', '),
         social_title: socialTitle, social_description: socialDescription, social_image: socialImage,
         scheduled_at: finalStatus === 'scheduled' ? scheduledAt : null,
         tag_ids: selectedTagIds,
@@ -293,13 +301,41 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     );
   };
 
+  const normalizeKeyword = (raw: string) => raw.trim().replace(/\s+/g, ' ');
+  const splitKeywords = (raw: string) =>
+    raw
+      .split(/[,\n]+/g)
+      .map(normalizeKeyword)
+      .filter(Boolean);
+
+  const addKeywords = (raw: string) => {
+    const next = splitKeywords(raw);
+    if (!next.length) return;
+    setFocusKeywords((prev) => {
+      const seen = new Set(prev.map((k) => k.toLowerCase()));
+      const merged = [...prev];
+      for (const kw of next) {
+        const key = kw.toLowerCase();
+        if (seen.has(key)) continue;
+        merged.push(kw);
+        seen.add(key);
+      }
+      return merged;
+    });
+  };
+
+  const removeKeyword = (kw: string) => {
+    setFocusKeywords((prev) => prev.filter((k) => k !== kw));
+  };
+
   type SeoCheckState = 'pass' | 'warn' | 'fail';
   type SeoChecklistItem = { id: string; label: string; state: SeoCheckState; detail?: string };
 
   const seoAnalysis = useMemo(() => {
     const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
 
-    const kw = focusKeyword.trim().toLowerCase();
+    const primaryKw = (focusKeywords[0] || '').trim().toLowerCase();
+    const kws = focusKeywords.map((k) => k.trim().toLowerCase()).filter(Boolean);
     const titleLc = title.toLowerCase();
     const slugLc = slug.toLowerCase();
     const metaTitleLen = metaTitle.trim().length;
@@ -322,8 +358,8 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
       return count;
     };
 
-    const kwCount = kw ? countPhrase(textLc, kw) : 0;
-    const keywordDensity = wordCount > 0 && kw ? (kwCount / wordCount) * 100 : 0;
+    const kwCount = primaryKw ? countPhrase(textLc, primaryKw) : 0;
+    const keywordDensity = wordCount > 0 && primaryKw ? (kwCount / wordCount) * 100 : 0;
 
     let doc: Document | null = null;
     try {
@@ -333,18 +369,34 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     }
 
     const firstPara = (doc?.querySelector('p')?.textContent || '').trim().toLowerCase();
-    const h1 = doc ? Array.from(doc.querySelectorAll('h1')).map((h) => (h.textContent || '').toLowerCase()) : [];
+    const contentH1Count = doc ? doc.querySelectorAll('h1').length : 0;
     const h2 = doc ? Array.from(doc.querySelectorAll('h2')).map((h) => (h.textContent || '').toLowerCase()) : [];
     const h3 = doc ? Array.from(doc.querySelectorAll('h3')).map((h) => (h.textContent || '').toLowerCase()) : [];
 
     const anchors = doc ? Array.from(doc.querySelectorAll('a[href]')) : [];
-    const hrefs = anchors.map((a) => (a.getAttribute('href') || '').trim()).filter(Boolean);
-    const isInternal = (href: string) => {
-      if (href.startsWith('/')) return true;
-      if (!hostname) return false;
+    const hrefs = anchors
+      .map((a) => (a.getAttribute('href') || '').trim())
+      .filter(Boolean)
+      .filter((href) => !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('javascript:'));
+
+    const normalizeWebsiteHost = (value: string) => {
+      const v = (value || '').trim();
+      if (!v) return '';
       try {
-        const u = new URL(href, `https://${hostname}`);
-        return u.hostname === hostname;
+        const u = new URL(v.includes('://') ? v : `https://${v}`);
+        return u.hostname;
+      } catch {
+        return '';
+      }
+    };
+
+    const internalHost = normalizeWebsiteHost(profileWebsite) || hostname;
+    const isInternal = (href: string) => {
+      if (href.startsWith('/') || href.startsWith('#')) return true;
+      if (!internalHost) return false;
+      try {
+        const u = new URL(href, `https://${internalHost}`);
+        return u.hostname === internalHost;
       } catch {
         return false;
       }
@@ -383,19 +435,20 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     const push = (id: string, label: string, state: SeoCheckState, detail?: string) => checks.push({ id, label, state, detail });
 
     // Keyword optimization checks
-    const hasKw = Boolean(kw);
+    const hasKw = kws.length > 0;
+    const includesAny = (text: string) => kws.some((k) => k && text.includes(k));
     push('kw_present', 'Focus keyword set', hasKw ? 'pass' : 'fail');
-    push('kw_title', 'Keyword in title', hasKw && titleLc.includes(kw) ? 'pass' : hasKw ? 'fail' : 'fail');
-    push('kw_slug', 'Keyword in URL slug', hasKw && slugLc.includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
-    push('kw_first_para', 'Keyword in first paragraph', hasKw && firstPara.includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
-    push('kw_headings', 'Keyword in headings (H2/H3)', hasKw && (h2.join(' ').includes(kw) || h3.join(' ').includes(kw)) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('kw_title', 'Keyword in title', hasKw && includesAny(titleLc) ? 'pass' : hasKw ? 'fail' : 'fail');
+    push('kw_slug', 'Keyword in URL slug', hasKw && includesAny(slugLc) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('kw_first_para', 'Keyword in first paragraph', hasKw && includesAny(firstPara) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('kw_headings', 'Keyword in headings (H2/H3)', hasKw && includesAny(`${h2.join(' ')} ${h3.join(' ')}`) ? 'pass' : hasKw ? 'warn' : 'fail');
     const densityState: SeoCheckState =
-      !hasKw ? 'fail'
+      !primaryKw ? 'fail'
         : keywordDensity >= 0.5 && keywordDensity <= 2.5 ? 'pass'
           : keywordDensity >= 0.2 && keywordDensity < 0.5 ? 'warn'
             : keywordDensity > 2.5 && keywordDensity <= 3.5 ? 'warn'
               : 'fail';
-    push('kw_density', 'Keyword density (0.5%–2.5%)', densityState, hasKw ? `${keywordDensity.toFixed(2)}%` : undefined);
+    push('kw_density', 'Keyword density (0.5%–2.5%)', densityState, primaryKw ? `${keywordDensity.toFixed(2)}%` : undefined);
 
     // Content quality
     push('content_len', 'Content length (600+ words)', wordCount >= 600 ? 'pass' : wordCount >= 300 ? 'warn' : 'fail', `${wordCount} words`);
@@ -426,11 +479,17 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
           : metaDescLen > 155 && metaDescLen <= 180 ? 'warn'
             : metaDescLen ? 'fail' : 'fail';
     push('meta_desc_len', 'Meta description length (120–155 chars)', metaDescState, `${metaDescLen} chars`);
-    push('meta_kw_title', 'Keyword in meta title', hasKw && metaTitle.toLowerCase().includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
-    push('meta_kw_desc', 'Keyword in meta description', hasKw && metaDescription.toLowerCase().includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('meta_kw_title', 'Keyword in meta title', hasKw && includesAny(metaTitle.toLowerCase()) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('meta_kw_desc', 'Keyword in meta description', hasKw && includesAny(metaDescription.toLowerCase()) ? 'pass' : hasKw ? 'warn' : 'fail');
 
     // Structure & links
-    push('h1_once', 'Only one H1', h1.length === 1 ? 'pass' : h1.length === 0 ? 'warn' : 'fail', `${h1.length}`);
+    const titleIsH1 = Boolean(title.trim());
+    const h1State: SeoCheckState =
+      !titleIsH1 ? 'fail'
+        : contentH1Count === 0 ? 'pass'
+          : contentH1Count === 1 ? 'warn'
+            : 'fail';
+    push('h1_once', 'Only one H1 (title)', h1State, !titleIsH1 ? 'Missing title' : `${contentH1Count} H1 in content`);
     push('h2_present', 'At least one H2', h2.length > 0 ? 'pass' : 'warn', `${h2.length}`);
     push('links_internal', 'Internal links (2+)', internalLinks >= 2 ? 'pass' : internalLinks === 1 ? 'warn' : 'fail', `${internalLinks}`);
     push('links_external', 'External links (1+)', externalLinks >= 1 ? 'pass' : 'warn', `${externalLinks}`);
@@ -447,10 +506,10 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     // Scoring
     let score = 0;
     // Keyword optimization (30)
-    if (hasKw && titleLc.includes(kw)) score += 8;
-    if (hasKw && slugLc.includes(kw)) score += 5;
-    if (hasKw && firstPara.includes(kw)) score += 6;
-    if (hasKw && (h2.join(' ').includes(kw) || h3.join(' ').includes(kw))) score += 5;
+    if (hasKw && includesAny(titleLc)) score += 8;
+    if (hasKw && includesAny(slugLc)) score += 5;
+    if (hasKw && includesAny(firstPara)) score += 6;
+    if (hasKw && includesAny(`${h2.join(' ')} ${h3.join(' ')}`)) score += 5;
     score += densityState === 'pass' ? 6 : densityState === 'warn' ? 3 : 0;
     // Content quality (25)
     score += wordCount >= 600 ? 15 : wordCount >= 300 ? 8 : 0;
@@ -459,10 +518,10 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     // Metadata (20)
     score += metaTitleState === 'pass' ? 6 : metaTitleState === 'warn' ? 3 : 0;
     score += metaDescState === 'pass' ? 8 : metaDescState === 'warn' ? 4 : 0;
-    score += hasKw && metaTitle.toLowerCase().includes(kw) ? 3 : 0;
-    score += hasKw && metaDescription.toLowerCase().includes(kw) ? 3 : 0;
+    score += hasKw && includesAny(metaTitle.toLowerCase()) ? 3 : 0;
+    score += hasKw && includesAny(metaDescription.toLowerCase()) ? 3 : 0;
     // Structure (15)
-    score += h1.length === 1 ? 5 : 0;
+    score += titleIsH1 && contentH1Count === 0 ? 5 : 0;
     score += h2.length > 0 ? 5 : 0;
     score += internalLinks >= 2 ? 5 : internalLinks === 1 ? 3 : 0;
     // Images (10)
@@ -501,7 +560,7 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
           case 'meta_desc_len': return 'Tune meta description length to 120–155 characters.';
           case 'meta_kw_title': return 'Include the focus keyword in the meta title.';
           case 'meta_kw_desc': return 'Include the focus keyword in the meta description.';
-          case 'h1_once': return 'Ensure your content has exactly one H1 (usually the title).';
+          case 'h1_once': return 'Use the title as the only H1; avoid H1 headings inside the editor content.';
           default: return `Improve: ${c.label}.`;
         }
       });
@@ -521,7 +580,7 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
         imagesMissingAlt,
       },
     };
-  }, [focusKeyword, title, slug, metaTitle, metaDescription, featuredImage, seoHtml, seoText]);
+  }, [focusKeywords, title, slug, metaTitle, metaDescription, featuredImage, seoHtml, seoText, profileWebsite]);
 
   if (loading) {
     return (
@@ -916,17 +975,53 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
             </>
           ) : (
             <div className="space-y-4">
-              {/* Focus keyword */}
+              {/* Focus keywords */}
               <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2">
-                <h3 className="text-sm font-bold text-slate-900">Focus Keyword</h3>
+                <h3 className="text-sm font-bold text-slate-900">Focus Keywords</h3>
+                {focusKeywords.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {focusKeywords.map((kw) => (
+                      <span
+                        key={kw}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+                      >
+                        {kw}
+                        <button
+                          type="button"
+                          onClick={() => removeKeyword(kw)}
+                          className="rounded-full p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                          title="Remove keyword"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <input
                   type="text"
-                  value={focusKeyword}
-                  onChange={(e) => setFocusKeyword(e.target.value)}
-                  placeholder="e.g. AI marketing tools"
+                  value={keywordDraft}
+                  onChange={(e) => setKeywordDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      addKeywords(keywordDraft);
+                      setKeywordDraft('');
+                      return;
+                    }
+                    if (e.key === 'Backspace' && !keywordDraft && focusKeywords.length > 0) {
+                      setFocusKeywords((prev) => prev.slice(0, -1));
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!keywordDraft.trim()) return;
+                    addKeywords(keywordDraft);
+                    setKeywordDraft('');
+                  }}
+                  placeholder="Type a keyword and press Enter or comma"
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                 />
-                <p className="text-xs text-slate-400">Use one primary keyword to analyze this post.</p>
+                <p className="text-xs text-slate-400">Add multiple keywords. The first keyword is used for density checks.</p>
               </div>
 
               {/* SEO score */}
@@ -1520,7 +1615,7 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
 }
 
 // ── Main Posts Page ──────────────────────────────────────────────────────────────
-const Posts = () => {
+const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
   const [view, setView] = useState<PostsView>('posts');
   const [editPostId, setEditPostId] = useState<string | null>(null);
   const [categories, setCategories] = useState<BlogCategory[]>([]);
@@ -1594,6 +1689,7 @@ const Posts = () => {
           postId={editPostId}
           categories={categories}
           tags={tags}
+          profileWebsite={currentUser?.website ?? ''}
           onSaved={handlePostSaved}
           onBack={() => { setView('posts'); setEditPostId(null); }}
           onMetaRefresh={loadMeta}
