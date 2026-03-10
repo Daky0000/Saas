@@ -163,7 +163,7 @@ const AdminCardsManagement = () => {
   // Per-card toggle saving state
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  const [isSaving, setIsSaving] = useState(false);
+  const [, setIsSaving] = useState(false);
   const [showJsonImport, setShowJsonImport] = useState(false);
 
   const fetchTemplates = async () => {
@@ -209,86 +209,13 @@ const AdminCardsManagement = () => {
   };
 
   // ── Save Draft ────────────────────────────────────────────────────────────
-  const handleSaveDraft = async (data: FabricDesignData, desc: string, name: string, coverImageUrl: string | null) => {
-    try {
-      setIsSaving(true);
-      if (editingIdRef.current) {
-        await cardTemplateService.updateTemplate(editingIdRef.current, {
-          name,
-          description: desc,
-          designData: data,
-          coverImageUrl: coverImageUrl ?? undefined,
-        });
-        setSuccessMessage('Template saved');
-      } else {
-        const created = await cardTemplateService.createTemplate({ name, description: desc, designData: data });
-        editingIdRef.current = created.id;
-        setEditingId(created.id);
-        // Save cover image after creation if present
-        if (coverImageUrl) {
-          await cardTemplateService.updateTemplate(created.id, {
-            name,
-            description: desc,
-            designData: data,
-            coverImageUrl,
-          });
-        }
-        setSuccessMessage('Template saved as draft');
-      }
-      await fetchTemplates();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to save template');
-      throw error; // re-throw so builder can handle
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  // Save draft is handled inside AdminFabricBuilder now.
 
   // ── Publish (builder already saved draft before calling this) ─────────────
-  const handlePublish = async (data: FabricDesignData, thumbnailUrl: string, desc: string, name: string) => {
-    try {
-      setIsSaving(true);
-      setErrorMessage(null);
-      // editingIdRef.current is always current (save draft sets it above)
-      let templateId = editingIdRef.current;
-      if (!templateId) {
-        // Fallback: create if somehow not saved yet
-        const created = await cardTemplateService.createTemplate({ name, description: desc, designData: data });
-        templateId = created.id;
-        editingIdRef.current = created.id;
-        setEditingId(created.id);
-      }
-      await cardTemplateService.publishTemplate(templateId, { coverImageUrl: thumbnailUrl });
-      setBuilderIsPublished(true);
-      setSuccessMessage(`"${name}" published successfully`);
-      setIsBuilderOpen(false);
-      setBuilderExistingData(null);
-      editingIdRef.current = null;
-      setEditingId(null);
-      await fetchTemplates();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to publish template');
-      throw error;
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  // Publish is handled inside AdminFabricBuilder now.
 
   // ── Unpublish (from builder button) ──────────────────────────────────────
-  const handleUnpublish = async () => {
-    if (!editingIdRef.current) return;
-    try {
-      setIsSaving(true);
-      await cardTemplateService.unpublishTemplate(editingIdRef.current);
-      setBuilderIsPublished(false);
-      setSuccessMessage(`"${builderName}" unpublished`);
-      await fetchTemplates();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to unpublish template');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  // Unpublish is handled inside AdminFabricBuilder now.
 
   // ── Toggle publish from card list ─────────────────────────────────────────
   const handleTogglePublish = async (template: AdminCardTemplate) => {
@@ -363,11 +290,7 @@ const AdminCardsManagement = () => {
         existingDesignData={builderExistingData}
         existingCoverImageUrl={builderCoverImageUrl ?? undefined}
         onTemplateUpdated={fetchTemplates}
-        onSaveDraft={handleSaveDraft}
-        onPublish={handlePublish}
-        onUnpublish={handleUnpublish}
         onClose={() => { setIsBuilderOpen(false); setBuilderExistingData(null); editingIdRef.current = null; setEditingId(null); }}
-        isSaving={isSaving}
       />
     );
   }

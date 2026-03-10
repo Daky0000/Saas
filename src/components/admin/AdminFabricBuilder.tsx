@@ -50,6 +50,7 @@ export default function AdminFabricBuilder({
   isPublished: initialIsPublished = false,
   existingDesignData,
   existingCoverImageUrl,
+  onTemplateUpdated,
   onClose,
 }: AdminFabricBuilderProps) {
   const canvasElRef = useRef<HTMLCanvasElement>(null);
@@ -714,7 +715,7 @@ export default function AdminFabricBuilder({
         </button>
 
         {/* Unpublish (shown when already published) */}
-        {isPublished && onUnpublish && (
+        {isPublished && (
           <button type="button" onClick={() => void handleUnpublish()} disabled={busy}
             className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60">
             {publishingState === 'unpublishing' ? <Loader2 size={14} className="animate-spin" /> : <EyeOff size={14} />}
@@ -722,16 +723,21 @@ export default function AdminFabricBuilder({
           </button>
         )}
 
-        {/* Publish error */}
-        {publishError && (
+        {saveError && (
           <div className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
             <AlertCircle size={12} className="shrink-0" />
-            {publishError}
+            {saveError}
+          </div>
+        )}
+        {saveSuccess && (
+          <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+            <CheckCircle2 size={12} className="shrink-0" />
+            {saveSuccess}
           </div>
         )}
 
         {/* Publish */}
-        <button type="button" onClick={() => { setPublishError(null); void handlePublish(); }} disabled={busy}
+        <button type="button" onClick={() => { setSaveError(null); void handlePublish(); }} disabled={busy}
           className={`flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold transition disabled:opacity-60 ${
             publishingState === 'done'
               ? 'bg-emerald-500 text-white'
