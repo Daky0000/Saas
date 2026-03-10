@@ -21,7 +21,10 @@
       "Bash(cat d:/Saas/.github/workflows/*.yaml)",
       "Bash(/dev/null:*)",
       "Bash(gh run list --limit 3)",
-      "Bash(cat .github/workflows/*.yml)"
+      "Bash(cat .github/workflows/*.yml)",
+      "Bash(npm install jspdf --save)",
+      "Bash(npm list jspdf)",
+      "Bash(npm install jspdf)"
     ]
   }
 }

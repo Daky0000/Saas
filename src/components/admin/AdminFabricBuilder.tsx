@@ -1,8 +1,10 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { fabric } from 'fabric';
+import { jsPDF } from 'jspdf';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
   ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff, Grid3X3,
+  FileJson, FileImage, FileType,
 } from 'lucide-react';
 import LayersPanel from '../cards/builder/LayersPanel';
 import PropertiesPanel, { GradientStop } from '../cards/builder/PropertiesPanel';
@@ -478,15 +480,65 @@ export default function AdminFabricBuilder({
   }, [onUnpublish, isSaving, publishingState]);
 
   // ── Export ───────────────────────────────────────────────────────────────────
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const getExportMultiplier = useCallback(() => preset.w / (preset.w * canvasScale), [preset, canvasScale]);
+  const sanitizedName = templateName.replace(/[^a-z0-9]/gi, '_');
+
   const exportPNG = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
-    const multiplier = preset.w / (preset.w * canvasScale);
     const link = document.createElement('a');
-    link.href = c.toDataURL({ format: 'png', quality: 1, multiplier });
-    link.download = `${templateName.replace(/[^a-z0-9]/gi, '_')}.png`;
+    link.href = c.toDataURL({ format: 'png', quality: 1, multiplier: getExportMultiplier() });
+    link.download = `${sanitizedName}.png`;
     link.click();
-  }, [templateName, preset, canvasScale]);
+    setShowExportMenu(false);
+  }, [sanitizedName, getExportMultiplier]);
+
+  const exportJPEG = useCallback(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+    const link = document.createElement('a');
+    link.href = c.toDataURL({ format: 'jpeg', quality: 0.95, multiplier: getExportMultiplier() });
+    link.download = `${sanitizedName}.jpg`;
+    link.click();
+    setShowExportMenu(false);
+  }, [sanitizedName, getExportMultiplier]);
+
+  const exportJSON = useCallback(() => {
+    const data = getDesignData();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${sanitizedName}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setShowExportMenu(false);
+  }, [sanitizedName, getDesignData]);
+
+  const copyJSON = useCallback(async () => {
+    const data = getDesignData();
+    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    setShowExportMenu(false);
+  }, [getDesignData]);
+
+  const exportPDF = useCallback(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+    const imgData = c.toDataURL({ format: 'jpeg', quality: 0.95, multiplier: getExportMultiplier() });
+    const pxW = preset.w;
+    const pxH = preset.h;
+    // Convert px → mm (at 96dpi: 1px = 0.2646mm)
+    const mmW = pxW * 0.2646;
+    const mmH = pxH * 0.2646;
+    const orientation = pxW >= pxH ? 'landscape' : 'portrait';
+    const pdf = new jsPDF({ orientation, unit: 'mm', format: [mmW, mmH] });
+    pdf.addImage(imgData, 'JPEG', 0, 0, mmW, mmH);
+    pdf.save(`${sanitizedName}.pdf`);
+    setShowExportMenu(false);
+  }, [sanitizedName, preset, getExportMultiplier]);
 
   const applyPreset = useCallback((p: CanvasPreset) => {
     setPreset(p); setShowPresets(false); setTimeout(() => scaleCanvasToFit(), 0);
@@ -548,11 +600,41 @@ export default function AdminFabricBuilder({
 
         <div className="flex-1" />
 
-        {/* Export PNG */}
-        <button type="button" onClick={exportPNG}
-          className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50">
-          <Download size={13} /> PNG
-        </button>
+        {/* Export dropdown */}
+        <div className="relative">
+          <button type="button" onClick={() => setShowExportMenu((v) => !v)}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50">
+            <Download size={13} /> Export <ChevronDown size={11} />
+          </button>
+          {showExportMenu && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-zinc-200 bg-white p-1 shadow-xl">
+                <button type="button" onClick={exportPNG}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition">
+                  <FileImage size={13} className="text-zinc-400" /> Download as PNG
+                </button>
+                <button type="button" onClick={exportJPEG}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition">
+                  <FileImage size={13} className="text-zinc-400" /> Download as JPEG
+                </button>
+                <button type="button" onClick={exportPDF}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition">
+                  <FileType size={13} className="text-zinc-400" /> Download as PDF
+                </button>
+                <div className="my-1 border-t border-zinc-100" />
+                <button type="button" onClick={exportJSON}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition">
+                  <FileJson size={13} className="text-zinc-400" /> Download as JSON
+                </button>
+                <button type="button" onClick={() => void copyJSON()}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition">
+                  <FileJson size={13} className="text-zinc-400" /> Copy as JSON
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Grid toggle */}
         <button type="button" onClick={() => setShowGrid((v) => !v)} title={showGrid ? 'Hide grid' : 'Show grid'}
@@ -685,7 +767,25 @@ export default function AdminFabricBuilder({
                   const file = e.target.files?.[0];
                   if (!file) return;
                   const reader = new FileReader();
-                  reader.onload = (ev) => setCustomPreviewImage(ev.target?.result as string);
+                  reader.onload = (ev) => {
+                    const src = ev.target?.result as string;
+                    // Resize to max 1200×800 JPEG to keep preview image compact
+                    const img = new Image();
+                    img.onload = () => {
+                      const MAX_W = 1200, MAX_H = 800;
+                      let { width: w, height: h } = img;
+                      if (w > MAX_W || h > MAX_H) {
+                        const ratio = Math.min(MAX_W / w, MAX_H / h);
+                        w = Math.round(w * ratio);
+                        h = Math.round(h * ratio);
+                      }
+                      const cvs = document.createElement('canvas');
+                      cvs.width = w; cvs.height = h;
+                      cvs.getContext('2d')!.drawImage(img, 0, 0, w, h);
+                      setCustomPreviewImage(cvs.toDataURL('image/jpeg', 0.88));
+                    };
+                    img.src = src;
+                  };
                   reader.readAsDataURL(file);
                   e.target.value = '';
                 }}
