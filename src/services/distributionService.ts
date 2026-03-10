@@ -7,6 +7,16 @@ function getToken() {
   return localStorage.getItem('auth_token') || '';
 }
 
+async function parseApiResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const preview = text.slice(0, 120).replace(/\s+/g, ' ').trim();
+    throw new Error(`Invalid server response (${res.status}). ${preview || 'Expected JSON.'}`);
+  }
+}
+
 export interface ConnectedPlatform {
   id: string;
   name: string;
@@ -36,7 +46,7 @@ export const distributionService = {
     const res = await fetch(`${API_BASE_URL}/api/distribution/connected`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<any>(res);
     return data.platforms ?? [];
   },
 
@@ -46,7 +56,7 @@ export const distributionService = {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
       body: JSON.stringify({ postId, platforms }),
     });
-    const data = await res.json();
+    const data = await parseApiResponse<any>(res);
     if (!data.success) throw new Error(data.error || 'Distribution failed');
     return data.results ?? [];
   },
@@ -55,7 +65,7 @@ export const distributionService = {
     const res = await fetch(`${API_BASE_URL}/api/distribution/status/${postId}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<any>(res);
     return data.logs ?? [];
   },
 
@@ -63,7 +73,7 @@ export const distributionService = {
     const res = await fetch(`${API_BASE_URL}/api/automation/logs`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<any>(res);
     return data.logs ?? [];
   },
 
@@ -72,7 +82,7 @@ export const distributionService = {
       method: 'POST',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<any>(res);
     if (!data.success) throw new Error(data.error || 'Retry failed');
     return data.result;
   },

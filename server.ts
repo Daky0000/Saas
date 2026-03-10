@@ -3782,11 +3782,34 @@ app.put('/api/admin/auth-providers/:provider', async (req: Request, res: Respons
 // GET /api/integrations/enabled — returns list of integration IDs admin has enabled
 app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
   try {
-    if (hasDatabase()) {
-      const result = await dbQuery('SELECT platform FROM platform_configs WHERE enabled = true');
-      return res.json({ success: true, enabled: result.rows.map((r: any) => r.platform as string) });
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    if (!hasDatabase()) {
+      return res.json({ success: true, enabled: [] });
     }
-    return res.json({ success: true, enabled: [] });
+
+    const platformResult = await dbQuery(
+      `SELECT platform
+       FROM platform_configs
+       WHERE enabled = true
+         AND config <> '{}'::jsonb`
+    );
+    const providerResult = await dbQuery(
+      `SELECT provider
+       FROM auth_providers
+       WHERE enabled = true
+         AND config <> '{}'::jsonb`
+    );
+
+    const enabled = Array.from(
+      new Set<string>([
+        ...platformResult.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean),
+        ...providerResult.rows.map((r: any) => String(r.provider || '').toLowerCase()).filter(Boolean),
+      ])
+    );
+
+    return res.json({ success: true, enabled });
   } catch (error) {
     console.error('Get enabled integrations error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch enabled integrations' });
@@ -4162,13 +4185,21 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
+// Ensure blog endpoints never run without a DB connection.
+app.use('/api/blog', (req: Request, res: Response, next) => {
+  if (!hasDatabase()) {
+    return res.status(503).json({ success: false, error: 'Database not configured' });
+  }
+  return next();
+});
+
 // GET /api/blog/categories
 app.get('/api/blog/categories', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const { rows } = await pool!.query(
     'SELECT * FROM blog_categories WHERE user_id=$1 ORDER BY name',
-    [user.id]
+    [user.userId]
   );
   return res.json({ success: true, categories: rows });
 });
@@ -4183,7 +4214,7 @@ app.post('/api/blog/categories', async (req: Request, res: Response) => {
   const slug = slugify(name);
   const { rows } = await pool!.query(
     'INSERT INTO blog_categories (id, user_id, name, slug) VALUES ($1,$2,$3,$4) RETURNING *',
-    [id, user.id, name.trim(), slug]
+    [id, user.userId, name.trim(), slug]
   );
   return res.json({ success: true, category: rows[0] });
 });
@@ -4198,7 +4229,7 @@ app.put('/api/blog/categories/:id', async (req: Request, res: Response) => {
   const slug = slugify(name);
   const { rows } = await pool!.query(
     'UPDATE blog_categories SET name=$1, slug=$2 WHERE id=$3 AND user_id=$4 RETURNING *',
-    [name.trim(), slug, id, user.id]
+    [name.trim(), slug, id, user.userId]
   );
   if (!rows.length) return res.status(404).json({ success: false, error: 'Not found' });
   return res.json({ success: true, category: rows[0] });
@@ -4209,7 +4240,7 @@ app.delete('/api/blog/categories/:id', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const { id } = req.params;
-  await pool!.query('DELETE FROM blog_categories WHERE id=$1 AND user_id=$2', [id, user.id]);
+  await pool!.query('DELETE FROM blog_categories WHERE id=$1 AND user_id=$2', [id, user.userId]);
   return res.json({ success: true });
 });
 
@@ -4219,7 +4250,7 @@ app.get('/api/blog/tags', async (req: Request, res: Response) => {
   if (!user) return;
   const { rows } = await pool!.query(
     'SELECT * FROM blog_tags WHERE user_id=$1 ORDER BY name',
-    [user.id]
+    [user.userId]
   );
   return res.json({ success: true, tags: rows });
 });
@@ -4234,7 +4265,7 @@ app.post('/api/blog/tags', async (req: Request, res: Response) => {
   const slug = slugify(name);
   const { rows } = await pool!.query(
     'INSERT INTO blog_tags (id, user_id, name, slug) VALUES ($1,$2,$3,$4) RETURNING *',
-    [id, user.id, name.trim(), slug]
+    [id, user.userId, name.trim(), slug]
   );
   return res.json({ success: true, tag: rows[0] });
 });
@@ -4244,7 +4275,7 @@ app.delete('/api/blog/tags/:id', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const { id } = req.params;
-  await pool!.query('DELETE FROM blog_tags WHERE id=$1 AND user_id=$2', [id, user.id]);
+  await pool!.query('DELETE FROM blog_tags WHERE id=$1 AND user_id=$2', [id, user.userId]);
   return res.json({ success: true });
 });
 
@@ -4257,7 +4288,7 @@ app.get('/api/blog/posts', async (req: Request, res: Response) => {
     ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
     FROM blog_posts p LEFT JOIN blog_categories c ON c.id=p.category_id
     WHERE p.user_id=$1`;
-  const params: (string | number)[] = [user.id];
+  const params: (string | number)[] = [user.userId];
   if (status && status !== 'all') { params.push(status); q += ` AND p.status=$${params.length}`; }
   if (search) { params.push(`%${search}%`); q += ` AND p.title ILIKE $${params.length}`; }
   q += ' ORDER BY p.updated_at DESC';
@@ -4276,7 +4307,7 @@ app.get('/api/blog/posts/:id', async (req: Request, res: Response) => {
       ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
      FROM blog_posts p LEFT JOIN blog_categories c ON c.id=p.category_id
      WHERE p.id=$1 AND p.user_id=$2`,
-    [id, user.id]
+    [id, user.userId]
   );
   if (!rows.length) return res.status(404).json({ success: false, error: 'Not found' });
   return res.json({ success: true, post: rows[0] });
@@ -4301,7 +4332,7 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
     `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
       meta_title,meta_description,focus_keyword,social_title,social_description,social_image,scheduled_at,published_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
-    [id, user.id, title, slug, content, excerpt, featured_image, status,
+    [id, user.userId, title, slug, content, excerpt, featured_image, status,
      category_id || null, meta_title, meta_description, focus_keyword,
      social_title, social_description, social_image, scheduled_at || null, published_at]
   );
@@ -4326,7 +4357,7 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
     focus_keyword?: string; social_title?: string; social_description?: string; social_image?: string;
     scheduled_at?: string; tag_ids?: string[];
   };
-  const existing = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.id]);
+  const existing = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
   if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
   const cur = existing.rows[0];
   const newTitle = title ?? cur.title;
@@ -4342,9 +4373,9 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
      newStatus, category_id !== undefined ? (category_id || null) : cur.category_id,
      meta_title ?? cur.meta_title, meta_description ?? cur.meta_description,
      focus_keyword ?? cur.focus_keyword, social_title ?? cur.social_title,
-     social_description ?? cur.social_description, social_image ?? cur.social_image,
-     scheduled_at !== undefined ? (scheduled_at || null) : cur.scheduled_at,
-     published_at, id, user.id]
+      social_description ?? cur.social_description, social_image ?? cur.social_image,
+      scheduled_at !== undefined ? (scheduled_at || null) : cur.scheduled_at,
+      published_at, id, user.userId]
   );
   if (tag_ids !== undefined) {
     await pool!.query('DELETE FROM blog_post_tags WHERE post_id=$1', [id]);
@@ -4362,7 +4393,7 @@ app.delete('/api/blog/posts/:id', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const { id } = req.params;
-  await pool!.query('DELETE FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.id]);
+  await pool!.query('DELETE FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
   return res.json({ success: true });
 });
 
@@ -4371,7 +4402,7 @@ app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) =>
   const user = await requireAuth(req, res);
   if (!user) return;
   const { id } = req.params;
-  const { rows } = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.id]);
+  const { rows } = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
   if (!rows.length) return res.status(404).json({ success: false, error: 'Not found' });
   const src = rows[0];
   const newId = randomUUID();
@@ -4379,7 +4410,7 @@ app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) =>
     `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
       meta_title,meta_description,focus_keyword,social_title,social_description,social_image)
      VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-    [newId, user.id, `${src.title} (Copy)`, `${src.slug}-copy`, src.content, src.excerpt,
+    [newId, user.userId, `${src.title} (Copy)`, `${src.slug}-copy`, src.content, src.excerpt,
      src.featured_image, src.category_id, src.meta_title, src.meta_description,
      src.focus_keyword, src.social_title, src.social_description, src.social_image]
   );
@@ -4619,6 +4650,28 @@ app.get('/health', (req: Request, res: Response) => {
 // Root route
 app.get('/', (req: Request, res: Response) => {
   res.json({ message: 'OAuth Backend Server Running', version: '1.0.0' });
+});
+
+// Last-resort JSON error handler for API routes (prevents Express HTML error pages)
+app.use((err: any, req: Request, res: Response, next: Function) => {
+  if (res.headersSent) return next(err);
+  const path = (req.originalUrl || req.url || '').toString();
+  const isApi = path.startsWith('/api/');
+  const accept = String(req.headers.accept || '');
+  if (!isApi && !accept.includes('application/json')) return next(err);
+
+  const status =
+    err?.type === 'entity.too.large' ? 413 :
+    err?.type === 'entity.parse.failed' ? 400 :
+    (typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500));
+
+  const message =
+    status === 413 ? 'Request too large' :
+    status === 400 ? 'Invalid JSON payload' :
+    (err instanceof Error ? err.message : 'Internal Server Error');
+
+  console.error('Unhandled API error:', err);
+  return res.status(status).json({ success: false, error: message });
 });
 
 // Start server
