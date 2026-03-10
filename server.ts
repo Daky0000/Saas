@@ -1410,34 +1410,17 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Missing code or state' });
     }
 
-    const storedState = await getStoredState(state);
-    if (!storedState) {
-      return res.status(400).json({ success: false, error: 'Invalid state parameter' });
+    const platformId = String(platform || '').trim().toLowerCase();
+    const stateRow = await getOAuthStateRow(String(state));
+    if (!stateRow) return res.status(400).json({ success: false, error: 'Invalid or expired state parameter' });
+    if (String(stateRow.user_id) !== auth.userId) return res.status(400).json({ success: false, error: 'State does not match user' });
+    if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) {
+      return res.status(400).json({ success: false, error: 'State does not match platform' });
     }
 
-    let tokenData;
-
-    switch (platform) {
-      case 'Instagram':
-        tokenData = await exchangeInstagramCode(code);
-        break;
-      case 'Twitter':
-        tokenData = await exchangeTwitterCode(code);
-        break;
-      case 'LinkedIn':
-        tokenData = await exchangeLinkedInCode(code);
-        break;
-      case 'Facebook':
-        tokenData = await exchangeFacebookCode(code);
-        break;
-      case 'TikTok':
-        tokenData = await exchangeTikTokCode(code);
-        break;
-      default:
-        return res.status(400).json({ success: false, error: 'Unsupported platform' });
-    }
-
-    await storeUserConnection(auth.userId, platform, tokenData);
+    const tokenData = await exchangeOAuthCode(platformId, String(code));
+    await storeUserConnection(auth.userId, platformDisplayName(platformId), tokenData);
+    await dbQuery('DELETE FROM oauth_states WHERE state = $1', [String(state)]).catch(() => undefined);
 
     return res.json({ success: true, data: tokenData });
   } catch (error) {
@@ -1531,6 +1514,51 @@ app.get('/api/analytics/:platform', async (req: Request, res: Response) => {
 });
 
 // OAuth Exchange Functions — credentials read from DB first, then env vars
+function platformDisplayName(platformId: string) {
+  switch ((platformId || '').trim().toLowerCase()) {
+    case 'instagram':
+      return 'Instagram';
+    case 'facebook':
+      return 'Facebook';
+    case 'linkedin':
+      return 'LinkedIn';
+    case 'twitter':
+      return 'Twitter';
+    case 'tiktok':
+      return 'TikTok';
+    case 'threads':
+      return 'Threads';
+    default:
+      return platformId;
+  }
+}
+
+async function getOAuthStateRow(state: string): Promise<{ user_id: string; platform: string } | null> {
+  if (!pool) return null;
+  const result = await dbQuery<{ user_id: string; platform: string }>(
+    'SELECT user_id, platform FROM oauth_states WHERE state = $1 AND expires_at > NOW()',
+    [state]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function exchangeOAuthCode(platformId: string, code: string) {
+  switch ((platformId || '').trim().toLowerCase()) {
+    case 'instagram':
+      return exchangeInstagramCode(code);
+    case 'twitter':
+      return exchangeTwitterCode(code);
+    case 'linkedin':
+      return exchangeLinkedInCode(code);
+    case 'facebook':
+      return exchangeFacebookCode(code);
+    case 'tiktok':
+      return exchangeTikTokCode(code);
+    default:
+      throw new Error('Unsupported platform');
+  }
+}
+
 async function exchangeInstagramCode(code: string) {
   const cfg = await getPlatformConfig('instagram');
   const data = new URLSearchParams({
@@ -1548,26 +1576,48 @@ async function exchangeInstagramCode(code: string) {
 
 async function exchangeTwitterCode(code: string) {
   const cfg = await getPlatformConfig('twitter');
-  const response = await axios.post('https://api.twitter.com/2/oauth2/token', {
-    client_id: cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID,
-    client_secret: cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET,
+  const clientId = cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '';
+  const clientSecret = cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '';
+  const redirectUri = cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI || '';
+
+  const data = new URLSearchParams({
+    client_id: clientId,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
     code,
     grant_type: 'authorization_code',
-    redirect_uri: cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI,
-    code_verifier: 'challenge',
+    redirect_uri: redirectUri,
+    // NOTE: X OAuth2 commonly uses PKCE; current flow assumes a verifier is configured server-side.
+    code_verifier: cfg.codeVerifier || 'challenge',
   });
+
+  const response = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (response.status >= 400) {
+    throw new Error(`Twitter token exchange failed (${response.status})`);
+  }
   return response.data;
 }
 
 async function exchangeLinkedInCode(code: string) {
   const cfg = await getPlatformConfig('linkedin');
-  const response = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', {
+  const data = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI,
-    client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID,
-    client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET,
+    redirect_uri: cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI || '',
+    client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '',
+    client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '',
   });
+  const response = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (response.status >= 400) {
+    throw new Error(`LinkedIn token exchange failed (${response.status})`);
+  }
   return response.data;
 }
 
@@ -1586,13 +1636,21 @@ async function exchangeFacebookCode(code: string) {
 
 async function exchangeTikTokCode(code: string) {
   const cfg = await getPlatformConfig('tiktok');
-  const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', {
-    client_key: cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID,
-    client_secret: cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET,
+  const data = new URLSearchParams({
+    client_key: cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID || '',
+    client_secret: cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '',
     code,
     grant_type: 'authorization_code',
-    redirect_uri: cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI,
+    redirect_uri: cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI || '',
   });
+  const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (response.status >= 400) {
+    throw new Error(`TikTok token exchange failed (${response.status})`);
+  }
   return response.data;
 }
 
@@ -3839,6 +3897,42 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Get enabled integrations error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch enabled integrations' });
+  }
+});
+
+// GET /auth/:platform/callback — OAuth redirect URI for platform integrations (Instagram/Facebook/LinkedIn/etc.)
+// Uses stored `state` (bound to user + platform) to persist tokens, then redirects back to the SPA.
+app.get('/auth/:platform/callback', async (req: Request, res: Response) => {
+  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  const platformId = String(req.params.platform || '').trim().toLowerCase();
+
+  const redirectOk = () => res.redirect(`${FRONTEND_URL}/integrations?success=true`);
+  const redirectErr = (msg: string) => res.redirect(`${FRONTEND_URL}/integrations?error=${encodeURIComponent(msg)}`);
+
+  try {
+    const oauthError = String((req.query as any).error || '').trim();
+    const oauthErrorDesc = String((req.query as any).error_description || '').trim();
+    if (oauthError) return redirectErr(oauthErrorDesc || oauthError);
+
+    const code = String((req.query as any).code || '').trim();
+    const state = String((req.query as any).state || '').trim();
+    if (!code || !state) return redirectErr('Missing code or state');
+
+    if (!pool) return redirectErr('Database not configured');
+
+    const stateRow = await getOAuthStateRow(state);
+    if (!stateRow) return redirectErr('Invalid or expired state');
+    if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return redirectErr('State/platform mismatch');
+
+    const tokenData = await exchangeOAuthCode(platformId, code);
+    await storeUserConnection(stateRow.user_id, platformDisplayName(platformId), tokenData);
+    await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
+
+    return redirectOk();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'OAuth connection failed';
+    console.error('Platform OAuth callback error:', err);
+    return redirectErr(msg);
   }
 });
 
