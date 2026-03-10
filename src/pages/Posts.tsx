@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Plus, Search, Pencil, Trash2, Copy, FileText, Tag, FolderOpen,
   Bold, Italic, List, ListOrdered, Quote, Code, Image as ImageIcon,
@@ -12,6 +12,7 @@ import TiptapImage from '@tiptap/extension-image';
 import { blogService, type BlogPost, type BlogCategory, type BlogTag, type BlogPostPayload } from '../services/blogService';
 import { distributionService, type ConnectedPlatform, type PublishingLog } from '../services/distributionService';
 import MediaLibraryModal from '../components/media/MediaLibraryModal';
+import SeoScoreBadge from '../components/SeoScoreBadge';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 type PostsView = 'posts' | 'editor' | 'categories' | 'tags' | 'automation';
@@ -282,6 +283,16 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     );
   };
 
+  const seoScore = useMemo(() => {
+    const clampScore = (value: number) => Math.min(100, Math.max(value, 0));
+    let total = 0;
+    if (metaTitle.trim()) total += 25;
+    if (metaDescription.trim()) total += 25;
+    total += Math.min(30, focusKeywords.length * 7);
+    total += Math.min(20, selectedTagIds.length * 5);
+    return clampScore(total);
+  }, [metaTitle, metaDescription, focusKeywords.length, selectedTagIds.length]);
+
   const addKeyword = () => {
     const trimmed = keywordDraft.trim();
     if (!trimmed) return;
@@ -426,8 +437,15 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
           {/* SEO */}
           <details className="rounded-2xl border border-slate-200 bg-white">
             <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-700 select-none">SEO Settings</summary>
-            <div className="space-y-4 px-5 pb-5">
-              <label className="block space-y-1.5">
+          <div className="space-y-4 px-5 pb-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">SEO readiness</p>
+                <p className="text-sm text-slate-500">A quick visualization of how complete your metadata is.</p>
+              </div>
+              <SeoScoreBadge score={seoScore} size={78} />
+            </div>
+            <label className="block space-y-1.5">
                 <span className="text-xs font-semibold text-slate-500">Meta Title</span>
                 <input type="text" value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} placeholder="SEO title..."
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
