@@ -549,6 +549,31 @@ const Integrations = () => {
     }
   }, []);
 
+  // ── Sync WordPress connection status from server ────────────────────────────
+  useEffect(() => {
+    const syncWordPressStatus = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/wordpress/status`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json() as { success: boolean; connected: boolean; siteUrl?: string };
+        if (!data.success) return;
+        setSavedConfigs((prev) => {
+          const current = prev['wordpress'];
+          const serverConnected = Boolean(data.connected);
+          // Only update if server says connected but local state doesn't know about it
+          if (serverConnected && !current?.enabled) {
+            const next = { ...prev, wordpress: { enabled: true, values: current?.values ?? (data.siteUrl ? { siteUrl: data.siteUrl } : {}) } };
+            saveLocalConfigs(next);
+            return next;
+          }
+          // If server says disconnected but local says enabled, trust local (user may have re-configured)
+          return prev;
+        });
+      } catch { /* ignore */ }
+    };
+    void syncWordPressStatus();
+  }, []);
+
   useEffect(() => {
     void loadBackendConfigs();
     void loadOAuthStatus();
