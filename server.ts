@@ -3453,12 +3453,12 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile,w_member_social,r_emailaddress', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
-  tiktok:    { authUrl: 'https://www.tiktok.com/oauth/authorize', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
+  tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
 
 // GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
-app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
+  app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -3478,13 +3478,24 @@ app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response
       return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
     }
 
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      state,
-      scope: meta.scopes,
-    });
+    const params =
+      platform === 'tiktok'
+        ? new URLSearchParams({
+            // TikTok uses `client_key` (not `client_id`)
+            client_key: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            state,
+            // TikTok expects comma-separated scopes
+            scope: meta.scopes,
+          })
+        : new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            state,
+            scope: meta.scopes,
+          });
 
     return res.json({ success: true, url: `${meta.authUrl}?${params.toString()}` });
   } catch (err) {
