@@ -4,13 +4,14 @@ import { jsPDF } from 'jspdf';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
   ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff, Grid3X3,
-  FileJson, FileImage, FileType, AlertCircle,
+  FileJson, FileImage, FileType, AlertCircle, GalleryHorizontalEnd,
 } from 'lucide-react';
 import { mediaService } from '../../services/mediaService';
 import LayersPanel from '../cards/builder/LayersPanel';
 import PropertiesPanel, { GradientStop } from '../cards/builder/PropertiesPanel';
 import FloatingToolbar from '../cards/builder/FloatingToolbar';
 import ImageUploadModal from '../cards/builder/ImageUploadModal';
+import MediaLibraryModal from '../media/MediaLibraryModal';
 import { CANVAS_PRESETS, CanvasPreset } from '../cards/builder/canvasPresets';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ interface AdminFabricBuilderProps {
   isPublished?: boolean;
   existingDesignData?: FabricDesignData | null;
   existingCoverImageUrl?: string;
-  onSaveDraft: (data: FabricDesignData, desc: string, name: string) => Promise<void>;
+  onSaveDraft: (data: FabricDesignData, desc: string, name: string, coverImageUrl: string | null) => Promise<void>;
   onPublish: (data: FabricDesignData, thumbnailUrl: string, desc: string, name: string) => Promise<void>;
   onUnpublish?: () => Promise<void>;
   onClose: () => void;
@@ -90,6 +91,7 @@ export default function AdminFabricBuilder({
   const [isPublished, setIsPublished] = useState(initialIsPublished);
   const [customPreviewImage, setCustomPreviewImage] = useState<string | null>(existingCoverImageUrl ?? null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [showPreviewLibrary, setShowPreviewLibrary] = useState(false);
   const previewFileInputRef = useRef<HTMLInputElement>(null);
   const skipSnapshotRef = useRef(false);
 
@@ -439,10 +441,16 @@ export default function AdminFabricBuilder({
   // ── Save Draft ───────────────────────────────────────────────────────────────
   const handleSaveDraft = useCallback(async () => {
     if (isSaving || publishingState !== 'idle') return;
+    setPublishError(null);
     setPublishingState('saving');
-    try { await onSaveDraft(getDesignData(), description, name); }
-    finally { setPublishingState('idle'); }
-  }, [isSaving, publishingState, onSaveDraft, getDesignData, description, name]);
+    try {
+      await onSaveDraft(getDesignData(), description, name, customPreviewImage);
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Save failed — please try again');
+    } finally {
+      setPublishingState('idle');
+    }
+  }, [isSaving, publishingState, onSaveDraft, getDesignData, description, name, customPreviewImage]);
 
   // ── Publish ──────────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
@@ -453,7 +461,7 @@ export default function AdminFabricBuilder({
     // Step 1: Auto-save first
     setPublishingState('saving');
     try {
-      await onSaveDraft(getDesignData(), description, name);
+      await onSaveDraft(getDesignData(), description, name, customPreviewImage);
     } catch (err) {
       setPublishingState('idle');
       setPublishError(err instanceof Error ? err.message : 'Save failed before publishing');
@@ -787,7 +795,6 @@ export default function AdminFabricBuilder({
                   const reader = new FileReader();
                   reader.onload = (ev) => {
                     const src = ev.target?.result as string;
-                    // Resize to max 1200×800 JPEG to keep preview image compact
                     const img = new Image();
                     img.onload = () => {
                       const MAX_W = 1200, MAX_H = 800;
@@ -802,7 +809,6 @@ export default function AdminFabricBuilder({
                       cvs.getContext('2d')!.drawImage(img, 0, 0, w, h);
                       const resized = cvs.toDataURL('image/jpeg', 0.88);
                       setCustomPreviewImage(resized);
-                      // Register in media library (best-effort)
                       const approxBytes = Math.round((resized.length * 3) / 4);
                       void mediaService.upload({
                         url: resized,
@@ -823,26 +829,38 @@ export default function AdminFabricBuilder({
                 }}
               />
               {customPreviewImage ? (
-                <div className="relative overflow-hidden rounded-xl border border-zinc-200">
-                  <img src={customPreviewImage} alt="Preview" className="h-24 w-full object-cover" />
-                  <div className="absolute inset-0 flex items-end justify-between bg-gradient-to-t from-black/40 to-transparent p-2">
-                    <button type="button" onClick={() => previewFileInputRef.current?.click()}
-                      className="rounded-lg bg-white/20 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/30">
-                      Change
-                    </button>
+                <div className="space-y-1.5">
+                  <div className="relative overflow-hidden rounded-xl border border-zinc-200">
+                    <img src={customPreviewImage} alt="Preview" className="h-24 w-full object-cover" />
                     <button type="button" onClick={() => setCustomPreviewImage(null)}
-                      className="rounded-lg bg-white/20 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm transition hover:bg-red-500/70">
+                      className="absolute right-1.5 top-1.5 rounded-md bg-black/40 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm transition hover:bg-red-500/80">
                       Remove
+                    </button>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => previewFileInputRef.current?.click()}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-zinc-200 py-1.5 text-[10px] font-semibold text-zinc-600 transition hover:bg-zinc-50">
+                      <ImagePlus size={11} /> Upload new
+                    </button>
+                    <button type="button" onClick={() => setShowPreviewLibrary(true)}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-zinc-200 py-1.5 text-[10px] font-semibold text-zinc-600 transition hover:bg-zinc-50">
+                      <GalleryHorizontalEnd size={11} /> Library
                     </button>
                   </div>
                 </div>
               ) : (
-                <button type="button" onClick={() => previewFileInputRef.current?.click()}
-                  className="flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-zinc-200 py-4 transition hover:border-zinc-300 hover:bg-zinc-50">
-                  <ImagePlus size={16} className="text-zinc-400" />
-                  <span className="text-[10px] font-semibold text-zinc-500">Upload preview image</span>
-                  <span className="text-[9px] text-zinc-300">Auto-generated if not set</span>
-                </button>
+                <div className="space-y-1.5">
+                  <button type="button" onClick={() => previewFileInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-zinc-200 py-3 transition hover:border-zinc-300 hover:bg-zinc-50">
+                    <ImagePlus size={14} className="text-zinc-400" />
+                    <span className="text-[10px] font-semibold text-zinc-500">Upload image file</span>
+                  </button>
+                  <button type="button" onClick={() => setShowPreviewLibrary(true)}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 py-2 text-[10px] font-semibold text-zinc-500 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600">
+                    <GalleryHorizontalEnd size={12} /> Choose from Media Library
+                  </button>
+                  <p className="text-center text-[9px] text-zinc-300">Auto-generated from canvas if not set</p>
+                </div>
               )}
             </div>
           </div>
@@ -872,11 +890,19 @@ export default function AdminFabricBuilder({
         </aside>
       </div>
 
-      {/* Image upload modal */}
+      {/* Canvas image upload modal */}
       {showImageModal && (
         <ImageUploadModal
           onConfirm={(url) => { addImageFromUrl(url); setShowImageModal(false); }}
           onClose={() => setShowImageModal(false)}
+        />
+      )}
+
+      {/* Preview image — choose from media library */}
+      {showPreviewLibrary && (
+        <MediaLibraryModal
+          onSelect={(url) => { setCustomPreviewImage(url); setShowPreviewLibrary(false); }}
+          onClose={() => setShowPreviewLibrary(false)}
         />
       )}
 

@@ -297,6 +297,9 @@ async function ensureDatabase() {
     );
   `);
 
+  // Ensure cover_image_url exists on card_templates (added in v6.4)
+  await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS cover_image_url TEXT`);
+
   // Seed card templates once if the table is empty
   try {
     const { rows: existingRows } = await pool.query<{ id: string }>('SELECT id FROM card_templates LIMIT 1');
@@ -2658,13 +2661,14 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
     if (!admin) return;
 
     const { id } = req.params;
-    const { name, description, designData } = req.body;
+    const { name, description, designData, coverImageUrl } = req.body;
 
     if (!name || !designData) {
       return res.status(400).json({ success: false, error: 'Name and designData are required' });
     }
 
     const now = new Date().toISOString();
+    const hasCover = coverImageUrl !== undefined && coverImageUrl !== null;
 
     if (!hasDatabase()) {
       const existing = inMemoryCardTemplatesById.get(id);
@@ -2677,6 +2681,7 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
         name,
         description: description || '',
         design_data: designData,
+        ...(hasCover && { cover_image_url: coverImageUrl as string }),
         updated_at: now,
       };
       inMemoryCardTemplatesById.set(id, updated);
@@ -2695,10 +2700,17 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
         },
       });
     } else {
-      await dbQuery(
-        'UPDATE card_templates SET name = $1, description = $2, design_data = $3, updated_at = $4 WHERE id = $5',
-        [name, description || '', JSON.stringify(designData), now, id]
-      );
+      if (hasCover) {
+        await dbQuery(
+          'UPDATE card_templates SET name = $1, description = $2, design_data = $3, cover_image_url = $4, updated_at = $5 WHERE id = $6',
+          [name, description || '', JSON.stringify(designData), coverImageUrl, now, id]
+        );
+      } else {
+        await dbQuery(
+          'UPDATE card_templates SET name = $1, description = $2, design_data = $3, updated_at = $4 WHERE id = $5',
+          [name, description || '', JSON.stringify(designData), now, id]
+        );
+      }
 
       const result = await dbQuery<DbCardTemplate>(
         'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at FROM card_templates WHERE id = $1',

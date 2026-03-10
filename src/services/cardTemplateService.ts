@@ -105,6 +105,7 @@ export const cardTemplateService = {
         name: input.name,
         description: input.description || '',
         designData: input.designData,
+        ...(input.coverImageUrl !== undefined && { coverImageUrl: input.coverImageUrl }),
       }),
     });
 
