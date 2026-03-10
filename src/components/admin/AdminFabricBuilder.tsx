@@ -4,8 +4,9 @@ import { jsPDF } from 'jspdf';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
   ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff, Grid3X3,
-  FileJson, FileImage, FileType,
+  FileJson, FileImage, FileType, AlertCircle,
 } from 'lucide-react';
+import { mediaService } from '../../services/mediaService';
 import LayersPanel from '../cards/builder/LayersPanel';
 import PropertiesPanel, { GradientStop } from '../cards/builder/PropertiesPanel';
 import FloatingToolbar from '../cards/builder/FloatingToolbar';
@@ -88,6 +89,7 @@ export default function AdminFabricBuilder({
   const [description, setDescription] = useState(templateDescription);
   const [isPublished, setIsPublished] = useState(initialIsPublished);
   const [customPreviewImage, setCustomPreviewImage] = useState<string | null>(existingCoverImageUrl ?? null);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const previewFileInputRef = useRef<HTMLInputElement>(null);
   const skipSnapshotRef = useRef(false);
 
@@ -446,13 +448,15 @@ export default function AdminFabricBuilder({
   const handlePublish = useCallback(async () => {
     const c = fabricRef.current;
     if (!c || isSaving || publishingState !== 'idle') return;
+    setPublishError(null);
 
     // Step 1: Auto-save first
     setPublishingState('saving');
     try {
       await onSaveDraft(getDesignData(), description, name);
-    } catch {
+    } catch (err) {
       setPublishingState('idle');
+      setPublishError(err instanceof Error ? err.message : 'Save failed before publishing');
       return;
     }
 
@@ -466,7 +470,10 @@ export default function AdminFabricBuilder({
       setIsPublished(true);
       setPublishingState('done');
       setTimeout(() => setPublishingState('idle'), 2000);
-    } catch { setPublishingState('idle'); }
+    } catch (err) {
+      setPublishingState('idle');
+      setPublishError(err instanceof Error ? err.message : 'Publish failed — please try again');
+    }
   }, [isSaving, publishingState, getDesignData, preset, canvasScale, onSaveDraft, onPublish, description, name, customPreviewImage]);
 
   // ── Unpublish ─────────────────────────────────────────────────────────────────
@@ -505,9 +512,13 @@ export default function AdminFabricBuilder({
     setShowExportMenu(false);
   }, [sanitizedName, getExportMultiplier]);
 
+  const getWrappedJSON = useCallback(() => {
+    // Wrap in import-compatible format: [{ name, description, designData }]
+    return JSON.stringify([{ name: templateName || 'Untitled Template', description, designData: getDesignData() }], null, 2);
+  }, [templateName, description, getDesignData]);
+
   const exportJSON = useCallback(() => {
-    const data = getDesignData();
-    const json = JSON.stringify(data, null, 2);
+    const json = getWrappedJSON();
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -516,13 +527,12 @@ export default function AdminFabricBuilder({
     link.click();
     URL.revokeObjectURL(url);
     setShowExportMenu(false);
-  }, [sanitizedName, getDesignData]);
+  }, [sanitizedName, getWrappedJSON]);
 
   const copyJSON = useCallback(async () => {
-    const data = getDesignData();
-    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    await navigator.clipboard.writeText(getWrappedJSON());
     setShowExportMenu(false);
-  }, [getDesignData]);
+  }, [getWrappedJSON]);
 
   const exportPDF = useCallback(() => {
     const c = fabricRef.current;
@@ -660,8 +670,16 @@ export default function AdminFabricBuilder({
           </button>
         )}
 
+        {/* Publish error */}
+        {publishError && (
+          <div className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
+            <AlertCircle size={12} className="shrink-0" />
+            {publishError}
+          </div>
+        )}
+
         {/* Publish */}
-        <button type="button" onClick={() => void handlePublish()} disabled={busy}
+        <button type="button" onClick={() => { setPublishError(null); void handlePublish(); }} disabled={busy}
           className={`flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold transition disabled:opacity-60 ${
             publishingState === 'done'
               ? 'bg-emerald-500 text-white'
@@ -782,7 +800,21 @@ export default function AdminFabricBuilder({
                       const cvs = document.createElement('canvas');
                       cvs.width = w; cvs.height = h;
                       cvs.getContext('2d')!.drawImage(img, 0, 0, w, h);
-                      setCustomPreviewImage(cvs.toDataURL('image/jpeg', 0.88));
+                      const resized = cvs.toDataURL('image/jpeg', 0.88);
+                      setCustomPreviewImage(resized);
+                      // Register in media library (best-effort)
+                      const approxBytes = Math.round((resized.length * 3) / 4);
+                      void mediaService.upload({
+                        url: resized,
+                        thumbnail_url: resized,
+                        file_name: file.name.replace(/\.[^.]+$/, '.jpg'),
+                        original_name: file.name,
+                        file_size: approxBytes,
+                        file_type: 'image/jpeg',
+                        width: w,
+                        height: h,
+                        category: 'admin',
+                      }).catch(() => undefined);
                     };
                     img.src = src;
                   };

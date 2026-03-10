@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Edit2, Trash2, Upload } from 'lucide-react';
+import { Plus, Edit2, Trash2, Upload, FileUp } from 'lucide-react';
 import {
   AdminCardTemplate,
   FabricDesignData,
@@ -37,13 +37,24 @@ function JsonImportModal({ onImport, onClose }: {
 }) {
   const [raw, setRaw] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleApply = () => {
+  const parseAndImport = (text: string) => {
     setError(null);
     try {
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = JSON.parse(text) as unknown;
       const arr = Array.isArray(parsed) ? parsed : [parsed];
       const items = (arr as Record<string, unknown>[]).map((item, i) => {
+        // Support both wrapped format { name, designData } and raw FabricDesignData
+        if ((item as Record<string, unknown>).fabricVersion === true) {
+          // Raw FabricDesignData — use a default name
+          const dd = item as Record<string, unknown>;
+          return {
+            name: 'Imported Template',
+            description: '',
+            designData: dd as unknown as FabricDesignData,
+          };
+        }
         if (!item.name) throw new Error(`Item ${i + 1}: missing "name"`);
         if (!item.designData) throw new Error(`Item ${i + 1}: missing "designData"`);
         const dd = item.designData as Record<string, unknown>;
@@ -60,30 +71,63 @@ function JsonImportModal({ onImport, onClose }: {
     }
   };
 
+  const handleFileUpload = (file: File) => {
+    if (!file.name.endsWith('.json')) { setError('Only .json files are supported'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      setRaw(text);
+      parseAndImport(text);
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="flex w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl">
         <div className="border-b px-6 py-5">
           <h2 className="text-xl font-bold text-slate-900">Import Templates from JSON</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Paste a JSON array of template objects. Each must have <code className="rounded bg-slate-100 px-1 text-xs">name</code>, optional <code className="rounded bg-slate-100 px-1 text-xs">description</code>, and <code className="rounded bg-slate-100 px-1 text-xs">designData</code> (FabricDesignData with <code className="rounded bg-slate-100 px-1 text-xs">fabricVersion: true</code>).
+            Upload a <code className="rounded bg-slate-100 px-1 text-xs">.json</code> file exported from the card builder, or paste JSON below.
           </p>
         </div>
-        <div className="p-6">
+        <div className="p-6 space-y-4">
+          {/* File upload */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 py-4 text-sm font-semibold text-slate-600 transition hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+          >
+            <FileUp size={16} /> Upload .json file
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-100" />
+            <span className="text-xs text-slate-400">or paste JSON</span>
+            <div className="h-px flex-1 bg-slate-100" />
+          </div>
+
           <textarea
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder='[{ "name": "Template 1", "designData": { "fabricVersion": true, ... } }]'
-            rows={14}
+            placeholder='[{ "name": "Template 1", "description": "", "designData": { "fabricVersion": true, ... } }]'
+            rows={10}
             className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-          <div className="mt-4 flex justify-end gap-3">
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex justify-end gap-3">
             <button type="button" onClick={onClose}
               className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition">
               Cancel
             </button>
-            <button type="button" onClick={handleApply}
+            <button type="button" onClick={() => parseAndImport(raw)}
               className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition">
               Import Templates
             </button>
