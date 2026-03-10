@@ -166,6 +166,7 @@ export interface UpdateAdminCardTemplateInput {
   name: string;
   description?: string;
   designData: CardTemplate | FabricDesignData;
+  coverImageUrl?: string | null;
 }
 
 export interface PublishCardTemplateInput {

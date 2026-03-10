@@ -209,16 +209,30 @@ const AdminCardsManagement = () => {
   };
 
   // ── Save Draft ────────────────────────────────────────────────────────────
-  const handleSaveDraft = async (data: FabricDesignData, desc: string, name: string) => {
+  const handleSaveDraft = async (data: FabricDesignData, desc: string, name: string, coverImageUrl: string | null) => {
     try {
       setIsSaving(true);
       if (editingIdRef.current) {
-        await cardTemplateService.updateTemplate(editingIdRef.current, { name, description: desc, designData: data });
+        await cardTemplateService.updateTemplate(editingIdRef.current, {
+          name,
+          description: desc,
+          designData: data,
+          coverImageUrl: coverImageUrl ?? undefined,
+        });
         setSuccessMessage('Template saved');
       } else {
         const created = await cardTemplateService.createTemplate({ name, description: desc, designData: data });
         editingIdRef.current = created.id;
         setEditingId(created.id);
+        // Save cover image after creation if present
+        if (coverImageUrl) {
+          await cardTemplateService.updateTemplate(created.id, {
+            name,
+            description: desc,
+            designData: data,
+            coverImageUrl,
+          });
+        }
         setSuccessMessage('Template saved as draft');
       }
       await fetchTemplates();

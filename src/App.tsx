@@ -176,8 +176,9 @@ function App() {
       const response = await originalFetch(...args);
       if (response.status === 401) {
         const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : '';
-        // Only intercept API calls to our backend (not OAuth or external calls)
-        if (url.includes('/api/') && !url.includes('/api/auth/')) {
+        // Only intercept API calls to our backend (not OAuth, external, or best-effort background calls)
+        // Exclude media upload — it's fire-and-forget from the builder and shouldn't force logout
+        if (url.includes('/api/') && !url.includes('/api/auth/') && !url.includes('/api/media')) {
           localStorage.removeItem('auth_session');
           localStorage.removeItem('auth_token');
           clearStoredUser();
