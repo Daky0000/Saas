@@ -344,21 +344,34 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
-        {/* Left: Editor */}
-        <div className="space-y-4">
-          <input
-            type="text"
-            placeholder="Post title"
-            value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-2xl font-bold text-slate-950 outline-none placeholder:text-slate-300 focus:border-slate-400"
-          />
-          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2">
-            <span className="text-xs font-semibold text-slate-500">Slug</span>
-            <input type="text" value={slug}
-              onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
-              className="flex-1 bg-transparent text-sm text-slate-700 outline-none" />
+        <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+          {/* Left: Editor */}
+          <div className="space-y-4">
+            <input
+              type="text"
+              placeholder="Post title"
+              value={title}
+              onChange={(e) => handleTitleChange(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-2xl font-bold text-slate-950 outline-none placeholder:text-slate-300 focus:border-slate-400"
+            />
+            <div className="flex items-center justify-end gap-2 text-xs">
+              <span className={title.length > 60 ? 'font-semibold text-red-600' : 'text-slate-500'}>
+                {title.length}/60
+              </span>
+              {title.length > 60 && (
+                <span className="relative inline-flex items-center group">
+                  <AlertCircle size={14} className="text-red-600" />
+                  <span className="pointer-events-none absolute right-0 top-full z-10 mt-2 w-64 rounded-lg bg-slate-950 px-3 py-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                    Your title exceeds 60 chars, not good for SEO.
+                  </span>
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2">
+              <span className="text-xs font-semibold text-slate-500">Slug</span>
+              <input type="text" value={slug}
+                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
+                className="flex-1 bg-transparent text-sm text-slate-700 outline-none" />
           </div>
 
           {/* WYSIWYG */}

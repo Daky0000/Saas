@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, Clock } from 'lucide-react';
 import AdvancedTemplateCard from '../components/AdvancedTemplateCard';
-import PrebuiltTemplates from '../components/PrebuiltTemplates';
-import { cardTemplates, cloneCardTemplate } from '../data/cardTemplates';
+import { cloneCardTemplate } from '../data/cardTemplates';
 import { CardTemplate, AdminCardTemplate, isFabricDesign, FabricDesignData } from '../types/cardTemplate';
 import { cardTemplateService } from '../services/cardTemplateService';
 import { designService, UserDesign } from '../services/designService';
@@ -172,10 +171,6 @@ const Cards = () => {
 
   const handleDeleteDesign = (id: string) => {
     setMyDesigns((prev) => prev.filter((d) => d.id !== id));
-  };
-
-  const handleSelectTemplate = (template: CardTemplate) => {
-    setSelectedTemplate(cloneCardTemplate(template));
   };
 
   const handleSelectPublishedTemplate = (template: AdminCardTemplate) => {
