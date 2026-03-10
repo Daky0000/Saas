@@ -16,6 +16,7 @@ import {
   Webhook,
   X,
 } from 'lucide-react';
+import { wordpressService } from '../services/wordpressService';
 
 // ── Platform SVG Icons ──────────────────────────────────────────────────────────
 
@@ -467,6 +468,10 @@ const Integrations = () => {
   const [oauthConnecting, setOauthConnecting] = useState<string | null>(null);
   // Admin-enabled integration IDs — null means not yet loaded, undefined means loading failed (show all)
   const [enabledIds, setEnabledIds] = useState<Set<string> | null>(null);
+  const [wpStatus, setWpStatus] = useState<{ loading: boolean; connected: boolean; siteUrl?: string; connectionType?: 'make_webhook' | 'wordpress_api' }>({
+    loading: true,
+    connected: false,
+  });
   const isAdmin = isAdminUser();
 
   // ── Load backend admin configs ─────────────────────────────────────────────
@@ -549,11 +554,31 @@ const Integrations = () => {
     }
   }, []);
 
+  const loadWordPressStatus = useCallback(async () => {
+    setWpStatus((prev) => ({ ...prev, loading: true }));
+    try {
+      const result = await wordpressService.getStatus();
+      if (result.success) {
+        setWpStatus({
+          loading: false,
+          connected: Boolean(result.connected),
+          siteUrl: result.siteUrl,
+          connectionType: result.connectionType,
+        });
+      } else {
+        setWpStatus({ loading: false, connected: false });
+      }
+    } catch {
+      setWpStatus({ loading: false, connected: false });
+    }
+  }, []);
+
   useEffect(() => {
     void loadBackendConfigs();
     void loadOAuthStatus();
+    void loadWordPressStatus();
     void loadEnabledIds();
-  }, [loadBackendConfigs, loadOAuthStatus, loadEnabledIds]);
+  }, [loadBackendConfigs, loadOAuthStatus, loadWordPressStatus, loadEnabledIds]);
 
   // ── Handle OAuth callback result ───────────────────────────────────────────
   useEffect(() => {
@@ -599,6 +624,7 @@ const Integrations = () => {
 
   const getConnectionStatus = (integration: IntegrationDefinition): boolean => {
     if (integration.isOAuth) return oauthStatus[integration.id]?.connected ?? false;
+    if (integration.id === 'wordpress') return wpStatus.connected;
     return savedConfigs[integration.id]?.enabled ?? false;
   };
 
@@ -655,6 +681,21 @@ const Integrations = () => {
     } catch { /* ignore */ }
   };
 
+  const handleWordPressDisconnect = async () => {
+    try {
+      const result = await wordpressService.disconnect();
+      if (!result.success) throw new Error(result.error || 'Failed to disconnect WordPress');
+      await loadWordPressStatus();
+      setSavedConfigs((prev) => {
+        const next = { ...prev, wordpress: { enabled: false, values: { ...(prev.wordpress?.values ?? {}) } } };
+        saveLocalConfigs(next);
+        return next;
+      });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to disconnect WordPress');
+    }
+  };
+
   // ── Save integration (admin OAuth config or API key integrations) ──────────
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -664,6 +705,30 @@ const Integrations = () => {
     setSaveSuccess(null);
 
     try {
+      // WordPress: connect + persist credentials server-side (do NOT store secrets in localStorage)
+      if (activeIntegration.id === 'wordpress') {
+        const siteUrl = String(draftValues.siteUrl || '').trim();
+        const username = String(draftValues.username || '').trim();
+        const applicationPassword = String(draftValues.applicationPassword || '').trim();
+        const result = await wordpressService.connect({ siteUrl, username, applicationPassword });
+        if (!result.success) throw new Error(result.error || 'Failed to connect WordPress');
+        await loadWordPressStatus();
+
+        setSavedConfigs((current) => {
+          const next = {
+            ...current,
+            wordpress: {
+              enabled: true,
+              values: { siteUrl, username },
+            },
+          };
+          saveLocalConfigs(next);
+          return next;
+        });
+        setSaveSuccess(result.message || 'WordPress connected successfully!');
+        return;
+      }
+
       // Admin configuring OAuth platform app credentials → save to backend
       if (isAdmin && activeIntegration.isOAuth) {
         const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${activeIntegration.id}`, {
@@ -723,7 +788,7 @@ const Integrations = () => {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => void loadOAuthStatus()} title="Refresh status" className="rounded-xl border border-slate-200 p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors">
+            <button type="button" onClick={() => { void loadOAuthStatus(); void loadWordPressStatus(); }} title="Refresh status" className="rounded-xl border border-slate-200 p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors">
               <RefreshCw size={16} />
             </button>
             <div className="w-full max-w-sm">
@@ -781,10 +846,12 @@ const Integrations = () => {
                   <div className="flex items-center justify-between gap-2">
                     <span className={`text-xs font-semibold ${isConnected ? 'text-emerald-600' : 'text-slate-400'}`}>
                       {isConnected
-                        ? `Connected${oAuth?.handle ? ` · ${oAuth.handle}` : ''}`
+                        ? (integration.id === 'wordpress'
+                          ? `Connected${wpStatus.siteUrl ? ` · ${wpStatus.siteUrl}` : ''}`
+                          : `Connected${oAuth?.handle ? ` · ${oAuth.handle}` : ''}`)
                         : integration.isOAuth
                           ? (oAuth?.loading ? 'Checking…' : isOAuthConfigured ? 'Not connected' : 'Setup required')
-                          : 'Not connected'}
+                          : (integration.id === 'wordpress' && wpStatus.loading ? 'Checking…' : 'Not connected')}
                     </span>
                     <div aria-hidden="true" className={`relative h-7 w-12 flex-shrink-0 rounded-full transition-colors ${isConnected ? 'bg-emerald-500' : 'bg-slate-200'}`}>
                       <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${isConnected ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -837,6 +904,10 @@ const Integrations = () => {
                         </button>
                         {!integration.isOAuth && isConnected && (
                           <button type="button" onClick={() => {
+                            if (integration.id === 'wordpress') {
+                              void handleWordPressDisconnect();
+                              return;
+                            }
                             setSavedConfigs((prev) => {
                               const next = { ...prev, [integration.id]: { ...prev[integration.id], enabled: false } };
                               saveLocalConfigs(next);
