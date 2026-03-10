@@ -2761,7 +2761,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
 
       const updated: DbCardTemplate = {
         ...existing,
-        cover_image_url: coverUrl,
+        ...(coverUrl ? { cover_image_url: coverUrl } : {}),
         is_published: true,
         updated_at: now,
       };
@@ -2782,7 +2782,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
       });
     } else {
       await dbQuery(
-        'UPDATE card_templates SET cover_image_url = $1, is_published = true, updated_at = $2 WHERE id = $3',
+        'UPDATE card_templates SET cover_image_url = COALESCE(NULLIF($1, \'\'), cover_image_url), is_published = true, updated_at = $2 WHERE id = $3',
         [coverUrl, now, id]
       );
 

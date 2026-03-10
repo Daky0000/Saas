@@ -290,7 +290,13 @@ const AdminCardsManagement = () => {
         existingDesignData={builderExistingData}
         existingCoverImageUrl={builderCoverImageUrl ?? undefined}
         onTemplateUpdated={fetchTemplates}
-        onClose={() => { setIsBuilderOpen(false); setBuilderExistingData(null); editingIdRef.current = null; setEditingId(null); }}
+        onClose={(refreshNeeded) => {
+          setIsBuilderOpen(false);
+          setBuilderExistingData(null);
+          editingIdRef.current = null;
+          setEditingId(null);
+          if (refreshNeeded) void fetchTemplates();
+        }}
       />
     );
   }
