@@ -126,7 +126,7 @@ function App() {
   useOAuthCallback();
 
   useEffect(() => {
-    const resetFlag = 'force_auth_reset_done';
+    const resetFlag = 'force_auth_reset_v7';
     if (sessionStorage.getItem(resetFlag) === '1') {
       return;
     }
@@ -166,6 +166,33 @@ function App() {
     (user: AppUser | null): PageType => (user?.role === 'admin' ? 'admin' : 'dashboard'),
     [],
   );
+
+  // Global 401 handler — auto-logout when any API call returns Unauthorized
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (response.status === 401) {
+        const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : '';
+        // Only intercept API calls to our backend (not OAuth or external calls)
+        if (url.includes('/api/') && !url.includes('/api/auth/')) {
+          localStorage.removeItem('auth_session');
+          localStorage.removeItem('auth_token');
+          clearStoredUser();
+          setAuthUser(null);
+          setIsAuthenticated(false);
+          navigatePath('/login', true);
+        }
+      }
+      return response;
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [isAuthenticated, navigatePath]);
 
   useEffect(() => {
     let canceled = false;
