@@ -4,9 +4,10 @@ import { jsPDF } from 'jspdf';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
   ZoomIn, ZoomOut, Maximize2, Send, ImagePlus, EyeOff, Grid3X3,
-  FileJson, FileImage, FileType, AlertCircle, GalleryHorizontalEnd,
+  FileJson, FileImage, FileType, AlertCircle, GalleryHorizontalEnd, CheckCircle2,
 } from 'lucide-react';
 import { mediaService } from '../../services/mediaService';
+import { cardTemplateService } from '../../services/cardTemplateService';
 import LayersPanel from '../cards/builder/LayersPanel';
 import PropertiesPanel, { GradientStop } from '../cards/builder/PropertiesPanel';
 import FloatingToolbar from '../cards/builder/FloatingToolbar';
@@ -29,11 +30,8 @@ interface AdminFabricBuilderProps {
   isPublished?: boolean;
   existingDesignData?: FabricDesignData | null;
   existingCoverImageUrl?: string;
-  onSaveDraft: (data: FabricDesignData, desc: string, name: string, coverImageUrl: string | null) => Promise<void>;
-  onPublish: (data: FabricDesignData, thumbnailUrl: string, desc: string, name: string) => Promise<void>;
-  onUnpublish?: () => Promise<void>;
-  onClose: () => void;
-  isSaving?: boolean;
+  /** Called when the builder closes — pass true when the template list should refresh */
+  onClose: (refreshNeeded?: boolean) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,16 +43,13 @@ function fmtZoom(z: number) { return `${Math.round(z * 100)}%`; }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function AdminFabricBuilder({
+  templateId: initialTemplateId,
   templateName,
   templateDescription = '',
   isPublished: initialIsPublished = false,
   existingDesignData,
   existingCoverImageUrl,
-  onSaveDraft,
-  onPublish,
-  onUnpublish,
   onClose,
-  isSaving = false,
 }: AdminFabricBuilderProps) {
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -90,10 +85,14 @@ export default function AdminFabricBuilder({
   const [description, setDescription] = useState(templateDescription);
   const [isPublished, setIsPublished] = useState(initialIsPublished);
   const [customPreviewImage, setCustomPreviewImage] = useState<string | null>(existingCoverImageUrl ?? null);
-  const [publishError, setPublishError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [showPreviewLibrary, setShowPreviewLibrary] = useState(false);
   const previewFileInputRef = useRef<HTMLInputElement>(null);
   const skipSnapshotRef = useRef(false);
+  // Internal template ID — starts from prop, updated after first create
+  const currentTemplateId = useRef<string | null>(initialTemplateId);
+  const didChangeRef = useRef(false); // tracks whether any save happened (to refresh list on close)
 
   // ── History ─────────────────────────────────────────────────────────────────
   const snapshot = useCallback(() => {
@@ -440,59 +439,100 @@ export default function AdminFabricBuilder({
 
   // ── Save Draft ───────────────────────────────────────────────────────────────
   const handleSaveDraft = useCallback(async () => {
-    if (isSaving || publishingState !== 'idle') return;
-    setPublishError(null);
+    if (publishingState !== 'idle') return;
+    setSaveError(null);
+    setSaveSuccess(null);
     setPublishingState('saving');
     try {
-      await onSaveDraft(getDesignData(), description, name, customPreviewImage);
+      const data = getDesignData();
+      if (currentTemplateId.current) {
+        await cardTemplateService.updateTemplate(currentTemplateId.current, {
+          name,
+          description,
+          designData: data,
+          coverImageUrl: customPreviewImage ?? undefined,
+        });
+      } else {
+        const created = await cardTemplateService.createTemplate({ name, description, designData: data });
+        currentTemplateId.current = created.id;
+        // If we have a cover image, save it immediately after create
+        if (customPreviewImage) {
+          await cardTemplateService.updateTemplate(created.id, {
+            name,
+            description,
+            designData: data,
+            coverImageUrl: customPreviewImage,
+          });
+        }
+      }
+      didChangeRef.current = true;
+      setSaveSuccess('Saved!');
+      setTimeout(() => setSaveSuccess(null), 2500);
     } catch (err) {
-      setPublishError(err instanceof Error ? err.message : 'Save failed — please try again');
+      setSaveError(err instanceof Error ? err.message : 'Save failed — please try again');
     } finally {
       setPublishingState('idle');
     }
-  }, [isSaving, publishingState, onSaveDraft, getDesignData, description, name, customPreviewImage]);
+  }, [publishingState, getDesignData, name, description, customPreviewImage]);
 
   // ── Publish ──────────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
     const c = fabricRef.current;
-    if (!c || isSaving || publishingState !== 'idle') return;
-    setPublishError(null);
+    if (!c || publishingState !== 'idle') return;
+    setSaveError(null);
+    setSaveSuccess(null);
 
-    // Step 1: Auto-save first
+    // Step 1: Save first
     setPublishingState('saving');
     try {
-      await onSaveDraft(getDesignData(), description, name, customPreviewImage);
+      const data = getDesignData();
+      if (currentTemplateId.current) {
+        await cardTemplateService.updateTemplate(currentTemplateId.current, {
+          name,
+          description,
+          designData: data,
+          coverImageUrl: customPreviewImage ?? undefined,
+        });
+      } else {
+        const created = await cardTemplateService.createTemplate({ name, description, designData: data });
+        currentTemplateId.current = created.id;
+      }
     } catch (err) {
       setPublishingState('idle');
-      setPublishError(err instanceof Error ? err.message : 'Save failed before publishing');
+      setSaveError(err instanceof Error ? err.message : 'Save failed before publishing');
       return;
     }
 
     // Step 2: Publish
     setPublishingState('publishing');
     try {
-      const data = getDesignData();
       const multiplier = preset.w / (preset.w * canvasScale);
       const thumbnailUrl = customPreviewImage || c.toDataURL({ format: 'jpeg', quality: 0.85, multiplier });
-      await onPublish(data, thumbnailUrl, description, name);
+      await cardTemplateService.publishTemplate(currentTemplateId.current!, { coverImageUrl: thumbnailUrl });
+      didChangeRef.current = true;
       setIsPublished(true);
       setPublishingState('done');
-      setTimeout(() => setPublishingState('idle'), 2000);
+      setTimeout(() => { setPublishingState('idle'); }, 2500);
     } catch (err) {
       setPublishingState('idle');
-      setPublishError(err instanceof Error ? err.message : 'Publish failed — please try again');
+      setSaveError(err instanceof Error ? err.message : 'Publish failed — please try again');
     }
-  }, [isSaving, publishingState, getDesignData, preset, canvasScale, onSaveDraft, onPublish, description, name, customPreviewImage]);
+  }, [publishingState, getDesignData, preset, canvasScale, name, description, customPreviewImage]);
 
   // ── Unpublish ─────────────────────────────────────────────────────────────────
   const handleUnpublish = useCallback(async () => {
-    if (!onUnpublish || isSaving || publishingState !== 'idle') return;
+    if (publishingState !== 'idle' || !currentTemplateId.current) return;
     setPublishingState('unpublishing');
     try {
-      await onUnpublish();
+      await cardTemplateService.unpublishTemplate(currentTemplateId.current);
+      didChangeRef.current = true;
       setIsPublished(false);
-    } finally { setPublishingState('idle'); }
-  }, [onUnpublish, isSaving, publishingState]);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Unpublish failed');
+    } finally {
+      setPublishingState('idle');
+    }
+  }, [publishingState]);
 
   // ── Export ───────────────────────────────────────────────────────────────────
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -562,7 +602,7 @@ export default function AdminFabricBuilder({
     setPreset(p); setShowPresets(false); setTimeout(() => scaleCanvasToFit(), 0);
   }, [scaleCanvasToFit]);
 
-  const busy = publishingState !== 'idle' || isSaving;
+  const busy = publishingState !== 'idle';
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
@@ -570,7 +610,7 @@ export default function AdminFabricBuilder({
 
       {/* ── Toolbar ──────────────────────────────────────────────────────────── */}
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-4 shadow-sm">
-        <button type="button" onClick={onClose}
+        <button type="button" onClick={() => onClose(didChangeRef.current)}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900">
           <X size={18} />
         </button>
