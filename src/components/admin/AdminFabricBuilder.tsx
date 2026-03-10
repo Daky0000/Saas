@@ -30,6 +30,7 @@ interface AdminFabricBuilderProps {
   isPublished?: boolean;
   existingDesignData?: FabricDesignData | null;
   existingCoverImageUrl?: string;
+  onTemplateUpdated?: () => Promise<void> | void;
   /** Called when the builder closes — pass true when the template list should refresh */
   onClose: (refreshNeeded?: boolean) => void;
 }
@@ -465,6 +466,7 @@ export default function AdminFabricBuilder({
           });
         }
       }
+      if (onTemplateUpdated) await onTemplateUpdated();
       didChangeRef.current = true;
       setSaveSuccess('Saved!');
       setTimeout(() => setSaveSuccess(null), 2500);
@@ -473,7 +475,7 @@ export default function AdminFabricBuilder({
     } finally {
       setPublishingState('idle');
     }
-  }, [publishingState, getDesignData, name, description, customPreviewImage]);
+  }, [publishingState, getDesignData, name, description, customPreviewImage, onTemplateUpdated]);
 
   // ── Publish ──────────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
@@ -512,12 +514,13 @@ export default function AdminFabricBuilder({
       didChangeRef.current = true;
       setIsPublished(true);
       setPublishingState('done');
+      if (onTemplateUpdated) await onTemplateUpdated();
       setTimeout(() => { setPublishingState('idle'); }, 2500);
     } catch (err) {
       setPublishingState('idle');
       setSaveError(err instanceof Error ? err.message : 'Publish failed — please try again');
     }
-  }, [publishingState, getDesignData, preset, canvasScale, name, description, customPreviewImage]);
+  }, [publishingState, getDesignData, preset, canvasScale, name, description, customPreviewImage, onTemplateUpdated]);
 
   // ── Unpublish ─────────────────────────────────────────────────────────────────
   const handleUnpublish = useCallback(async () => {
@@ -527,12 +530,13 @@ export default function AdminFabricBuilder({
       await cardTemplateService.unpublishTemplate(currentTemplateId.current);
       didChangeRef.current = true;
       setIsPublished(false);
+      if (onTemplateUpdated) await onTemplateUpdated();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Unpublish failed');
     } finally {
       setPublishingState('idle');
     }
-  }, [publishingState]);
+  }, [publishingState, onTemplateUpdated]);
 
   // ── Export ───────────────────────────────────────────────────────────────────
   const [showExportMenu, setShowExportMenu] = useState(false);
