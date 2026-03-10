@@ -52,7 +52,8 @@ export const oauthConfigs = {
   TikTok: {
     clientId: import.meta.env.VITE_TIKTOK_CLIENT_ID,
     redirectUri: resolveRedirectUri(import.meta.env.VITE_TIKTOK_REDIRECT_URI),
-    authUrl: 'https://www.tiktok.com/oauth/authorize',
+    // TikTok Login Kit Web authorize endpoint
+    authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
     scopes: ['user.info.basic', 'video.upload'],
   },
 };
@@ -62,13 +63,23 @@ export const oauthService = {
   /** Generate OAuth authorization URL */
   getAuthorizationUrl: (platform: SocialPlatform, state: string): string => {
     const config = oauthConfigs[platform];
-    const params = new URLSearchParams({
-      client_id: config.clientId,
-      redirect_uri: config.redirectUri,
-      response_type: 'code',
-      state,
-      scope: config.scopes.join(' '),
-    });
+    const params =
+      platform === 'TikTok'
+        ? new URLSearchParams({
+            // TikTok uses `client_key` (not `client_id`)
+            client_key: config.clientId,
+            redirect_uri: config.redirectUri,
+            response_type: 'code',
+            state,
+            scope: config.scopes.join(','),
+          })
+        : new URLSearchParams({
+            client_id: config.clientId,
+            redirect_uri: config.redirectUri,
+            response_type: 'code',
+            state,
+            scope: config.scopes.join(' '),
+          });
     return `${config.authUrl}?${params.toString()}`;
   },
 
