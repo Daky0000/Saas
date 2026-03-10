@@ -284,6 +284,19 @@ async function ensureDatabase() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS publishing_logs (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      platform_post_id TEXT,
+      error_message TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
   // Seed card templates once if the table is empty
   try {
     const { rows: existingRows } = await pool.query<{ id: string }>('SELECT id FROM card_templates LIMIT 1');
@@ -4366,6 +4379,224 @@ app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) =>
     ));
   }
   return res.json({ success: true, post: newRows[0] });
+});
+
+// ── Distribution / Automation ────────────────────────────────────────────────
+
+// Helper: publish a blog post to a single platform, return result
+async function publishToplatform(
+  userId: string,
+  post: Record<string, any>,
+  platform: string
+): Promise<{ status: string; platformPostId?: string; error?: string }> {
+  try {
+    if (platform === 'wordpress') {
+      const conn = await getWordPressConnection(userId);
+      if (!conn) throw new Error('WordPress not connected');
+      const appPassword = decryptWordPressPassword(conn.appPasswordEncrypted);
+      const postPayload: Record<string, any> = {
+        title: post.title || '',
+        content: post.content || '',
+        status: post.status === 'published' ? 'publish' : 'draft',
+        excerpt: post.excerpt || '',
+        slug: post.slug || '',
+      };
+      const { data: wpData, status: wpStatus, error: wpError } = await wpRequest(
+        conn.siteUrl, conn.username, appPassword, 'POST', '/wp/v2/posts', { data: postPayload }
+      );
+      if (wpStatus !== 201 && wpStatus !== 200) throw new Error(wpError || 'WordPress publish failed');
+      // Set SEO meta if available
+      const postId = wpData?.id;
+      if (postId && (post.meta_title || post.meta_description || post.focus_keyword)) {
+        const meta: Record<string, string> = {};
+        if (post.meta_title) { meta._yoast_wpseo_title = post.meta_title; meta.rank_math_title = post.meta_title; }
+        if (post.meta_description) { meta._yoast_wpseo_metadesc = post.meta_description; meta.rank_math_description = post.meta_description; }
+        if (post.focus_keyword) { meta._yoast_wpseo_focuskw = post.focus_keyword; meta.rank_math_focus_keyword = post.focus_keyword; }
+        await wpRequest(conn.siteUrl, conn.username, appPassword, 'POST', `/wp/v2/posts/${postId}`, { data: { meta } });
+      }
+      return { status: 'published', platformPostId: String(wpData?.id || '') };
+    }
+
+    // OAuth platforms (LinkedIn, Twitter/X, Facebook, Instagram, etc.)
+    const socialRows = await pool!.query(
+      'SELECT access_token, token_data FROM social_accounts WHERE user_id=$1 AND platform=$2 AND connected=true',
+      [userId, platform]
+    );
+    if (!socialRows.rows.length) throw new Error(`${platform} is not connected`);
+    const { access_token, token_data } = socialRows.rows[0];
+    if (!access_token) throw new Error(`${platform} access token missing – please reconnect`);
+
+    const PLATFORM_NAMES: Record<string, string> = {
+      linkedin: 'LinkedIn', twitter: 'Twitter / X', facebook: 'Facebook',
+      instagram: 'Instagram', threads: 'Threads', tiktok: 'TikTok',
+    };
+    const platformName = PLATFORM_NAMES[platform] || platform;
+    const summary = post.excerpt || post.title || '';
+    const maxLen = platform === 'twitter' ? 260 : 3000;
+    const text = `${post.title}\n\n${summary}`.slice(0, maxLen);
+
+    if (platform === 'linkedin') {
+      const authorUrn = token_data?.sub ? `urn:li:person:${token_data.sub}` : null;
+      if (!authorUrn) throw new Error('LinkedIn profile URN not available – please reconnect');
+      const body = {
+        author: authorUrn,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: { text },
+            shareMediaCategory: 'NONE',
+          },
+        },
+        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
+      };
+      const resp = await fetch('https://api.linkedin.com/v2/ugcPosts', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error((errData as any)?.message || `LinkedIn API error ${resp.status}`);
+      }
+      const data: any = await resp.json();
+      return { status: 'published', platformPostId: data?.id };
+    }
+
+    if (platform === 'twitter') {
+      const resp = await fetch('https://api.twitter.com/2/tweets', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.slice(0, 280) }),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error((errData as any)?.detail || `Twitter API error ${resp.status}`);
+      }
+      const data: any = await resp.json();
+      return { status: 'published', platformPostId: data?.data?.id };
+    }
+
+    // Stub for other platforms
+    console.log(`[Distribution] ${platformName}: token available, platform publishing not yet implemented`);
+    return { status: 'pending', error: `${platformName} publishing coming soon` };
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
+// GET /api/distribution/connected
+app.get('/api/distribution/connected', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const platforms: { id: string; name: string }[] = [];
+
+    const wpRows = await pool!.query('SELECT id FROM wordpress_connections WHERE user_id=$1', [auth.userId]);
+    if (wpRows.rows.length > 0) platforms.push({ id: 'wordpress', name: 'WordPress' });
+
+    const socialRows = await pool!.query(
+      'SELECT platform FROM social_accounts WHERE user_id=$1 AND connected=true', [auth.userId]
+    );
+    const SOCIAL_NAMES: Record<string, string> = {
+      instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn',
+      twitter: 'Twitter / X', tiktok: 'TikTok', threads: 'Threads',
+    };
+    for (const row of socialRows.rows) {
+      if (SOCIAL_NAMES[row.platform]) platforms.push({ id: row.platform, name: SOCIAL_NAMES[row.platform] });
+    }
+
+    return res.json({ success: true, platforms });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Failed to fetch connected platforms' });
+  }
+});
+
+// POST /api/distribution/publish
+app.post('/api/distribution/publish', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const { postId, platforms } = req.body as { postId: string; platforms: string[] };
+    if (!postId || !Array.isArray(platforms) || platforms.length === 0) {
+      return res.status(400).json({ success: false, error: 'postId and platforms required' });
+    }
+
+    const postRows = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [postId, auth.userId]);
+    if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    const post = postRows.rows[0];
+
+    const results: { platform: string; status: string; error?: string; platformPostId?: string }[] = [];
+    for (const platform of platforms) {
+      const result = await publishToplatform(auth.userId, post, platform);
+      const logId = randomUUID();
+      await pool!.query(
+        'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [logId, postId, auth.userId, platform, result.status, result.platformPostId || null, result.error || null]
+      );
+      results.push({ platform, ...result });
+    }
+
+    return res.json({ success: true, results });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Distribution failed' });
+  }
+});
+
+// GET /api/distribution/status/:postId
+app.get('/api/distribution/status/:postId', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const { postId } = req.params;
+    const { rows } = await pool!.query(
+      'SELECT * FROM publishing_logs WHERE post_id=$1 AND user_id=$2 ORDER BY created_at DESC',
+      [postId, auth.userId]
+    );
+    return res.json({ success: true, logs: rows });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Failed to fetch status' });
+  }
+});
+
+// GET /api/automation/logs
+app.get('/api/automation/logs', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const { rows } = await pool!.query(
+      `SELECT l.*, p.title as post_title FROM publishing_logs l
+       LEFT JOIN blog_posts p ON p.id = l.post_id
+       WHERE l.user_id=$1 ORDER BY l.created_at DESC LIMIT 200`,
+      [auth.userId]
+    );
+    return res.json({ success: true, logs: rows });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Failed to fetch logs' });
+  }
+});
+
+// POST /api/automation/retry/:logId
+app.post('/api/automation/retry/:logId', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const { logId } = req.params;
+    const logRows = await pool!.query('SELECT * FROM publishing_logs WHERE id=$1 AND user_id=$2', [logId, auth.userId]);
+    if (!logRows.rows.length) return res.status(404).json({ success: false, error: 'Log not found' });
+    const log = logRows.rows[0];
+    const postRows = await pool!.query('SELECT * FROM blog_posts WHERE id=$1', [log.post_id]);
+    if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    const result = await publishToplatform(auth.userId, postRows.rows[0], log.platform);
+    await pool!.query(
+      'UPDATE publishing_logs SET status=$1, platform_post_id=$2, error_message=$3 WHERE id=$4',
+      [result.status, result.platformPostId || null, result.error || null, logId]
+    );
+    return res.json({ success: true, result });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Retry failed' });
+  }
 });
 
 // Health check
