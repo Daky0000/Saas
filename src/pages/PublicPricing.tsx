@@ -33,42 +33,41 @@ function PlanCard({
   const yearlyDiscount = cycle === 'yearly' && !isFree;
   const hasDiscount = (plan.discountPercentage ?? 0) > 0;
   const finalPrice = hasDiscount ? discountedPrice(plan.price, plan.discountPercentage) : plan.price;
-
   const isFeatured = plan.name.toLowerCase().includes('pro') || plan.name.toLowerCase().includes('business');
 
   return (
     <div
-      className={`relative flex flex-col rounded-3xl border p-8 transition-all duration-300 ${
+      className={`relative flex flex-col rounded-2xl border p-8 transition-all duration-200 ${
         isFeatured
-          ? 'border-[#e6332a] bg-[#e6332a] text-white shadow-xl shadow-red-100'
-          : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-md'
+          ? 'border-[#5b6cf9] bg-[#5b6cf9] text-white shadow-xl shadow-blue-200/40'
+          : 'border-[#e5e7eb] bg-white hover:border-[#c7d0fe] hover:shadow-sm'
       }`}
     >
-      {/* Sale badge (takes priority over "Most popular") */}
+      {/* Badges */}
       {plan.isOnSale ? (
         <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-          <div className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-1 text-xs font-bold uppercase tracking-widest text-white whitespace-nowrap">
+          <div className="flex items-center gap-1.5 rounded-full bg-[#0f0f11] px-4 py-1 text-[11px] font-bold uppercase tracking-widest text-white whitespace-nowrap">
             <Tag size={10} />
             On Sale
           </div>
         </div>
       ) : isFeatured ? (
-        <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900 px-4 py-1 text-xs font-bold uppercase tracking-widest text-white whitespace-nowrap">
+        <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-[#0f0f11] px-4 py-1 text-[11px] font-bold uppercase tracking-widest text-white whitespace-nowrap">
           Most popular
         </div>
       ) : null}
 
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <h3 className={`text-lg font-black tracking-[-0.02em] mb-1 ${isFeatured ? 'text-white' : 'text-zinc-900'}`}>
+          <h3 className={`text-[17px] font-black tracking-[-0.02em] mb-1 ${isFeatured ? 'text-white' : 'text-[#0f0f11]'}`}>
             {plan.name}
           </h3>
-          <p className={`text-sm leading-relaxed ${isFeatured ? 'text-white/70' : 'text-zinc-500'}`}>
+          <p className={`text-[14px] leading-relaxed ${isFeatured ? 'text-white/70' : 'text-[#6b7280]'}`}>
             {plan.description}
           </p>
         </div>
         {hasDiscount && (
-          <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black ${isFeatured ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-black ${isFeatured ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
             -{Math.round(plan.discountPercentage)}%
           </span>
         )}
@@ -77,43 +76,43 @@ function PlanCard({
       <div className="mb-6">
         {hasDiscount ? (
           <>
-            <div className={`text-sm line-through mb-0.5 ${isFeatured ? 'text-white/50' : 'text-zinc-400'}`}>
+            <div className={`text-[13px] line-through mb-0.5 ${isFeatured ? 'text-white/50' : 'text-[#9ca3af]'}`}>
               {formatPrice(plan.price)} / {cycle === 'monthly' ? 'mo' : 'yr'}
             </div>
             <div className="flex items-end gap-1.5">
-              <span className={`text-5xl font-black tracking-[-0.04em] ${isFeatured ? 'text-white' : 'text-zinc-900'}`}>
+              <span className={`text-[48px] font-black tracking-[-0.04em] leading-none ${isFeatured ? 'text-white' : 'text-[#0f0f11]'}`}>
                 ${finalPrice.toFixed(0)}
               </span>
-              <span className={`text-sm mb-1 ${isFeatured ? 'text-white/60' : 'text-zinc-400'}`}>
+              <span className={`text-[13px] mb-1 ${isFeatured ? 'text-white/60' : 'text-[#9ca3af]'}`}>
                 / {cycle === 'monthly' ? 'mo' : 'yr'}
               </span>
             </div>
           </>
         ) : (
           <>
-            <span className={`text-5xl font-black tracking-[-0.04em] ${isFeatured ? 'text-white' : 'text-zinc-900'}`}>
+            <span className={`text-[48px] font-black tracking-[-0.04em] leading-none ${isFeatured ? 'text-white' : 'text-[#0f0f11]'}`}>
               {formatPrice(plan.price)}
             </span>
             {!isFree && (
-              <span className={`text-sm ml-1.5 ${isFeatured ? 'text-white/60' : 'text-zinc-400'}`}>
+              <span className={`text-[13px] ml-1.5 ${isFeatured ? 'text-white/60' : 'text-[#9ca3af]'}`}>
                 / {cycle === 'monthly' ? 'mo' : 'yr'}
               </span>
             )}
           </>
         )}
         {yearlyDiscount && !hasDiscount && (
-          <div className="mt-1 text-xs font-semibold text-emerald-400">Save ~20% vs monthly</div>
+          <div className="mt-1 text-[12px] font-semibold text-emerald-500">Save ~20% vs monthly</div>
         )}
       </div>
 
       <ul className="flex-1 flex flex-col gap-3 mb-8">
         {plan.features.map((f, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-sm">
+          <li key={i} className="flex items-start gap-2.5 text-[14px]">
             <Check
-              size={16}
-              className={`mt-0.5 shrink-0 ${isFeatured ? 'text-white' : 'text-[#e6332a]'}`}
+              size={15}
+              className={`mt-0.5 shrink-0 ${isFeatured ? 'text-white/90' : 'text-[#5b6cf9]'}`}
             />
-            <span className={isFeatured ? 'text-white/80' : 'text-zinc-600'}>
+            <span className={isFeatured ? 'text-white/80' : 'text-[#6b7280]'}>
               {f}
             </span>
           </li>
@@ -123,14 +122,14 @@ function PlanCard({
       <button
         type="button"
         onClick={onGetStarted}
-        className={`group w-full flex items-center justify-center gap-2 font-bold py-3.5 rounded-2xl text-sm transition-colors ${
+        className={`group w-full flex items-center justify-center gap-2 font-semibold py-3 rounded-lg text-[14px] transition-all duration-150 ${
           isFeatured
-            ? 'bg-white text-[#e6332a] hover:bg-zinc-50'
-            : 'bg-[#e6332a] text-white hover:bg-[#cc2921]'
+            ? 'bg-white text-[#5b6cf9] hover:bg-[#f5f6ff]'
+            : 'bg-[#5b6cf9] text-white hover:bg-[#4f63f7] shadow-sm shadow-blue-200/60'
         }`}
       >
         {isFree ? 'Get started free' : 'Get started'}
-        <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
+        <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
       </button>
     </div>
   );
@@ -217,16 +216,16 @@ const FAQ = [
 function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-b border-zinc-100 py-5">
+    <div className="border-b border-[#f3f4f6] py-5">
       <button
         type="button"
         onClick={() => setOpen((p) => !p)}
         className="flex w-full items-center justify-between text-left gap-4"
       >
-        <span className="text-sm font-bold text-zinc-900">{q}</span>
-        <span className={`text-xl font-light text-zinc-400 transition-transform duration-200 ${open ? 'rotate-45' : ''}`}>+</span>
+        <span className="text-[15px] font-semibold text-[#0f0f11]">{q}</span>
+        <span className={`text-xl font-light text-[#9ca3af] transition-transform duration-200 ${open ? 'rotate-45' : ''}`}>+</span>
       </button>
-      {open && <p className="mt-3 text-sm text-zinc-500 leading-relaxed">{a}</p>}
+      {open && <p className="mt-3 text-[14px] text-[#6b7280] leading-relaxed">{a}</p>}
     </div>
   );
 }
@@ -254,39 +253,45 @@ export default function PublicPricing({ onLoginClick }: PublicPricingProps) {
   }, [cycle]);
 
   return (
-    <div className="bg-white text-zinc-900 min-h-screen font-sans">
+    <div className="bg-white text-[#0f0f11] min-h-screen font-sans">
       <PublicNav onLoginClick={onLoginClick} activePath="/pricing" />
 
       {/* ── Hero ── */}
       <section className="relative flex flex-col items-center justify-center px-6 pt-36 pb-12 text-center overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-red-50/70 via-white to-white" />
+        {/* Subtle grid */}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.025]"
+          style={{ backgroundImage: 'linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '48px 48px' }}
+        />
+        {/* Glow */}
+        <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[350px] rounded-full bg-[#5b6cf9]/6 blur-3xl" />
 
-        <div className="relative mb-6 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-xs font-semibold uppercase tracking-widest text-zinc-500 shadow-sm">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#e6332a]" />
+        <div className="relative mb-6 inline-flex items-center gap-2 rounded-full border border-[#c7d0fe] bg-[#eef0fe] px-3.5 py-1.5 text-[12px] font-semibold text-[#5b6cf9]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#5b6cf9]" />
           Simple, transparent pricing
         </div>
 
-        <h1 className="relative max-w-3xl text-5xl sm:text-6xl md:text-7xl font-black tracking-[-0.04em] leading-[0.95] mb-6">
-          <span className="block text-zinc-900">Pricing that</span>
-          <span className="block text-[#e6332a]">scales with you.</span>
+        <h1 className="relative max-w-3xl font-black tracking-[-0.05em] leading-[0.93] mb-6">
+          <span className="block text-5xl sm:text-6xl md:text-7xl text-[#0f0f11]">Pricing that</span>
+          <span className="block text-5xl sm:text-6xl md:text-7xl text-transparent bg-clip-text bg-gradient-to-r from-[#5b6cf9] to-[#818cf8]">scales with you.</span>
         </h1>
 
-        <p className="relative max-w-lg text-base sm:text-lg text-zinc-500 leading-relaxed mb-10">
+        <p className="relative max-w-lg text-[16px] text-[#6b7280] leading-relaxed mb-10">
           Start free, upgrade when you're ready. No hidden fees. No surprises.
         </p>
 
         {/* Billing toggle */}
         <div className="relative flex flex-col items-center gap-2">
-          <div className="flex items-center gap-1 rounded-2xl border-2 border-zinc-200 bg-zinc-100 p-1.5 shadow-inner">
+          <div className="flex items-center gap-1 rounded-xl border border-[#e5e7eb] bg-[#f9fafb] p-1">
             {(['monthly', 'yearly'] as BillingCycle[]).map((c) => (
               <button
                 key={c}
                 type="button"
                 onClick={() => setCycle(c)}
-                className={`flex min-w-[120px] items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all duration-200 ${
+                className={`flex min-w-[110px] items-center justify-center gap-2 rounded-lg px-5 py-2 text-[14px] font-semibold transition-all duration-150 ${
                   cycle === c
-                    ? 'bg-white text-zinc-900 shadow-md'
-                    : 'text-zinc-500 hover:text-zinc-700'
+                    ? 'bg-white text-[#0f0f11] shadow-sm border border-[#e5e7eb]'
+                    : 'text-[#6b7280] hover:text-[#0f0f11]'
                 }`}
               >
                 {c === 'monthly' ? 'Monthly' : 'Yearly'}
@@ -298,32 +303,32 @@ export default function PublicPricing({ onLoginClick }: PublicPricingProps) {
               </button>
             ))}
           </div>
-          <p className="text-xs text-zinc-400">
+          <p className="text-[12px] text-[#9ca3af]">
             {cycle === 'yearly' ? '✓ Annual billing — saving ~20%' : 'Switch to annual to save ~20%'}
           </p>
         </div>
       </section>
 
       {/* ── Plans ── */}
-      <section className="max-w-5xl mx-auto px-6 py-12 md:py-16">
+      <section className="max-w-[1000px] mx-auto px-6 py-12 md:py-16">
         {loading ? (
-          <div className="text-center py-20 text-zinc-400 text-sm">Loading plans…</div>
+          <div className="text-center py-20 text-[#9ca3af] text-[14px]">Loading plans…</div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {plans.map((plan) => (
               <PlanCard key={plan.id} plan={plan} cycle={cycle} onGetStarted={onLoginClick} />
             ))}
           </div>
         )}
 
-        <p className="text-center text-xs text-zinc-400 mt-8">
+        <p className="text-center text-[12px] text-[#9ca3af] mt-8">
           All prices in USD. Payments processed securely by Stripe.
         </p>
       </section>
 
       {/* ── FAQ ── */}
-      <section className="max-w-2xl mx-auto px-6 py-16 md:py-24">
-        <h2 className="text-3xl font-black tracking-[-0.03em] text-zinc-900 mb-10 text-center">
+      <section className="max-w-[680px] mx-auto px-6 py-16 md:py-24">
+        <h2 className="text-3xl font-black tracking-[-0.04em] text-[#0f0f11] mb-10 text-center">
           Frequently asked questions
         </h2>
         {FAQ.map((item, i) => (
@@ -332,22 +337,25 @@ export default function PublicPricing({ onLoginClick }: PublicPricingProps) {
       </section>
 
       {/* ── CTA Banner ── */}
-      <section className="max-w-4xl mx-auto px-6 pb-24 md:pb-32 text-center">
-        <div className="rounded-3xl border border-zinc-100 bg-zinc-50 p-12 md:p-16 relative overflow-hidden">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 rounded-full bg-[#e6332a]" />
-          <h2 className="text-3xl sm:text-4xl font-black tracking-[-0.03em] text-zinc-900 mb-4">
+      <section className="max-w-[1000px] mx-auto px-6 pb-24 md:pb-32">
+        <div className="rounded-2xl border border-[#c7d0fe] bg-gradient-to-br from-[#eef0fe] via-white to-[#f5f3ff] p-12 md:p-14 text-center relative overflow-hidden">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.04]"
+            style={{ backgroundImage: 'radial-gradient(#5b6cf9 1px, transparent 0)', backgroundSize: '24px 24px' }}
+          />
+          <h2 className="relative text-3xl sm:text-4xl font-black tracking-[-0.04em] text-[#0f0f11] mb-4">
             Start building your audience today.
           </h2>
-          <p className="text-zinc-500 text-base sm:text-lg mb-8 max-w-md mx-auto">
+          <p className="relative text-[#6b7280] text-[15px] mb-8 max-w-md mx-auto">
             Free plan available. No credit card required.
           </p>
           <button
             type="button"
             onClick={onLoginClick}
-            className="group inline-flex items-center gap-2 bg-[#e6332a] hover:bg-[#cc2921] text-white font-bold px-8 py-4 rounded-2xl text-sm transition-colors shadow-md shadow-red-100"
+            className="relative group inline-flex items-center gap-2 bg-[#5b6cf9] hover:bg-[#4f63f7] text-white font-semibold px-7 py-3.5 rounded-lg text-[15px] transition-all duration-150 shadow-md shadow-blue-200/70 hover:shadow-lg"
           >
             Get started free
-            <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+            <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
           </button>
         </div>
       </section>
