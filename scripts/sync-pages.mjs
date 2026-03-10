@@ -49,4 +49,12 @@ writeFileSync(rootIndex, syncedHtml, 'utf8');
 writeFileSync(root404, syncedHtml, 'utf8');
 writeFileSync(noJekyll, '', 'utf8');
 
+// Copy any additional root-level build artifacts (e.g., verification .txt files) from dist/ to repo root.
+// GitHub Pages serves from repo root in this project, so these must be present alongside index.html.
+for (const entry of readdirSync(distDir, { withFileTypes: true })) {
+  if (!entry.isFile()) continue;
+  if (entry.name === 'index.html') continue;
+  cpSync(resolve(distDir, entry.name), resolve(rootDir, entry.name));
+}
+
 console.log(`Synced GitHub Pages root files. Assets copied: ${assets.length}. Stable files: app.js, app.css`);
