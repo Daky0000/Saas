@@ -4,7 +4,7 @@ import {
   Bold, Italic, List, ListOrdered, Quote, Code, Image as ImageIcon,
   Heading1, Heading2, Heading3, Undo2, Redo2, Link,
   Loader2, Check, X, Save, Globe, Clock, Zap, Send, RefreshCw,
-  AlertCircle, CheckCircle2, ExternalLink,
+  AlertCircle, AlertTriangle, CheckCircle2, XCircle, ExternalLink,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -76,12 +76,12 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [metaTitle, setMetaTitle] = useState('');
   const [metaDescription, setMetaDescription] = useState('');
-  const [focusKeywords, setFocusKeywords] = useState<string[]>([]);
-  const [keywordDraft, setKeywordDraft] = useState('');
+  const [focusKeyword, setFocusKeyword] = useState('');
   const [socialTitle, setSocialTitle] = useState('');
   const [socialDescription, setSocialDescription] = useState('');
   const [socialImage, setSocialImage] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
+  const [sidebarTab, setSidebarTab] = useState<'details' | 'seo'>('details');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,12 +109,20 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
   const allCategories = [...categories, ...localCategories];
   const allTags = [...tags, ...localTags];
 
+  // Lightweight copies for real-time SEO analysis (avoid heavy parsing during save).
+  const [seoHtml, setSeoHtml] = useState('');
+  const [seoText, setSeoText] = useState('');
+
   const editor = useEditor({
     extensions: [
       StarterKit,
       TiptapImage.configure({ allowBase64: true }),
     ],
     content: '',
+    onUpdate: ({ editor }) => {
+      setSeoHtml(editor.getHTML());
+      setSeoText(editor.getText());
+    },
   });
 
   useEffect(() => {
@@ -133,17 +141,19 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
         setSelectedTagIds(post.tag_ids ?? []);
         setMetaTitle(post.meta_title ?? '');
         setMetaDescription(post.meta_description ?? '');
-        const keywords = (post.focus_keyword ?? '')
-          .split(',')
-          .map((kw) => kw.trim())
-          .filter(Boolean);
-        setFocusKeywords(keywords);
-        setKeywordDraft('');
+        setFocusKeyword((post.focus_keyword ?? '').trim());
         setSocialTitle(post.social_title ?? '');
         setSocialDescription(post.social_description ?? '');
         setSocialImage(post.social_image ?? '');
         setScheduledAt(post.scheduled_at ? post.scheduled_at.slice(0, 16) : '');
         editor.commands.setContent(post.content || '');
+        setSeoHtml(post.content || '');
+        try {
+          const text = new DOMParser().parseFromString(post.content || '', 'text/html').body.textContent || '';
+          setSeoText(text);
+        } catch {
+          setSeoText('');
+        }
         contentLoadedRef.current = true;
       })
       .catch(() => setError('Failed to load post'))
@@ -173,7 +183,7 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
       const payload: BlogPostPayload = {
         title, slug, content: editor?.getHTML() ?? '', excerpt, featured_image: featuredImage,
         status: finalStatus, category_id: categoryId || null,
-        meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeywords.join(', '),
+        meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeyword.trim(),
         social_title: socialTitle, social_description: socialDescription, social_image: socialImage,
         scheduled_at: finalStatus === 'scheduled' ? scheduledAt : null,
         tag_ids: selectedTagIds,
@@ -283,26 +293,235 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     );
   };
 
-  const seoScore = useMemo(() => {
-    const clampScore = (value: number) => Math.min(100, Math.max(value, 0));
-    let total = 0;
-    if (metaTitle.trim()) total += 25;
-    if (metaDescription.trim()) total += 25;
-    total += Math.min(30, focusKeywords.length * 7);
-    total += Math.min(20, selectedTagIds.length * 5);
-    return clampScore(total);
-  }, [metaTitle, metaDescription, focusKeywords.length, selectedTagIds.length]);
+  type SeoCheckState = 'pass' | 'warn' | 'fail';
+  type SeoChecklistItem = { id: string; label: string; state: SeoCheckState; detail?: string };
 
-  const addKeyword = () => {
-    const trimmed = keywordDraft.trim();
-    if (!trimmed) return;
-    setFocusKeywords((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
-    setKeywordDraft('');
-  };
+  const seoAnalysis = useMemo(() => {
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
 
-  const removeKeyword = (keyword: string) => {
-    setFocusKeywords((prev) => prev.filter((k) => k !== keyword));
-  };
+    const kw = focusKeyword.trim().toLowerCase();
+    const titleLc = title.toLowerCase();
+    const slugLc = slug.toLowerCase();
+    const metaTitleLen = metaTitle.trim().length;
+    const metaDescLen = metaDescription.trim().length;
+
+    const words = seoText.trim().split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+    const textLc = seoText.toLowerCase();
+
+    const countPhrase = (text: string, phrase: string) => {
+      if (!phrase) return 0;
+      let idx = 0;
+      let count = 0;
+      while (true) {
+        idx = text.indexOf(phrase, idx);
+        if (idx === -1) break;
+        count++;
+        idx += phrase.length;
+      }
+      return count;
+    };
+
+    const kwCount = kw ? countPhrase(textLc, kw) : 0;
+    const keywordDensity = wordCount > 0 && kw ? (kwCount / wordCount) * 100 : 0;
+
+    let doc: Document | null = null;
+    try {
+      doc = new DOMParser().parseFromString(seoHtml || '', 'text/html');
+    } catch {
+      doc = null;
+    }
+
+    const firstPara = (doc?.querySelector('p')?.textContent || '').trim().toLowerCase();
+    const h1 = doc ? Array.from(doc.querySelectorAll('h1')).map((h) => (h.textContent || '').toLowerCase()) : [];
+    const h2 = doc ? Array.from(doc.querySelectorAll('h2')).map((h) => (h.textContent || '').toLowerCase()) : [];
+    const h3 = doc ? Array.from(doc.querySelectorAll('h3')).map((h) => (h.textContent || '').toLowerCase()) : [];
+
+    const anchors = doc ? Array.from(doc.querySelectorAll('a[href]')) : [];
+    const hrefs = anchors.map((a) => (a.getAttribute('href') || '').trim()).filter(Boolean);
+    const isInternal = (href: string) => {
+      if (href.startsWith('/')) return true;
+      if (!hostname) return false;
+      try {
+        const u = new URL(href, `https://${hostname}`);
+        return u.hostname === hostname;
+      } catch {
+        return false;
+      }
+    };
+    const internalLinks = hrefs.filter((h) => isInternal(h)).length;
+    const externalLinks = hrefs.filter((h) => h.startsWith('http') && !isInternal(h)).length;
+
+    const imgs = doc ? Array.from(doc.querySelectorAll('img')) : [];
+    const imagesCount = imgs.length;
+    const imagesMissingAlt = imgs.filter((img) => !(img.getAttribute('alt') || '').trim()).length;
+
+    const sentences = seoText
+      .split(/[\.\!\?]+/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const sentenceWordLens = sentences.map((s) => s.split(/\s+/).filter(Boolean).length);
+    const avgSentenceLen = sentenceWordLens.length
+      ? sentenceWordLens.reduce((a, b) => a + b, 0) / sentenceWordLens.length
+      : 0;
+
+    const paragraphs = (doc ? Array.from(doc.querySelectorAll('p')) : [])
+      .map((p) => (p.textContent || '').trim())
+      .filter(Boolean);
+    const paragraphSentenceCounts = paragraphs.map((p) =>
+      p.split(/[\.\!\?]+/g).map((s) => s.trim()).filter(Boolean).length
+    );
+    const avgParagraphSentences = paragraphSentenceCounts.length
+      ? paragraphSentenceCounts.reduce((a, b) => a + b, 0) / paragraphSentenceCounts.length
+      : 0;
+
+    const passiveMatches = seoText.match(/\b(was|were|is|are|been|being)\b\s+\b(\w+ed|known|seen|given|made|built|written)\b/gi) || [];
+    const passiveRatio = sentences.length ? passiveMatches.length / sentences.length : 0;
+
+    // Checklist (Pass/Warn/Fail)
+    const checks: SeoChecklistItem[] = [];
+    const push = (id: string, label: string, state: SeoCheckState, detail?: string) => checks.push({ id, label, state, detail });
+
+    // Keyword optimization checks
+    const hasKw = Boolean(kw);
+    push('kw_present', 'Focus keyword set', hasKw ? 'pass' : 'fail');
+    push('kw_title', 'Keyword in title', hasKw && titleLc.includes(kw) ? 'pass' : hasKw ? 'fail' : 'fail');
+    push('kw_slug', 'Keyword in URL slug', hasKw && slugLc.includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('kw_first_para', 'Keyword in first paragraph', hasKw && firstPara.includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('kw_headings', 'Keyword in headings (H2/H3)', hasKw && (h2.join(' ').includes(kw) || h3.join(' ').includes(kw)) ? 'pass' : hasKw ? 'warn' : 'fail');
+    const densityState: SeoCheckState =
+      !hasKw ? 'fail'
+        : keywordDensity >= 0.5 && keywordDensity <= 2.5 ? 'pass'
+          : keywordDensity >= 0.2 && keywordDensity < 0.5 ? 'warn'
+            : keywordDensity > 2.5 && keywordDensity <= 3.5 ? 'warn'
+              : 'fail';
+    push('kw_density', 'Keyword density (0.5%–2.5%)', densityState, hasKw ? `${keywordDensity.toFixed(2)}%` : undefined);
+
+    // Content quality
+    push('content_len', 'Content length (600+ words)', wordCount >= 600 ? 'pass' : wordCount >= 300 ? 'warn' : 'fail', `${wordCount} words`);
+    const sentenceState: SeoCheckState =
+      avgSentenceLen >= 15 && avgSentenceLen <= 20 ? 'pass'
+        : avgSentenceLen >= 10 && avgSentenceLen < 15 ? 'warn'
+          : avgSentenceLen > 20 && avgSentenceLen <= 25 ? 'warn'
+            : 'fail';
+    push('read_sentence', 'Average sentence length (15–20 words)', sentences.length ? sentenceState : 'fail', sentences.length ? `${avgSentenceLen.toFixed(1)} words` : 'No sentences');
+    const paraState: SeoCheckState =
+      avgParagraphSentences >= 2 && avgParagraphSentences <= 4 ? 'pass'
+        : avgParagraphSentences >= 1 && avgParagraphSentences < 2 ? 'warn'
+          : avgParagraphSentences > 4 && avgParagraphSentences <= 5 ? 'warn'
+            : paragraphs.length ? 'fail' : 'fail';
+    push('read_paragraph', 'Paragraph length (2–4 sentences)', paragraphs.length ? paraState : 'warn', paragraphs.length ? `${avgParagraphSentences.toFixed(1)} avg` : 'No paragraphs');
+    push('read_passive', 'Passive voice usage (low)', passiveRatio <= 0.1 ? 'pass' : passiveRatio <= 0.2 ? 'warn' : 'fail', sentences.length ? `${Math.round(passiveRatio * 100)}%` : undefined);
+
+    // Metadata
+    const metaTitleState: SeoCheckState =
+      metaTitleLen >= 50 && metaTitleLen <= 60 ? 'pass'
+        : metaTitleLen >= 40 && metaTitleLen < 50 ? 'warn'
+          : metaTitleLen > 60 && metaTitleLen <= 70 ? 'warn'
+            : metaTitleLen ? 'fail' : 'fail';
+    push('meta_title_len', 'Meta title length (50–60 chars)', metaTitleState, `${metaTitleLen} chars`);
+    const metaDescState: SeoCheckState =
+      metaDescLen >= 120 && metaDescLen <= 155 ? 'pass'
+        : metaDescLen >= 90 && metaDescLen < 120 ? 'warn'
+          : metaDescLen > 155 && metaDescLen <= 180 ? 'warn'
+            : metaDescLen ? 'fail' : 'fail';
+    push('meta_desc_len', 'Meta description length (120–155 chars)', metaDescState, `${metaDescLen} chars`);
+    push('meta_kw_title', 'Keyword in meta title', hasKw && metaTitle.toLowerCase().includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
+    push('meta_kw_desc', 'Keyword in meta description', hasKw && metaDescription.toLowerCase().includes(kw) ? 'pass' : hasKw ? 'warn' : 'fail');
+
+    // Structure & links
+    push('h1_once', 'Only one H1', h1.length === 1 ? 'pass' : h1.length === 0 ? 'warn' : 'fail', `${h1.length}`);
+    push('h2_present', 'At least one H2', h2.length > 0 ? 'pass' : 'warn', `${h2.length}`);
+    push('links_internal', 'Internal links (2+)', internalLinks >= 2 ? 'pass' : internalLinks === 1 ? 'warn' : 'fail', `${internalLinks}`);
+    push('links_external', 'External links (1+)', externalLinks >= 1 ? 'pass' : 'warn', `${externalLinks}`);
+
+    // Images
+    push('img_featured', 'Featured image present', featuredImage ? 'pass' : 'warn');
+    const altState: SeoCheckState =
+      imagesCount === 0 ? 'warn'
+        : imagesMissingAlt === 0 ? 'pass'
+          : imagesMissingAlt < imagesCount ? 'warn'
+            : 'fail';
+    push('img_alt', 'Images have alt text', altState, imagesCount ? `${imagesCount - imagesMissingAlt}/${imagesCount}` : 'No images');
+
+    // Scoring
+    let score = 0;
+    // Keyword optimization (30)
+    if (hasKw && titleLc.includes(kw)) score += 8;
+    if (hasKw && slugLc.includes(kw)) score += 5;
+    if (hasKw && firstPara.includes(kw)) score += 6;
+    if (hasKw && (h2.join(' ').includes(kw) || h3.join(' ').includes(kw))) score += 5;
+    score += densityState === 'pass' ? 6 : densityState === 'warn' ? 3 : 0;
+    // Content quality (25)
+    score += wordCount >= 600 ? 15 : wordCount >= 300 ? 8 : 0;
+    score += sentenceState === 'pass' ? 5 : sentenceState === 'warn' ? 3 : 0;
+    score += paraState === 'pass' ? 5 : paraState === 'warn' ? 3 : 0;
+    // Metadata (20)
+    score += metaTitleState === 'pass' ? 6 : metaTitleState === 'warn' ? 3 : 0;
+    score += metaDescState === 'pass' ? 8 : metaDescState === 'warn' ? 4 : 0;
+    score += hasKw && metaTitle.toLowerCase().includes(kw) ? 3 : 0;
+    score += hasKw && metaDescription.toLowerCase().includes(kw) ? 3 : 0;
+    // Structure (15)
+    score += h1.length === 1 ? 5 : 0;
+    score += h2.length > 0 ? 5 : 0;
+    score += internalLinks >= 2 ? 5 : internalLinks === 1 ? 3 : 0;
+    // Images (10)
+    score += featuredImage ? 4 : 0;
+    score += altState === 'pass' ? 6 : altState === 'warn' ? 3 : 0;
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    const grade =
+      score >= 80 ? 'Excellent'
+        : score >= 60 ? 'Good'
+          : score >= 40 ? 'Needs Improvement'
+            : 'Poor';
+    const colorClass =
+      grade === 'Excellent' ? 'text-emerald-800'
+        : grade === 'Good' ? 'text-emerald-600'
+          : grade === 'Needs Improvement' ? 'text-amber-600'
+            : 'text-red-600';
+
+    const recommendations = checks
+      .filter((c) => c.state !== 'pass')
+      .slice(0, 7)
+      .map((c) => {
+        switch (c.id) {
+          case 'kw_title': return 'Add your focus keyword to the post title.';
+          case 'kw_slug': return 'Include your focus keyword in the URL slug.';
+          case 'kw_first_para': return 'Use your focus keyword in the first paragraph.';
+          case 'kw_headings': return 'Add your focus keyword to at least one H2 heading.';
+          case 'kw_density': return 'Adjust keyword usage to keep density between 0.5% and 2.5%.';
+          case 'content_len': return 'Increase content length to at least 600 words.';
+          case 'links_internal': return 'Add at least 2 internal links to other posts/pages.';
+          case 'links_external': return 'Add at least 1 external link to a reputable site.';
+          case 'img_featured': return 'Add a featured image for better SEO and sharing.';
+          case 'img_alt': return 'Add descriptive alt text to images.';
+          case 'meta_title_len': return 'Tune meta title length to 50–60 characters.';
+          case 'meta_desc_len': return 'Tune meta description length to 120–155 characters.';
+          case 'meta_kw_title': return 'Include the focus keyword in the meta title.';
+          case 'meta_kw_desc': return 'Include the focus keyword in the meta description.';
+          case 'h1_once': return 'Ensure your content has exactly one H1 (usually the title).';
+          default: return `Improve: ${c.label}.`;
+        }
+      });
+
+    return {
+      score,
+      grade,
+      colorClass,
+      checklist: checks,
+      recommendations,
+      stats: {
+        wordCount,
+        keywordDensity,
+        internalLinks,
+        externalLinks,
+        imagesCount,
+        imagesMissingAlt,
+      },
+    };
+  }, [focusKeyword, title, slug, metaTitle, metaDescription, featuredImage, seoHtml, seoText]);
 
   if (loading) {
     return (
@@ -438,119 +657,6 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
               />
             </div>
           )}
-
-          {/* Excerpt */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <label className="block text-sm font-semibold text-slate-700 mb-2">Excerpt</label>
-            <textarea rows={3} value={excerpt} onChange={(e) => setExcerpt(e.target.value)}
-              placeholder="Short description shown in listings..."
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none resize-none focus:border-slate-400" />
-          </div>
-
-          {/* SEO */}
-          <details className="rounded-2xl border border-slate-200 bg-white">
-            <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-700 select-none">SEO Settings</summary>
-          <div className="space-y-4 px-5 pb-5">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">SEO readiness</p>
-                <p className="text-sm text-slate-500">A quick visualization of how complete your metadata is.</p>
-              </div>
-              <SeoScoreBadge score={seoScore} size={78} />
-            </div>
-            <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-500">Meta Title</span>
-                <input type="text" value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} placeholder="SEO title..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-              </label>
-              <label className="block space-y-3">
-                <span className="text-xs font-semibold text-slate-500">Focus Keywords</span>
-                <div className="flex flex-wrap gap-2">
-                  {focusKeywords.length === 0 ? (
-                    <p className="text-xs text-slate-400">Add keywords to help search visibility.</p>
-                  ) : (
-                    focusKeywords.map((keyword) => (
-                      <span
-                        key={keyword}
-                        className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
-                      >
-                        <span className="truncate max-w-[120px]">{keyword}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeKeyword(keyword)}
-                          className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-slate-400 transition hover:bg-slate-200"
-                        >
-                          <X size={10} />
-                        </button>
-                      </span>
-                    ))
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={keywordDraft}
-                    onChange={(e) => setKeywordDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        addKeyword();
-                      }
-                    }}
-                    placeholder="Add keyword..."
-                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={addKeyword}
-                    disabled={!keywordDraft.trim()}
-                    className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white disabled:opacity-50"
-                  >
-                    <Check size={16} />
-                  </button>
-                </div>
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-500">Meta Description</span>
-                <textarea rows={2} value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)}
-                  placeholder="Page description for search engines..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none resize-none focus:border-slate-400" />
-              </label>
-            </div>
-          </details>
-
-          {/* Social */}
-          <details className="rounded-2xl border border-slate-200 bg-white">
-            <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-700 select-none">Social Sharing</summary>
-            <div className="space-y-4 px-5 pb-5">
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-500">Social Title</span>
-                <input type="text" value={socialTitle} onChange={(e) => setSocialTitle(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-500">Social Description</span>
-                <textarea rows={2} value={socialDescription} onChange={(e) => setSocialDescription(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none resize-none focus:border-slate-400" />
-              </label>
-              <div>
-                <span className="text-xs font-semibold text-slate-500 block mb-1.5">Social Image</span>
-                {socialImage
-                  ? <div className="relative">
-                      <img src={socialImage} alt="" className="h-24 w-full rounded-xl object-cover" />
-                      <button type="button" onClick={() => openMedia('social')}
-                        className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 text-white text-xs font-semibold opacity-0 hover:opacity-100">
-                        Change
-                      </button>
-                    </div>
-                  : <button type="button" onClick={() => openMedia('social')}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-3 text-sm text-slate-500 hover:border-slate-400">
-                      <ImageIcon size={15} /> Set Social Image
-                    </button>
-                }
-              </div>
-            </div>
-          </details>
         </div>
 
         {/* Right: Settings panel */}
@@ -576,6 +682,31 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
             )}
           </div>
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-1">
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setSidebarTab('details')}
+                className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
+                  sidebarTab === 'details' ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Post Details
+              </button>
+              <button
+                type="button"
+                onClick={() => setSidebarTab('seo')}
+                className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
+                  sidebarTab === 'seo' ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                SEO
+              </button>
+            </div>
+          </div>
+
+          {sidebarTab === 'details' ? (
+            <>
           {/* Featured Image */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <h3 className="text-sm font-bold text-slate-900 mb-3">Featured Image</h3>
@@ -689,6 +820,18 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
             }
           </div>
 
+          {/* Excerpt */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Excerpt</label>
+            <textarea
+              rows={3}
+              value={excerpt}
+              onChange={(e) => setExcerpt(e.target.value)}
+              placeholder="Short description shown in listings..."
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none resize-none focus:border-slate-400"
+            />
+          </div>
+
           {/* Distribution Settings */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="flex items-center gap-2 mb-3">
@@ -767,6 +910,164 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+            </>
+          ) : (
+            <div className="space-y-4">
+              {/* Focus keyword */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2">
+                <h3 className="text-sm font-bold text-slate-900">Focus Keyword</h3>
+                <input
+                  type="text"
+                  value={focusKeyword}
+                  onChange={(e) => setFocusKeyword(e.target.value)}
+                  placeholder="e.g. AI marketing tools"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                />
+                <p className="text-xs text-slate-400">Use one primary keyword to analyze this post.</p>
+              </div>
+
+              {/* SEO score */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">SEO Score</p>
+                    <div className="mt-1 flex items-end gap-2">
+                      <span className={`text-5xl font-black leading-none ${seoAnalysis.colorClass}`}>{seoAnalysis.score}</span>
+                      <span className="text-sm font-bold text-slate-400">/ 100</span>
+                    </div>
+                    <p className={`mt-1 text-sm font-semibold ${seoAnalysis.colorClass}`}>Status: {seoAnalysis.grade}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {seoAnalysis.stats.wordCount} words · {seoAnalysis.stats.keywordDensity.toFixed(2)}% density
+                    </p>
+                  </div>
+                  <SeoScoreBadge score={seoAnalysis.score} size={86} />
+                </div>
+                {seoAnalysis.score < 40 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                    Your SEO score is low. You can still publish, but improving SEO is recommended.
+                  </div>
+                )}
+              </div>
+
+              {/* Checklist */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h3 className="text-sm font-bold text-slate-900">SEO Checklist</h3>
+                <div className="mt-3 space-y-2">
+                  {seoAnalysis.checklist.map((item) => (
+                    <div key={item.id} className="flex items-start gap-2.5">
+                      {item.state === 'pass' ? (
+                        <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />
+                      ) : item.state === 'warn' ? (
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                      ) : (
+                        <XCircle size={16} className="mt-0.5 shrink-0 text-red-600" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-slate-700">{item.label}</div>
+                        {item.detail && <div className="text-xs text-slate-400">{item.detail}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Meta optimization */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-900">Meta Optimization</h3>
+                <label className="block space-y-2">
+                  <div className="flex items-end justify-between gap-3">
+                    <span className="text-xs font-semibold text-slate-500">Meta Title</span>
+                    <span className={`text-xs font-semibold ${metaTitle.trim().length > 60 ? 'text-red-600' : metaTitle.trim().length >= 50 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {metaTitle.trim().length}/60
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={metaTitle}
+                    onChange={(e) => setMetaTitle(e.target.value)}
+                    placeholder="Recommended: 50–60 characters"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <div className="flex items-end justify-between gap-3">
+                    <span className="text-xs font-semibold text-slate-500">Meta Description</span>
+                    <span className={`text-xs font-semibold ${metaDescription.trim().length > 155 ? 'text-red-600' : metaDescription.trim().length >= 120 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {metaDescription.trim().length}/155
+                    </span>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={metaDescription}
+                    onChange={(e) => setMetaDescription(e.target.value)}
+                    placeholder="Recommended: 120–155 characters"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none resize-none focus:border-slate-400"
+                  />
+                </label>
+
+                {/* Search snippet preview */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-xs text-emerald-700">{(typeof window !== 'undefined' ? window.location.host : 'example.com')}/blog/{slug || 'your-post'}</div>
+                  <div className="mt-1 text-base font-semibold text-blue-700 leading-snug">
+                    {(metaTitle.trim() || title || 'Untitled post').slice(0, 80)}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600 line-clamp-2">
+                    {(metaDescription.trim() || excerpt || 'Add a meta description to improve click-through rates.').slice(0, 180)}
+                  </div>
+                </div>
+
+                {/* Social (existing fields, unchanged) */}
+                <details className="rounded-2xl border border-slate-200 bg-white">
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 select-none">Social Sharing</summary>
+                  <div className="space-y-4 px-4 pb-4">
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-semibold text-slate-500">Social Title</span>
+                      <input type="text" value={socialTitle} onChange={(e) => setSocialTitle(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </label>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-semibold text-slate-500">Social Description</span>
+                      <textarea rows={2} value={socialDescription} onChange={(e) => setSocialDescription(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none resize-none focus:border-slate-400" />
+                    </label>
+                    <div>
+                      <span className="text-xs font-semibold text-slate-500 block mb-1.5">Social Image</span>
+                      {socialImage
+                        ? <div className="relative">
+                            <img src={socialImage} alt="" className="h-24 w-full rounded-xl object-cover" />
+                            <button type="button" onClick={() => openMedia('social')}
+                              className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 text-white text-xs font-semibold opacity-0 hover:opacity-100">
+                              Change
+                            </button>
+                          </div>
+                        : <button type="button" onClick={() => openMedia('social')}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-3 text-sm text-slate-500 hover:border-slate-400">
+                            <ImageIcon size={15} /> Set Social Image
+                          </button>
+                      }
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              {/* Recommendations */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h3 className="text-sm font-bold text-slate-900">SEO Recommendations</h3>
+                <div className="mt-3 space-y-2">
+                  {seoAnalysis.recommendations.length === 0 ? (
+                    <p className="text-sm text-slate-500">No recommendations right now.</p>
+                  ) : (
+                    seoAnalysis.recommendations.map((rec) => (
+                      <div key={rec} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        {rec}
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           )}
