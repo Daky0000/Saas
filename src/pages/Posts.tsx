@@ -3,16 +3,18 @@ import {
   Plus, Search, Pencil, Trash2, Copy, FileText, Tag, FolderOpen,
   Bold, Italic, List, ListOrdered, Quote, Code, Image as ImageIcon,
   Heading1, Heading2, Heading3, Undo2, Redo2, Link,
-  Loader2, Check, X, Save, Globe, Clock,
+  Loader2, Check, X, Save, Globe, Clock, Zap, Send, RefreshCw,
+  AlertCircle, CheckCircle2, ExternalLink,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TiptapImage from '@tiptap/extension-image';
 import { blogService, type BlogPost, type BlogCategory, type BlogTag, type BlogPostPayload } from '../services/blogService';
+import { distributionService, type ConnectedPlatform, type PublishingLog } from '../services/distributionService';
 import MediaLibraryModal from '../components/media/MediaLibraryModal';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
-type PostsView = 'posts' | 'editor' | 'categories' | 'tags';
+type PostsView = 'posts' | 'editor' | 'categories' | 'tags' | 'automation';
 
 const STATUS_LABELS: Record<string, string> = {
   all: 'All',
@@ -27,9 +29,29 @@ const STATUS_BADGE: Record<string, string> = {
   scheduled: 'bg-blue-100 text-blue-700',
 };
 
+const DIST_STATUS_BADGE: Record<string, string> = {
+  published: 'bg-emerald-100 text-emerald-700',
+  failed: 'bg-red-100 text-red-700',
+  pending: 'bg-yellow-100 text-yellow-700',
+};
+
+const PLATFORM_ICONS: Record<string, string> = {
+  wordpress: '🌐',
+  linkedin: 'in',
+  twitter: '𝕏',
+  instagram: '📸',
+  facebook: '📘',
+  tiktok: '🎵',
+  threads: '@',
+};
+
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function fmtDateTime(iso: string) {
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 // ── Blog Post Editor ─────────────────────────────────────────────────────────────
@@ -39,9 +61,10 @@ interface PostEditorProps {
   tags: BlogTag[];
   onSaved: (post: BlogPost) => void;
   onBack: () => void;
+  onMetaRefresh: () => void;
 }
 
-function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorProps) {
+function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
@@ -63,6 +86,26 @@ function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorPro
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const [mediaPurpose, setMediaPurpose] = useState<'featured' | 'social' | 'content'>('featured');
   const contentLoadedRef = useRef(false);
+
+  // Inline category/tag creation
+  const [localCategories, setLocalCategories] = useState<BlogCategory[]>([]);
+  const [showCatInput, setShowCatInput] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [localTags, setLocalTags] = useState<BlogTag[]>([]);
+  const [showTagInput, setShowTagInput] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [creatingTag, setCreatingTag] = useState(false);
+
+  // Distribution
+  const [connectedPlatforms, setConnectedPlatforms] = useState<ConnectedPlatform[]>([]);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
+  const [distributing, setDistributing] = useState(false);
+  const [publishLogs, setPublishLogs] = useState<PublishingLog[]>([]);
+  const [savedPostId, setSavedPostId] = useState<string | null>(postId);
+
+  const allCategories = [...categories, ...localCategories];
+  const allTags = [...tags, ...localTags];
 
   const editor = useEditor({
     extensions: [
@@ -100,6 +143,14 @@ function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorPro
       .finally(() => setLoading(false));
   }, [postId, editor]);
 
+  // Load connected platforms + existing publish logs
+  useEffect(() => {
+    distributionService.getConnectedPlatforms().then(setConnectedPlatforms).catch(() => {});
+    if (postId) {
+      distributionService.getStatus(postId).then(setPublishLogs).catch(() => {});
+    }
+  }, [postId]);
+
   const handleTitleChange = (val: string) => {
     setTitle(val);
     if (!slugEdited) {
@@ -124,11 +175,78 @@ function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorPro
         ? await blogService.updatePost(postId, payload)
         : await blogService.createPost(payload);
       if (publishStatus) setStatus(publishStatus);
+      setSavedPostId(saved.id);
       onSaved(saved);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDistribute = async () => {
+    const targetId = savedPostId ?? postId;
+    if (!targetId || selectedPlatforms.length === 0) return;
+    setDistributing(true);
+    try {
+      const results = await distributionService.publish(targetId, selectedPlatforms);
+      // Refresh publish logs
+      const updated = await distributionService.getStatus(targetId);
+      setPublishLogs(updated);
+      const failed = results.filter((r) => r.status === 'failed');
+      if (failed.length > 0) {
+        setError(`Some platforms failed: ${failed.map((f) => f.platform).join(', ')}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Distribution failed');
+    } finally {
+      setDistributing(false);
+    }
+  };
+
+  const handleRetry = async (logId: string) => {
+    const targetId = savedPostId ?? postId;
+    if (!targetId) return;
+    try {
+      await distributionService.retry(logId);
+      const updated = await distributionService.getStatus(targetId);
+      setPublishLogs(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Retry failed');
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    if (!newCatName.trim()) return;
+    setCreatingCat(true);
+    try {
+      const cat = await blogService.createCategory(newCatName.trim());
+      setLocalCategories((prev) => [...prev, cat]);
+      setCategoryId(cat.id);
+      setNewCatName('');
+      setShowCatInput(false);
+      onMetaRefresh();
+    } catch {
+      // ignore
+    } finally {
+      setCreatingCat(false);
+    }
+  };
+
+  const handleCreateTag = async () => {
+    if (!newTagName.trim()) return;
+    setCreatingTag(true);
+    try {
+      const tag = await blogService.createTag(newTagName.trim());
+      setLocalTags((prev) => [...prev, tag]);
+      setSelectedTagIds((prev) => [...prev, tag.id]);
+      setNewTagName('');
+      setShowTagInput(false);
+      onMetaRefresh();
+    } catch {
+      // ignore
+    } finally {
+      setCreatingTag(false);
     }
   };
 
@@ -147,6 +265,12 @@ function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorPro
   const toggleTag = (id: string) => {
     setSelectedTagIds((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  };
+
+  const togglePlatform = (id: string) => {
+    setSelectedPlatforms((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
     );
   };
 
@@ -385,25 +509,79 @@ function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorPro
             }
           </div>
 
-          {/* Category */}
+          {/* Category with inline creation */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="text-sm font-bold text-slate-900 mb-3">Category</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-slate-900">Category</h3>
+              <button type="button" onClick={() => setShowCatInput((v) => !v)}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+                <Plus size={12} /> New
+              </button>
+            </div>
+            {showCatInput && (
+              <div className="mb-3 flex gap-2">
+                <input
+                  autoFocus
+                  type="text"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void handleCreateCategory(); if (e.key === 'Escape') setShowCatInput(false); }}
+                  placeholder="Category name..."
+                  className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                />
+                <button type="button" onClick={() => void handleCreateCategory()} disabled={creatingCat || !newCatName.trim()}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-950 text-white disabled:opacity-50">
+                  {creatingCat ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                </button>
+                <button type="button" onClick={() => setShowCatInput(false)}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100">
+                  <X size={11} />
+                </button>
+              </div>
+            )}
             <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-slate-400">
               <option value="">— No category —</option>
-              {categories.map((c) => (
+              {allCategories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
           </div>
 
-          {/* Tags */}
+          {/* Tags with inline creation */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="text-sm font-bold text-slate-900 mb-3">Tags</h3>
-            {tags.length === 0
-              ? <p className="text-xs text-slate-400">No tags yet. Create them in the Tags tab.</p>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-slate-900">Tags</h3>
+              <button type="button" onClick={() => setShowTagInput((v) => !v)}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+                <Plus size={12} /> New
+              </button>
+            </div>
+            {showTagInput && (
+              <div className="mb-3 flex gap-2">
+                <input
+                  autoFocus
+                  type="text"
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void handleCreateTag(); if (e.key === 'Escape') setShowTagInput(false); }}
+                  placeholder="Tag name..."
+                  className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                />
+                <button type="button" onClick={() => void handleCreateTag()} disabled={creatingTag || !newTagName.trim()}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-950 text-white disabled:opacity-50">
+                  {creatingTag ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                </button>
+                <button type="button" onClick={() => setShowTagInput(false)}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100">
+                  <X size={11} />
+                </button>
+              </div>
+            )}
+            {allTags.length === 0
+              ? <p className="text-xs text-slate-400">No tags yet. Click "+ New" to create one.</p>
               : <div className="flex flex-wrap gap-2">
-                  {tags.map((t) => {
+                  {allTags.map((t) => {
                     const active = selectedTagIds.includes(t.id);
                     return (
                       <button key={t.id} type="button" onClick={() => toggleTag(t.id)}
@@ -418,6 +596,88 @@ function PostEditor({ postId, categories, tags, onSaved, onBack }: PostEditorPro
                 </div>
             }
           </div>
+
+          {/* Distribution Settings */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Zap size={15} className="text-amber-500" />
+              <h3 className="text-sm font-bold text-slate-900">Distribution</h3>
+            </div>
+            {connectedPlatforms.length === 0
+              ? <p className="text-xs text-slate-400 leading-relaxed">
+                  No platforms connected. Visit{' '}
+                  <button type="button" onClick={() => { window.history.pushState({}, '', '/integrations'); window.dispatchEvent(new PopStateEvent('popstate')); }}
+                    className="text-blue-600 hover:underline">Integrations</button>{' '}
+                  to connect platforms.
+                </p>
+              : <>
+                  <p className="text-xs text-slate-500 mb-3">Select platforms to publish to after saving.</p>
+                  <div className="space-y-2 mb-4">
+                    {connectedPlatforms.map((p) => (
+                      <label key={p.id} className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedPlatforms.includes(p.id)}
+                          onChange={() => togglePlatform(p.id)}
+                          className="h-4 w-4 rounded border-slate-300 accent-slate-900"
+                        />
+                        <span className="text-lg leading-none">{PLATFORM_ICONS[p.id] ?? '🔗'}</span>
+                        <span className="text-sm font-medium text-slate-700">{p.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedPlatforms.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDistribute()}
+                      disabled={distributing || !savedPostId}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                    >
+                      {distributing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      {distributing ? 'Publishing...' : `Publish to ${selectedPlatforms.length} platform${selectedPlatforms.length > 1 ? 's' : ''}`}
+                    </button>
+                  )}
+                  {!savedPostId && selectedPlatforms.length > 0 && (
+                    <p className="mt-2 text-xs text-slate-400">Save the post first to distribute.</p>
+                  )}
+                </>
+            }
+          </div>
+
+          {/* Publishing Status */}
+          {publishLogs.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h3 className="text-sm font-bold text-slate-900 mb-3">Publishing Status</h3>
+              <div className="space-y-2">
+                {publishLogs.map((log) => (
+                  <div key={log.id} className="flex items-center gap-3">
+                    <span className="text-base leading-none">{PLATFORM_ICONS[log.platform] ?? '🔗'}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-700 capitalize">{log.platform}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${DIST_STATUS_BADGE[log.status] ?? 'bg-slate-100 text-slate-600'}`}>
+                          {log.status}
+                        </span>
+                      </div>
+                      {log.error_message && (
+                        <p className="text-xs text-red-600 mt-0.5 truncate">{log.error_message}</p>
+                      )}
+                    </div>
+                    {log.status === 'failed' && (
+                      <button type="button" onClick={() => void handleRetry(log.id)}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100"
+                        title="Retry">
+                        <RefreshCw size={12} />
+                      </button>
+                    )}
+                    {log.platform_post_id && log.status === 'published' && (
+                      <span className="text-emerald-500"><CheckCircle2 size={14} /></span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -570,6 +830,141 @@ function TagsTab({ tags, onChange }: TagsTabProps) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Automation Tab ────────────────────────────────────────────────────────────────
+function AutomationTab() {
+  const [logs, setLogs] = useState<PublishingLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await distributionService.getLogs();
+      setLogs(data);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const handleRetry = async (logId: string) => {
+    setRetrying(logId);
+    try {
+      await distributionService.retry(logId);
+      await load();
+    } catch {
+      // ignore
+    } finally {
+      setRetrying(null);
+    }
+  };
+
+  const platforms = Array.from(new Set(logs.map((l) => l.platform)));
+  const stats = {
+    total: logs.length,
+    published: logs.filter((l) => l.status === 'published').length,
+    failed: logs.filter((l) => l.status === 'failed').length,
+    pending: logs.filter((l) => l.status === 'pending').length,
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-2xl font-black tracking-tight text-slate-950">Automation</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Monitor automated post distribution across your connected platforms.
+        </p>
+      </div>
+
+      {/* Stats */}
+      {logs.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { label: 'Total', value: stats.total, color: 'text-slate-900' },
+            { label: 'Published', value: stats.published, color: 'text-emerald-600' },
+            { label: 'Failed', value: stats.failed, color: 'text-red-600' },
+            { label: 'Pending', value: stats.pending, color: 'text-yellow-600' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className={`text-2xl font-black ${color}`}>{value}</div>
+              <div className="mt-0.5 text-xs font-semibold text-slate-500">{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Connected platforms info */}
+      {logs.length === 0 && !loading && (
+        <div className="rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center">
+          <Zap size={36} className="mx-auto mb-3 text-slate-200" />
+          <h3 className="text-base font-bold text-slate-700">No distribution activity yet</h3>
+          <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
+            Open a post in the editor and use the Distribution panel to publish to connected platforms.
+          </p>
+          {platforms.length === 0 && (
+            <button type="button"
+              onClick={() => { window.history.pushState({}, '', '/integrations'); window.dispatchEvent(new PopStateEvent('popstate')); }}
+              className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 mx-auto">
+              <ExternalLink size={14} /> Connect platforms
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Logs table */}
+      {logs.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div className="hidden sm:grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-4 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 bg-slate-50">
+            <span>Post</span>
+            <span>Platform</span>
+            <span>Status</span>
+            <span>Date</span>
+            <span>Action</span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {loading
+              ? <div className="flex items-center justify-center py-12"><Loader2 className="animate-spin text-slate-300" size={24} /></div>
+              : logs.map((log) => (
+                <div key={log.id} className="flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto_auto_auto] items-start sm:items-center gap-2 sm:gap-4 px-5 py-4 hover:bg-slate-50">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">{log.post_title || log.post_id}</div>
+                    {log.error_message && (
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <AlertCircle size={11} className="text-red-400 shrink-0" />
+                        <span className="truncate text-xs text-red-500">{log.error_message}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">{PLATFORM_ICONS[log.platform] ?? '🔗'}</span>
+                    <span className="text-xs font-medium text-slate-600 capitalize">{log.platform}</span>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${DIST_STATUS_BADGE[log.status] ?? 'bg-slate-100 text-slate-600'}`}>
+                    {log.status}
+                  </span>
+                  <span className="text-xs text-slate-400 whitespace-nowrap">{fmtDateTime(log.created_at)}</span>
+                  <div className="flex items-center gap-1">
+                    {log.status === 'failed' && (
+                      <button type="button" onClick={() => void handleRetry(log.id)} disabled={retrying === log.id}
+                        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">
+                        {retrying === log.id ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                        Retry
+                      </button>
+                    )}
+                    {log.status === 'published' && <CheckCircle2 size={16} className="text-emerald-500" />}
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -763,6 +1158,7 @@ const Posts = () => {
     { id: 'posts', label: 'All Posts', icon: FileText },
     { id: 'categories', label: 'Categories', icon: FolderOpen },
     { id: 'tags', label: 'Tags', icon: Tag },
+    { id: 'automation', label: 'Automation', icon: Zap },
   ];
 
   return (
@@ -807,6 +1203,7 @@ const Posts = () => {
           tags={tags}
           onSaved={handlePostSaved}
           onBack={() => { setView('posts'); setEditPostId(null); }}
+          onMetaRefresh={() => void loadMeta()}
         />
       )}
       {view === 'categories' && (
@@ -814,6 +1211,9 @@ const Posts = () => {
       )}
       {view === 'tags' && (
         <TagsTab tags={tags} onChange={() => void loadMeta()} />
+      )}
+      {view === 'automation' && (
+        <AutomationTab />
       )}
     </div>
   );
