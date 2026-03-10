@@ -61,7 +61,7 @@ interface PostEditorProps {
   tags: BlogTag[];
   onSaved: (post: BlogPost) => void;
   onBack: () => void;
-  onMetaRefresh: () => void;
+  onMetaRefresh: () => Promise<void>;
 }
 
 function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
@@ -75,7 +75,8 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [metaTitle, setMetaTitle] = useState('');
   const [metaDescription, setMetaDescription] = useState('');
-  const [focusKeyword, setFocusKeyword] = useState('');
+  const [focusKeywords, setFocusKeywords] = useState<string[]>([]);
+  const [keywordDraft, setKeywordDraft] = useState('');
   const [socialTitle, setSocialTitle] = useState('');
   const [socialDescription, setSocialDescription] = useState('');
   const [socialImage, setSocialImage] = useState('');
@@ -131,7 +132,12 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
         setSelectedTagIds(post.tag_ids ?? []);
         setMetaTitle(post.meta_title ?? '');
         setMetaDescription(post.meta_description ?? '');
-        setFocusKeyword(post.focus_keyword ?? '');
+        const keywords = (post.focus_keyword ?? '')
+          .split(',')
+          .map((kw) => kw.trim())
+          .filter(Boolean);
+        setFocusKeywords(keywords);
+        setKeywordDraft('');
         setSocialTitle(post.social_title ?? '');
         setSocialDescription(post.social_description ?? '');
         setSocialImage(post.social_image ?? '');
@@ -166,7 +172,7 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
       const payload: BlogPostPayload = {
         title, slug, content: editor?.getHTML() ?? '', excerpt, featured_image: featuredImage,
         status: finalStatus, category_id: categoryId || null,
-        meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeyword,
+        meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeywords.join(', '),
         social_title: socialTitle, social_description: socialDescription, social_image: socialImage,
         scheduled_at: finalStatus === 'scheduled' ? scheduledAt : null,
         tag_ids: selectedTagIds,
@@ -225,7 +231,8 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
       setCategoryId(cat.id);
       setNewCatName('');
       setShowCatInput(false);
-      onMetaRefresh();
+      await onMetaRefresh();
+      setLocalCategories((prev) => prev.filter((c) => c.id !== cat.id));
     } catch {
       // ignore
     } finally {
@@ -242,7 +249,8 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
       setSelectedTagIds((prev) => [...prev, tag.id]);
       setNewTagName('');
       setShowTagInput(false);
-      onMetaRefresh();
+      await onMetaRefresh();
+      setLocalTags((prev) => prev.filter((t) => t.id !== tag.id));
     } catch {
       // ignore
     } finally {
@@ -272,6 +280,17 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
     setSelectedPlatforms((prev) =>
       prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
     );
+  };
+
+  const addKeyword = () => {
+    const trimmed = keywordDraft.trim();
+    if (!trimmed) return;
+    setFocusKeywords((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setKeywordDraft('');
+  };
+
+  const removeKeyword = (keyword: string) => {
+    setFocusKeywords((prev) => prev.filter((k) => k !== keyword));
   };
 
   if (loading) {
@@ -413,10 +432,52 @@ function PostEditor({ postId, categories, tags, onSaved, onBack, onMetaRefresh }
                 <input type="text" value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} placeholder="SEO title..."
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
               </label>
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-500">Focus Keyword</span>
-                <input type="text" value={focusKeyword} onChange={(e) => setFocusKeyword(e.target.value)} placeholder="Primary keyword..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+              <label className="block space-y-3">
+                <span className="text-xs font-semibold text-slate-500">Focus Keywords</span>
+                <div className="flex flex-wrap gap-2">
+                  {focusKeywords.length === 0 ? (
+                    <p className="text-xs text-slate-400">Add keywords to help search visibility.</p>
+                  ) : (
+                    focusKeywords.map((keyword) => (
+                      <span
+                        key={keyword}
+                        className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+                      >
+                        <span className="truncate max-w-[120px]">{keyword}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeKeyword(keyword)}
+                          className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-slate-400 transition hover:bg-slate-200"
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={keywordDraft}
+                    onChange={(e) => setKeywordDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addKeyword();
+                      }
+                    }}
+                    placeholder="Add keyword..."
+                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={addKeyword}
+                    disabled={!keywordDraft.trim()}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white disabled:opacity-50"
+                  >
+                    <Check size={16} />
+                  </button>
+                </div>
               </label>
               <label className="block space-y-1.5">
                 <span className="text-xs font-semibold text-slate-500">Meta Description</span>
@@ -1203,7 +1264,7 @@ const Posts = () => {
           tags={tags}
           onSaved={handlePostSaved}
           onBack={() => { setView('posts'); setEditPostId(null); }}
-          onMetaRefresh={() => void loadMeta()}
+          onMetaRefresh={loadMeta}
         />
       )}
       {view === 'categories' && (
