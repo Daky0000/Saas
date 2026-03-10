@@ -536,16 +536,16 @@ const Integrations = () => {
   const loadEnabledIds = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/integrations/enabled`, { headers: authHeaders() });
-      if (!res.ok) { setEnabledIds(null); return; }
+      if (!res.ok) { setEnabledIds(new Set()); return; }
       const data = await res.json() as { success: boolean; enabled: string[] };
       if (data.success) {
         setEnabledIds(new Set(data.enabled));
       } else {
-        setEnabledIds(null);
+        setEnabledIds(new Set());
       }
     } catch {
-      // If endpoint unreachable, show all integrations (graceful degradation)
-      setEnabledIds(null);
+      // If we can't confirm what's enabled/configured, show none.
+      setEnabledIds(new Set());
     }
   }, []);
 
