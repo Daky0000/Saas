@@ -11,6 +11,27 @@ function authHeaders(): Record<string, string> {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
 }
 
+function safeJsonParse(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function parseApiResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  const parsed = text ? safeJsonParse(text) : null;
+  if (!res.ok) {
+    const errorMessage = parsed?.error || parsed?.message || text || 'Request failed';
+    throw new Error(typeof errorMessage === 'string' ? errorMessage : 'Request failed');
+  }
+  if (text && parsed === null) {
+    throw new Error('Invalid server response');
+  }
+  return (parsed ?? {}) as T;
+}
+
 export interface BlogCategory {
   id: string;
   user_id: string;
@@ -76,7 +97,7 @@ export const blogService = {
     const res = await fetch(`${API_BASE_URL}/api/blog/categories`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ categories?: BlogCategory[] }>(res);
     return data.categories ?? [];
   },
 
@@ -86,9 +107,9 @@ export const blogService = {
       headers: authHeaders(),
       body: JSON.stringify({ name }),
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; category?: BlogCategory; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to create category');
-    return data.category;
+    return data.category!;
   },
 
   async updateCategory(id: string, name: string): Promise<BlogCategory> {
@@ -97,16 +118,17 @@ export const blogService = {
       headers: authHeaders(),
       body: JSON.stringify({ name }),
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; category?: BlogCategory; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to update category');
-    return data.category;
+    return data.category!;
   },
 
   async deleteCategory(id: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/blog/categories/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/blog/categories/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
+    await parseApiResponse(res);
   },
 
   // Tags
@@ -114,7 +136,7 @@ export const blogService = {
     const res = await fetch(`${API_BASE_URL}/api/blog/tags`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ tags?: BlogTag[] }>(res);
     return data.tags ?? [];
   },
 
@@ -124,16 +146,17 @@ export const blogService = {
       headers: authHeaders(),
       body: JSON.stringify({ name }),
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; tag?: BlogTag; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to create tag');
-    return data.tag;
+    return data.tag!;
   },
 
   async deleteTag(id: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/blog/tags/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/blog/tags/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
+    await parseApiResponse(res);
   },
 
   // Posts
@@ -144,7 +167,7 @@ export const blogService = {
     const res = await fetch(`${API_BASE_URL}/api/blog/posts?${qs}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ posts?: BlogPost[] }>(res);
     return data.posts ?? [];
   },
 
@@ -152,9 +175,9 @@ export const blogService = {
     const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; post?: BlogPost; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Not found');
-    return data.post;
+    return data.post!;
   },
 
   async createPost(payload: BlogPostPayload): Promise<BlogPost> {
@@ -163,9 +186,9 @@ export const blogService = {
       headers: authHeaders(),
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; post?: BlogPost; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to create post');
-    return data.post;
+    return data.post!;
   },
 
   async updatePost(id: string, payload: BlogPostPayload): Promise<BlogPost> {
@@ -174,16 +197,17 @@ export const blogService = {
       headers: authHeaders(),
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; post?: BlogPost; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to update post');
-    return data.post;
+    return data.post!;
   },
 
   async deletePost(id: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
+    await parseApiResponse(res);
   },
 
   async duplicatePost(id: string): Promise<BlogPost> {
@@ -191,8 +215,8 @@ export const blogService = {
       method: 'POST',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const data = await res.json();
+    const data = await parseApiResponse<{ success?: boolean; post?: BlogPost; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to duplicate post');
-    return data.post;
+    return data.post!;
   },
 };

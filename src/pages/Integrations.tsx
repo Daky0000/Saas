@@ -581,14 +581,12 @@ const Integrations = () => {
     const q = query.trim().toLowerCase();
     return INTEGRATIONS.filter((i) => {
       if (!isAdmin) {
+        // Hide any integration that admin has not enabled (or we can't confirm yet).
+        if (!enabledIds || !enabledIds.has(i.id)) return false;
         if (i.isOAuth) {
           // Only show OAuth integrations confirmed configured by admin (hide while loading or unconfigured).
           const status = oauthStatus[i.id];
           if (!status || status.loading || !status.configured) return false;
-        } else {
-          // Only show non-OAuth integrations admin has explicitly enabled.
-          // If enabledIds is null (still loading or endpoint failed), hide by default.
-          if (!enabledIds || !enabledIds.has(i.id)) return false;
         }
       }
       const matchesCategory = activeCategory === 'All integrations' || i.category === activeCategory;

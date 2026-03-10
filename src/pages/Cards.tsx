@@ -395,21 +395,6 @@ const Cards = () => {
           </section>
         )}
 
-        {/* ── Prebuilt templates ──────────────────────────────────────────────── */}
-        <section>
-          <div className="mb-5">
-            <h2 className="text-lg font-bold text-slate-900">
-              {publishedTemplates.length > 0 ? 'More Templates' : 'Prebuilt Templates'}
-            </h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Ready-made designs you can customize instantly
-            </p>
-          </div>
-          <PrebuiltTemplates
-            templates={cardTemplates}
-            onSelectTemplate={handleSelectTemplate}
-          />
-        </section>
       </div>
     </div>
   );
