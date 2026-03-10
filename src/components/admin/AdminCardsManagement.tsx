@@ -362,6 +362,7 @@ const AdminCardsManagement = () => {
         isPublished={builderIsPublished}
         existingDesignData={builderExistingData}
         existingCoverImageUrl={builderCoverImageUrl ?? undefined}
+        onTemplateUpdated={fetchTemplates}
         onSaveDraft={handleSaveDraft}
         onPublish={handlePublish}
         onUnpublish={handleUnpublish}
