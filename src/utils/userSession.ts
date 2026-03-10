@@ -5,6 +5,7 @@ export type AppUser = {
   username: string | null;
   phone: string | null;
   country: string | null;
+  website: string | null;
   role: 'admin' | 'user';
   avatar: string | null;
   cover: string | null;
@@ -20,6 +21,7 @@ export function normalizeUser(input: Partial<AppUser> & { id: string; email: str
     username: input.username ?? null,
     phone: input.phone ?? null,
     country: input.country ?? null,
+    website: input.website ?? null,
     role: input.role === 'admin' ? 'admin' : 'user',
     avatar: input.avatar ?? null,
     cover: input.cover ?? null,

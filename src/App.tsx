@@ -372,7 +372,7 @@ function App() {
       case 'dashboard':
         return <Dashboard currentUser={authUser} />;
       case 'posts':
-        return <Posts />;
+        return <Posts currentUser={authUser} />;
       case 'cards':
         return <Cards />;
       case 'integrations':

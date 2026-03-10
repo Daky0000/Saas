@@ -27,6 +27,9 @@ export default function MediaLibraryModal({ onSelect, onClose }: MediaLibraryMod
   const [bulkMode, setBulkMode] = useState(false);
   const [editName, setEditName] = useState('');
   const [editTags, setEditTags] = useState('');
+  const [editAlt, setEditAlt] = useState('');
+  const [editCaption, setEditCaption] = useState('');
+  const [editDescription, setEditDescription] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
@@ -73,6 +76,9 @@ export default function MediaLibraryModal({ onSelect, onClose }: MediaLibraryMod
     setSelected(img);
     setEditName(img.file_name);
     setEditTags((img.tags ?? []).join(', '));
+    setEditAlt(img.alt_text ?? '');
+    setEditCaption(img.caption ?? '');
+    setEditDescription(img.description ?? '');
   };
 
   const handleSaveDetails = async () => {
@@ -80,7 +86,13 @@ export default function MediaLibraryModal({ onSelect, onClose }: MediaLibraryMod
     setSaving(true);
     try {
       const tagsArr = editTags.split(',').map((t) => t.trim()).filter(Boolean);
-      const updated = await mediaService.update(selected.id, { file_name: editName, tags: tagsArr });
+      const updated = await mediaService.update(selected.id, {
+        file_name: editName,
+        tags: tagsArr,
+        alt_text: editAlt,
+        caption: editCaption,
+        description: editDescription,
+      });
       setImages((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
       setSelected(updated);
     } catch {
@@ -412,6 +424,38 @@ export default function MediaLibraryModal({ onSelect, onClose }: MediaLibraryMod
                         className="flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
                       />
                       <button type="button" onClick={() => void addTag()} className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-zinc-700">Add</button>
+                    </div>
+                  </div>
+
+                  {/* SEO fields */}
+                  <div className="space-y-3 rounded-xl bg-white p-3 border border-zinc-200">
+                    <div>
+                      <label className="mb-1 block font-semibold text-zinc-500">Alt text</label>
+                      <input
+                        value={editAlt}
+                        onChange={(e) => setEditAlt(e.target.value)}
+                        placeholder="Describe the image for accessibility"
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-semibold text-zinc-500">Caption</label>
+                      <input
+                        value={editCaption}
+                        onChange={(e) => setEditCaption(e.target.value)}
+                        placeholder="Optional caption"
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-semibold text-zinc-500">Description</label>
+                      <textarea
+                        rows={3}
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        placeholder="Optional description"
+                        className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                      />
                     </div>
                   </div>
 

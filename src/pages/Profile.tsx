@@ -66,7 +66,7 @@ function toProfileForm(user: AppUser | null): ProfileForm {
     cover: user?.cover ?? '',
     bio:
       'Tell your audience what you do, what you build, and what kind of content they should expect from your profile.',
-    website: '',
+    website: user?.website ?? '',
   };
 }
 
@@ -161,6 +161,7 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
           email: form.email.trim(),
           phone: form.phone.trim(),
           country: form.country.trim(),
+          website: form.website.trim(),
           avatar: form.avatar,
           cover: form.cover,
         }),
@@ -182,6 +183,7 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
         username: payload.user.username ?? null,
         phone: payload.user.phone ?? null,
         country: payload.user.country ?? null,
+        website: payload.user.website ?? null,
         role: payload.user.role === 'admin' ? 'admin' : 'user',
         avatar: payload.user.avatar ?? null,
         cover: payload.user.cover ?? null,

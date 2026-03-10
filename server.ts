@@ -56,6 +56,7 @@ async function ensureDatabase() {
       username TEXT,
       password_hash TEXT NOT NULL,
       full_name TEXT,
+      website TEXT,
       phone TEXT,
       country TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -63,6 +64,7 @@ async function ensureDatabase() {
   `);
 
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS website TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS country TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';`);
@@ -227,12 +229,18 @@ async function ensureDatabase() {
       upload_date TIMESTAMPTZ DEFAULT NOW(),
       url TEXT NOT NULL,
       thumbnail_url TEXT,
+      alt_text TEXT DEFAULT '',
+      caption TEXT DEFAULT '',
+      description TEXT DEFAULT '',
       tags TEXT[] DEFAULT '{}',
       used_in JSONB DEFAULT '[]',
       category TEXT DEFAULT 'user'
     );
   `);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'user'`);
+  await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS alt_text TEXT DEFAULT ''`).catch(() => undefined);
+  await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS caption TEXT DEFAULT ''`).catch(() => undefined);
+  await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => undefined);
 
   // Blog post management tables
   await pool.query(`
@@ -360,6 +368,7 @@ type DbUserRow = {
   email: string;
   username: string | null;
   full_name: string | null;
+  website: string | null;
   phone: string | null;
   country: string | null;
   role: string;
@@ -458,6 +467,7 @@ function upsertInMemoryUser(input: {
     email: normalizedEmail,
     username: normalizedUsername,
     full_name: input.name,
+    website: existing?.website || null,
     phone: existing?.phone || null,
     country: existing?.country || null,
     role: input.role,
@@ -570,6 +580,7 @@ function userToAuthPayload(user: DbUserRow) {
     email: user.email,
     username: user.username,
     name: user.full_name,
+    website: user.website,
     phone: user.phone,
     country: user.country,
     role: user.role === 'admin' ? 'admin' : 'user',
@@ -663,6 +674,7 @@ async function createUser(
       email: normalizedEmail,
       username: normalizedUsername,
       full_name: name || null,
+      website: null,
       phone: null,
       country: null,
       role: options?.role || 'user',
@@ -893,13 +905,23 @@ async function ensureSeedPricingPlans() {
 
 async function updateUserProfile(
   userId: string,
-  updates: { name: string; username: string; email: string; phone: string; country: string; avatar?: string; cover?: string }
+  updates: {
+    name: string;
+    username: string;
+    email: string;
+    phone: string;
+    country: string;
+    website: string;
+    avatar?: string;
+    cover?: string;
+  }
 ): Promise<DbUserRow | undefined> {
   const normalizedEmail = normalizeEmail(updates.email);
   const normalizedUsername = normalizeUsername(updates.username);
   const normalizedPhone = updates.phone.trim();
   const normalizedCountry = updates.country.trim();
   const normalizedName = updates.name.trim();
+  const normalizedWebsite = updates.website.trim();
 
   if (!hasDatabase()) {
     const existing = inMemoryUsersById.get(userId);
@@ -924,6 +946,7 @@ async function updateUserProfile(
       email: normalizedEmail,
       username: normalizedUsername,
       full_name: normalizedName || null,
+      website: normalizedWebsite || null,
       phone: normalizedPhone || null,
       country: normalizedCountry || null,
       avatar_url: typeof updates.avatar === 'string' ? updates.avatar || null : existing.avatar_url,
@@ -958,17 +981,19 @@ async function updateUserProfile(
     SET email = $1,
         username = $2,
         full_name = $3,
-        phone = $4,
-        country = $5,
-        avatar_url = COALESCE($6, avatar_url),
-        cover_url = COALESCE($7, cover_url)
-    WHERE id = $8
+        website = $4,
+        phone = $5,
+        country = $6,
+        avatar_url = COALESCE($7, avatar_url),
+        cover_url = COALESCE($8, cover_url)
+    WHERE id = $9
     RETURNING *;
   `,
     [
       normalizedEmail,
       normalizedUsername,
       normalizedName || null,
+      normalizedWebsite || null,
       normalizedPhone || null,
       normalizedCountry || null,
       typeof updates.avatar === 'string' ? updates.avatar || null : null,
@@ -1093,7 +1118,7 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const { name, username, email, phone, country, avatar, cover } = req.body;
+    const { name, username, email, phone, country, website, avatar, cover } = req.body;
     if (!name || !username || !email) {
       return res.status(400).json({ success: false, error: 'Name, username, and email are required' });
     }
@@ -1104,6 +1129,7 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
       email: String(email),
       phone: String(phone || ''),
       country: String(country || ''),
+      website: String(website || ''),
       avatar: typeof avatar === 'string' ? avatar : undefined,
       cover: typeof cover === 'string' ? cover : undefined,
     });
@@ -4026,18 +4052,27 @@ app.get('/api/media', async (req: Request, res: Response) => {
   }
 });
 
-// Update image metadata (rename / tags)
+// Update image metadata (rename / tags / alt text / caption / description)
 app.put('/api/media/:id', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const { id } = req.params;
-  const { file_name, tags } = req.body as { file_name?: string; tags?: string[] };
+  const { file_name, tags, alt_text, caption, description } = req.body as {
+    file_name?: string;
+    tags?: string[];
+    alt_text?: string;
+    caption?: string;
+    description?: string;
+  };
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
   try {
     const updates: string[] = [];
     const params: unknown[] = [id, user.userId];
     if (file_name !== undefined) { updates.push(`file_name = $${params.length + 1}`); params.push(sanitizeFileName(file_name)); }
     if (tags !== undefined) { updates.push(`tags = $${params.length + 1}`); params.push(tags); }
+    if (alt_text !== undefined) { updates.push(`alt_text = $${params.length + 1}`); params.push(String(alt_text).slice(0, 1000)); }
+    if (caption !== undefined) { updates.push(`caption = $${params.length + 1}`); params.push(String(caption).slice(0, 2000)); }
+    if (description !== undefined) { updates.push(`description = $${params.length + 1}`); params.push(String(description).slice(0, 5000)); }
     if (!updates.length) return res.status(400).json({ success: false, error: 'Nothing to update' });
     const { rows } = await pool!.query(
       `UPDATE media_images SET ${updates.join(', ')} WHERE id = $1 AND user_id = $2 RETURNING *`,
