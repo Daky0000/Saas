@@ -3609,6 +3609,18 @@ app.post('/api/integrations/validate', async (req: Request, res: Response) => {
         if (resp.status < 400) return res.json({ success: true });
         throw new Error(`Webhook returned status ${resp.status}`);
       }
+      case 'apify': {
+        const apiToken = String(credentials.apiToken || credentials.token || '').trim();
+        if (!apiToken) throw new Error('Missing Apify API token');
+        const resp = await axios.get('https://api.apify.com/v2/users/me', {
+          headers: { Authorization: `Bearer ${apiToken}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) return res.json({ success: true, handle: resp.data?.data?.username || resp.data?.data?.email || 'Apify' });
+        if (resp.status === 401 || resp.status === 403) throw new Error('Invalid Apify API token');
+        throw new Error(`Apify returned ${resp.status}`);
+      }
       default:
         // No validation available (Framer, Brave, etc.) — accept as-is
         return res.json({ success: true });

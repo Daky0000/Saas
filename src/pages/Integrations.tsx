@@ -66,6 +66,8 @@ function getPlatformIcon(id: string): ReactNode {
     case 'twitter':   return <TwitterXIcon />;
     case 'threads':   return <ThreadsIcon />;
     case 'mailchimp': return <Mail size={22} />;
+    case 'apify':     return <Box size={22} />;
+    case 'manus':     return <Bot size={22} />;
     case 'chatgpt':   return <Bot size={22} />;
     case 'stripe':    return <CreditCard size={22} />;
     case 'square':    return <Box size={22} />;
@@ -129,7 +131,7 @@ const CATEGORIES: IntegrationCategory[] = [
 ];
 
 // Platforms where we can do live server-side validation of credentials
-const VALIDATED_PLATFORM_IDS = new Set(['wordpress', 'mailchimp', 'chatgpt', 'webflow', 'stripe', 'linear', 'square', 'zapier']);
+const VALIDATED_PLATFORM_IDS = new Set(['wordpress', 'mailchimp', 'chatgpt', 'webflow', 'stripe', 'linear', 'square', 'zapier', 'apify']);
 
 const INTEGRATIONS: IntegrationDefinition[] = [
   {
@@ -366,6 +368,37 @@ const INTEGRATIONS: IntegrationDefinition[] = [
       { id: 'apiKey', label: 'API key', placeholder: 'sk-...', type: 'password', helpText: 'Generate an API key in the OpenAI developer platform.', docUrl: 'https://platform.openai.com/api-keys', docLabel: 'OpenAI API keys' },
       { id: 'model', label: 'Model', placeholder: 'gpt-4o-mini', type: 'text', helpText: 'Model used for your workflow (e.g. gpt-4o, gpt-4o-mini).', docUrl: 'https://platform.openai.com/docs/models', docLabel: 'Available models' },
       { id: 'systemPrompt', label: 'System prompt', placeholder: 'You are a brand voice assistant...', type: 'textarea', helpText: 'Optional base prompt used for every generated request.' },
+    ],
+  },
+  {
+    id: 'apify',
+    name: 'Apify',
+    description: 'Automate data extraction and workflows with actors, crawlers, and scheduled runs.',
+    category: 'Developer tools',
+    accentClass: 'bg-[#0f172a] text-white',
+    icon: <Box size={22} />,
+    setupTitle: 'Connect Apify',
+    setupDescription: 'Enter your Apify API token. We verify it against the Apify API.',
+    requirements: ['API token'],
+    hasValidation: true,
+    fields: [
+      { id: 'apiToken', label: 'API token', placeholder: 'apify_api_...', type: 'password', helpText: 'Generate a token in Apify Console → Settings → Integrations.', docUrl: 'https://docs.apify.com/platform/integrations/api', docLabel: 'Apify API docs' },
+      { id: 'defaultActor', label: 'Default actor (optional)', placeholder: 'username~my-actor', type: 'text', helpText: 'Optional actor ID used by your automations. Leave empty if you are not sure.' },
+    ],
+  },
+  {
+    id: 'manus',
+    name: 'Manus',
+    description: 'Connect Manus to generate content, run tasks, and automate AI workflows from your dashboard.',
+    category: 'Productivity',
+    accentClass: 'bg-[#111827] text-white',
+    icon: <Bot size={22} />,
+    setupTitle: 'Connect Manus',
+    setupDescription: 'Paste your Manus API key. This integration stores the key locally for now.',
+    requirements: ['API key'],
+    fields: [
+      { id: 'apiKey', label: 'API key', placeholder: 'manus_...', type: 'password', helpText: 'Create an API key in your Manus account and paste it here.' },
+      { id: 'baseUrl', label: 'Base URL (optional)', placeholder: 'https://api.manus.ai', type: 'url', helpText: 'Only change this if your Manus account uses a different API base.' },
     ],
   },
   {
