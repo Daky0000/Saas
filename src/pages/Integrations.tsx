@@ -450,6 +450,7 @@ type SavedConfigMap = Record<string, SavedIntegrationConfig>;
 
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
+const CALLBACK_BASE_URL = (API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
 
 const authHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('auth_token');
@@ -465,12 +466,12 @@ const isAdminUser = (): boolean => {
 };
 
 const PRODUCTION_REDIRECT_URIS: Record<string, string> = {
-  instagram: 'https://marketing.dakyworld.com/auth/instagram/callback',
-  facebook: 'https://marketing.dakyworld.com/auth/facebook/callback',
-  linkedin: 'https://marketing.dakyworld.com/auth/linkedin/callback',
-  twitter: 'https://marketing.dakyworld.com/auth/twitter/callback',
-  tiktok: 'https://marketing.dakyworld.com/auth/tiktok/callback',
-  threads: 'https://marketing.dakyworld.com/auth/threads/callback',
+  instagram: `${CALLBACK_BASE_URL}/auth/instagram/callback`,
+  facebook: `${CALLBACK_BASE_URL}/auth/facebook/callback`,
+  linkedin: `${CALLBACK_BASE_URL}/auth/linkedin/callback`,
+  twitter: `${CALLBACK_BASE_URL}/auth/twitter/callback`,
+  tiktok: `${CALLBACK_BASE_URL}/auth/tiktok/callback`,
+  threads: `${CALLBACK_BASE_URL}/auth/threads/callback`,
 };
 
 const loadSavedConfigs = (): SavedConfigMap => {
@@ -1069,6 +1070,22 @@ const Integrations = () => {
                     <p className="rounded-xl bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
                       <strong>Admin:</strong> These app credentials are saved to the backend and used when users click "Connect".
                     </p>
+                  )}
+                  {isAdmin && activeIntegration.id === 'twitter' && (
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                      <div className="text-xs font-black uppercase tracking-wide text-slate-500">X / Twitter proven setup</div>
+                      <ul className="mt-2 list-disc pl-5 space-y-1.5 text-sm">
+                        <li>In X Developer Portal → App settings → User authentication settings: enable OAuth 2.0.</li>
+                        <li>Set App permissions to <span className="font-semibold">Read and Write</span>.</li>
+                        <li>Callback URI / Redirect URL must match exactly:</li>
+                      </ul>
+                      <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
+                        {PRODUCTION_REDIRECT_URIS.twitter}
+                      </div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        If X shows “You weren’t able to give access to the App”, this is almost always a callback URL mismatch or OAuth 2.0 not enabled.
+                      </div>
+                    </div>
                   )}
                   {saveError && <p className="rounded-xl bg-red-50 px-4 py-2.5 text-xs text-red-600">{saveError}</p>}
                   {saveSuccess && (

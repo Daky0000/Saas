@@ -131,6 +131,12 @@ interface PlatformRow {
 
 // ── App URL helper (substituted into step instructions) ────────────────────────
 const APP_URL = ((import.meta.env.VITE_APP_URL as string | undefined) ?? 'https://yourdomain.com').replace(/\/$/, '');
+const RAW_OAUTH_API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim();
+const OAUTH_API_BASE_URL =
+  RAW_OAUTH_API_BASE_URL && !RAW_OAUTH_API_BASE_URL.includes('api.yourdomain.com')
+    ? RAW_OAUTH_API_BASE_URL.replace(/\/$/, '')
+    : '';
+const CALLBACK_BASE_URL = OAUTH_API_BASE_URL || APP_URL;
 
 // ── All integrations the admin can manage ──────────────────────────────────────
 
@@ -262,7 +268,7 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
       { text: 'Create a new Project and inside it create a new App. Give it a descriptive name.' },
       { text: 'Under your app → Settings → User authentication settings, click "Set up".' },
       { text: 'Set App permissions to "Read and Write". Set Type of App to "Web App, Automated App or Bot".' },
-      { text: 'In "Callback URI / Redirect URL", add:', code: `${APP_URL}/auth/twitter/callback` },
+      { text: 'In "Callback URI / Redirect URL", add exactly (no extra slashes/spaces):', code: `${CALLBACK_BASE_URL}/auth/twitter/callback` },
       { text: 'In "Website URL", enter your app domain:', code: APP_URL },
       { text: 'Go to Keys and Tokens tab → OAuth 2.0 Client ID and Client Secret. Copy both values.' },
       { text: 'Ensure scopes tweet.read, tweet.write, users.read, offline.access are listed in your app settings.' },
@@ -271,7 +277,7 @@ const ALL_INTEGRATIONS: IntegrationDef[] = [
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'X OAuth 2.0 client ID', type: 'text', helpText: 'OAuth 2.0 Client ID from your X developer app → Keys and Tokens.', envVar: 'VITE_TWITTER_CLIENT_ID', docUrl: 'https://developer.x.com/en/portal/dashboard', docLabel: 'X developer portal' },
       { id: 'clientSecret', label: 'Client secret', placeholder: 'X client secret', type: 'password', helpText: 'Required for secure authorization code exchange. Server-side only.', envVar: 'TWITTER_CLIENT_SECRET', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'OAuth 2.0 guide' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: `${APP_URL}/auth/twitter/callback`, type: 'url', helpText: 'Add this under App Settings → User authentication settings → Callback URI.', envVar: 'VITE_TWITTER_REDIRECT_URI', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'X OAuth setup' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: `${CALLBACK_BASE_URL}/auth/twitter/callback`, type: 'url', helpText: 'Must match the Callback URI / Redirect URL in the X portal exactly.', envVar: 'VITE_TWITTER_REDIRECT_URI', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'X OAuth setup' },
     ],
   },
   {

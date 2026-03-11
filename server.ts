@@ -1617,7 +1617,7 @@ async function exchangeInstagramCode(code: string) {
     client_id: cfg.appId || process.env.VITE_INSTAGRAM_APP_ID || '',
     client_secret: cfg.appSecret || process.env.INSTAGRAM_APP_SECRET || '',
     grant_type: 'authorization_code',
-    redirect_uri: cfg.redirectUri || resolveRedirectUri(process.env.VITE_INSTAGRAM_REDIRECT_URI),
+    redirect_uri: resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_INSTAGRAM_REDIRECT_URI),
     code,
   });
   const response = await axios.post('https://api.instagram.com/oauth/access_token', data, {
@@ -1630,7 +1630,7 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string) {
   const cfg = await getPlatformConfig('twitter');
   const clientId = cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '';
   const clientSecret = cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '';
-  const redirectUri = cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI || '';
+  const redirectUri = resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI || '');
 
   const data = new URLSearchParams({
     client_id: clientId,
@@ -1657,7 +1657,7 @@ async function exchangeLinkedInCode(code: string) {
   const data = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI || '',
+    redirect_uri: resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI || ''),
     client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '',
     client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '',
   });
@@ -1699,7 +1699,7 @@ async function exchangeThreadsCode(code: string) {
     process.env.VITE_THREADS_APP_SECRET ||
     process.env.INSTAGRAM_APP_SECRET ||
     '';
-  const redirectUri = cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI || '';
+  const redirectUri = resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI || '');
 
   if (!clientId || !clientSecret || !redirectUri) {
     throw new Error('Threads credentials not configured');
@@ -1760,7 +1760,7 @@ async function exchangeTikTokCode(code: string) {
     client_secret: cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '',
     code,
     grant_type: 'authorization_code',
-    redirect_uri: cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI || '',
+    redirect_uri: resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI || ''),
   });
   const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', data.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1870,6 +1870,32 @@ function resolveRedirectUri(uri: string | undefined): string {
   if (uri.startsWith('http://') || uri.startsWith('https://')) return uri;
   const appUrl = process.env.VITE_APP_URL || 'http://localhost:3000';
   return `${appUrl}${uri}`;
+}
+
+function getBackendPublicUrl(req?: Request): string {
+  const fromEnv = String(
+    process.env.BACKEND_PUBLIC_URL ||
+    process.env.PUBLIC_API_URL ||
+    process.env.API_PUBLIC_URL ||
+    process.env.VITE_API_BASE_URL ||
+    ''
+  ).trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+
+  if (!req) return '';
+  const protoHeader = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = protoHeader || req.protocol || 'http';
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  return hostHeader ? `${proto}://${hostHeader}` : '';
+}
+
+function resolveBackendRedirectUri(uri: string | undefined, req?: Request): string {
+  const raw = String(uri || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  const base = getBackendPublicUrl(req);
+  if (!base) return raw.startsWith('/') ? raw : `/${raw}`;
+  return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
 }
 
 // --- WordPress: encryption and storage (credentials never logged) ---
@@ -3318,16 +3344,21 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
 
     const now = new Date().toISOString();
 
+    const normalizedConfig: Record<string, string> = { ...(config as any) };
+    if (typeof normalizedConfig.redirectUri === 'string') {
+      normalizedConfig.redirectUri = resolveBackendRedirectUri(normalizedConfig.redirectUri, req);
+    }
+
     if (hasDatabase()) {
       await dbQuery(
         `INSERT INTO platform_configs (platform, config, enabled, updated_at)
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (platform) DO UPDATE
            SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
-        [platform, JSON.stringify(config), Boolean(enabled)]
+        [platform, JSON.stringify(normalizedConfig), Boolean(enabled)]
       );
     } else {
-      inMemoryPlatformConfigs.set(platform, { platform, config, enabled: Boolean(enabled), updated_at: now });
+      inMemoryPlatformConfigs.set(platform, { platform, config: normalizedConfig, enabled: Boolean(enabled), updated_at: now });
     }
 
     return res.json({ success: true, message: 'Platform config saved' });
@@ -3594,7 +3625,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
 
     const cfg = await getPlatformConfig(platform);
     const clientId = cfg[meta.idField];
-    const redirectUri = cfg.redirectUri;
+    const redirectUri = resolveBackendRedirectUri(cfg.redirectUri, req);
 
     if (!clientId || !redirectUri) {
       return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
@@ -4125,7 +4156,7 @@ app.get('/auth/:platform/callback', async (req: Request, res: Response) => {
     if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
     if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return res.redirect(fallbackErr('State/platform mismatch'));
 
-    const tokenData = await exchangeOAuthCode(platformId, code);
+    const tokenData = await exchangeOAuthCode(platformId, code, stateRow.code_verifier || undefined);
     await storeUserConnection(stateRow.user_id, platformDisplayName(platformId), tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
 
