@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Clock, ExternalLink, Info, Mail, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock, Mail, ShieldCheck } from 'lucide-react';
 
 type DeletionStatusResponse =
   | { success: true; data: { code: string; status: 'received' | 'completed' | 'unknown'; createdAt: string; completedAt: string | null } }
@@ -27,8 +27,6 @@ export default function DataDeletion() {
   const urls = useMemo(() => {
     const apiBase = API_BASE_URL || origin;
     return {
-      instructionsUrl: `${origin}/data-deletion`,
-      callbackUrl: `${apiBase}/api/meta/data-deletion`,
       statusUrl: `${apiBase}/api/meta/data-deletion/status`,
     };
   }, [origin]);
@@ -77,54 +75,26 @@ export default function DataDeletion() {
         <div className="rounded-[32px] border border-slate-200 bg-white px-6 py-6 md:px-8">
           <h1 className="text-[2.2rem] font-black tracking-[-0.03em] text-slate-950">Data Deletion</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-500 md:text-base">
-            This page explains how to request deletion of your data and provides the URLs Meta requires for apps that access user data.
+            This page explains how to request deletion of your data from Dakyworld Hub.
           </p>
         </div>
 
-        <Card title="Meta Developer Settings (Copy/Paste)">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 text-slate-400"><Info size={16} /></div>
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-slate-900">Use these URLs in your Meta app settings</div>
-                <div className="mt-2 space-y-2 text-sm text-slate-700">
-                  <div>
-                    <div className="text-xs font-bold text-slate-600">Data Deletion Instructions URL</div>
-                    <InlineCode>{urls.instructionsUrl}</InlineCode>
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-600">Data Deletion Request URL (Callback)</div>
-                    <InlineCode>{urls.callbackUrl}</InlineCode>
-                  </div>
-                </div>
-                <div className="mt-3 text-xs text-slate-500">
-                  Meta will send a <InlineCode>signed_request</InlineCode> to the callback URL. We return a confirmation code and a status URL.
-                </div>
-              </div>
-            </div>
-          </div>
-          <a
-            href="https://developers.facebook.com/docs/apps/delete-data/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50"
-          >
-            Official Meta docs <ExternalLink size={16} className="text-slate-400" />
-          </a>
-        </Card>
-
-        <Card title="For Users: How to Request Deletion">
+        <Card title="How to Request Deletion">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 text-slate-400"><ShieldCheck size={16} /></div>
             <div className="min-w-0">
               <div className="text-sm text-slate-700">
-                Email us from the address you used in the app and include:
+                Email us from the address you used in the app. Include:
               </div>
               <ul className="mt-2 list-disc pl-5 text-sm text-slate-600">
                 <li>Your account email</li>
                 <li>Which Meta-connected accounts you want removed (Facebook/Instagram/Threads)</li>
+                <li>If you know it: your Facebook user ID (optional)</li>
                 <li>Any relevant screenshots or error messages (optional)</li>
               </ul>
+              <div className="mt-3 text-xs text-slate-500">
+                We will delete/disconnect any stored OAuth tokens and related account connection data we can identify for your account.
+              </div>
               <div className="mt-3">
                 <a
                   href={`mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent('Data deletion request')}`}
@@ -141,7 +111,7 @@ export default function DataDeletion() {
         <Card title="Request Status (If You Have a Confirmation Code)">
           {!code && (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              If Meta redirected you here after a deletion request, you’ll have a <InlineCode>code</InlineCode> in the URL.
+              If you were redirected here after submitting a deletion request, you’ll have a <InlineCode>code</InlineCode> in the URL.
             </div>
           )}
 
