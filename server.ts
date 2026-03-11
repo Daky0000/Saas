@@ -5225,6 +5225,31 @@ app.get('/api/meta/data-deletion/status', async (req: Request, res: Response) =>
   }
 });
 
+// Meta Deauthorize Callback (uninstall)
+
+// POST /api/meta/deauthorize — Meta "Deauthorize Callback URL"
+app.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
+  try {
+    const signedRequest = String((req.body as any)?.signed_request || '').trim();
+    if (!signedRequest) return res.status(400).json({ success: false, error: 'signed_request required' });
+
+    const appSecret = await getMetaAppSecretForDeletion();
+    if (!appSecret) return res.status(500).json({ success: false, error: 'Meta app secret not configured' });
+
+    const payload = parseSignedRequest(signedRequest, appSecret);
+    const metaUserId = typeof payload.user_id === 'string' ? payload.user_id : null;
+
+    if (metaUserId) {
+      await deleteBestEffortUserDataByMetaUserId(metaUserId).catch(() => false);
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Meta deauthorize error:', error);
+    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
+  }
+});
+
 // Health check
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
