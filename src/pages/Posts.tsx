@@ -14,6 +14,7 @@ import { distributionService, type ConnectedPlatform, type PublishingLog } from 
 import MediaLibraryModal from '../components/media/MediaLibraryModal';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import type { AppUser } from '../utils/userSession';
+import { wordpressService } from '../services/wordpressService';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 type PostsView = 'posts' | 'editor' | 'categories' | 'tags' | 'automation';
@@ -1458,6 +1459,729 @@ function AutomationTab() {
 }
 
 // ── Posts List ───────────────────────────────────────────────────────────────────
+// New Automation UI (sub-tabs) - extends Automation only. Does not change post editor/publish logic.
+function AutomationTabV2() {
+  type AutomationSubTab = 'platforms' | 'accounts' | 'rules' | 'logs';
+  const [subTab, setSubTab] = useState<AutomationSubTab>('platforms');
+  // Keep legacy component referenced to satisfy TS noUnusedLocals while migrating UI safely.
+  void AutomationTab;
+
+  type ConnectedAccountRow = {
+    id: string;
+    platform: string;
+    handle?: string | null;
+    connected: boolean;
+    expiresAt?: string | null;
+  };
+
+  const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+  const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
+  const INTEGRATION_STORAGE_KEY = 'integration-configs';
+  const authHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem('auth_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const goIntegrations = () => {
+    window.history.pushState({}, '', '/integrations');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
+  const PLATFORM_DEFS: Array<{ id: string; label: string; description: string; kind: 'oauth' | 'external' }> = [
+    { id: 'facebook', label: 'Facebook', description: 'Auto-share posts to pages or groups you connect.', kind: 'oauth' },
+    { id: 'linkedin', label: 'LinkedIn', description: 'Publish updates to your profile or company presence.', kind: 'oauth' },
+    { id: 'twitter', label: 'X', description: 'Share short-form updates with your audience on X.', kind: 'oauth' },
+    { id: 'instagram', label: 'Instagram', description: 'Prepare captions and automate post publishing workflows.', kind: 'oauth' },
+    { id: 'threads', label: 'Threads', description: 'Auto-publish short threads when your blog goes live.', kind: 'oauth' },
+    { id: 'wordpress', label: 'WordPress', description: 'Send posts to your connected WordPress site.', kind: 'external' },
+    { id: 'mailchimp', label: 'Mailchimp', description: 'Automate newsletter campaigns from new posts.', kind: 'external' },
+  ];
+
+  const [enabledIds, setEnabledIds] = useState<Set<string> | null>(null);
+  const [loadingEnabled, setLoadingEnabled] = useState(false);
+  const [accounts, setAccounts] = useState<ConnectedAccountRow[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [wpStatus, setWpStatus] = useState<{ loading: boolean; connected: boolean; siteUrl?: string }>({ loading: true, connected: false });
+  const [mailchimpConnected, setMailchimpConnected] = useState(false);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Activity logs (existing functionality, shown under the Logs sub-tab)
+  const [logs, setLogs] = useState<PublishingLog[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  const loadEnabled = useCallback(async () => {
+    setLoadingEnabled(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/integrations/enabled`, { headers: authHeaders() });
+      if (!res.ok) { setEnabledIds(new Set()); return; }
+      const data = await res.json() as { success: boolean; enabled: string[] };
+      setEnabledIds(data.success ? new Set(data.enabled) : new Set());
+    } catch {
+      setEnabledIds(new Set());
+    } finally {
+      setLoadingEnabled(false);
+    }
+  }, [API_BASE_URL]);
+
+  const loadAccounts = useCallback(async () => {
+    setLoadingAccounts(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/accounts`, { headers: authHeaders() });
+      if (!res.ok) { setAccounts([]); return; }
+      const data = await res.json() as { success: boolean; data: ConnectedAccountRow[] };
+      setAccounts(data.success ? (data.data || []) : []);
+    } catch {
+      setAccounts([]);
+    } finally {
+      setLoadingAccounts(false);
+    }
+  }, [API_BASE_URL]);
+
+  const loadWordPress = useCallback(async () => {
+    setWpStatus({ loading: true, connected: false });
+    try {
+      const result = await wordpressService.getStatus();
+      if (result.success) setWpStatus({ loading: false, connected: Boolean(result.connected), siteUrl: result.siteUrl });
+      else setWpStatus({ loading: false, connected: false });
+    } catch {
+      setWpStatus({ loading: false, connected: false });
+    }
+  }, []);
+
+  const loadMailchimp = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(INTEGRATION_STORAGE_KEY);
+      if (!raw) { setMailchimpConnected(false); return; }
+      const all = JSON.parse(raw) as any;
+      const cfg = all?.mailchimp;
+      const values = cfg?.values || {};
+      setMailchimpConnected(Boolean(cfg?.enabled) && Boolean(String(values.apiKey || '').trim()) && Boolean(String(values.serverPrefix || '').trim()));
+    } catch {
+      setMailchimpConnected(false);
+    }
+  }, [INTEGRATION_STORAGE_KEY]);
+
+  const loadLogs = useCallback(async () => {
+    setLoadingLogs(true);
+    try {
+      const data = await distributionService.getLogs();
+      setLogs(data);
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadEnabled();
+    void loadAccounts();
+    void loadWordPress();
+    void loadLogs();
+    loadMailchimp();
+  }, [loadEnabled, loadAccounts, loadWordPress, loadLogs, loadMailchimp]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      void loadEnabled();
+      void loadAccounts();
+      void loadWordPress();
+      loadMailchimp();
+    };
+    window.addEventListener('focus', onFocus);
+    const interval = window.setInterval(onFocus, 30_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(interval);
+    };
+  }, [loadEnabled, loadAccounts, loadWordPress, loadMailchimp]);
+
+  const enabled = enabledIds ?? new Set<string>();
+  const visiblePlatforms = useMemo(
+    () => PLATFORM_DEFS.filter((p) => enabledIds !== null && enabled.has(p.id)),
+    [enabledIds, enabled]
+  );
+
+  const accountsByPlatform = useMemo(() => {
+    const map: Record<string, ConnectedAccountRow[]> = {};
+    for (const a of accounts) {
+      const key = String(a.platform || '').toLowerCase();
+      if (!map[key]) map[key] = [];
+      map[key].push(a);
+    }
+    return map;
+  }, [accounts]);
+
+  const connectedPlatformIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of accounts) {
+      if (a.connected) set.add(String(a.platform || '').toLowerCase());
+    }
+    if (wpStatus.connected) set.add('wordpress');
+    if (mailchimpConnected) set.add('mailchimp');
+    return set;
+  }, [accounts, wpStatus.connected, mailchimpConnected]);
+
+  // Local settings for the Automation tab UI (stored in browser). This does not change publish logic.
+  const SETTINGS_KEY = 'posts-automation-settings';
+  const DEFAULT_TEMPLATES: Record<string, string> = {
+    facebook: '{title}\n\n{excerpt}\n\nRead more:\n{post_url}',
+    linkedin: '{title}\n\n{excerpt}\n\nRead more:\n{post_url}',
+    twitter: '{title}\n\n{post_url}',
+    instagram: '{title}\n\n{excerpt}\n\n{post_url}',
+    threads: '{title}\n\n{post_url}',
+    wordpress: '{title}\n\n{excerpt}\n\nRead more:\n{post_url}',
+    mailchimp: 'Subject: {title}\n\n{excerpt}\n\nRead more:\n{post_url}',
+  };
+
+  const loadSettings = () => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      return raw ? (JSON.parse(raw) as any) : {};
+    } catch { return {}; }
+  };
+  const saveSettings = (next: any) => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+
+  const [facebookTarget, setFacebookTarget] = useState<'page' | 'group'>(() => (loadSettings().facebookTarget === 'group' ? 'group' : 'page'));
+  const [platformEnabledMap, setPlatformEnabledMap] = useState<Record<string, boolean>>(() => {
+    const s = loadSettings();
+    return s.platformEnabledMap && typeof s.platformEnabledMap === 'object' ? s.platformEnabledMap : {};
+  });
+  const [selectedAccountMap, setSelectedAccountMap] = useState<Record<string, string>>(() => {
+    const s = loadSettings();
+    return s.selectedAccountMap && typeof s.selectedAccountMap === 'object' ? s.selectedAccountMap : {};
+  });
+  const [rules, setRules] = useState<{ whenPublished: boolean; whenScheduled: boolean; onlySelectedCategories: boolean }>(() => {
+    const s = loadSettings().rules || {};
+    return {
+      whenPublished: Boolean(s.whenPublished ?? true),
+      whenScheduled: Boolean(s.whenScheduled ?? false),
+      onlySelectedCategories: Boolean(s.onlySelectedCategories ?? false),
+    };
+  });
+  const [templates, setTemplates] = useState<Record<string, string>>(() => {
+    const s = loadSettings().templates || {};
+    return { ...DEFAULT_TEMPLATES, ...(typeof s === 'object' ? s : {}) };
+  });
+
+  useEffect(() => {
+    const current = loadSettings();
+    saveSettings({ ...current, facebookTarget });
+  }, [facebookTarget]);
+  useEffect(() => {
+    const current = loadSettings();
+    saveSettings({ ...current, platformEnabledMap });
+  }, [platformEnabledMap]);
+  useEffect(() => {
+    const current = loadSettings();
+    saveSettings({ ...current, selectedAccountMap });
+  }, [selectedAccountMap]);
+  useEffect(() => {
+    const current = loadSettings();
+    saveSettings({ ...current, rules });
+  }, [rules]);
+  useEffect(() => {
+    const current = loadSettings();
+    saveSettings({ ...current, templates });
+  }, [templates]);
+
+  const beginOAuthConnect = useCallback(async (platformId: string) => {
+    setError(null);
+    setConnecting(platformId);
+    try {
+      const state =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? (crypto as any).randomUUID()
+          : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+      const res = await fetch(`${API_BASE_URL}/api/oauth/state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ state, platform: platformId, returnTo: '/posts?view=automation' }),
+      });
+      if (!res.ok) throw new Error('Failed to start connection. Please try again.');
+
+      const urlRes = await fetch(`${API_BASE_URL}/api/oauth/${platformId}/authorize-url?state=${encodeURIComponent(state)}`, {
+        headers: authHeaders(),
+      });
+      const data = urlRes.ok
+        ? await urlRes.json() as { success: boolean; url?: string; error?: string }
+        : { success: false, error: 'Failed to build authorize URL' };
+      if (!data.success || !data.url) throw new Error(data.error || 'Failed to build authorize URL');
+      window.location.href = data.url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Connection failed');
+      setConnecting(null);
+    }
+  }, [API_BASE_URL]);
+
+  const disconnect = useCallback(async (platformId: string) => {
+    if (!confirm('Disconnect this account?')) return;
+    setError(null);
+    try {
+      if (platformId === 'wordpress') {
+        const res = await wordpressService.disconnect();
+        if (!res.success) throw new Error(res.error || 'Failed to disconnect WordPress');
+        await loadWordPress();
+        return;
+      }
+      if (platformId === 'mailchimp') {
+        try {
+          const raw = localStorage.getItem(INTEGRATION_STORAGE_KEY);
+          const next = raw ? JSON.parse(raw) as any : {};
+          if (next.mailchimp) next.mailchimp.enabled = false;
+          localStorage.setItem(INTEGRATION_STORAGE_KEY, JSON.stringify(next));
+        } catch { /* ignore */ }
+        setMailchimpConnected(false);
+        return;
+      }
+      const res = await fetch(`${API_BASE_URL}/api/accounts/${encodeURIComponent(platformId)}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const data = res.ok ? await res.json() as { success: boolean; error?: string } : { success: false, error: 'Failed to disconnect' };
+      if (!data.success) throw new Error(data.error || 'Failed to disconnect');
+      await loadAccounts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to disconnect');
+    }
+  }, [API_BASE_URL, loadAccounts, loadWordPress]);
+
+  const handleRetry = useCallback(async (logId: string) => {
+    setRetrying(logId);
+    try {
+      await distributionService.retry(logId);
+      await loadLogs();
+    } catch {
+      // ignore
+    } finally {
+      setRetrying(null);
+    }
+  }, [loadLogs]);
+
+  const getPrimaryAccountLabel = (platformId: string): string | null => {
+    if (platformId === 'wordpress') return wpStatus.connected ? (wpStatus.siteUrl || 'WordPress site') : null;
+    if (platformId === 'mailchimp') return mailchimpConnected ? 'Mailchimp account' : null;
+    const list = accountsByPlatform[platformId] || [];
+    const connected = list.find((a) => a.connected);
+    if (!connected) return null;
+    return connected.handle ? String(connected.handle) : `${platformId} account`;
+  };
+
+  const Toggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
+    <button type="button" onClick={onClick}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${on ? 'bg-emerald-500' : 'bg-slate-200'}`}>
+      <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${on ? 'translate-x-5' : 'translate-x-1'}`} />
+    </button>
+  );
+
+  const stats = useMemo(() => ({
+    total: logs.length,
+    published: logs.filter((l) => l.status === 'published').length,
+    failed: logs.filter((l) => l.status === 'failed').length,
+    pending: logs.filter((l) => l.status === 'pending').length,
+  }), [logs]);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-black tracking-tight text-slate-950">Automation</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Configure automatic publishing to connected platforms. All extra features live inside the Automation tab.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 w-fit">
+        {[
+          { id: 'platforms', label: 'Social Platforms' },
+          { id: 'accounts', label: 'Connected Accounts' },
+          { id: 'rules', label: 'Auto Posting Rules' },
+          { id: 'logs', label: 'Activity Logs' },
+        ].map((t) => (
+          <button key={t.id} type="button" onClick={() => setSubTab(t.id as AutomationSubTab)}
+            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-colors ${
+              subTab === t.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-50'
+            }`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <div className="min-w-0">{error}</div>
+        </div>
+      )}
+
+      {subTab === 'platforms' && (
+        <div className="space-y-4">
+          {(enabledIds === null || loadingEnabled) && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 flex items-center gap-2">
+              <Loader2 size={16} className="animate-spin text-slate-300" /> Loading available platforms...
+            </div>
+          )}
+
+          {enabledIds !== null && visiblePlatforms.length === 0 && (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center bg-white">
+              <Zap size={36} className="mx-auto mb-3 text-slate-200" />
+              <h3 className="text-base font-bold text-slate-700">No platforms enabled by admin</h3>
+              <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
+                Enable social tools in the Admin dashboard to make them appear here.
+              </p>
+            </div>
+          )}
+
+          {enabledIds !== null && visiblePlatforms.map((p) => {
+            const isOn = Boolean(platformEnabledMap[p.id]);
+            const primary = getPrimaryAccountLabel(p.id);
+            const isConnected = connectedPlatformIds.has(p.id);
+            const list = accountsByPlatform[p.id] || [];
+
+            const dropdownOptions =
+              p.id === 'wordpress'
+                ? (wpStatus.connected ? [{ id: 'wp', name: wpStatus.siteUrl || 'WordPress site' }] : [])
+                : p.id === 'mailchimp'
+                  ? (mailchimpConnected ? [{ id: 'mc', name: 'Mailchimp account' }] : [])
+                  : list.filter((a) => a.connected).map((a) => ({ id: a.id, name: a.handle || `${p.label} account` }));
+
+            const selected = selectedAccountMap[p.id] || '';
+
+            return (
+              <div key={p.id} className="rounded-3xl border border-slate-200 bg-white p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="h-11 w-11 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center text-base shrink-0">
+                      {PLATFORM_ICONS[p.id] ?? '⚙️'}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-black text-slate-900">{p.label}</h3>
+                        {isConnected && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">Connected</span>}
+                        {!isConnected && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">Not connected</span>}
+                      </div>
+                      <p className="mt-0.5 text-sm text-slate-500">{p.description}</p>
+                      {p.id === 'facebook' && (
+                        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                          <span className="font-semibold text-slate-600">Target:</span>
+                          <select value={facebookTarget} onChange={(e) => setFacebookTarget(e.target.value === 'group' ? 'group' : 'page')}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-slate-400">
+                            <option value="page">Page</option>
+                            <option value="group">Group</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <Toggle on={isOn} onClick={() => setPlatformEnabledMap((prev) => ({ ...prev, [p.id]: !prev[p.id] }))} />
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-[1fr_320px]">
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        value={selected}
+                        onChange={(e) => setSelectedAccountMap((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-slate-400"
+                        disabled={dropdownOptions.length === 0}
+                      >
+                        <option value="">{dropdownOptions.length ? 'Select account...' : 'No accounts connected'}</option>
+                        {dropdownOptions.map((o) => (
+                          <option key={o.id} value={o.id}>{o.name}</option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (p.kind === 'oauth') void beginOAuthConnect(p.id);
+                          else goIntegrations();
+                        }}
+                        disabled={connecting === p.id}
+                        className="flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50"
+                      >
+                        {connecting === p.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                        Add New
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-slate-400">
+                      {p.kind === 'oauth'
+                        ? 'Click Add New to connect via OAuth and return here automatically.'
+                        : 'This platform is configured from Integrations.'}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs font-black text-slate-800">Preview</div>
+                    {!primary && (
+                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-400">
+                        No connected account yet.
+                      </div>
+                    )}
+                    {primary && (
+                      <div className="mt-3 flex items-center gap-3">
+                        <div className="h-11 w-11 rounded-full border border-slate-200 bg-white flex items-center justify-center text-base shrink-0">
+                          {PLATFORM_ICONS[p.id] ?? '⚙️'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-black text-slate-900">{primary}</div>
+                          <div className="mt-0.5 text-xs text-slate-500">Automation toggle, edit, or remove.</div>
+                        </div>
+                        <Toggle on={isOn} onClick={() => setPlatformEnabledMap((prev) => ({ ...prev, [p.id]: !prev[p.id] }))} />
+                        <button type="button" disabled title="Edit (coming soon)"
+                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 disabled:opacity-60">
+                          <Pencil size={15} />
+                        </button>
+                        <button type="button" onClick={() => void disconnect(p.id)} title="Remove"
+                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-red-50 hover:text-red-600">
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {subTab === 'accounts' && (
+        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-black text-slate-900">Connected Accounts</h3>
+              <p className="mt-1 text-sm text-slate-500">Manage connected profiles and reconnect when needed.</p>
+            </div>
+            <button type="button" onClick={() => { void loadAccounts(); void loadWordPress(); loadMailchimp(); }}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
+              <RefreshCw size={15} /> Refresh
+            </button>
+          </div>
+
+          {(loadingAccounts || wpStatus.loading) && (
+            <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
+              <Loader2 size={16} className="animate-spin text-slate-300" /> Loading connections...
+            </div>
+          )}
+
+          <div className="mt-4 space-y-3">
+            {visiblePlatforms.map((p) => {
+              const platformId = p.id;
+              const primary = getPrimaryAccountLabel(platformId);
+              const isConnected = connectedPlatformIds.has(platformId);
+
+              let statusLabel = isConnected ? 'Connected' : 'Not connected';
+              let statusClass = isConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
+
+              if (platformId !== 'wordpress' && platformId !== 'mailchimp') {
+                const acc = (accountsByPlatform[platformId] || []).find((a) => a.connected);
+                if (acc?.expiresAt) {
+                  const expired = new Date(acc.expiresAt).getTime() < Date.now();
+                  if (expired) {
+                    statusLabel = 'Token expired';
+                    statusClass = 'bg-orange-100 text-orange-700';
+                  }
+                }
+              }
+
+              return (
+                <div key={platformId} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="h-10 w-10 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center text-base shrink-0">
+                        {PLATFORM_ICONS[platformId] ?? '⚙️'}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-black text-slate-900">{p.label}</div>
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${statusClass}`}>{statusLabel}</span>
+                        </div>
+                        <div className="mt-0.5 text-sm text-slate-500 truncate">{primary || 'No account connected'}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {p.kind === 'oauth' ? (
+                        <button type="button" onClick={() => void beginOAuthConnect(platformId)} disabled={connecting === platformId}
+                          className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
+                          {connecting === platformId ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                          {isConnected ? 'Reconnect' : 'Connect'}
+                        </button>
+                      ) : (
+                        <button type="button" onClick={goIntegrations}
+                          className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
+                          <ExternalLink size={16} /> Configure
+                        </button>
+                      )}
+                      {isConnected && (
+                        <button type="button" onClick={() => void disconnect(platformId)}
+                          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-red-50 hover:text-red-600">
+                          <Trash2 size={16} /> Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {subTab === 'rules' && (
+        <div className="space-y-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-black text-slate-900">Auto Posting Rules</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Configure automatic publishing behavior. Only connected platforms will show in templates below.
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {[
+                { id: 'whenPublished', label: 'Auto publish when post is published' },
+                { id: 'whenScheduled', label: 'Auto publish when post is scheduled' },
+                { id: 'onlySelectedCategories', label: 'Auto publish only for selected categories' },
+              ].map((r) => (
+                <label key={r.id} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(rules as any)[r.id]}
+                    onChange={(e) => setRules((prev) => ({ ...prev, [r.id]: e.target.checked }))}
+                    className="mt-1 h-4 w-4 rounded border-slate-300"
+                  />
+                  <span className="text-sm font-semibold text-slate-700">{r.label}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-xs font-black text-slate-800">Variables</div>
+              <p className="mt-1 text-sm text-slate-500">Use variables in templates:</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {['{title}', '{excerpt}', '{content}', '{post_url}', '{featured_image}'].map((v) => (
+                  <span key={v} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700">{v}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {Array.from(connectedPlatformIds)
+            .filter((id) => enabled.has(id))
+            .map((id) => (
+              <div key={id} className="rounded-3xl border border-slate-200 bg-white p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="h-10 w-10 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center text-base shrink-0">
+                      {PLATFORM_ICONS[id] ?? '⚙️'}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-black text-slate-900">{id === 'twitter' ? 'X' : id.charAt(0).toUpperCase() + id.slice(1)} format</div>
+                      <div className="mt-0.5 text-sm text-slate-500">Template used when automation runs.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setTemplates((prev) => ({ ...prev, [id]: DEFAULT_TEMPLATES[id] || '' }))}
+                    className="text-xs font-bold text-slate-700 hover:text-slate-950">
+                    Reset to default
+                  </button>
+                </div>
+
+                <textarea
+                  value={templates[id] ?? ''}
+                  onChange={(e) => setTemplates((prev) => ({ ...prev, [id]: e.target.value }))}
+                  rows={6}
+                  className="mt-4 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-slate-400"
+                />
+              </div>
+            ))}
+        </div>
+      )}
+
+      {subTab === 'logs' && (
+        <div className="space-y-6">
+          {logs.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { label: 'Total', value: stats.total, color: 'text-slate-900' },
+                { label: 'Published', value: stats.published, color: 'text-emerald-600' },
+                { label: 'Failed', value: stats.failed, color: 'text-red-600' },
+                { label: 'Pending', value: stats.pending, color: 'text-yellow-600' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className={`text-2xl font-black ${color}`}>{value}</div>
+                  <div className="mt-0.5 text-xs font-semibold text-slate-500">{label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {logs.length === 0 && !loadingLogs && (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center bg-white">
+              <Zap size={36} className="mx-auto mb-3 text-slate-200" />
+              <h3 className="text-base font-bold text-slate-700">No automation activity yet</h3>
+              <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
+                Publish posts and view automation activity here. Connect integrations first if needed.
+              </p>
+            </div>
+          )}
+
+          {logs.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+              <div className="hidden sm:grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-4 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 bg-slate-50">
+                <span>Post</span>
+                <span>Platform</span>
+                <span>Status</span>
+                <span>Date</span>
+                <span>Action</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {loadingLogs
+                  ? <div className="flex items-center justify-center py-12"><Loader2 className="animate-spin text-slate-300" size={24} /></div>
+                  : logs.map((log) => (
+                    <div key={log.id} className="flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto_auto_auto] items-start sm:items-center gap-2 sm:gap-4 px-5 py-4 hover:bg-slate-50">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-900">{log.post_title || log.post_id}</div>
+                        {log.error_message && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <AlertCircle size={11} className="text-red-400 shrink-0" />
+                            <span className="truncate text-xs text-red-500">{log.error_message}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">{PLATFORM_ICONS[log.platform] ?? '⚙️'}</span>
+                        <span className="text-xs font-medium text-slate-600 capitalize">{log.platform}</span>
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${DIST_STATUS_BADGE[log.status] ?? 'bg-slate-100 text-slate-600'}`}>
+                        {log.status}
+                      </span>
+                      <span className="text-xs text-slate-400 whitespace-nowrap">{fmtDateTime(log.created_at)}</span>
+                      <div className="flex items-center gap-1">
+                        {log.status === 'failed' && (
+                          <button type="button" onClick={() => void handleRetry(log.id)} disabled={retrying === log.id}
+                            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">
+                            {retrying === log.id ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                            Retry
+                          </button>
+                        )}
+                        {log.status === 'published' && <CheckCircle2 size={16} className="text-emerald-500" />}
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface PostsListProps {
   onEdit: (id: string) => void;
   onNew: () => void;
@@ -1621,6 +2345,18 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [tags, setTags] = useState<BlogTag[]>([]);
 
+  // Support OAuth returnTo flows like `/posts?view=automation`.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const desired = params.get('view');
+    if (desired === 'automation') setView('automation');
+    if (params.has('view')) {
+      params.delete('view');
+      const qs = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+    }
+  }, []);
+
   const loadMeta = useCallback(async () => {
     const [cats, tgs] = await Promise.all([
       blogService.listCategories(),
@@ -1702,7 +2438,7 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
         <TagsTab tags={tags} onChange={() => void loadMeta()} />
       )}
       {view === 'automation' && (
-        <AutomationTab />
+        <AutomationTabV2 />
       )}
     </div>
   );
