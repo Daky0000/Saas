@@ -1462,7 +1462,7 @@ function AutomationTab() {
 // New Automation UI (sub-tabs) - extends Automation only. Does not change post editor/publish logic.
 function AutomationTabV2() {
   type AutomationSubTab = 'platforms' | 'accounts' | 'rules' | 'logs';
-  const [subTab, setSubTab] = useState<AutomationSubTab>('platforms');
+  const [subTab, setSubTab] = useState<AutomationSubTab>('accounts');
   // Keep legacy component referenced to satisfy TS noUnusedLocals while migrating UI safely.
   void AutomationTab;
 
@@ -1622,6 +1622,11 @@ function AutomationTabV2() {
     return set;
   }, [accounts, wpStatus.connected, mailchimpConnected]);
 
+  const connectedPlatforms = useMemo(
+    () => visiblePlatforms.filter((p) => connectedPlatformIds.has(p.id)),
+    [visiblePlatforms, connectedPlatformIds],
+  );
+
   // Local settings for the Automation tab UI (stored in browser). This does not change publish logic.
   const SETTINGS_KEY = 'posts-automation-settings';
   const DEFAULT_TEMPLATES: Record<string, string> = {
@@ -1687,6 +1692,21 @@ function AutomationTabV2() {
     saveSettings({ ...current, templates });
   }, [templates]);
 
+  const base64UrlFromBytes = (bytes: Uint8Array) => {
+    let str = '';
+    for (const b of bytes) str += String.fromCharCode(b);
+    const base64 = btoa(str);
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  };
+
+  const createPkcePair = async () => {
+    const verifierBytes = crypto.getRandomValues(new Uint8Array(32));
+    const codeVerifier = base64UrlFromBytes(verifierBytes);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+    const codeChallenge = base64UrlFromBytes(new Uint8Array(digest));
+    return { codeVerifier, codeChallenge };
+  };
+
   const beginOAuthConnect = useCallback(async (platformId: string) => {
     setError(null);
     setConnecting(platformId);
@@ -1695,15 +1715,27 @@ function AutomationTabV2() {
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? (crypto as any).randomUUID()
           : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const pkce = platformId === 'twitter' ? await createPkcePair() : null;
 
       const res = await fetch(`${API_BASE_URL}/api/oauth/state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ state, platform: platformId, returnTo: '/posts?view=automation' }),
+        body: JSON.stringify({
+          state,
+          platform: platformId,
+          returnTo: '/posts?view=automation',
+          ...(pkce ? { codeVerifier: pkce.codeVerifier } : {}),
+        }),
       });
       if (!res.ok) throw new Error('Failed to start connection. Please try again.');
 
-      const urlRes = await fetch(`${API_BASE_URL}/api/oauth/${platformId}/authorize-url?state=${encodeURIComponent(state)}`, {
+      const authorizeUrl = new URL(`${API_BASE_URL}/api/oauth/${platformId}/authorize-url`);
+      authorizeUrl.searchParams.set('state', state);
+      if (pkce) {
+        authorizeUrl.searchParams.set('code_challenge', pkce.codeChallenge);
+        authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+      }
+      const urlRes = await fetch(authorizeUrl.toString(), {
         headers: authHeaders(),
       });
       const text = await urlRes.text();
@@ -1800,7 +1832,6 @@ function AutomationTabV2() {
 
       <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 w-fit">
         {[
-          { id: 'platforms', label: 'Social Platforms' },
           { id: 'accounts', label: 'Connected Accounts' },
           { id: 'rules', label: 'Auto Posting Rules' },
           { id: 'logs', label: 'Activity Logs' },
@@ -1960,12 +1991,18 @@ function AutomationTabV2() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-sm font-black text-slate-900">Connected Accounts</h3>
-              <p className="mt-1 text-sm text-slate-500">Manage connected profiles and reconnect when needed.</p>
+              <p className="mt-1 text-sm text-slate-500">Only tools you’ve connected will appear here.</p>
             </div>
-            <button type="button" onClick={() => { void loadAccounts(); void loadWordPress(); loadMailchimp(); }}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
-              <RefreshCw size={15} /> Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={goIntegrations}
+                className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
+                <ExternalLink size={15} /> Integrations
+              </button>
+              <button type="button" onClick={() => { void loadAccounts(); void loadWordPress(); loadMailchimp(); }}
+                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
+                <RefreshCw size={15} /> Refresh
+              </button>
+            </div>
           </div>
 
           {(loadingAccounts || wpStatus.loading) && (
@@ -1975,10 +2012,24 @@ function AutomationTabV2() {
           )}
 
           <div className="mt-4 space-y-3">
-            {visiblePlatforms.map((p) => {
+            {connectedPlatforms.length === 0 && !loadingAccounts && !wpStatus.loading && (
+              <div className="rounded-2xl border-2 border-dashed border-slate-200 p-10 text-center bg-white">
+                <Zap size={36} className="mx-auto mb-3 text-slate-200" />
+                <h3 className="text-base font-bold text-slate-700">No connected tools yet</h3>
+                <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
+                  Connect your tools from the Integrations page, then come back here to manage them.
+                </p>
+                <button type="button" onClick={goIntegrations}
+                  className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
+                  <ExternalLink size={16} /> Go to Integrations
+                </button>
+              </div>
+            )}
+
+            {connectedPlatforms.map((p) => {
               const platformId = p.id;
               const primary = getPrimaryAccountLabel(platformId);
-              const isConnected = connectedPlatformIds.has(platformId);
+              const isConnected = true;
 
               let statusLabel = isConnected ? 'Connected' : 'Not connected';
               let statusClass = isConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
@@ -2015,7 +2066,7 @@ function AutomationTabV2() {
                         <button type="button" onClick={() => void beginOAuthConnect(platformId)} disabled={connecting === platformId}
                           className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
                           {connecting === platformId ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                          {isConnected ? 'Reconnect' : 'Connect'}
+                          Reconnect
                         </button>
                       ) : (
                         <button type="button" onClick={goIntegrations}
@@ -2023,12 +2074,10 @@ function AutomationTabV2() {
                           <ExternalLink size={16} /> Configure
                         </button>
                       )}
-                      {isConnected && (
-                        <button type="button" onClick={() => void disconnect(platformId)}
-                          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-red-50 hover:text-red-600">
-                          <Trash2 size={16} /> Remove
-                        </button>
-                      )}
+                      <button type="button" onClick={() => void disconnect(platformId)}
+                        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-red-50 hover:text-red-600">
+                        <Trash2 size={16} /> Remove
+                      </button>
                     </div>
                   </div>
                 </div>
