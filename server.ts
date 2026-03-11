@@ -4758,6 +4758,36 @@ app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) =>
 
 // ── Distribution / Automation ────────────────────────────────────────────────
 
+function normalizePlatformId(value: string): string {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === 'twitter / x' || raw === 'twitter/x' || raw === 'x') return 'twitter';
+  if (raw === 'twitter') return 'twitter';
+  if (raw === 'linkedin') return 'linkedin';
+  if (raw === 'facebook') return 'facebook';
+  if (raw === 'instagram') return 'instagram';
+  if (raw === 'tiktok') return 'tiktok';
+  if (raw === 'threads') return 'threads';
+  if (raw === 'wordpress') return 'wordpress';
+  return raw;
+}
+
+function toHashtags(tags: unknown): string {
+  const list = Array.isArray(tags) ? tags : [];
+  const tagsText = list
+    .map((t) => String(t || '').trim())
+    .filter(Boolean)
+    .map((t) => `#${t.replace(/\\s+/g, '').replace(/^#/, '')}`);
+  return tagsText.join(' ');
+}
+
+function buildPostUrl(post: Record<string, any>): string {
+  const base = (process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com').replace(/\\/$/, '');
+  const slug = String(post.slug || '').trim();
+  if (!slug) return base;
+  return `${base}/blog/${encodeURIComponent(slug)}`;
+}
+
 // Helper: publish a blog post to a single platform, return result
 async function publishToplatform(
   userId: string,
@@ -4794,23 +4824,38 @@ async function publishToplatform(
 
     // OAuth platforms (LinkedIn, Twitter/X, Facebook, Instagram, etc.)
     const socialRows = await pool!.query(
-      'SELECT access_token, token_data FROM social_accounts WHERE user_id=$1 AND platform=$2 AND connected=true',
-      [userId, platform]
+      'SELECT platform, access_token, token_data FROM social_accounts WHERE user_id=$1 AND connected=true',
+      [userId]
     );
-    if (!socialRows.rows.length) throw new Error(`${platform} is not connected`);
-    const { access_token, token_data } = socialRows.rows[0];
+    const targetId = normalizePlatformId(platform);
+    const match = socialRows.rows.find((r: any) => normalizePlatformId(r.platform) === targetId);
+    if (!match) throw new Error(`${platform} is not connected`);
+    const { access_token, token_data } = match as any;
     if (!access_token) throw new Error(`${platform} access token missing – please reconnect`);
 
     const PLATFORM_NAMES: Record<string, string> = {
       linkedin: 'LinkedIn', twitter: 'Twitter / X', facebook: 'Facebook',
       instagram: 'Instagram', threads: 'Threads', tiktok: 'TikTok',
     };
-    const platformName = PLATFORM_NAMES[platform] || platform;
-    const summary = post.excerpt || post.title || '';
-    const maxLen = platform === 'twitter' ? 260 : 3000;
-    const text = `${post.title}\n\n${summary}`.slice(0, maxLen);
+    const platformId = normalizePlatformId(platform);
+    const platformName = PLATFORM_NAMES[platformId] || platformId;
 
-    if (platform === 'linkedin') {
+    const caption = String(post.excerpt || '').trim() || String(post.title || '').trim();
+    const hashtags = toHashtags((post as any).tag_names);
+    const postUrl = buildPostUrl(post);
+    const featuredImage = String(post.featured_image || '').trim();
+
+    const maxLen = platformId === 'twitter' ? 260 : 3000;
+    const textParts = [
+      String(post.title || '').trim(),
+      caption,
+      hashtags,
+      postUrl,
+      featuredImage ? featuredImage : '',
+    ].filter(Boolean);
+    const text = textParts.join('\n\n').slice(0, maxLen);
+
+    if (platformId === 'linkedin') {
       const authorUrn = token_data?.sub ? `urn:li:person:${token_data.sub}` : null;
       if (!authorUrn) throw new Error('LinkedIn profile URN not available – please reconnect');
       const body = {
@@ -4837,7 +4882,7 @@ async function publishToplatform(
       return { status: 'published', platformPostId: data?.id };
     }
 
-    if (platform === 'twitter') {
+    if (platformId === 'twitter') {
       const resp = await fetch('https://api.twitter.com/2/tweets', {
         method: 'POST',
         headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
@@ -4877,8 +4922,12 @@ app.get('/api/distribution/connected', async (req: Request, res: Response) => {
       instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn',
       twitter: 'Twitter / X', tiktok: 'TikTok', threads: 'Threads',
     };
+    const seen = new Set<string>();
     for (const row of socialRows.rows) {
-      if (SOCIAL_NAMES[row.platform]) platforms.push({ id: row.platform, name: SOCIAL_NAMES[row.platform] });
+      const id = normalizePlatformId(row.platform);
+      if (!id || !SOCIAL_NAMES[id] || seen.has(id)) continue;
+      seen.add(id);
+      platforms.push({ id, name: SOCIAL_NAMES[id] });
     }
 
     return res.json({ success: true, platforms });
@@ -4898,19 +4947,30 @@ app.post('/api/distribution/publish', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'postId and platforms required' });
     }
 
-    const postRows = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [postId, auth.userId]);
+    const postRows = await pool!.query(
+      `SELECT p.*,
+        ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
+       FROM blog_posts p
+       WHERE p.id=$1 AND p.user_id=$2`,
+      [postId, auth.userId]
+    );
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
     const post = postRows.rows[0];
 
     const results: { platform: string; status: string; error?: string; platformPostId?: string }[] = [];
     for (const platform of platforms) {
-      const result = await publishToplatform(auth.userId, post, platform);
+      const platformId = normalizePlatformId(platform);
+      if (!platformId) {
+        results.push({ platform: String(platform), status: 'failed', error: 'Invalid platform' });
+        continue;
+      }
+      const result = await publishToplatform(auth.userId, post, platformId);
       const logId = randomUUID();
       await pool!.query(
         'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [logId, postId, auth.userId, platform, result.status, result.platformPostId || null, result.error || null]
+        [logId, postId, auth.userId, platformId, result.status, result.platformPostId || null, result.error || null]
       );
-      results.push({ platform, ...result });
+      results.push({ platform: platformId, ...result });
     }
 
     return res.json({ success: true, results });
@@ -4961,9 +5021,16 @@ app.post('/api/automation/retry/:logId', async (req: Request, res: Response) => 
     const logRows = await pool!.query('SELECT * FROM publishing_logs WHERE id=$1 AND user_id=$2', [logId, auth.userId]);
     if (!logRows.rows.length) return res.status(404).json({ success: false, error: 'Log not found' });
     const log = logRows.rows[0];
-    const postRows = await pool!.query('SELECT * FROM blog_posts WHERE id=$1', [log.post_id]);
+    const postRows = await pool!.query(
+      `SELECT p.*,
+        ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
+       FROM blog_posts p
+       WHERE p.id=$1 AND p.user_id=$2`,
+      [log.post_id, auth.userId]
+    );
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
-    const result = await publishToplatform(auth.userId, postRows.rows[0], log.platform);
+    const platformId = normalizePlatformId(log.platform);
+    const result = await publishToplatform(auth.userId, postRows.rows[0], platformId);
     await pool!.query(
       'UPDATE publishing_logs SET status=$1, platform_post_id=$2, error_message=$3 WHERE id=$4',
       [result.status, result.platformPostId || null, result.error || null, logId]
