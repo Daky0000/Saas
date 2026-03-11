@@ -31,6 +31,7 @@ import TermsOfService from './pages/TermsOfService';
 import Landing from './pages/Landing';
 import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
+import DataDeletion from './pages/DataDeletion';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { useOAuthCallback } from './hooks/useOAuth';
@@ -258,7 +259,7 @@ function App() {
     }
 
     if (!loggedIn) {
-      const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing'];
+      const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
       if (!publicPaths.includes(pathname)) {
         navigatePath('/login', true);
       }
@@ -293,7 +294,7 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing'];
+        const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
         if (!publicPaths.includes(pathname)) {
           navigatePath('/login', true);
           setCurrentPathname('/login');
@@ -341,6 +342,7 @@ function App() {
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
   if (currentPathname === '/tools') return <Tools onLoginClick={goToLogin} />;
+  if (currentPathname === '/data-deletion') return <DataDeletion />;
   if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={goToLogin} />;
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={goToLogin} />;

@@ -6,7 +6,15 @@ import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Pool } from 'pg';
-import { randomUUID, randomBytes, createCipheriv, createDecipheriv, scryptSync } from 'crypto';
+import {
+  randomUUID,
+  randomBytes,
+  createCipheriv,
+  createDecipheriv,
+  scryptSync,
+  createHmac,
+  timingSafeEqual,
+} from 'crypto';
 import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.js';
 
 dotenv.config();
@@ -40,6 +48,17 @@ let dbReady = false;
 function hasDatabase() {
   return Boolean(pool && dbReady);
 }
+
+type DataDeletionStatus = 'received' | 'completed' | 'unknown';
+type DataDeletionRecord = {
+  code: string;
+  metaUserId: string | null;
+  status: DataDeletionStatus;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+const inMemoryDataDeletionRequests = new Map<string, DataDeletionRecord>();
 
 async function ensureDatabase() {
   if (!pool) {
@@ -106,6 +125,22 @@ async function ensureDatabase() {
       token_data JSONB DEFAULT '{}'::jsonb,
       UNIQUE (user_id, platform)
     );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS data_deletion_requests (
+      code TEXT PRIMARY KEY,
+      platform TEXT NOT NULL DEFAULT 'meta',
+      meta_user_id TEXT,
+      status TEXT NOT NULL DEFAULT 'received',
+      payload JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS data_deletion_requests_meta_user_id_idx
+    ON data_deletion_requests (meta_user_id);
   `);
 
   await pool.query(`
@@ -4902,6 +4937,190 @@ app.post('/api/automation/retry/:logId', async (req: Request, res: Response) => 
     return res.json({ success: true, result });
   } catch {
     return res.status(500).json({ success: false, error: 'Retry failed' });
+  }
+});
+
+// ═════════ Meta Data Deletion (Facebook requirement) ═════════
+
+const base64UrlToBuffer = (value: string): Buffer => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
+  return Buffer.from(padded, 'base64');
+};
+
+const parseSignedRequest = (signedRequest: string, appSecret: string): Record<string, unknown> => {
+  const parts = String(signedRequest || '').split('.');
+  if (parts.length !== 2) throw new Error('Invalid signed_request');
+  const [encodedSig, encodedPayload] = parts;
+
+  const sig = base64UrlToBuffer(encodedSig);
+  const expected = createHmac('sha256', appSecret).update(encodedPayload).digest();
+
+  if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) {
+    throw new Error('Invalid signed_request signature');
+  }
+
+  const payloadJson = base64UrlToBuffer(encodedPayload).toString('utf8');
+  const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+  return payload;
+};
+
+const getMetaAppSecretForDeletion = async (): Promise<string> => {
+  const envSecret =
+    (process.env.FACEBOOK_APP_SECRET || '').trim() ||
+    (process.env.META_APP_SECRET || '').trim();
+  if (envSecret) return envSecret;
+  const cfg = await getPlatformConfig('facebook').catch(() => ({} as any));
+  return String((cfg as any)?.appSecret || '').trim();
+};
+
+const createDeletionRequestRecord = async (
+  code: string,
+  metaUserId: string | null,
+  payload: Record<string, unknown>,
+): Promise<DataDeletionRecord> => {
+  const record: DataDeletionRecord = {
+    code,
+    metaUserId,
+    status: 'received',
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+  };
+
+  if (!hasDatabase()) {
+    inMemoryDataDeletionRequests.set(code, record);
+    return record;
+  }
+
+  await dbQuery(
+    `INSERT INTO data_deletion_requests (code, platform, meta_user_id, status, payload, created_at)
+     VALUES ($1, 'meta', $2, 'received', $3::jsonb, NOW())
+     ON CONFLICT (code) DO NOTHING`,
+    [code, metaUserId, JSON.stringify(payload ?? {})],
+  );
+
+  return record;
+};
+
+const updateDeletionRequestStatus = async (code: string, status: DataDeletionStatus) => {
+  if (!hasDatabase()) {
+    const existing = inMemoryDataDeletionRequests.get(code);
+    if (!existing) return;
+    const completedAt = status === 'completed' ? new Date().toISOString() : null;
+    inMemoryDataDeletionRequests.set(code, { ...existing, status, completedAt });
+    return;
+  }
+
+  if (status === 'completed') {
+    await dbQuery(
+      `UPDATE data_deletion_requests
+       SET status = $2, completed_at = NOW()
+       WHERE code = $1`,
+      [code, status],
+    );
+    return;
+  }
+
+  await dbQuery('UPDATE data_deletion_requests SET status = $2 WHERE code = $1', [code, status]);
+};
+
+const getDeletionRequest = async (code: string): Promise<DataDeletionRecord | null> => {
+  if (!code) return null;
+  if (!hasDatabase()) return inMemoryDataDeletionRequests.get(code) ?? null;
+  const result = await dbQuery(
+    `SELECT code, meta_user_id, status, created_at, completed_at
+     FROM data_deletion_requests
+     WHERE code = $1`,
+    [code],
+  );
+  const row = result.rows[0] as any;
+  if (!row) return null;
+  return {
+    code: String(row.code),
+    metaUserId: row.meta_user_id ? String(row.meta_user_id) : null,
+    status: (String(row.status || 'received') as DataDeletionStatus) || 'received',
+    createdAt: new Date(row.created_at).toISOString(),
+    completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+  };
+};
+
+const deleteBestEffortUserDataByMetaUserId = async (metaUserId: string): Promise<boolean> => {
+  if (!metaUserId || !hasDatabase()) return false;
+
+  let deleted = false;
+
+  // 1) If the user originally logged in via Facebook without email, we created a synthetic email.
+  const syntheticEmail = `fb_${metaUserId}@facebook.social`;
+  const userRows = await dbQuery('SELECT id FROM users WHERE email = $1', [syntheticEmail]);
+  if (userRows.rows.length > 0) {
+    const userId = String((userRows.rows[0] as any).id);
+    const delUser = await dbQuery('DELETE FROM users WHERE id = $1', [userId]);
+    deleted = deleted || delUser.rowCount > 0;
+  }
+
+  // 2) Also remove any connected accounts where token payload contains a matching user_id.
+  const delAccounts = await dbQuery(
+    `DELETE FROM social_accounts
+     WHERE token_data->>'user_id' = $1`,
+    [metaUserId],
+  );
+  deleted = deleted || delAccounts.rowCount > 0;
+
+  return deleted;
+};
+
+// POST /api/meta/data-deletion — Meta "Data Deletion Request URL"
+app.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
+  try {
+    const signedRequest = String((req.body as any)?.signed_request || '').trim();
+    if (!signedRequest) return res.status(400).json({ success: false, error: 'signed_request required' });
+
+    const appSecret = await getMetaAppSecretForDeletion();
+    if (!appSecret) return res.status(500).json({ success: false, error: 'Meta app secret not configured' });
+
+    const payload = parseSignedRequest(signedRequest, appSecret);
+    const metaUserId = typeof payload.user_id === 'string' ? payload.user_id : null;
+
+    const confirmationCode = randomUUID();
+    await createDeletionRequestRecord(confirmationCode, metaUserId, payload);
+
+    if (metaUserId) {
+      const deleted = await deleteBestEffortUserDataByMetaUserId(metaUserId).catch(() => false);
+      if (deleted) await updateDeletionRequestStatus(confirmationCode, 'completed');
+    }
+
+    const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+    const statusUrl = `${FRONTEND_URL.replace(/\\/$/, '')}/data-deletion?code=${encodeURIComponent(confirmationCode)}`;
+
+    // Meta expects: { url, confirmation_code }
+    return res.json({ url: statusUrl, confirmation_code: confirmationCode });
+  } catch (error) {
+    console.error('Meta data deletion error:', error);
+    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
+  }
+});
+
+// GET /api/meta/data-deletion/status?code=... — used by our public status page
+app.get('/api/meta/data-deletion/status', async (req: Request, res: Response) => {
+  try {
+    const code = String((req.query as any)?.code || '').trim();
+    if (!code) return res.status(400).json({ success: false, error: 'code required' });
+
+    const record = await getDeletionRequest(code);
+    if (!record) return res.status(404).json({ success: false, error: 'Not found' });
+
+    return res.json({
+      success: true,
+      data: {
+        code: record.code,
+        status: record.status,
+        createdAt: record.createdAt,
+        completedAt: record.completedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Meta deletion status error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to load status' });
   }
 });
 
