@@ -5,6 +5,7 @@ import {
   Heading1, Heading2, Heading3, Undo2, Redo2, Link,
   Loader2, Check, X, Save, Globe, Clock, Zap, Send, RefreshCw,
   AlertCircle, AlertTriangle, CheckCircle2, XCircle, ExternalLink,
+  ChevronDown,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -112,6 +113,28 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
 
   const allCategories = [...categories, ...localCategories];
   const allTags = [...tags, ...localTags];
+
+  const postUrl = useMemo(() => {
+    const rawBase = (profileWebsite || (typeof window !== 'undefined' ? window.location.origin : '')).trim();
+    const base = rawBase ? rawBase.replace(/\/$/, '') : '';
+    const cleanSlug = slug.trim();
+    if (!base) return cleanSlug ? `/blog/${encodeURIComponent(cleanSlug)}` : '/blog';
+    return cleanSlug ? `${base}/blog/${encodeURIComponent(cleanSlug)}` : `${base}/blog`;
+  }, [profileWebsite, slug]);
+
+  const hashtags = useMemo(() => {
+    const map = new Map(allTags.map((t) => [t.id, t.name] as const));
+    return selectedTagIds
+      .map((id) => map.get(id))
+      .filter(Boolean)
+      .map((name) => `#${String(name).trim().replace(/\s+/g, '').replace(/^#/, '')}`)
+      .join(' ');
+  }, [allTags, selectedTagIds]);
+
+  const caption = useMemo(() => {
+    const cap = excerpt.trim();
+    return cap || title.trim();
+  }, [excerpt, title]);
 
   // Lightweight copies for real-time SEO analysis (avoid heavy parsing during save).
   const [seoHtml, setSeoHtml] = useState('');
@@ -935,6 +958,23 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
                   {!savedPostId && selectedPlatforms.length > 0 && (
                     <p className="mt-2 text-xs text-slate-400">Save the post first to distribute.</p>
                   )}
+
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs font-black text-slate-700">Preview</div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Featured image, caption (excerpt), hashtags (tags), and post URL.
+                    </p>
+                    {featuredImage ? (
+                      <img src={featuredImage} alt="" className="mt-3 h-44 w-full rounded-xl object-cover border border-slate-200 bg-white" />
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white p-6 text-center text-xs text-slate-400">
+                        No featured image selected.
+                      </div>
+                    )}
+                    <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
+                      {[caption, hashtags, postUrl].filter(Boolean).join('\n\n')}
+                    </div>
+                  </div>
                 </>
             }
           </div>
@@ -1630,13 +1670,13 @@ function AutomationTabV2() {
   // Local settings for the Automation tab UI (stored in browser). This does not change publish logic.
   const SETTINGS_KEY = 'posts-automation-settings';
   const DEFAULT_TEMPLATES: Record<string, string> = {
-    facebook: '{title}\n\n{excerpt}\n\nRead more:\n{post_url}',
-    linkedin: '{title}\n\n{excerpt}\n\nRead more:\n{post_url}',
-    twitter: '{title}\n\n{post_url}',
-    instagram: '{title}\n\n{excerpt}\n\n{post_url}',
-    threads: '{title}\n\n{post_url}',
-    wordpress: '{title}\n\n{excerpt}\n\nRead more:\n{post_url}',
-    mailchimp: 'Subject: {title}\n\n{excerpt}\n\nRead more:\n{post_url}',
+    facebook: '{excerpt}\n\n{hashtags}\n\nRead more:\n{post_url}\n\n{featured_image}',
+    linkedin: '{excerpt}\n\n{hashtags}\n\nRead more:\n{post_url}\n\n{featured_image}',
+    twitter: '{excerpt}\n\n{hashtags}\n\n{post_url}\n\n{featured_image}',
+    instagram: '{excerpt}\n\n{hashtags}\n\n{post_url}\n\n{featured_image}',
+    threads: '{excerpt}\n\n{hashtags}\n\n{post_url}\n\n{featured_image}',
+    wordpress: '{title}\n\n{excerpt}\n\n{post_url}\n\n{featured_image}',
+    mailchimp: 'Subject: {title}\n\n{excerpt}\n\n{hashtags}\n\nRead more:\n{post_url}\n\n{featured_image}',
   };
 
   const loadSettings = () => {
@@ -1658,18 +1698,27 @@ function AutomationTabV2() {
     const s = loadSettings();
     return s.selectedAccountMap && typeof s.selectedAccountMap === 'object' ? s.selectedAccountMap : {};
   });
-  const [rules, setRules] = useState<{ whenPublished: boolean; whenScheduled: boolean; onlySelectedCategories: boolean }>(() => {
+  const [rules, setRules] = useState<{ whenPublished: boolean; whenScheduled: boolean; onlySelectedCategories: boolean; autoPostTo: string[] }>(() => {
     const s = loadSettings().rules || {};
     return {
       whenPublished: Boolean(s.whenPublished ?? true),
       whenScheduled: Boolean(s.whenScheduled ?? false),
       onlySelectedCategories: Boolean(s.onlySelectedCategories ?? false),
+      autoPostTo: Array.isArray(s.autoPostTo) ? s.autoPostTo.map((x: any) => String(x)).filter(Boolean) : [],
     };
   });
   const [templates, setTemplates] = useState<Record<string, string>>(() => {
     const s = loadSettings().templates || {};
     return { ...DEFAULT_TEMPLATES, ...(typeof s === 'object' ? s : {}) };
   });
+
+  useEffect(() => {
+    const allowed = new Set(connectedPlatforms.map((p) => p.id));
+    setRules((prev) => {
+      const nextAuto = prev.autoPostTo.filter((id) => allowed.has(id));
+      return nextAuto.length === prev.autoPostTo.length ? prev : { ...prev, autoPostTo: nextAuto };
+    });
+  }, [connectedPlatforms]);
 
   useEffect(() => {
     const current = loadSettings();
@@ -2114,10 +2163,43 @@ function AutomationTabV2() {
             </div>
 
             <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-xs font-black text-slate-800">Automatically post to</div>
+              <p className="mt-1 text-sm text-slate-500">
+                These platforms will be used when you select “Post to connected accounts” from a post.
+              </p>
+              {connectedPlatforms.length === 0 ? (
+                <div className="mt-3 text-sm text-slate-400">
+                  No connected accounts.{' '}
+                  <button type="button" onClick={goIntegrations} className="text-blue-600 hover:underline">Connect integrations</button>.
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {connectedPlatforms.map((p) => (
+                    <label key={p.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rules.autoPostTo.includes(p.id)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? Array.from(new Set([...rules.autoPostTo, p.id]))
+                            : rules.autoPostTo.filter((x) => x !== p.id);
+                          setRules((prev) => ({ ...prev, autoPostTo: next }));
+                        }}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                      <span className="text-base leading-none">{PLATFORM_ICONS[p.id] ?? '鈿欙笍'}</span>
+                      <span className="text-sm font-semibold text-slate-700">{p.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
               <div className="text-xs font-black text-slate-800">Variables</div>
               <p className="mt-1 text-sm text-slate-500">Use variables in templates:</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {['{title}', '{excerpt}', '{content}', '{post_url}', '{featured_image}'].map((v) => (
+                {['{title}', '{excerpt}', '{content}', '{hashtags}', '{post_url}', '{featured_image}'].map((v) => (
                   <span key={v} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700">{v}</span>
                 ))}
               </div>
@@ -2247,6 +2329,27 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
+  const SETTINGS_KEY = 'posts-automation-settings';
+  const getAutoPostTargets = (): string[] => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      const parsed = raw ? JSON.parse(raw) as any : {};
+      const ids = parsed?.rules?.autoPostTo;
+      return Array.isArray(ids) ? ids.map((x: any) => String(x)).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  useEffect(() => {
+    const onClick = () => setOpenMenu(null);
+    window.addEventListener('click', onClick);
+    return () => window.removeEventListener('click', onClick);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2271,6 +2374,29 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
     setPosts((p) => [copy, ...p]);
   };
 
+  const handleQuickPublish = async (postId: string) => {
+    setPublishError(null);
+    const targets = getAutoPostTargets();
+    if (targets.length === 0) {
+      setPublishError('No auto-post targets selected. Configure “Automatically post to” in Posts → Automation.');
+      window.history.pushState({}, '', '/posts?view=automation');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
+    setPublishingPostId(postId);
+    try {
+      const results = await distributionService.publish(postId, targets);
+      const failed = results.filter((r) => r.status === 'failed');
+      if (failed.length > 0) {
+        setPublishError(`Some platforms failed: ${failed.map((f) => f.platform).join(', ')}`);
+      }
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : 'Publishing failed');
+    } finally {
+      setPublishingPostId(null);
+    }
+  };
+
   const handleBulkDelete = async () => {
     if (!confirm(`Delete ${selected.size} post(s)?`)) return;
     await Promise.all([...selected].map((id) => blogService.deletePost(id)));
@@ -2288,6 +2414,12 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
 
   return (
     <div className="space-y-5">
+      {publishError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <div className="min-w-0">{publishError}</div>
+        </div>
+      )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2370,6 +2502,34 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
                     <span className="hidden lg:block text-xs text-slate-400">{fmtDate(post.published_at || post.updated_at)}</span>
 
                     <div className="flex items-center gap-1">
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setOpenMenu((prev) => (prev === post.id ? null : post.id)); }}
+                          title="Publish options"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        >
+                          {publishingPostId === post.id ? <Loader2 size={14} className="animate-spin" /> : <ChevronDown size={14} />}
+                        </button>
+                        {openMenu === post.id && (
+                          <div
+                            className="absolute right-0 z-20 mt-1 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => { setOpenMenu(null); void handleQuickPublish(post.id); }}
+                              className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              <Send size={14} className="text-slate-500" />
+                              Post to connected accounts
+                            </button>
+                            <div className="px-3 py-2 text-xs text-slate-400 border-t border-slate-100">
+                              Uses targets from Automation → “Automatically post to”.
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <button type="button" onClick={() => onEdit(post.id)} title="Edit"
                         className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                         <Pencil size={14} />
