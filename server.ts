@@ -83,10 +83,13 @@ async function ensureDatabase() {
       state TEXT PRIMARY KEY,
       user_id TEXT,
       platform TEXT NOT NULL,
+      return_to TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '15 minutes')
     );
   `);
+
+  await pool.query(`ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to TEXT;`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_accounts (
@@ -1375,7 +1378,7 @@ app.post('/api/oauth/state', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const { state, platform } = req.body;
+    const { state, platform, returnTo } = req.body as { state?: string; platform?: string; returnTo?: string };
     if (!state || !platform) {
       return res.status(400).json({ success: false, error: 'Missing state or platform' });
     }
@@ -1385,10 +1388,10 @@ app.post('/api/oauth/state', async (req: Request, res: Response) => {
     }
 
     await dbQuery(
-      `INSERT INTO oauth_states (state, user_id, platform, expires_at)
-       VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')
+      `INSERT INTO oauth_states (state, user_id, platform, return_to, expires_at)
+       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '15 minutes')
        ON CONFLICT (state) DO NOTHING`,
-      [state, auth.userId, platform]
+      [state, auth.userId, platform, typeof returnTo === 'string' ? returnTo.slice(0, 500) : null]
     );
 
     return res.json({ success: true });
@@ -1535,8 +1538,8 @@ function platformDisplayName(platformId: string) {
 
 async function getOAuthStateRow(state: string): Promise<{ user_id: string; platform: string } | null> {
   if (!pool) return null;
-  const result = await dbQuery<{ user_id: string; platform: string }>(
-    'SELECT user_id, platform FROM oauth_states WHERE state = $1 AND expires_at > NOW()',
+  const result = await dbQuery<{ user_id: string; platform: string; return_to: string | null }>(
+    'SELECT user_id, platform, return_to FROM oauth_states WHERE state = $1 AND expires_at > NOW()',
     [state]
   );
   return result.rows[0] ?? null;
@@ -3931,33 +3934,35 @@ app.get('/auth/:platform/callback', async (req: Request, res: Response) => {
   const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
   const platformId = String(req.params.platform || '').trim().toLowerCase();
 
-  const redirectOk = () => res.redirect(`${FRONTEND_URL}/integrations?success=true`);
-  const redirectErr = (msg: string) => res.redirect(`${FRONTEND_URL}/integrations?error=${encodeURIComponent(msg)}`);
+  const fallbackOk = `${FRONTEND_URL}/integrations?success=true`;
+  const fallbackErr = (msg: string) => `${FRONTEND_URL}/integrations?error=${encodeURIComponent(msg)}`;
 
   try {
     const oauthError = String((req.query as any).error || '').trim();
     const oauthErrorDesc = String((req.query as any).error_description || '').trim();
-    if (oauthError) return redirectErr(oauthErrorDesc || oauthError);
+    if (oauthError) return res.redirect(fallbackErr(oauthErrorDesc || oauthError));
 
     const code = String((req.query as any).code || '').trim();
     const state = String((req.query as any).state || '').trim();
-    if (!code || !state) return redirectErr('Missing code or state');
+    if (!code || !state) return res.redirect(fallbackErr('Missing code or state'));
 
-    if (!pool) return redirectErr('Database not configured');
+    if (!pool) return res.redirect(fallbackErr('Database not configured'));
 
     const stateRow = await getOAuthStateRow(state);
-    if (!stateRow) return redirectErr('Invalid or expired state');
-    if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return redirectErr('State/platform mismatch');
+    if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
+    if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return res.redirect(fallbackErr('State/platform mismatch'));
 
     const tokenData = await exchangeOAuthCode(platformId, code);
     await storeUserConnection(stateRow.user_id, platformDisplayName(platformId), tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
 
-    return redirectOk();
+    const returnTo = (stateRow as any).return_to as string | null | undefined;
+    const dest = returnTo && returnTo.startsWith('/') ? `${FRONTEND_URL}${returnTo}` : fallbackOk;
+    return res.redirect(dest);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'OAuth connection failed';
     console.error('Platform OAuth callback error:', err);
-    return redirectErr(msg);
+    return res.redirect(fallbackErr(msg));
   }
 });
 

@@ -699,7 +699,7 @@ const Integrations = () => {
       await fetch(`${API_BASE_URL}/api/oauth/state`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ state, platform: platformId }),
+        body: JSON.stringify({ state, platform: platformId, returnTo: '/integrations?success=true' }),
       });
       sessionStorage.setItem('oauth_state', state);
       sessionStorage.setItem('oauth_platform', platformId);
