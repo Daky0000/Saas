@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
+  BookOpen,
   FileText,
   Image,
   LogOut,
@@ -17,6 +18,7 @@ import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
 import Integrations from './pages/Integrations';
+import Instructions from './pages/Instructions';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
 import Pricing from './pages/Pricing';
@@ -41,7 +43,17 @@ import {
   setStoredUser,
 } from './utils/userSession';
 
-type PageType = 'dashboard' | 'posts' | 'cards' | 'integrations' | 'pricing' | 'admin' | 'analytics' | 'profile' | 'media';
+type PageType =
+  | 'dashboard'
+  | 'posts'
+  | 'cards'
+  | 'integrations'
+  | 'instructions'
+  | 'pricing'
+  | 'admin'
+  | 'analytics'
+  | 'profile'
+  | 'media';
 
 type AuthMeResponse = {
   success: boolean;
@@ -66,6 +78,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   posts: '/posts',
   cards: '/cards',
   integrations: '/integrations',
+  instructions: '/instructions',
   pricing: '/pricing',
   admin: '/admin/users',
   analytics: '/analytics',
@@ -357,6 +370,7 @@ function App() {
     { id: 'posts' as const, label: 'Posts', icon: FileText },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
     { id: 'integrations' as const, label: 'Integrations', icon: Share2 },
+    { id: 'instructions' as const, label: 'Instructions', icon: BookOpen },
     { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
@@ -377,6 +391,8 @@ function App() {
         return <Cards />;
       case 'integrations':
         return <Integrations />;
+      case 'instructions':
+        return <Instructions />;
       case 'pricing':
         return <Pricing />;
       case 'admin':
