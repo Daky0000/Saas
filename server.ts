@@ -1730,7 +1730,8 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
 
 async function removeUserConnection(userId: string, platform: string): Promise<void> {
   if (!pool) return;
-  await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND platform = $2', [userId, platform]);
+  // Platform values are stored in display-case (e.g. "Twitter") but callers may send lowercase (e.g. "twitter").
+  await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND LOWER(platform) = LOWER($2)', [userId, platform]);
 }
 
 async function testPlatformConnection(userId: string, platform: string): Promise<any> {
@@ -3187,7 +3188,7 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
 });
 
 // PUT /api/admin/platform-configs/:platform — save/update platform config
-app.put('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
+ app.put('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -3925,6 +3926,37 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Get enabled integrations error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch enabled integrations' });
+  }
+});
+
+// DELETE /api/admin/platform-configs/:platform — reset config + disable (admin only)
+app.delete('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { platform } = req.params;
+    const normalized = String(platform || '').trim().toLowerCase();
+    if (!normalized) return res.status(400).json({ success: false, error: 'platform is required' });
+
+    const now = new Date().toISOString();
+
+    if (hasDatabase()) {
+      await dbQuery(
+        `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+         VALUES ($1, '{}'::jsonb, false, NOW())
+         ON CONFLICT (platform) DO UPDATE
+           SET config = '{}'::jsonb, enabled = false, updated_at = NOW()`,
+        [normalized]
+      );
+    } else {
+      inMemoryPlatformConfigs.set(normalized, { platform: normalized, config: {}, enabled: false, updated_at: now });
+    }
+
+    return res.json({ success: true, message: 'Platform config reset' });
+  } catch (error) {
+    console.error('Reset platform config error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to reset platform config' });
   }
 });
 

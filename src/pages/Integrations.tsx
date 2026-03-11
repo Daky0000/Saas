@@ -1049,6 +1049,38 @@ const Integrations = () => {
                     </p>
                   )}
                   <div className="flex items-center justify-end gap-3">
+                    {isAdmin && activeIntegration.isOAuth && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!confirm(`Reset ${activeIntegration.name} configuration? This will clear saved credentials and disable it.`)) return;
+                          setIsSaving(true);
+                          setSaveError(null);
+                          setSaveSuccess(null);
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${activeIntegration.id}`, {
+                              method: 'DELETE',
+                              headers: authHeaders(),
+                            });
+                            const data = res.ok ? await res.json() as { success: boolean; error?: string } : { success: false, error: 'Failed to reset' };
+                            if (!data.success) throw new Error(data.error || 'Failed to reset');
+                            setDraftValues({});
+                            setSaveSuccess('Configuration reset. Re-enter credentials and save.');
+                            void loadBackendConfigs();
+                            void loadEnabledIds();
+                            void loadOAuthStatus();
+                          } catch (err) {
+                            setSaveError(err instanceof Error ? err.message : 'Failed to reset');
+                          } finally {
+                            setIsSaving(false);
+                          }
+                        }}
+                        disabled={isSaving}
+                        className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60"
+                      >
+                        Reset config
+                      </button>
+                    )}
                     <button type="button" onClick={closeConfigure} className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50">
                       Cancel
                     </button>

@@ -1706,9 +1706,14 @@ function AutomationTabV2() {
       const urlRes = await fetch(`${API_BASE_URL}/api/oauth/${platformId}/authorize-url?state=${encodeURIComponent(state)}`, {
         headers: authHeaders(),
       });
-      const data = urlRes.ok
-        ? await urlRes.json() as { success: boolean; url?: string; error?: string }
-        : { success: false, error: 'Failed to build authorize URL' };
+      const text = await urlRes.text();
+      let data: { success: boolean; url?: string; error?: string };
+      try {
+        data = JSON.parse(text) as { success: boolean; url?: string; error?: string };
+      } catch {
+        const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
+        data = { success: false, error: preview ? `Invalid server response. ${preview}` : 'Invalid server response.' };
+      }
       if (!data.success || !data.url) throw new Error(data.error || 'Failed to build authorize URL');
       window.location.href = data.url;
     } catch (e) {
