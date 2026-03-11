@@ -1555,6 +1555,8 @@ async function exchangeOAuthCode(platformId: string, code: string) {
       return exchangeLinkedInCode(code);
     case 'facebook':
       return exchangeFacebookCode(code);
+    case 'threads':
+      return exchangeThreadsCode(code);
     case 'tiktok':
       return exchangeTikTokCode(code);
     default:
@@ -1635,6 +1637,76 @@ async function exchangeFacebookCode(code: string) {
     },
   });
   return response.data;
+}
+
+async function exchangeThreadsCode(code: string) {
+  const cfg = await getPlatformConfig('threads');
+  const clientId =
+    cfg.appId ||
+    process.env.VITE_THREADS_APP_ID ||
+    process.env.VITE_THREADS_CLIENT_ID ||
+    process.env.VITE_INSTAGRAM_APP_ID ||
+    '';
+  const clientSecret =
+    cfg.appSecret ||
+    process.env.THREADS_APP_SECRET ||
+    process.env.VITE_THREADS_APP_SECRET ||
+    process.env.INSTAGRAM_APP_SECRET ||
+    '';
+  const redirectUri = cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI || '';
+
+  if (!clientId || !clientSecret || !redirectUri) {
+    throw new Error('Threads credentials not configured');
+  }
+
+  const tokenRes = await axios.post(
+    'https://graph.threads.net/oauth/access_token',
+    null,
+    {
+      params: {
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri,
+        code,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    }
+  );
+
+  if (tokenRes.status >= 400) {
+    throw new Error(`Threads token exchange failed (${tokenRes.status})`);
+  }
+
+  const shortLived = (tokenRes.data as any)?.access_token;
+  if (!shortLived) return tokenRes.data;
+
+  // Best-effort: exchange short-lived token for long-lived token.
+  try {
+    const longRes = await axios.get('https://graph.threads.net/access_token', {
+      params: {
+        grant_type: 'th_exchange_token',
+        client_secret: clientSecret,
+      },
+      headers: { Authorization: `Bearer ${shortLived}` },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+
+    if (longRes.status < 400 && (longRes.data as any)?.access_token) {
+      return {
+        ...(tokenRes.data || {}),
+        ...(longRes.data || {}),
+        short_lived_access_token: shortLived,
+        access_token: (longRes.data as any).access_token,
+      };
+    }
+  } catch {
+    // ignore - return short-lived token if exchange fails
+  }
+
+  return tokenRes.data;
 }
 
 async function exchangeTikTokCode(code: string) {
