@@ -3893,20 +3893,22 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
     if (!auth) return;
 
     if (!hasDatabase()) {
-      return res.json({ success: true, enabled: [] });
+      const enabled = Array.from(inMemoryPlatformConfigs.values())
+        .filter((r) => r.enabled)
+        .map((r) => String(r.platform || '').toLowerCase())
+        .filter(Boolean);
+      return res.json({ success: true, enabled });
     }
 
     const platformResult = await dbQuery(
       `SELECT platform
        FROM platform_configs
-       WHERE enabled = true
-         AND config <> '{}'::jsonb`
+       WHERE enabled = true`
     );
     const providerResult = await dbQuery(
       `SELECT provider
        FROM auth_providers
-       WHERE enabled = true
-         AND config <> '{}'::jsonb`
+       WHERE enabled = true`
     );
 
     const enabled = Array.from(
