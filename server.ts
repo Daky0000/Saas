@@ -109,6 +109,7 @@ async function ensureDatabase() {
   `);
 
   await pool.query(`ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS code_verifier TEXT;`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_accounts (
@@ -1413,7 +1414,12 @@ app.post('/api/oauth/state', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const { state, platform, returnTo } = req.body as { state?: string; platform?: string; returnTo?: string };
+    const { state, platform, returnTo, codeVerifier } = req.body as {
+      state?: string;
+      platform?: string;
+      returnTo?: string;
+      codeVerifier?: string;
+    };
     if (!state || !platform) {
       return res.status(400).json({ success: false, error: 'Missing state or platform' });
     }
@@ -1423,10 +1429,16 @@ app.post('/api/oauth/state', async (req: Request, res: Response) => {
     }
 
     await dbQuery(
-      `INSERT INTO oauth_states (state, user_id, platform, return_to, expires_at)
-       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '15 minutes')
+      `INSERT INTO oauth_states (state, user_id, platform, return_to, code_verifier, expires_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '15 minutes')
        ON CONFLICT (state) DO NOTHING`,
-      [state, auth.userId, platform, typeof returnTo === 'string' ? returnTo.slice(0, 500) : null]
+      [
+        state,
+        auth.userId,
+        platform,
+        typeof returnTo === 'string' ? returnTo.slice(0, 500) : null,
+        typeof codeVerifier === 'string' ? codeVerifier.slice(0, 2048) : null,
+      ]
     );
 
     return res.json({ success: true });
@@ -1456,7 +1468,7 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'State does not match platform' });
     }
 
-    const tokenData = await exchangeOAuthCode(platformId, String(code));
+    const tokenData = await exchangeOAuthCode(platformId, String(code), stateRow.code_verifier || undefined);
     await storeUserConnection(auth.userId, platformDisplayName(platformId), tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [String(state)]).catch(() => undefined);
 
@@ -1571,21 +1583,21 @@ function platformDisplayName(platformId: string) {
   }
 }
 
-async function getOAuthStateRow(state: string): Promise<{ user_id: string; platform: string } | null> {
+async function getOAuthStateRow(state: string): Promise<{ user_id: string; platform: string; return_to?: string | null; code_verifier?: string | null } | null> {
   if (!pool) return null;
-  const result = await dbQuery<{ user_id: string; platform: string; return_to: string | null }>(
-    'SELECT user_id, platform, return_to FROM oauth_states WHERE state = $1 AND expires_at > NOW()',
+  const result = await dbQuery<{ user_id: string; platform: string; return_to: string | null; code_verifier: string | null }>(
+    'SELECT user_id, platform, return_to, code_verifier FROM oauth_states WHERE state = $1 AND expires_at > NOW()',
     [state]
   );
   return result.rows[0] ?? null;
 }
 
-async function exchangeOAuthCode(platformId: string, code: string) {
+async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?: string) {
   switch ((platformId || '').trim().toLowerCase()) {
     case 'instagram':
       return exchangeInstagramCode(code);
     case 'twitter':
-      return exchangeTwitterCode(code);
+      return exchangeTwitterCode(code, codeVerifier);
     case 'linkedin':
       return exchangeLinkedInCode(code);
     case 'facebook':
@@ -1614,7 +1626,7 @@ async function exchangeInstagramCode(code: string) {
   return response.data;
 }
 
-async function exchangeTwitterCode(code: string) {
+async function exchangeTwitterCode(code: string, codeVerifier?: string) {
   const cfg = await getPlatformConfig('twitter');
   const clientId = cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '';
   const clientSecret = cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '';
@@ -1626,8 +1638,7 @@ async function exchangeTwitterCode(code: string) {
     code,
     grant_type: 'authorization_code',
     redirect_uri: redirectUri,
-    // NOTE: X OAuth2 commonly uses PKCE; current flow assumes a verifier is configured server-side.
-    code_verifier: cfg.codeVerifier || 'challenge',
+    code_verifier: (codeVerifier || cfg.codeVerifier || '').trim() || 'challenge',
   });
 
   const response = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), {
@@ -1694,21 +1705,18 @@ async function exchangeThreadsCode(code: string) {
     throw new Error('Threads credentials not configured');
   }
 
-  const tokenRes = await axios.post(
-    'https://graph.threads.net/oauth/access_token',
-    null,
-    {
-      params: {
-        client_id: clientId,
-        client_secret: clientSecret,
-        grant_type: 'authorization_code',
-        redirect_uri: redirectUri,
-        code,
-      },
-      validateStatus: () => true,
-      timeout: 15000,
-    }
-  );
+  const tokenBody = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: 'authorization_code',
+    redirect_uri: redirectUri,
+    code,
+  });
+  const tokenRes = await axios.post('https://graph.threads.net/oauth/access_token', tokenBody.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
 
   if (tokenRes.status >= 400) {
     throw new Error(`Threads token exchange failed (${tokenRes.status})`);
@@ -1723,6 +1731,7 @@ async function exchangeThreadsCode(code: string) {
       params: {
         grant_type: 'th_exchange_token',
         client_secret: clientSecret,
+        access_token: shortLived,
       },
       headers: { Authorization: `Bearer ${shortLived}` },
       validateStatus: () => true,
@@ -3560,9 +3569,11 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
 // ── Integration helpers ────────────────────────────────────────────────────────
 
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
-  instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media,instagram_basic,instagram_content_publish', idField: 'appId' },
+  // Instagram Basic Display OAuth (scopes are comma-separated)
+  instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile,w_member_social,r_emailaddress', idField: 'clientId' },
+  // LinkedIn scopes are space-separated
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile w_member_social r_emailaddress', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
@@ -3589,6 +3600,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
       return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
     }
 
+    const scopeParam = meta.scopes;
     const params =
       platform === 'tiktok'
         ? new URLSearchParams({
@@ -3598,15 +3610,26 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
             response_type: 'code',
             state,
             // TikTok expects comma-separated scopes
-            scope: meta.scopes,
+            scope: scopeParam,
           })
         : new URLSearchParams({
             client_id: clientId,
             redirect_uri: redirectUri,
             response_type: 'code',
             state,
-            scope: meta.scopes,
+            scope: scopeParam,
           });
+
+    if (platform === 'twitter') {
+      const { code_challenge, code_challenge_method } = req.query as { code_challenge?: string; code_challenge_method?: string };
+      const challenge = String(code_challenge || '').trim();
+      const method = String(code_challenge_method || 'S256').trim();
+      if (!challenge) {
+        return res.status(400).json({ success: false, error: 'Missing code_challenge (PKCE) for Twitter' });
+      }
+      params.set('code_challenge', challenge);
+      params.set('code_challenge_method', method || 'S256');
+    }
 
     return res.json({ success: true, url: `${meta.authUrl}?${params.toString()}` });
   } catch (err) {
@@ -3624,7 +3647,18 @@ app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) =
 
     const cfg = await getPlatformConfig(platform);
     const clientId = cfg[meta.idField];
-    const configured = Boolean(clientId && cfg.redirectUri);
+    const secretRequired =
+      platform === 'instagram' ||
+      platform === 'facebook' ||
+      platform === 'threads' ||
+      platform === 'twitter' ||
+      platform === 'linkedin' ||
+      platform === 'tiktok';
+    const secretValue =
+      platform === 'instagram' || platform === 'facebook' || platform === 'threads'
+        ? cfg.appSecret
+        : cfg.clientSecret;
+    const configured = Boolean(clientId && cfg.redirectUri && (!secretRequired || secretValue));
 
     return res.json({ success: true, configured });
   } catch {

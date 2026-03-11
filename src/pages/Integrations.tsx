@@ -160,12 +160,12 @@ const INTEGRATIONS: IntegrationDefinition[] = [
     icon: getPlatformIcon('instagram'),
     isOAuth: true,
     setupTitle: 'Connect Instagram',
-    setupDescription: 'Admin: configure app credentials. Users: click "Connect" to authorise via Instagram.',
-    requirements: ['App ID', 'App secret', 'Redirect URI'],
+    setupDescription: 'Admin: configure Meta app credentials (Instagram Basic Display). Users: click "Connect" to authorise.',
+    requirements: ['Instagram Basic Display enabled', 'Valid OAuth Redirect URI', 'App ID + App secret'],
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Instagram app ID', type: 'text', helpText: 'App identifier from the Meta developer console.', docUrl: 'https://developers.facebook.com/apps/', docLabel: 'Meta developers' },
-      { id: 'appSecret', label: 'App secret', placeholder: 'Instagram app secret', type: 'password', helpText: 'Keep secure. Use the production secret when live.', docUrl: 'https://developers.facebook.com/docs/instagram-api/', docLabel: 'Instagram API docs' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://marketing.dakyworld.com/auth/instagram/callback', type: 'url', helpText: 'Must match the callback URL in your Meta app settings.', docUrl: 'https://developers.facebook.com/docs/instagram-api/getting-started', docLabel: 'Getting started guide' },
+      { id: 'appSecret', label: 'App secret', placeholder: 'Instagram app secret', type: 'password', helpText: 'Keep secure. Use the production secret when live.', docUrl: 'https://developers.facebook.com/docs/instagram-basic-display-api/', docLabel: 'Instagram Basic Display docs' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://marketing.dakyworld.com/auth/instagram/callback', type: 'url', helpText: 'Register this exact URI under Instagram Basic Display → Settings → Valid OAuth Redirect URIs.', docUrl: 'https://developers.facebook.com/docs/instagram-basic-display-api/getting-started', docLabel: 'Getting started' },
     ],
   },
   {
@@ -195,7 +195,7 @@ const INTEGRATIONS: IntegrationDefinition[] = [
     isOAuth: true,
     setupTitle: 'Connect LinkedIn',
     setupDescription: 'Admin: configure app credentials. Users: click "Connect" to authorise via LinkedIn.',
-    requirements: ['Client ID', 'Client secret', 'Redirect URI'],
+    requirements: ['Client ID', 'Client secret', 'Authorized redirect URL'],
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'LinkedIn client ID', type: 'text', helpText: 'Client ID shown on your LinkedIn app overview page.', docUrl: 'https://www.linkedin.com/developers/apps', docLabel: 'LinkedIn developer apps' },
       { id: 'clientSecret', label: 'Client secret', placeholder: 'LinkedIn client secret', type: 'password', helpText: 'Used to exchange the OAuth authorization code.', docUrl: 'https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow', docLabel: 'Authorization code flow' },
@@ -229,11 +229,11 @@ const INTEGRATIONS: IntegrationDefinition[] = [
     isOAuth: true,
     setupTitle: 'Connect Twitter / X',
     setupDescription: 'Admin: configure app credentials. Users: click "Connect" to authorise via X.',
-    requirements: ['Client ID', 'Client secret', 'Redirect URI'],
+    requirements: ['OAuth 2.0 enabled', 'Callback URL added', 'Client ID + Client secret'],
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'Twitter or X client ID', type: 'text', helpText: 'OAuth 2.0 Client ID from your X developer app settings.', docUrl: 'https://developer.x.com/en/portal/dashboard', docLabel: 'X developer portal' },
-      { id: 'clientSecret', label: 'Client secret', placeholder: 'Twitter or X client secret', type: 'password', helpText: 'Required for secure authorization code exchange.', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'OAuth 2.0 guide' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://marketing.dakyworld.com/auth/twitter/callback', type: 'url', helpText: 'Add this under App Settings → User authentication settings.', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'X OAuth setup' },
+      { id: 'clientSecret', label: 'Client secret', placeholder: 'Twitter or X client secret', type: 'password', helpText: 'Required for authorization code exchange (PKCE is handled automatically by this app).', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'OAuth 2.0 guide' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://marketing.dakyworld.com/auth/twitter/callback', type: 'url', helpText: 'Add this under App Settings → User authentication settings → Callback URI / Redirect URL.', docUrl: 'https://developer.x.com/en/docs/authentication/oauth-2-0/authorization-code', docLabel: 'X OAuth setup' },
     ],
   },
   {
@@ -246,7 +246,7 @@ const INTEGRATIONS: IntegrationDefinition[] = [
     isOAuth: true,
     setupTitle: 'Connect Threads',
     setupDescription: 'Threads uses the same Meta app as Instagram. Enable the Threads API in your Meta app, then users can connect.',
-    requirements: ['Meta App ID', 'App secret', 'Redirect URI'],
+    requirements: ['Threads use case enabled', 'Threads API product added', 'Redirect callback URL'],
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'Same Meta app as Instagram — enable the Threads API product inside it.', docUrl: 'https://developers.facebook.com/docs/threads/', docLabel: 'Threads API docs' },
       { id: 'appSecret', label: 'App secret', placeholder: 'Meta app secret', type: 'password', helpText: 'Same Meta app secret used for Instagram.', docUrl: 'https://developers.facebook.com/docs/threads/get-started/', docLabel: 'Getting started guide' },
@@ -690,22 +690,50 @@ const Integrations = () => {
   };
 
   // ── OAuth connect via backend-configured credentials ───────────────────────
+  const base64UrlFromBytes = (bytes: Uint8Array) => {
+    let str = '';
+    for (const b of bytes) str += String.fromCharCode(b);
+    const base64 = btoa(str);
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  };
+
+  const createPkcePair = async () => {
+    const verifierBytes = crypto.getRandomValues(new Uint8Array(32));
+    const codeVerifier = base64UrlFromBytes(verifierBytes);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+    const codeChallenge = base64UrlFromBytes(new Uint8Array(digest));
+    return { codeVerifier, codeChallenge };
+  };
+
   const handleOAuthConnect = async (platformId: string) => {
     setOauthConnecting(platformId);
     setSaveError(null);
     try {
       const state = crypto.getRandomValues(new Uint8Array(16)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
+      const pkce = platformId === 'twitter' ? await createPkcePair() : null;
       // Register state on backend
-      await fetch(`${API_BASE_URL}/api/oauth/state`, {
+      const stateRes = await fetch(`${API_BASE_URL}/api/oauth/state`, {
         method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ state, platform: platformId, returnTo: '/integrations?success=true' }),
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          state,
+          platform: platformId,
+          returnTo: '/integrations?success=true',
+          ...(pkce ? { codeVerifier: pkce.codeVerifier } : {}),
+        }),
       });
+      if (!stateRes.ok) throw new Error('Failed to start connection. Please try again.');
       sessionStorage.setItem('oauth_state', state);
       sessionStorage.setItem('oauth_platform', platformId);
 
       // Get auth URL from backend (uses DB credentials)
-      const res = await fetch(`${API_BASE_URL}/api/oauth/${platformId}/authorize-url?state=${state}`, { headers: authHeaders() });
+      const authorizeUrl = new URL(`${API_BASE_URL}/api/oauth/${platformId}/authorize-url`);
+      authorizeUrl.searchParams.set('state', state);
+      if (pkce) {
+        authorizeUrl.searchParams.set('code_challenge', pkce.codeChallenge);
+        authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+      }
+      const res = await fetch(authorizeUrl.toString(), { headers: authHeaders() });
       const data = await res.json() as { success: boolean; url?: string; error?: string };
       if (!data.success || !data.url) throw new Error(data.error || 'Failed to get authorization URL');
       window.location.href = data.url;
