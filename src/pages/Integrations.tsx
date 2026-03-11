@@ -613,6 +613,17 @@ const Integrations = () => {
     void loadEnabledIds();
   }, [loadBackendConfigs, loadOAuthStatus, loadWordPressStatus, loadEnabledIds]);
 
+  // Keep enabled tools list fresh (admin may toggle integrations while users have this page open).
+  useEffect(() => {
+    const onFocus = () => void loadEnabledIds();
+    window.addEventListener('focus', onFocus);
+    const interval = window.setInterval(() => void loadEnabledIds(), 30_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(interval);
+    };
+  }, [loadEnabledIds]);
+
   // ── Handle OAuth callback result ───────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -821,7 +832,12 @@ const Integrations = () => {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => { void loadOAuthStatus(); void loadWordPressStatus(); }} title="Refresh status" className="rounded-xl border border-slate-200 p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors">
+            <button
+              type="button"
+              onClick={() => { void loadOAuthStatus(); void loadWordPressStatus(); void loadEnabledIds(); }}
+              title="Refresh status"
+              className="rounded-xl border border-slate-200 p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+            >
               <RefreshCw size={16} />
             </button>
             <div className="w-full max-w-sm">
