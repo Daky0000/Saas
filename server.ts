@@ -1564,6 +1564,66 @@ app.get('/api/accounts', async (req: Request, res: Response) => {
   }
 });
 
+// Get Facebook publish targets (Pages; Groups best-effort)
+app.get('/api/facebook/targets', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
+    }
+
+    const graphBase = 'https://graph.facebook.com/v19.0';
+    const warnings: string[] = [];
+
+    const pagesResp = await axios.get(
+      `${graphBase}/me/accounts?fields=id,name&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+      { validateStatus: () => true, timeout: 15000 }
+    );
+    const pagesData: any = pagesResp.data || {};
+    if (pagesResp.status >= 400) {
+      const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const pages = Array.isArray(pagesData?.data)
+      ? pagesData.data
+          .map((p: any) => ({ id: String(p?.id || '').trim(), name: String(p?.name || '').trim() }))
+          .filter((p: any) => p.id)
+      : [];
+
+    // Groups listing is often restricted by permissions/app review; try, but don't fail the request.
+    let groups: Array<{ id: string; name: string }> = [];
+    try {
+      const groupsResp = await axios.get(
+        `${graphBase}/me/groups?fields=id,name&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+        { validateStatus: () => true, timeout: 15000 }
+      );
+      const groupsData: any = groupsResp.data || {};
+      if (groupsResp.status >= 400) {
+        const msg = groupsData?.error?.message || `Facebook groups lookup failed (${groupsResp.status})`;
+        warnings.push(msg);
+      } else {
+        groups = Array.isArray(groupsData?.data)
+          ? groupsData.data
+              .map((g: any) => ({ id: String(g?.id || '').trim(), name: String(g?.name || '').trim() }))
+              .filter((g: any) => g.id)
+          : [];
+      }
+    } catch {
+      warnings.push('Facebook groups lookup failed');
+    }
+
+    return res.json({ success: true, pages, groups, warnings });
+  } catch (error) {
+    console.error('Facebook targets error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
+  }
+});
+
 // Disconnect account
 app.delete('/api/accounts/:platform', async (req: Request, res: Response) => {
   try {
@@ -5003,6 +5063,16 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   return { platform: match.platform, access_token: '', token_data: tokenData };
 }
 
+async function getUserSettingValue(userId: string, key: string): Promise<any | null> {
+  if (!pool) return null;
+  try {
+    const result = await pool.query('SELECT value FROM user_settings WHERE user_id = $1 AND key = $2', [userId, key]);
+    return result.rows[0]?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Helper: publish a blog post to a single platform, return result
 async function publishToplatform(
   userId: string,
@@ -5146,6 +5216,39 @@ async function publishToplatform(
 
     if (platformId === 'facebook') {
       const graphBase = 'https://graph.facebook.com/v19.0';
+      const settings = (await getUserSettingValue(userId, 'posts-automation-settings')) || {};
+      const rawSelected = String(settings?.selectedAccountMap?.facebook || '').trim();
+      let desiredType: 'page' | 'group' = settings?.facebookTarget === 'group' ? 'group' : 'page';
+      let desiredId = '';
+      if (rawSelected.startsWith('page:')) {
+        desiredType = 'page';
+        desiredId = rawSelected.slice('page:'.length).trim();
+      } else if (rawSelected.startsWith('group:')) {
+        desiredType = 'group';
+        desiredId = rawSelected.slice('group:'.length).trim();
+      } else if (rawSelected) {
+        desiredId = rawSelected;
+      }
+
+      if (desiredType === 'group') {
+        if (!desiredId) throw new Error('Select a Facebook Group to publish to');
+        const body = new URLSearchParams({
+          message: text,
+          ...(postUrl ? { link: postUrl } : {}),
+          access_token: access_token,
+        });
+        const resp = await axios.post(`${graphBase}/${encodeURIComponent(desiredId)}/feed`, body.toString(), {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const respData: any = resp.data || {};
+        if (resp.status >= 400) {
+          throw new Error(respData?.error?.message || `Facebook API error ${resp.status}`);
+        }
+        return { status: 'published', platformPostId: String(respData?.id || '') };
+      }
+
       const pagesResp = await axios.get(`${graphBase}/me/accounts?access_token=${encodeURIComponent(access_token)}`, {
         validateStatus: () => true,
         timeout: 15000,
@@ -5154,10 +5257,13 @@ async function publishToplatform(
       if (pagesResp.status >= 400) {
         throw new Error(pagesData?.error?.message || `Facebook API error ${pagesResp.status}`);
       }
-      const page = Array.isArray(pagesData?.data) ? pagesData.data[0] : null;
+      const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
+      const page = desiredId ? pages.find((p: any) => String(p?.id || '').trim() === desiredId) : pages[0];
       const pageId = String(page?.id || '').trim();
       const pageToken = String(page?.access_token || '').trim();
-      if (!pageId || !pageToken) throw new Error('Facebook Page access not available (no pages found)');
+      if (!pageId || !pageToken) {
+        throw new Error(desiredId ? 'Selected Facebook Page not found or access not available' : 'Facebook Page access not available (no pages found)');
+      }
 
       const body = new URLSearchParams({
         message: text,

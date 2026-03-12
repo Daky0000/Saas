@@ -1516,6 +1516,8 @@ function AutomationTabV2() {
     expiresAt?: string | null;
   };
 
+  type FacebookTarget = { id: string; name: string; type: 'page' | 'group' };
+
   const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
   const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
   const INTEGRATION_STORAGE_KEY = 'integration-configs';
@@ -1545,6 +1547,12 @@ function AutomationTabV2() {
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [wpStatus, setWpStatus] = useState<{ loading: boolean; connected: boolean; siteUrl?: string }>({ loading: true, connected: false });
   const [mailchimpConnected, setMailchimpConnected] = useState(false);
+  const [facebookTargets, setFacebookTargets] = useState<{ loading: boolean; pages: FacebookTarget[]; groups: FacebookTarget[]; error: string | null }>({
+    loading: false,
+    pages: [],
+    groups: [],
+    error: null,
+  });
   const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1578,6 +1586,22 @@ function AutomationTabV2() {
       setAccounts([]);
     } finally {
       setLoadingAccounts(false);
+    }
+  }, [API_BASE_URL]);
+
+  const loadFacebookTargets = useCallback(async () => {
+    setFacebookTargets((p) => ({ ...p, loading: true, error: null }));
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
+      const data = res.ok
+        ? (await res.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; groups?: Array<{ id: string; name: string }>; error?: string })
+        : { success: false, error: 'Failed to load Facebook targets' };
+      if (!data.success) throw new Error(data.error || 'Failed to load Facebook targets');
+      const pages = (data.pages || []).map((p) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
+      const groups = (data.groups || []).map((g) => ({ id: String(g.id), name: String(g.name || 'Facebook Group'), type: 'group' as const }));
+      setFacebookTargets({ loading: false, pages, groups, error: null });
+    } catch (e) {
+      setFacebookTargets({ loading: false, pages: [], groups: [], error: e instanceof Error ? e.message : 'Failed to load Facebook targets' });
     }
   }, [API_BASE_URL]);
 
@@ -1618,15 +1642,17 @@ function AutomationTabV2() {
   useEffect(() => {
     void loadEnabled();
     void loadAccounts();
+    void loadFacebookTargets();
     void loadWordPress();
     void loadLogs();
     loadMailchimp();
-  }, [loadEnabled, loadAccounts, loadWordPress, loadLogs, loadMailchimp]);
+  }, [loadEnabled, loadAccounts, loadFacebookTargets, loadWordPress, loadLogs, loadMailchimp]);
 
   useEffect(() => {
     const onFocus = () => {
       void loadEnabled();
       void loadAccounts();
+      void loadFacebookTargets();
       void loadWordPress();
       loadMailchimp();
     };
@@ -1636,7 +1662,7 @@ function AutomationTabV2() {
       window.removeEventListener('focus', onFocus);
       window.clearInterval(interval);
     };
-  }, [loadEnabled, loadAccounts, loadWordPress, loadMailchimp]);
+  }, [loadEnabled, loadAccounts, loadFacebookTargets, loadWordPress, loadMailchimp]);
 
   const enabled = enabledIds ?? new Set<string>();
   const visiblePlatforms = useMemo(
@@ -1948,6 +1974,13 @@ function AutomationTabV2() {
   const getPrimaryAccountLabel = (platformId: string): string | null => {
     if (platformId === 'wordpress') return wpStatus.connected ? (wpStatus.siteUrl || 'WordPress site') : null;
     if (platformId === 'mailchimp') return mailchimpConnected ? 'Mailchimp account' : null;
+    if (platformId === 'facebook') {
+      const selected = String(selectedAccountMap.facebook || '').trim();
+      const rawId = selected.startsWith('page:') ? selected.slice('page:'.length) : selected.startsWith('group:') ? selected.slice('group:'.length) : selected;
+      const type = selected.startsWith('group:') ? 'group' : 'page';
+      const match = [...facebookTargets.pages, ...facebookTargets.groups].find((t) => t.type === type && t.id === rawId);
+      if (match) return match.name;
+    }
     const list = accountsByPlatform[platformId] || [];
     const connected = list.find((a) => a.connected);
     if (!connected) return null;
@@ -2042,7 +2075,12 @@ function AutomationTabV2() {
                 ? (wpStatus.connected ? [{ id: 'wp', name: wpStatus.siteUrl || 'WordPress site' }] : [])
                 : p.id === 'mailchimp'
                   ? (mailchimpConnected ? [{ id: 'mc', name: 'Mailchimp account' }] : [])
-                  : list.filter((a) => a.connected).map((a) => ({ id: a.id, name: a.handle || `${p.label} account` }));
+                  : p.id === 'facebook'
+                    ? [
+                        ...facebookTargets.pages.map((t) => ({ id: `page:${t.id}`, name: `Page: ${t.name}` })),
+                        ...facebookTargets.groups.map((t) => ({ id: `group:${t.id}`, name: `Group: ${t.name}` })),
+                      ]
+                    : list.filter((a) => a.connected).map((a) => ({ id: a.id, name: a.handle || `${p.label} account` }));
 
             const selected = selectedAccountMap[p.id] || '';
 
@@ -2060,18 +2098,24 @@ function AutomationTabV2() {
                         {!isConnected && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">Not connected</span>}
                       </div>
                       <p className="mt-0.5 text-sm text-slate-500">{p.description}</p>
-                      {p.id === 'facebook' && (
-                        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                          <span className="font-semibold text-slate-600">Target:</span>
-                          <select value={facebookTarget} onChange={(e) => setFacebookTarget(e.target.value === 'group' ? 'group' : 'page')}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-slate-400">
-                            <option value="page">Page</option>
-                            <option value="group">Group</option>
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                       {p.id === 'facebook' && (
+                         <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                           <span className="font-semibold text-slate-600">Destination:</span>
+                           {facebookTargets.loading ? (
+                             <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin text-slate-300" /> Loading pages/groups...</span>
+                           ) : facebookTargets.error ? (
+                             <span className="text-red-600">{facebookTargets.error}</span>
+                           ) : (
+                             <span className="text-slate-600">{(facebookTargets.pages.length + facebookTargets.groups.length) ? 'Choose where to publish' : 'No Pages/Groups available'}</span>
+                           )}
+                           <button type="button" onClick={() => void loadFacebookTargets()}
+                             className="ml-1 inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50">
+                             <RefreshCw size={12} /> Refresh
+                           </button>
+                         </div>
+                       )}
+                     </div>
+                   </div>
 
                   <Toggle on={isOn} onClick={() => setPlatformEnabledMap((prev) => ({ ...prev, [p.id]: !prev[p.id] }))} />
                 </div>
@@ -2081,7 +2125,13 @@ function AutomationTabV2() {
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       <select
                         value={selected}
-                        onChange={(e) => setSelectedAccountMap((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSelectedAccountMap((prev) => ({ ...prev, [p.id]: v }));
+                          if (p.id === 'facebook') {
+                            setFacebookTarget(v.startsWith('group:') ? 'group' : 'page');
+                          }
+                        }}
                         className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-slate-400"
                         disabled={dropdownOptions.length === 0}
                       >
