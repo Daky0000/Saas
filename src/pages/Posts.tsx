@@ -6,6 +6,7 @@ import {
   Loader2, Check, X, Save, Globe, Clock, Zap, Send, RefreshCw,
   AlertCircle, AlertTriangle, CheckCircle2, XCircle, ExternalLink,
   ChevronDown,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -1503,6 +1504,7 @@ function AutomationTab() {
 function AutomationTabV2() {
   type AutomationSubTab = 'platforms' | 'accounts' | 'rules' | 'logs';
   const [subTab, setSubTab] = useState<AutomationSubTab>('accounts');
+  const [customizePlatformId, setCustomizePlatformId] = useState<string | null>(null);
   // Keep legacy component referenced to satisfy TS noUnusedLocals while migrating UI safely.
   void AutomationTab;
 
@@ -1715,33 +1717,59 @@ function AutomationTabV2() {
     const s = loadSettings().templates || {};
     return { ...DEFAULT_TEMPLATES, ...(typeof s === 'object' ? s : {}) };
   });
+  const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>('');
+
+  const currentSnapshot = useMemo(
+    () => JSON.stringify({ facebookTarget, platformEnabledMap, selectedAccountMap, rules, templates }),
+    [facebookTarget, platformEnabledMap, selectedAccountMap, rules, templates],
+  );
+  const isDirty = Boolean(lastSavedSnapshot) && currentSnapshot !== lastSavedSnapshot;
+
+  useEffect(() => {
+    if (!lastSavedSnapshot) setLastSavedSnapshot(currentSnapshot);
+  }, [currentSnapshot, lastSavedSnapshot]);
+
+  const parseApiJson = async <T,>(res: Response): Promise<T> => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
+      throw new Error(`Invalid server response (${res.status}). ${preview || 'Expected JSON.'}`);
+    }
+  };
 
   useEffect(() => {
     const loadRemote = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(SETTINGS_KEY)}`, { headers: authHeaders() });
-        const data = res.ok ? await res.json() as { success: boolean; value?: unknown } : { success: false };
+        const data = res.ok ? await parseApiJson<{ success: boolean; value?: unknown }>(res) : { success: false };
         if (!data.success || !data.value || typeof data.value !== 'object') return;
         const s = data.value as any;
-        if (s.facebookTarget) setFacebookTarget(s.facebookTarget === 'group' ? 'group' : 'page');
-        if (s.platformEnabledMap && typeof s.platformEnabledMap === 'object') setPlatformEnabledMap(s.platformEnabledMap);
-        if (s.selectedAccountMap && typeof s.selectedAccountMap === 'object') setSelectedAccountMap(s.selectedAccountMap);
-        if (s.rules && typeof s.rules === 'object') {
-          setRules({
-            whenPublished: Boolean(s.rules.whenPublished ?? true),
-            whenScheduled: Boolean(s.rules.whenScheduled ?? false),
-            onlySelectedCategories: Boolean(s.rules.onlySelectedCategories ?? false),
-            autoPostTo: Array.isArray(s.rules.autoPostTo) ? s.rules.autoPostTo.map((x: any) => String(x)).filter(Boolean) : [],
-          });
-        }
-        if (s.templates && typeof s.templates === 'object') setTemplates({ ...DEFAULT_TEMPLATES, ...s.templates });
-        saveSettings(s);
+        const normalizedValue = {
+          facebookTarget: s.facebookTarget === 'group' ? 'group' : 'page',
+          platformEnabledMap: s.platformEnabledMap && typeof s.platformEnabledMap === 'object' ? s.platformEnabledMap : {},
+          selectedAccountMap: s.selectedAccountMap && typeof s.selectedAccountMap === 'object' ? s.selectedAccountMap : {},
+          rules: {
+            whenPublished: Boolean(s.rules?.whenPublished ?? true),
+            whenScheduled: Boolean(s.rules?.whenScheduled ?? false),
+            onlySelectedCategories: Boolean(s.rules?.onlySelectedCategories ?? false),
+            autoPostTo: Array.isArray(s.rules?.autoPostTo) ? s.rules.autoPostTo.map((x: any) => String(x)).filter(Boolean) : [],
+          },
+          templates: s.templates && typeof s.templates === 'object' ? { ...DEFAULT_TEMPLATES, ...s.templates } : { ...DEFAULT_TEMPLATES },
+        };
+        setFacebookTarget(normalizedValue.facebookTarget as 'group' | 'page');
+        setPlatformEnabledMap(normalizedValue.platformEnabledMap);
+        setSelectedAccountMap(normalizedValue.selectedAccountMap);
+        setRules(normalizedValue.rules);
+        setTemplates(normalizedValue.templates);
+        saveSettings(normalizedValue);
+        setLastSavedSnapshot(JSON.stringify(normalizedValue));
       } catch {
         // ignore - localStorage fallback still works
       }
     };
     void loadRemote();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [API_BASE_URL]);
 
   const saveRemote = async () => {
@@ -1749,16 +1777,18 @@ function AutomationTabV2() {
     setRemoteSaveErr(null);
     setRemoteSaving(true);
     try {
+      if (!API_BASE_URL) throw new Error('API base URL is not configured');
       const value = { facebookTarget, platformEnabledMap, selectedAccountMap, rules, templates };
       const res = await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(SETTINGS_KEY)}`, {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
       });
-      const data = res.ok ? await res.json() as { success: boolean; error?: string } : { success: false, error: 'Failed to save' };
+      const data = await parseApiJson<{ success: boolean; error?: string }>(res);
       if (!data.success) throw new Error(data.error || 'Failed to save');
       setRemoteSaveMsg('Saved.');
       saveSettings(value);
+      setLastSavedSnapshot(currentSnapshot);
     } catch (e) {
       setRemoteSaveErr(e instanceof Error ? e.message : 'Failed to save');
     } finally {
@@ -1932,13 +1962,14 @@ function AutomationTabV2() {
           <p className="mt-1 text-sm text-slate-500">
             Configure automatic publishing to connected platforms. All extra features live inside the Automation tab.
           </p>
+          {isDirty && <div className="mt-2 text-xs font-semibold text-amber-600">Unsaved changes</div>}
           {remoteSaveMsg && <div className="mt-2 text-xs font-semibold text-emerald-600">{remoteSaveMsg}</div>}
           {remoteSaveErr && <div className="mt-2 text-xs font-semibold text-red-600">{remoteSaveErr}</div>}
         </div>
         <button
           type="button"
           onClick={() => void saveRemote()}
-          disabled={remoteSaving}
+          disabled={remoteSaving || !isDirty}
           className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
         >
           {remoteSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -2178,24 +2209,95 @@ function AutomationTabV2() {
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      {p.kind === 'oauth' ? (
-                        <button type="button" onClick={() => void beginOAuthConnect(platformId)} disabled={connecting === platformId}
-                          className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
-                          {connecting === platformId ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                          Reconnect
-                        </button>
-                      ) : (
-                        <button type="button" onClick={goIntegrations}
-                          className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
-                          <ExternalLink size={16} /> Configure
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setCustomizePlatformId((prev) => (prev === platformId ? null : platformId))}
+                        className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+                      >
+                        <SlidersHorizontal size={16} /> Customize
+                      </button>
                       <button type="button" onClick={() => void disconnect(platformId)}
                         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-red-50 hover:text-red-600">
                         <Trash2 size={16} /> Remove
                       </button>
                     </div>
                   </div>
+
+                  {customizePlatformId === platformId && (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-4">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={rules.autoPostTo.includes(platformId)}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? Array.from(new Set([...rules.autoPostTo, platformId]))
+                              : rules.autoPostTo.filter((x) => x !== platformId);
+                            setRules((prev) => ({ ...prev, autoPostTo: next }));
+                          }}
+                          className="mt-1 h-4 w-4 rounded border-slate-300"
+                        />
+                        <div>
+                          <div className="text-sm font-semibold text-slate-700">Automatically post to this platform</div>
+                          <div className="text-xs text-slate-500">Used by “Post to connected accounts” and automation targets.</div>
+                        </div>
+                      </label>
+
+                      {platformId === 'facebook' && (
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                          <span className="font-semibold text-slate-600">Facebook target:</span>
+                          <select value={facebookTarget} onChange={(e) => setFacebookTarget(e.target.value === 'group' ? 'group' : 'page')}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-slate-400">
+                            <option value="page">Page</option>
+                            <option value="group">Group</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {platformId !== 'wordpress' && platformId !== 'mailchimp' && (accountsByPlatform[platformId] || []).filter((a) => a.connected).length > 1 && (
+                        <div className="space-y-1.5">
+                          <div className="text-xs font-black text-slate-700">Account</div>
+                          <select
+                            value={selectedAccountMap[platformId] || ''}
+                            onChange={(e) => setSelectedAccountMap((prev) => ({ ...prev, [platformId]: e.target.value }))}
+                            className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 outline-none focus:border-slate-400"
+                          >
+                            <option value="">Default connected account</option>
+                            {(accountsByPlatform[platformId] || []).filter((a) => a.connected).map((a) => (
+                              <option key={a.id} value={a.id}>{a.handle || `${p.label} account`}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-black text-slate-700">Template</div>
+                          <div className="text-xs text-slate-500">Used when automation runs.</div>
+                        </div>
+                        <button type="button" onClick={() => setTemplates((prev) => ({ ...prev, [platformId]: DEFAULT_TEMPLATES[platformId] || '' }))}
+                          className="text-xs font-bold text-slate-700 hover:text-slate-950">
+                          Reset
+                        </button>
+                      </div>
+                      <textarea
+                        value={templates[platformId] ?? ''}
+                        onChange={(e) => setTemplates((prev) => ({ ...prev, [platformId]: e.target.value }))}
+                        rows={5}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-slate-400"
+                      />
+
+                      {p.kind === 'oauth' && (
+                        <div className="flex items-center justify-end">
+                          <button type="button" onClick={() => void beginOAuthConnect(platformId)} disabled={connecting === platformId}
+                            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                            {connecting === platformId ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                            Reconnect
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
