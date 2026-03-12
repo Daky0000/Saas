@@ -1729,7 +1729,7 @@ function AutomationTabV2() {
     if (!lastSavedSnapshot) setLastSavedSnapshot(currentSnapshot);
   }, [currentSnapshot, lastSavedSnapshot]);
 
-  const parseApiJson = async <T,>(res: Response): Promise<T> => {
+  const readApiJsonOrThrow = async <T,>(res: Response): Promise<T> => {
     const text = await res.text();
     try {
       return JSON.parse(text) as T;
@@ -1743,7 +1743,7 @@ function AutomationTabV2() {
     const loadRemote = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(SETTINGS_KEY)}`, { headers: authHeaders() });
-        const data = res.ok ? await parseApiJson<{ success: boolean; value?: unknown }>(res) : { success: false };
+        const data = res.ok ? await readApiJsonOrThrow<{ success: boolean; value?: unknown }>(res) : { success: false };
         if (!data.success || !data.value || typeof data.value !== 'object') return;
         const s = data.value as any;
         const normalizedValue = {
@@ -1784,7 +1784,21 @@ function AutomationTabV2() {
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
       });
-      const data = await parseApiJson<{ success: boolean; error?: string }>(res);
+      const text = await res.text();
+      const looksLikeMissingRoute = res.status === 404 && /Cannot PUT\s+\/api\/user-settings\//i.test(text);
+      if (looksLikeMissingRoute) {
+        saveSettings(value);
+        setLastSavedSnapshot(currentSnapshot);
+        setRemoteSaveMsg('Saved locally. Server save is unavailable until the API is redeployed.');
+        return;
+      }
+      let data: { success: boolean; error?: string } | null = null;
+      try {
+        data = JSON.parse(text) as { success: boolean; error?: string };
+      } catch {
+        const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
+        throw new Error(`Invalid server response (${res.status}). ${preview || 'Expected JSON.'}`);
+      }
       if (!data.success) throw new Error(data.error || 'Failed to save');
       setRemoteSaveMsg('Saved.');
       saveSettings(value);

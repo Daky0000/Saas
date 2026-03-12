@@ -1479,7 +1479,7 @@ app.get('/api/user-settings/:key', async (req: Request, res: Response) => {
   }
 });
 
-app.put('/api/user-settings/:key', async (req: Request, res: Response) => {
+const saveUserSetting = async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -1508,7 +1508,10 @@ app.put('/api/user-settings/:key', async (req: Request, res: Response) => {
     console.error('Save user setting error:', error);
     return res.status(500).json({ success: false, error: 'Failed to save setting' });
   }
-});
+};
+
+app.put('/api/user-settings/:key', saveUserSetting);
+app.post('/api/user-settings/:key', saveUserSetting);
 
 // OAuth Handler for Instagram and others
 app.post('/api/oauth/callback', async (req: Request, res: Response) => {
