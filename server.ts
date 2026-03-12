@@ -201,6 +201,16 @@ async function ensureDatabase() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (user_id, key)
+    );
+    CREATE INDEX IF NOT EXISTS user_settings_user_id_idx ON user_settings (user_id);
+
     CREATE TABLE IF NOT EXISTS auth_providers (
       provider TEXT PRIMARY KEY,
       config JSONB NOT NULL DEFAULT '{}',
@@ -1445,6 +1455,58 @@ app.post('/api/oauth/state', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('OAuth state error:', error);
     return res.status(500).json({ success: false, error: 'Failed to store state' });
+  }
+});
+
+// User settings (persist UI settings server-side)
+app.get('/api/user-settings/:key', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const key = String(req.params.key || '').trim();
+    if (!/^[a-z0-9._:-]{1,80}$/i.test(key)) {
+      return res.status(400).json({ success: false, error: 'Invalid key' });
+    }
+
+    const result = await dbQuery<{ value: any }>('SELECT value FROM user_settings WHERE user_id = $1 AND key = $2', [auth.userId, key]);
+    const value = result.rows[0]?.value ?? null;
+    return res.json({ success: true, value });
+  } catch (error) {
+    console.error('Get user setting error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to load setting' });
+  }
+});
+
+app.put('/api/user-settings/:key', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const key = String(req.params.key || '').trim();
+    if (!/^[a-z0-9._:-]{1,80}$/i.test(key)) {
+      return res.status(400).json({ success: false, error: 'Invalid key' });
+    }
+
+    const value = (req.body as any)?.value;
+    if (typeof value === 'undefined') {
+      return res.status(400).json({ success: false, error: 'value is required' });
+    }
+
+    await dbQuery(
+      `INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
+       VALUES ($1, $2, $3::jsonb, NOW(), NOW())
+       ON CONFLICT (user_id, key) DO UPDATE
+         SET value = EXCLUDED.value, updated_at = NOW()`,
+      [auth.userId, key, JSON.stringify(value)],
+    );
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Save user setting error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to save setting' });
   }
 });
 
@@ -4887,8 +4949,27 @@ async function publishToplatform(
     const text = textParts.join('\n\n').slice(0, maxLen);
 
     if (platformId === 'linkedin') {
-      const authorUrn = token_data?.sub ? `urn:li:person:${token_data.sub}` : null;
-      if (!authorUrn) throw new Error('LinkedIn profile URN not available – please reconnect');
+      let authorUrn = token_data?.sub ? `urn:li:person:${token_data.sub}` : null;
+      if (!authorUrn) {
+        const meResp = await fetch('https://api.linkedin.com/v2/me', {
+          headers: { Authorization: `Bearer ${access_token}` },
+        });
+        if (!meResp.ok) throw new Error(`LinkedIn profile lookup failed (${meResp.status})`);
+        const meData: any = await meResp.json().catch(() => ({}));
+        const meId = String(meData?.id || '').trim();
+        if (!meId) throw new Error('LinkedIn profile ID not available');
+        authorUrn = `urn:li:person:${meId}`;
+        try {
+          await pool!.query(
+            `UPDATE social_accounts
+             SET token_data = COALESCE(token_data, '{}'::jsonb) || $3::jsonb
+             WHERE user_id = $1 AND LOWER(platform) = LOWER($2)`,
+            [userId, 'linkedin', JSON.stringify({ sub: meId })],
+          );
+        } catch {
+          // ignore
+        }
+      }
       const body = {
         author: authorUrn,
         lifecycleState: 'PUBLISHED',
@@ -4925,6 +5006,77 @@ async function publishToplatform(
       }
       const data: any = await resp.json();
       return { status: 'published', platformPostId: data?.data?.id };
+    }
+
+    if (platformId === 'facebook') {
+      const graphBase = 'https://graph.facebook.com/v19.0';
+      const pagesResp = await fetch(`${graphBase}/me/accounts?access_token=${encodeURIComponent(access_token)}`);
+      const pagesData: any = await pagesResp.json().catch(() => ({}));
+      const page = Array.isArray(pagesData?.data) ? pagesData.data[0] : null;
+      const pageId = String(page?.id || '').trim();
+      const pageToken = String(page?.access_token || '').trim();
+      if (!pageId || !pageToken) throw new Error('Facebook Page access not available (no pages found)');
+
+      const body = new URLSearchParams({
+        message: text,
+        ...(postUrl ? { link: postUrl } : {}),
+        access_token: pageToken,
+      });
+      const resp = await fetch(`${graphBase}/${encodeURIComponent(pageId)}/feed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      const respData: any = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(respData?.error?.message || `Facebook API error ${resp.status}`);
+      }
+      return { status: 'published', platformPostId: String(respData?.id || '') };
+    }
+
+    if (platformId === 'threads') {
+      const threadsBase = 'https://graph.threads.net/v1.0';
+      let threadsUserId = String(token_data?.user_id || token_data?.userId || token_data?.id || '').trim();
+      if (!threadsUserId) {
+        const meResp = await fetch(`${threadsBase}/me?fields=id&access_token=${encodeURIComponent(access_token)}`);
+        const meData: any = await meResp.json().catch(() => ({}));
+        threadsUserId = String(meData?.id || '').trim();
+      }
+      if (!threadsUserId) throw new Error('Threads user id not available');
+
+      const createParams = new URLSearchParams({
+        media_type: featuredImage ? 'IMAGE' : 'TEXT',
+        text,
+        ...(featuredImage ? { image_url: featuredImage } : {}),
+        access_token: access_token,
+      });
+      const createResp = await fetch(`${threadsBase}/${encodeURIComponent(threadsUserId)}/threads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: createParams.toString(),
+      });
+      const createData: any = await createResp.json().catch(() => ({}));
+      if (!createResp.ok) {
+        throw new Error(createData?.error?.message || `Threads create error ${createResp.status}`);
+      }
+      const creationId = String(createData?.id || '').trim();
+      if (!creationId) throw new Error('Threads creation id missing');
+
+      const publishParams = new URLSearchParams({
+        creation_id: creationId,
+        access_token: access_token,
+      });
+      const pubResp = await fetch(`${threadsBase}/${encodeURIComponent(threadsUserId)}/threads_publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: publishParams.toString(),
+      });
+      const pubData: any = await pubResp.json().catch(() => ({}));
+      if (!pubResp.ok) {
+        const msg = pubData?.error?.message || `Threads publish error ${pubResp.status}`;
+        return { status: 'pending', error: msg };
+      }
+      return { status: 'published', platformPostId: String(pubData?.id || '') };
     }
 
     // Stub for other platforms

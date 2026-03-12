@@ -451,6 +451,7 @@ type SavedConfigMap = Record<string, SavedIntegrationConfig>;
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
 const CALLBACK_BASE_URL = (API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
+const USER_SETTINGS_INTEGRATIONS_KEY = 'integration-configs';
 
 const authHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('auth_token');
@@ -507,6 +508,61 @@ const Integrations = () => {
     connected: false,
   });
   const isAdmin = isAdminUser();
+
+  const filterUserConfigs = useCallback((configs: SavedConfigMap): SavedConfigMap => {
+    const next: SavedConfigMap = {};
+    for (const [id, cfg] of Object.entries(configs)) {
+      const def = INTEGRATIONS.find((i) => i.id === id);
+      if (def?.isOAuth) continue;
+      next[id] = cfg;
+    }
+    return next;
+  }, []);
+
+  const loadRemoteUserConfigs = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(USER_SETTINGS_INTEGRATIONS_KEY)}`, {
+        headers: authHeaders(),
+      });
+      const data = res.ok ? await res.json() as { success: boolean; value?: unknown } : { success: false };
+      if (!data.success) return;
+      if (!data.value || typeof data.value !== 'object') return;
+      const remote = data.value as SavedConfigMap;
+      setSavedConfigs((prev) => {
+        // Preserve any admin OAuth configs already loaded, but override user-level configs from remote.
+        const next = { ...prev, ...remote };
+        saveLocalConfigs(next);
+        return next;
+      });
+    } catch {
+      // ignore - localStorage fallback still works
+    }
+  }, []);
+
+  const saveRemoteUserConfigs = useCallback(async (configs: SavedConfigMap) => {
+    try {
+      const payload = filterUserConfigs(configs);
+      await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(USER_SETTINGS_INTEGRATIONS_KEY)}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ value: payload }),
+      });
+    } catch {
+      // ignore - localStorage fallback still works
+    }
+  }, [filterUserConfigs]);
+
+  useEffect(() => {
+    // Keep user-level (non-OAuth) integration configs persistent across refresh/devices.
+    void loadRemoteUserConfigs();
+  }, [loadRemoteUserConfigs]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void saveRemoteUserConfigs(savedConfigs);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [savedConfigs, saveRemoteUserConfigs]);
 
   // ── Load backend admin configs ─────────────────────────────────────────────
   const loadBackendConfigs = useCallback(async () => {
