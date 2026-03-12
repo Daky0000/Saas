@@ -544,7 +544,7 @@ const Integrations = () => {
       const payload = filterUserConfigs(configs);
       await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(USER_SETTINGS_INTEGRATIONS_KEY)}`, {
         method: 'PUT',
-        headers: authHeaders(),
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: payload }),
       });
     } catch {
