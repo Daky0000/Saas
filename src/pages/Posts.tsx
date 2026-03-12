@@ -1689,6 +1689,10 @@ function AutomationTabV2() {
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   };
 
+  const [remoteSaving, setRemoteSaving] = useState(false);
+  const [remoteSaveMsg, setRemoteSaveMsg] = useState<string | null>(null);
+  const [remoteSaveErr, setRemoteSaveErr] = useState<string | null>(null);
+
   const [facebookTarget, setFacebookTarget] = useState<'page' | 'group'>(() => (loadSettings().facebookTarget === 'group' ? 'group' : 'page'));
   const [platformEnabledMap, setPlatformEnabledMap] = useState<Record<string, boolean>>(() => {
     const s = loadSettings();
@@ -1711,6 +1715,56 @@ function AutomationTabV2() {
     const s = loadSettings().templates || {};
     return { ...DEFAULT_TEMPLATES, ...(typeof s === 'object' ? s : {}) };
   });
+
+  useEffect(() => {
+    const loadRemote = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(SETTINGS_KEY)}`, { headers: authHeaders() });
+        const data = res.ok ? await res.json() as { success: boolean; value?: unknown } : { success: false };
+        if (!data.success || !data.value || typeof data.value !== 'object') return;
+        const s = data.value as any;
+        if (s.facebookTarget) setFacebookTarget(s.facebookTarget === 'group' ? 'group' : 'page');
+        if (s.platformEnabledMap && typeof s.platformEnabledMap === 'object') setPlatformEnabledMap(s.platformEnabledMap);
+        if (s.selectedAccountMap && typeof s.selectedAccountMap === 'object') setSelectedAccountMap(s.selectedAccountMap);
+        if (s.rules && typeof s.rules === 'object') {
+          setRules({
+            whenPublished: Boolean(s.rules.whenPublished ?? true),
+            whenScheduled: Boolean(s.rules.whenScheduled ?? false),
+            onlySelectedCategories: Boolean(s.rules.onlySelectedCategories ?? false),
+            autoPostTo: Array.isArray(s.rules.autoPostTo) ? s.rules.autoPostTo.map((x: any) => String(x)).filter(Boolean) : [],
+          });
+        }
+        if (s.templates && typeof s.templates === 'object') setTemplates({ ...DEFAULT_TEMPLATES, ...s.templates });
+        saveSettings(s);
+      } catch {
+        // ignore - localStorage fallback still works
+      }
+    };
+    void loadRemote();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [API_BASE_URL]);
+
+  const saveRemote = async () => {
+    setRemoteSaveMsg(null);
+    setRemoteSaveErr(null);
+    setRemoteSaving(true);
+    try {
+      const value = { facebookTarget, platformEnabledMap, selectedAccountMap, rules, templates };
+      const res = await fetch(`${API_BASE_URL}/api/user-settings/${encodeURIComponent(SETTINGS_KEY)}`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      const data = res.ok ? await res.json() as { success: boolean; error?: string } : { success: false, error: 'Failed to save' };
+      if (!data.success) throw new Error(data.error || 'Failed to save');
+      setRemoteSaveMsg('Saved.');
+      saveSettings(value);
+    } catch (e) {
+      setRemoteSaveErr(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setRemoteSaving(false);
+    }
+  };
 
   useEffect(() => {
     const allowed = new Set(connectedPlatforms.map((p) => p.id));
@@ -1872,11 +1926,24 @@ function AutomationTabV2() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-black tracking-tight text-slate-950">Automation</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Configure automatic publishing to connected platforms. All extra features live inside the Automation tab.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight text-slate-950">Automation</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Configure automatic publishing to connected platforms. All extra features live inside the Automation tab.
+          </p>
+          {remoteSaveMsg && <div className="mt-2 text-xs font-semibold text-emerald-600">{remoteSaveMsg}</div>}
+          {remoteSaveErr && <div className="mt-2 text-xs font-semibold text-red-600">{remoteSaveErr}</div>}
+        </div>
+        <button
+          type="button"
+          onClick={() => void saveRemote()}
+          disabled={remoteSaving}
+          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+        >
+          {remoteSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+          Save changes
+        </button>
       </div>
 
       <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 w-fit">
@@ -2451,7 +2518,7 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-visible">
         {loading
           ? <div className="flex items-center justify-center py-16"><Loader2 className="animate-spin text-slate-300" size={28} /></div>
           : posts.length === 0
@@ -2513,7 +2580,7 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
                         </button>
                         {openMenu === post.id && (
                           <div
-                            className="absolute right-0 z-20 mt-1 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+                            className="absolute left-0 sm:left-auto sm:right-0 z-30 mt-1 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
