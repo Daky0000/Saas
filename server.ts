@@ -46,7 +46,10 @@ const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 let dbReady = false;
 
 function hasDatabase() {
-  return Boolean(pool && dbReady);
+  // Treat the database as "available" if a Pool is configured.
+  // Schema initialization can fail in restricted DB roles (no CREATE/ALTER),
+  // but reads/writes to existing tables may still succeed.
+  return Boolean(pool);
 }
 
 type DataDeletionStatus = 'received' | 'completed' | 'unknown';
@@ -554,7 +557,7 @@ function seedInMemoryUsers() {
 
 // Helpers
 async function dbQuery<T = any>(sql: string, params: any[] = []) {
-  if (!hasDatabase()) {
+  if (!pool) {
     throw new Error('DATABASE_URL is not configured. Please set it to enable persistence.');
   }
   return pool!.query<T>(sql, params);
@@ -573,7 +576,7 @@ ensureDatabase()
   .then(() => ensureSeedPricingPlans())
   .catch((err) => {
     dbReady = false;
-    seedInMemoryUsers();
+    if (!pool) seedInMemoryUsers();
     console.error('Database initialization failed:', err);
   });
 
@@ -4884,6 +4887,122 @@ function buildPostUrl(post: Record<string, any>): string {
   return `${base}/blog/${encodeURIComponent(slug)}`;
 }
 
+type PublishableSocialConnection = {
+  platform: string;
+  access_token: string;
+  token_data: any;
+};
+
+function computeExpiresAtIso(expiresInSeconds: unknown): string | null {
+  const seconds = Number(expiresInSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+async function refreshTwitterAccessToken(refreshToken: string) {
+  const cfg = await getPlatformConfig('twitter');
+  const clientId = (cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '').trim();
+  const clientSecret = (cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '').trim();
+  if (!clientId) throw new Error('Twitter client_id not configured');
+
+  const data = new URLSearchParams({
+    client_id: clientId,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+  if (clientSecret) data.set('client_secret', clientSecret);
+
+  const resp = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400) throw new Error(`Twitter token refresh failed (${resp.status})`);
+  return resp.data;
+}
+
+async function refreshLinkedInAccessToken(refreshToken: string) {
+  const cfg = await getPlatformConfig('linkedin');
+  const clientId = (cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '').trim();
+  const clientSecret = (cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) throw new Error('LinkedIn client credentials not configured');
+
+  const data = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  const resp = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400) throw new Error(`LinkedIn token refresh failed (${resp.status})`);
+  return resp.data;
+}
+
+async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
+  if (!pool) return null;
+  const rows = await pool.query(
+    'SELECT platform, access_token, refresh_token, token_data, expires_at FROM social_accounts WHERE user_id=$1 AND connected=true',
+    [userId]
+  );
+  const match = rows.rows.find((r: any) => normalizePlatformId(r.platform) === platformId) as
+    | { platform: string; access_token: string | null; refresh_token: string | null; token_data: any; expires_at: string | null }
+    | undefined;
+  if (!match) return null;
+
+  const accessToken = String(match.access_token || '').trim();
+  const refreshToken = String(match.refresh_token || '').trim();
+  const tokenData = match.token_data || {};
+
+  const expiresAtMs = match.expires_at ? new Date(match.expires_at).getTime() : NaN;
+  const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + 60_000 : false;
+  if (!isExpired) {
+    if (!accessToken) return { platform: match.platform, access_token: '', token_data: tokenData };
+    return { platform: match.platform, access_token: accessToken, token_data: tokenData };
+  }
+
+  if (!refreshToken) {
+    return { platform: match.platform, access_token: '', token_data: tokenData };
+  }
+
+  let refreshed: any = null;
+  if (platformId === 'twitter') {
+    refreshed = await refreshTwitterAccessToken(refreshToken);
+  } else if (platformId === 'linkedin') {
+    refreshed = await refreshLinkedInAccessToken(refreshToken);
+  } else {
+    // No refresh flow implemented for this platform.
+    return { platform: match.platform, access_token: '', token_data: tokenData };
+  }
+
+  const nextAccess = String(refreshed?.access_token || '').trim();
+  const nextRefresh = String(refreshed?.refresh_token || refreshToken || '').trim() || null;
+  const nextExpiresAt = computeExpiresAtIso(refreshed?.expires_in);
+  const mergedTokenData = { ...(tokenData || {}), ...(refreshed || {}) };
+
+  if (nextAccess) {
+    try {
+      await pool.query(
+        `UPDATE social_accounts
+         SET access_token=$3,
+             refresh_token=$4,
+             expires_at=$5,
+             token_data = COALESCE(token_data, '{}'::jsonb) || $6::jsonb
+         WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`,
+        [userId, match.platform, nextAccess, nextRefresh, nextExpiresAt, JSON.stringify(refreshed || {})]
+      );
+    } catch {
+      // ignore persistence issues; still return refreshed token for this request
+    }
+    return { platform: match.platform, access_token: nextAccess, token_data: mergedTokenData };
+  }
+
+  return { platform: match.platform, access_token: '', token_data: tokenData };
+}
+
 // Helper: publish a blog post to a single platform, return result
 async function publishToplatform(
   userId: string,
@@ -4918,23 +5037,27 @@ async function publishToplatform(
       return { status: 'published', platformPostId: String(wpData?.id || '') };
     }
 
-    // OAuth platforms (LinkedIn, Twitter/X, Facebook, Instagram, etc.)
-    const socialRows = await pool!.query(
-      'SELECT platform, access_token, token_data FROM social_accounts WHERE user_id=$1 AND connected=true',
-      [userId]
-    );
-    const targetId = normalizePlatformId(platform);
-    const match = socialRows.rows.find((r: any) => normalizePlatformId(r.platform) === targetId);
-    if (!match) throw new Error(`${platform} is not connected`);
-    const { access_token, token_data } = match as any;
+    // OAuth platforms (LinkedIn, Twitter/X, Facebook, Threads, etc.)
+    const platformId = normalizePlatformId(platform);
+    const conn = await getPublishableSocialConnection(userId, platformId);
+    if (!conn) throw new Error(`${platform} is not connected`);
+    const { access_token, token_data } = conn;
     if (!access_token) throw new Error(`${platform} access token missing – please reconnect`);
 
     const PLATFORM_NAMES: Record<string, string> = {
       linkedin: 'LinkedIn', twitter: 'Twitter / X', facebook: 'Facebook',
       instagram: 'Instagram', threads: 'Threads', tiktok: 'TikTok',
     };
-    const platformId = normalizePlatformId(platform);
     const platformName = PLATFORM_NAMES[platformId] || platformId;
+
+    if (platformId === 'instagram') {
+      // Current OAuth wiring is Instagram Basic Display (read-only). Publishing requires Instagram Graph API.
+      return {
+        status: 'failed',
+        error:
+          'Instagram publishing is not supported. To publish to Instagram you must use Instagram Graph API (Business/Creator account linked to a Facebook Page) and request publish permissions.',
+      };
+    }
 
     const caption = String(post.excerpt || '').trim() || String(post.title || '').trim();
     const hashtags = toHashtags((post as any).tag_names);
@@ -4954,11 +5077,13 @@ async function publishToplatform(
     if (platformId === 'linkedin') {
       let authorUrn = token_data?.sub ? `urn:li:person:${token_data.sub}` : null;
       if (!authorUrn) {
-        const meResp = await fetch('https://api.linkedin.com/v2/me', {
+        const meResp = await axios.get('https://api.linkedin.com/v2/me', {
           headers: { Authorization: `Bearer ${access_token}` },
+          validateStatus: () => true,
+          timeout: 15000,
         });
-        if (!meResp.ok) throw new Error(`LinkedIn profile lookup failed (${meResp.status})`);
-        const meData: any = await meResp.json().catch(() => ({}));
+        if (meResp.status >= 400) throw new Error(`LinkedIn profile lookup failed (${meResp.status})`);
+        const meData: any = meResp.data || {};
         const meId = String(meData?.id || '').trim();
         if (!meId) throw new Error('LinkedIn profile ID not available');
         authorUrn = `urn:li:person:${meId}`;
@@ -4984,37 +5109,51 @@ async function publishToplatform(
         },
         visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
       };
-      const resp = await fetch('https://api.linkedin.com/v2/ugcPosts', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
-        body: JSON.stringify(body),
+      const resp = await axios.post('https://api.linkedin.com/v2/ugcPosts', body, {
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          'Content-Type': 'application/json',
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+        validateStatus: () => true,
+        timeout: 15000,
       });
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}));
-        throw new Error((errData as any)?.message || `LinkedIn API error ${resp.status}`);
+      if (resp.status >= 400) {
+        const errData: any = resp.data || {};
+        throw new Error(errData?.message || `LinkedIn API error ${resp.status}`);
       }
-      const data: any = await resp.json();
+      const data: any = resp.data || {};
       return { status: 'published', platformPostId: data?.id };
     }
 
     if (platformId === 'twitter') {
-      const resp = await fetch('https://api.twitter.com/2/tweets', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 280) }),
-      });
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}));
-        throw new Error((errData as any)?.detail || `Twitter API error ${resp.status}`);
+      const resp = await axios.post(
+        'https://api.twitter.com/2/tweets',
+        { text: text.slice(0, 280) },
+        {
+          headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
+      );
+      if (resp.status >= 400) {
+        const errData: any = resp.data || {};
+        throw new Error(errData?.detail || `Twitter API error ${resp.status}`);
       }
-      const data: any = await resp.json();
+      const data: any = resp.data || {};
       return { status: 'published', platformPostId: data?.data?.id };
     }
 
     if (platformId === 'facebook') {
       const graphBase = 'https://graph.facebook.com/v19.0';
-      const pagesResp = await fetch(`${graphBase}/me/accounts?access_token=${encodeURIComponent(access_token)}`);
-      const pagesData: any = await pagesResp.json().catch(() => ({}));
+      const pagesResp = await axios.get(`${graphBase}/me/accounts?access_token=${encodeURIComponent(access_token)}`, {
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      const pagesData: any = pagesResp.data || {};
+      if (pagesResp.status >= 400) {
+        throw new Error(pagesData?.error?.message || `Facebook API error ${pagesResp.status}`);
+      }
       const page = Array.isArray(pagesData?.data) ? pagesData.data[0] : null;
       const pageId = String(page?.id || '').trim();
       const pageToken = String(page?.access_token || '').trim();
@@ -5025,13 +5164,13 @@ async function publishToplatform(
         ...(postUrl ? { link: postUrl } : {}),
         access_token: pageToken,
       });
-      const resp = await fetch(`${graphBase}/${encodeURIComponent(pageId)}/feed`, {
-        method: 'POST',
+      const resp = await axios.post(`${graphBase}/${encodeURIComponent(pageId)}/feed`, body.toString(), {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
+        validateStatus: () => true,
+        timeout: 15000,
       });
-      const respData: any = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
+      const respData: any = resp.data || {};
+      if (resp.status >= 400) {
         throw new Error(respData?.error?.message || `Facebook API error ${resp.status}`);
       }
       return { status: 'published', platformPostId: String(respData?.id || '') };
@@ -5041,8 +5180,14 @@ async function publishToplatform(
       const threadsBase = 'https://graph.threads.net/v1.0';
       let threadsUserId = String(token_data?.user_id || token_data?.userId || token_data?.id || '').trim();
       if (!threadsUserId) {
-        const meResp = await fetch(`${threadsBase}/me?fields=id&access_token=${encodeURIComponent(access_token)}`);
-        const meData: any = await meResp.json().catch(() => ({}));
+        const meResp = await axios.get(`${threadsBase}/me?fields=id&access_token=${encodeURIComponent(access_token)}`, {
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const meData: any = meResp.data || {};
+        if (meResp.status >= 400) {
+          throw new Error(meData?.error?.message || `Threads profile lookup failed (${meResp.status})`);
+        }
         threadsUserId = String(meData?.id || '').trim();
       }
       if (!threadsUserId) throw new Error('Threads user id not available');
@@ -5053,13 +5198,17 @@ async function publishToplatform(
         ...(featuredImage ? { image_url: featuredImage } : {}),
         access_token: access_token,
       });
-      const createResp = await fetch(`${threadsBase}/${encodeURIComponent(threadsUserId)}/threads`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: createParams.toString(),
+      const createResp = await axios.post(
+        `${threadsBase}/${encodeURIComponent(threadsUserId)}/threads`,
+        createParams.toString(),
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
       });
-      const createData: any = await createResp.json().catch(() => ({}));
-      if (!createResp.ok) {
+      const createData: any = createResp.data || {};
+      if (createResp.status >= 400) {
         throw new Error(createData?.error?.message || `Threads create error ${createResp.status}`);
       }
       const creationId = String(createData?.id || '').trim();
@@ -5069,13 +5218,17 @@ async function publishToplatform(
         creation_id: creationId,
         access_token: access_token,
       });
-      const pubResp = await fetch(`${threadsBase}/${encodeURIComponent(threadsUserId)}/threads_publish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: publishParams.toString(),
-      });
-      const pubData: any = await pubResp.json().catch(() => ({}));
-      if (!pubResp.ok) {
+      const pubResp = await axios.post(
+        `${threadsBase}/${encodeURIComponent(threadsUserId)}/threads_publish`,
+        publishParams.toString(),
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
+      );
+      const pubData: any = pubResp.data || {};
+      if (pubResp.status >= 400) {
         const msg = pubData?.error?.message || `Threads publish error ${pubResp.status}`;
         return { status: 'pending', error: msg };
       }
@@ -5084,7 +5237,7 @@ async function publishToplatform(
 
     // Stub for other platforms
     console.log(`[Distribution] ${platformName}: token available, platform publishing not yet implemented`);
-    return { status: 'pending', error: `${platformName} publishing coming soon` };
+    return { status: 'failed', error: `${platformName} publishing is not implemented yet` };
   } catch (err) {
     return { status: 'failed', error: err instanceof Error ? err.message : 'Unknown error' };
   }
