@@ -10,14 +10,12 @@ import {
   Palette,
   Receipt,
   Settings,
-  Share2,
   TrendingUp,
   X,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
-import Integrations from './pages/Integrations';
 import Instructions from './pages/Instructions';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
@@ -25,7 +23,6 @@ import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
 import Media from './pages/Media';
 import Auth from './pages/Auth';
-import OAuthCallback from './pages/OAuthCallback';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import Landing from './pages/Landing';
@@ -34,7 +31,6 @@ import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
-import { useOAuthCallback } from './hooks/useOAuth';
 import {
   AppUser,
   clearStoredUser,
@@ -48,7 +44,6 @@ type PageType =
   | 'dashboard'
   | 'posts'
   | 'cards'
-  | 'integrations'
   | 'instructions'
   | 'pricing'
   | 'admin'
@@ -78,7 +73,6 @@ const PAGE_PATHS: Record<PageType, string> = {
   dashboard: '/dashboard',
   posts: '/posts',
   cards: '/cards',
-  integrations: '/integrations',
   instructions: '/instructions',
   pricing: '/pricing',
   admin: '/admin/users',
@@ -90,7 +84,6 @@ const PAGE_PATHS: Record<PageType, string> = {
 const PATH_TO_PAGE = new Map<string, PageType>(
   Object.entries(PAGE_PATHS).map(([page, path]) => [path, page as PageType])
 );
-PATH_TO_PAGE.set('/connects', 'integrations');
 PATH_TO_PAGE.set('/admin', 'admin');
 
 async function fetchCurrentUser(token: string): Promise<AppUser | null> {
@@ -134,10 +127,8 @@ function App() {
   const [authUser, setAuthUser] = useState<AppUser | null>(() => getStoredUser());
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isOAuthCallback, setIsOAuthCallback] = useState(false);
-  const [currentPathname, setCurrentPathname] = useState(window.location.pathname);
+  const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
 
-  useOAuthCallback();
 
   useEffect(() => {
     const resetFlag = 'force_auth_reset_v7';
@@ -160,9 +151,11 @@ function App() {
   const navigatePath = useCallback((path: string, replace = false) => {
     if (replace) {
       window.history.replaceState({}, document.title, path);
+      setCurrentPathname(path);
       return;
     }
     window.history.pushState({}, document.title, path);
+    setCurrentPathname(path);
   }, []);
 
   const navigateToPage = useCallback(
@@ -213,8 +206,6 @@ function App() {
     let canceled = false;
 
     const pathname = window.location.pathname;
-    const callbackPath = pathname.startsWith('/auth/') && pathname.includes('callback');
-    setIsOAuthCallback(callbackPath);
 
     const hasSession = Boolean(localStorage.getItem('auth_session'));
     const token = localStorage.getItem('auth_token');
@@ -252,12 +243,6 @@ function App() {
       setAuthUser(null);
     }
 
-    if (callbackPath) {
-      return () => {
-        canceled = true;
-      };
-    }
-
     if (!loggedIn) {
       const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
       if (!publicPaths.includes(pathname)) {
@@ -286,12 +271,6 @@ function App() {
     const handlePopState = () => {
       const pathname = window.location.pathname;
       setCurrentPathname(pathname);
-      const callbackPath = pathname.startsWith('/auth/') && pathname.includes('callback');
-      setIsOAuthCallback(callbackPath);
-
-      if (callbackPath) {
-        return;
-      }
 
       if (!isAuthenticated) {
         const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
@@ -348,7 +327,7 @@ function App() {
     return <Landing onLoginClick={goToLogin} />;
   }
 
-  if (!isAuthenticated && !isOAuthCallback) {
+  if (!isAuthenticated) {
     return <Auth onLogin={handleLogin} />;
   }
 
@@ -357,7 +336,7 @@ function App() {
     return <Dashboard currentUser={authUser} />;
   }
 
-  if (isAuthenticated && currentPage === 'admin' && !isOAuthCallback) {
+  if (isAuthenticated && currentPage === 'admin') {
     return (
       <TemplateEditorProvider>
         <Admin currentUser={authUser} />
@@ -371,7 +350,6 @@ function App() {
     { id: 'dashboard' as const, label: 'Dashboard', icon: BarChart4 },
     { id: 'posts' as const, label: 'Posts', icon: FileText },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
-    { id: 'integrations' as const, label: 'Integrations', icon: Share2 },
     { id: 'instructions' as const, label: 'Instructions', icon: BookOpen },
     { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
@@ -380,10 +358,6 @@ function App() {
   ];
 
   const renderPage = () => {
-    if (isOAuthCallback) {
-      return <OAuthCallback />;
-    }
-
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard currentUser={authUser} />;
@@ -391,8 +365,6 @@ function App() {
         return <Posts currentUser={authUser} />;
       case 'cards':
         return <Cards />;
-      case 'integrations':
-        return <Integrations />;
       case 'instructions':
         return <Instructions />;
       case 'pricing':

@@ -6,6 +6,8 @@ import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Pool } from 'pg';
+import { Queue, Worker } from 'bullmq';
+import IORedis from 'ioredis';
 import {
   randomUUID,
   randomBytes,
@@ -28,6 +30,7 @@ const app = express();
 const PORT = process.env.PORT || process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const DATABASE_URL = process.env.DATABASE_URL;
+const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
 const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
@@ -44,6 +47,23 @@ const allowedOrigins = new Set([
 
 const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 let dbReady = false;
+
+const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
+const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
+const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
+
+let socialAutomationQueue: Queue | null = null;
+let socialAutomationWorker: Worker | null = null;
+let socialAutomationRedis: IORedis | null = null;
+
+function isBullMqEnabled() {
+  return Boolean(REDIS_URL && REDIS_URL.trim());
+}
+
+function getRetryDelayMs(attemptNumber: number) {
+  const n = Math.max(1, Number(attemptNumber || 1));
+  return SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS * Math.pow(2, n - 1);
+}
 
 function hasDatabase() {
   // Treat the database as "available" if a Pool is configured.
@@ -119,17 +139,99 @@ async function ensureDatabase() {
       id TEXT PRIMARY KEY,
       user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       platform TEXT NOT NULL,
+      platform_id BIGINT REFERENCES social_platforms(id) ON DELETE SET NULL,
+      account_type TEXT,
+      account_id TEXT,
+      account_name TEXT,
+      profile_image TEXT,
       handle TEXT,
       followers INTEGER DEFAULT 0,
       connected BOOLEAN DEFAULT TRUE,
       connected_at TIMESTAMPTZ DEFAULT NOW(),
       expires_at TIMESTAMPTZ,
+      token_expires_at TIMESTAMPTZ,
       access_token TEXT,
       refresh_token TEXT,
       token_data JSONB DEFAULT '{}'::jsonb,
-      UNIQUE (user_id, platform)
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  // Migrate: remove legacy uniqueness constraint so users can save multiple accounts per platform.
+  await pool.query(`ALTER TABLE social_accounts DROP CONSTRAINT IF EXISTS social_accounts_user_id_platform_key;`).catch(() => undefined);
+  // Ensure a single OAuth profile token row per (user, platform).
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS social_accounts_user_platform_profile_unique_idx
+     ON social_accounts (user_id, platform)
+     WHERE account_type = 'profile';`
+  ).catch(() => undefined);
+  // Prevent duplicate saved targets per (user, platform, type, id).
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS social_accounts_user_platform_account_unique_idx
+     ON social_accounts (user_id, platform, account_type, account_id)
+     WHERE account_id IS NOT NULL AND account_type IS NOT NULL;`
+  ).catch(() => undefined);
+
+  // Social Automation v2 schema (platform registry + richer account metadata)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_platforms (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      api_base_url TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(
+    `INSERT INTO social_platforms (name, slug, api_base_url, enabled)
+     VALUES ('Facebook', 'facebook', 'https://graph.facebook.com', true)
+     ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, api_base_url=EXCLUDED.api_base_url;`
+  ).catch(() => undefined);
+
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS platform_id BIGINT REFERENCES social_platforms(id) ON DELETE SET NULL;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS account_type TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS account_id TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS account_name TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS profile_image TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_accounts_user_platform_idx ON social_accounts (user_id, platform_id);`).catch(() => undefined);
+
+  // Best-effort backfill of `platform_id` for existing connections.
+  await pool.query(
+    `UPDATE social_accounts sa
+     SET platform_id = sp.id
+     FROM social_platforms sp
+     WHERE sa.platform_id IS NULL
+       AND LOWER(sa.platform) = sp.slug;`
+  ).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_connections (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      social_account_id TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_connections_user_idx ON social_connections (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS social_connections_user_account_unique_idx ON social_connections (user_id, social_account_id);`).catch(() => undefined);
+
+  // Admin OAuth/app credentials (separate from platform_configs/auth_providers legacy tables)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS integrations (
+      id BIGSERIAL PRIMARY KEY,
+      provider TEXT NOT NULL,
+      client_id TEXT,
+      client_secret TEXT,
+      redirect_url TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS integrations_provider_unique_idx ON integrations (LOWER(provider));`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS data_deletion_requests (
@@ -336,6 +438,8 @@ async function ensureDatabase() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  await pool.query(`ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS social_automation JSONB DEFAULT '{}'::jsonb;`).catch(() => undefined);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS blog_post_tags (
       post_id TEXT NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
@@ -343,6 +447,48 @@ async function ensureDatabase() {
       PRIMARY KEY (post_id, tag_id)
     );
   `);
+
+  // Social Automation v2: per-post settings + targets + logs
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_post_settings (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
+      template TEXT DEFAULT '',
+      publish_type TEXT NOT NULL DEFAULT 'immediate',
+      scheduled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(
+    `ALTER TABLE social_post_settings
+     ADD CONSTRAINT social_post_settings_publish_type_chk
+     CHECK (publish_type IN ('immediate','scheduled','delayed'))`
+  ).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS social_post_settings_post_unique_idx ON social_post_settings (post_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_post_targets (
+      id TEXT PRIMARY KEY,
+      social_post_id TEXT NOT NULL REFERENCES social_post_settings(id) ON DELETE CASCADE,
+      social_account_id TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+      enabled BOOLEAN NOT NULL DEFAULT true
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_post_targets_post_idx ON social_post_targets (social_post_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_post_logs (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
+      social_account_id TEXT REFERENCES social_accounts(id) ON DELETE SET NULL,
+      platform TEXT NOT NULL,
+      status TEXT NOT NULL,
+      api_response JSONB,
+      posted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_post_logs_post_idx ON social_post_logs (post_id);`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS publishing_logs (
@@ -352,10 +498,35 @@ async function ensureDatabase() {
       platform TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       platform_post_id TEXT,
+      account TEXT,
       error_message TEXT,
+      response JSONB,
+      scheduled_for TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS account TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS response JSONB;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_automation_tasks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      post_id TEXT NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      run_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      payload JSONB DEFAULT '{}'::jsonb,
+      log_id TEXT,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_automation_tasks_due_idx ON social_automation_tasks (status, run_at);`).catch(() => undefined);
 
   // Ensure cover_image_url exists on card_templates (added in v6.4)
   await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS cover_image_url TEXT`);
@@ -574,6 +745,7 @@ function normalizeUsername(value: string) {
 ensureDatabase()
   .then(() => ensureSeedUsers())
   .then(() => ensureSeedPricingPlans())
+  .then(() => startSocialAutomationProcessor())
   .catch((err) => {
     dbReady = false;
     if (!pool) seedInMemoryUsers();
@@ -1800,17 +1972,43 @@ async function exchangeLinkedInCode(code: string) {
   return response.data;
 }
 
-async function exchangeFacebookCode(code: string) {
+async function exchangeFacebookCode(code: string, redirectUriOverride?: string) {
   const cfg = await getPlatformConfig('facebook');
   const response = await axios.get('https://graph.facebook.com/v18.0/oauth/access_token', {
     params: {
       client_id: cfg.appId || process.env.VITE_FACEBOOK_APP_ID,
       client_secret: cfg.appSecret || process.env.FACEBOOK_APP_SECRET,
-      redirect_uri: cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI,
+      redirect_uri: redirectUriOverride || cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI,
       code,
     },
   });
-  return response.data;
+  const tokenData: any = response.data || {};
+
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://graph.facebook.com/v19.0/me', {
+        params: {
+          fields: 'id,name,picture.width(256).height(256)',
+          access_token: accessToken,
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (meResp.status < 400) {
+        const meData: any = meResp.data || {};
+        if (meData?.id) tokenData.user_id = String(meData.id);
+        if (meData?.id) tokenData.id = String(meData.id);
+        if (meData?.name) tokenData.name = String(meData.name);
+        if (meData?.picture) tokenData.picture = meData.picture;
+        if (meData?.picture?.data?.url) tokenData.avatar_url = String(meData.picture.data.url);
+      }
+    } catch {
+      // best-effort; token still valid even if profile lookup fails
+    }
+  }
+
+  return tokenData;
 }
 
 async function exchangeThreadsCode(code: string) {
@@ -1914,24 +2112,38 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
     return;
   }
 
+  const platformId = normalizePlatformId(platform);
   const handle =
-    tokenData?.user_id || tokenData?.username || tokenData?.handle || `${platform.toLowerCase()}_account`;
+    tokenData?.user_id || tokenData?.username || tokenData?.handle || `${platformId}_account`;
   const followers = Number(tokenData?.followers || tokenData?.followers_count || 0);
   const expiresAt = tokenData?.expires_in
     ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
     : null;
+  const tokenExpiresAt = expiresAt;
+
+  const accountId = String(tokenData?.user_id || tokenData?.id || '').trim() || null;
+  const accountName = tokenData?.name ? String(tokenData.name) : null;
+  const profileImage = tokenData?.avatar_url ? String(tokenData.avatar_url) : null;
+
+  const platRow = await dbQuery<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', [platformId]).catch(() => ({ rows: [] } as any));
+  const platformDbId = platRow?.rows?.[0]?.id ?? null;
 
   await dbQuery(
     `
     INSERT INTO social_accounts
-      (id, user_id, platform, handle, followers, connected, connected_at, expires_at, access_token, refresh_token, token_data)
-    VALUES ($1, $2, $3, $4, $5, true, NOW(), $6, $7, $8, $9)
-    ON CONFLICT (user_id, platform) DO UPDATE
-      SET handle = EXCLUDED.handle,
+      (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, handle, followers, connected, connected_at, expires_at, token_expires_at, access_token, refresh_token, token_data)
+    VALUES ($1, $2, $3, $4, 'profile', $5, $6, $7, $8, $9, true, NOW(), $10, $11, $12, $13, $14)
+    ON CONFLICT (user_id, platform) WHERE account_type = 'profile' DO UPDATE
+      SET platform_id = EXCLUDED.platform_id,
+          account_id = EXCLUDED.account_id,
+          account_name = EXCLUDED.account_name,
+          profile_image = EXCLUDED.profile_image,
+          handle = EXCLUDED.handle,
           followers = EXCLUDED.followers,
           connected = true,
           connected_at = NOW(),
           expires_at = EXCLUDED.expires_at,
+          token_expires_at = EXCLUDED.token_expires_at,
           access_token = EXCLUDED.access_token,
           refresh_token = EXCLUDED.refresh_token,
           token_data = EXCLUDED.token_data;
@@ -1939,10 +2151,15 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
     [
       randomUUID(),
       userId,
-      platform,
+      platformId,
+      platformDbId,
+      accountId,
+      accountName,
+      profileImage,
       String(handle),
       followers,
       expiresAt,
+      tokenExpiresAt,
       tokenData?.access_token ?? tokenData?.accessToken ?? null,
       tokenData?.refresh_token ?? tokenData?.refreshToken ?? null,
       tokenData || {},
@@ -1962,7 +2179,8 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
       followers::text AS followers,
       connected,
       connected_at AS "connectedAt",
-      expires_at AS "expiresAt"
+      expires_at AS "expiresAt",
+      token_data AS "token_data"
     FROM social_accounts
     WHERE user_id = $1
     ORDER BY platform;
@@ -4229,6 +4447,372 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
   }
 });
 
+// ── API v1: Social Automation endpoints ─────────────────────────────────────────
+
+// GET /api/v1/social/facebook/connect — start OAuth and redirect to Facebook
+app.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).send('Database not configured');
+
+    const cfg = await getPlatformConfig('facebook');
+    const clientId = String(cfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+    const clientSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+    if (!clientId || !clientSecret) return res.status(400).send('Facebook integration not configured');
+
+    const state = randomUUID();
+    const returnTo = String((req.query as any)?.returnTo || '').trim() || '/posts?view=editor&tab=social_automation&subtab=connections';
+
+    await dbQuery(
+      `INSERT INTO oauth_states (state, user_id, platform, return_to, created_at, expires_at)
+       VALUES ($1, $2, 'facebook', $3, NOW(), NOW() + INTERVAL '15 minutes')
+       ON CONFLICT (state) DO NOTHING`,
+      [state, auth.userId, returnTo]
+    );
+
+    const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
+    const scope = [
+      'public_profile',
+      'email',
+      // List pages the user manages
+      'pages_show_list',
+      // Read engagement insights for pages
+      'pages_read_engagement',
+      // Post as a page
+      'pages_manage_posts',
+    ].join(',');
+
+    const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
+    oauthUrl.searchParams.set('client_id', clientId);
+    oauthUrl.searchParams.set('redirect_uri', redirectUri);
+    oauthUrl.searchParams.set('state', state);
+    oauthUrl.searchParams.set('response_type', 'code');
+    oauthUrl.searchParams.set('scope', scope);
+
+    return res.redirect(oauthUrl.toString());
+  } catch (err) {
+    console.error('v1 facebook connect error:', err);
+    return res.status(500).send('Failed to start Facebook connection');
+  }
+});
+
+// GET /api/v1/social/facebook/callback — OAuth redirect URI
+app.get('/api/v1/social/facebook/callback', async (req: Request, res: Response) => {
+  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  const fallbackOk = `${FRONTEND_URL}/posts?view=editor&tab=social_automation&subtab=connections`;
+  const fallbackErr = (msg: string) => `${FRONTEND_URL}/posts?view=editor&tab=social_automation&subtab=connections&error=${encodeURIComponent(msg)}`;
+
+  try {
+    const oauthError = String((req.query as any).error || '').trim();
+    const oauthErrorDesc = String((req.query as any).error_description || '').trim();
+    if (oauthError) return res.redirect(fallbackErr(oauthErrorDesc || oauthError));
+
+    const code = String((req.query as any).code || '').trim();
+    const state = String((req.query as any).state || '').trim();
+    if (!code || !state) return res.redirect(fallbackErr('Missing code or state'));
+    if (!pool) return res.redirect(fallbackErr('Database not configured'));
+
+    const stateRow = await getOAuthStateRow(state);
+    if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
+    if (String(stateRow.platform || '').trim().toLowerCase() !== 'facebook') return res.redirect(fallbackErr('State/platform mismatch'));
+
+    const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
+    const tokenData = await exchangeFacebookCode(code, redirectUri);
+    await storeUserConnection(stateRow.user_id, 'facebook', tokenData);
+    await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
+
+    const returnTo = (stateRow as any).return_to as string | null | undefined;
+    const dest = returnTo && returnTo.startsWith('/') ? `${FRONTEND_URL}${returnTo}` : fallbackOk;
+    return res.redirect(dest);
+  } catch (err) {
+    console.error('v1 facebook callback error:', err);
+    const msg = err instanceof Error ? err.message : 'Facebook OAuth failed';
+    return res.redirect(fallbackErr(msg));
+  }
+});
+
+// GET /api/v1/social/facebook/pages — list managed pages (Graph API /me/accounts)
+app.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
+
+    const graphBase = 'https://graph.facebook.com/v19.0';
+    const pagesResp = await axios.get(
+      `${graphBase}/me/accounts?fields=id,name,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+      { validateStatus: () => true, timeout: 15000 }
+    );
+    const pagesData: any = pagesResp.data || {};
+    if (pagesResp.status >= 400) {
+      const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const pages = Array.isArray(pagesData?.data)
+      ? pagesData.data
+          .map((p: any) => ({
+            id: String(p?.id || '').trim(),
+            name: String(p?.name || '').trim(),
+            picture: p?.picture?.data?.url ? String(p.picture.data.url) : null,
+          }))
+          .filter((p: any) => p.id)
+      : [];
+
+    return res.json({ success: true, pages });
+  } catch (err) {
+    console.error('v1 facebook pages error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Facebook pages' });
+  }
+});
+
+// POST /api/v1/social/accounts — save an account target (page/profile/etc)
+app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { platform, account_type, account_id, account_name } = req.body as {
+      platform: string;
+      account_type: string;
+      account_id: string;
+      account_name: string;
+    };
+
+    const platformSlug = normalizePlatformId(String(platform || ''));
+    const accountType = String(account_type || '').trim().toLowerCase();
+    const accountId = String(account_id || '').trim();
+    const accountName = String(account_name || '').trim();
+
+    if (!platformSlug) return res.status(400).json({ success: false, error: 'platform is required' });
+    if (!accountType) return res.status(400).json({ success: false, error: 'account_type is required' });
+    if (!accountId) return res.status(400).json({ success: false, error: 'account_id is required' });
+    if (!accountName) return res.status(400).json({ success: false, error: 'account_name is required' });
+
+    const plat = await pool.query<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', [platformSlug]);
+    const platformDbId = plat.rows[0]?.id ?? null;
+
+    let profileImage: string | null = null;
+    let accessTokenToStore: string | null = null;
+    let tokenExpiresAtToStore: string | null = null;
+
+    // Facebook: when saving a Page target, fetch the Page access_token from /me/accounts using the user's profile token.
+    if (platformSlug === 'facebook' && accountType === 'page') {
+      const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+      const profileToken = String(conn?.access_token || '').trim();
+      if (!profileToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
+
+      const graphBase = 'https://graph.facebook.com/v19.0';
+      const pagesResp = await axios.get(
+        `${graphBase}/me/accounts?fields=id,name,access_token,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(profileToken)}`,
+        { validateStatus: () => true, timeout: 15000 }
+      );
+      const pagesData: any = pagesResp.data || {};
+      if (pagesResp.status >= 400) {
+        const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
+        return res.status(400).json({ success: false, error: msg });
+      }
+      const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
+      const match = pages.find((p: any) => String(p?.id || '').trim() === accountId);
+      if (!match) return res.status(400).json({ success: false, error: 'Selected Facebook Page not found or access not available' });
+      accessTokenToStore = String(match?.access_token || '').trim() || null;
+      profileImage = match?.picture?.data?.url ? String(match.picture.data.url) : null;
+      tokenExpiresAtToStore = null;
+      if (!accessTokenToStore) return res.status(400).json({ success: false, error: 'Facebook Page access token not available' });
+    }
+
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, token_expires_at, access_token, connected, connected_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW(),NOW())
+       ON CONFLICT (user_id, platform, account_type, account_id) DO UPDATE
+         SET account_name=EXCLUDED.account_name,
+             platform_id=EXCLUDED.platform_id,
+             profile_image=COALESCE(EXCLUDED.profile_image, social_accounts.profile_image),
+             token_expires_at=COALESCE(EXCLUDED.token_expires_at, social_accounts.token_expires_at),
+             access_token=COALESCE(EXCLUDED.access_token, social_accounts.access_token),
+             connected=true,
+             connected_at=NOW()`,
+      [id, auth.userId, platformSlug, platformDbId, accountType, accountId, accountName, profileImage, tokenExpiresAtToStore, accessTokenToStore]
+    );
+
+    const row = await pool.query(
+      `SELECT id, platform, account_type, account_id, account_name, profile_image, created_at
+       FROM social_accounts
+       WHERE user_id=$1 AND platform=$2 AND account_type=$3 AND account_id=$4`,
+      [auth.userId, platformSlug, accountType, accountId]
+    );
+
+    const saved = row.rows[0];
+    if (saved?.id) {
+      await pool.query(
+        `INSERT INTO social_connections (id, user_id, social_account_id, active, created_at)
+         VALUES ($1,$2,$3,true,NOW())
+         ON CONFLICT (user_id, social_account_id) DO UPDATE SET active=true`,
+        [randomUUID(), auth.userId, saved.id]
+      ).catch(() => undefined);
+    }
+
+    return res.json({ success: true, account: saved });
+  } catch (err) {
+    console.error('v1 save social account error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to save account' });
+  }
+});
+
+// GET /api/v1/social/accounts — list saved accounts
+app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { rows } = await pool.query(
+      `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
+       FROM social_accounts
+       WHERE user_id=$1
+       ORDER BY created_at DESC`,
+      [auth.userId]
+    );
+    return res.json({ success: true, accounts: rows });
+  } catch (err) {
+    console.error('v1 list social accounts error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to list accounts' });
+  }
+});
+
+// DELETE /api/v1/social/accounts/:id — delete a saved account
+app.delete('/api/v1/social/accounts/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { id } = req.params;
+    const result = await pool.query('DELETE FROM social_accounts WHERE id=$1 AND user_id=$2', [String(id), auth.userId]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('v1 delete social account error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete account' });
+  }
+});
+
+// POST /api/v1/posts/:postId/social-settings — save settings + targets
+app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { postId } = req.params;
+    const { template = '', publish_type = 'immediate', scheduled_at = null, accounts = [] } = req.body as {
+      template?: string;
+      publish_type?: 'immediate' | 'scheduled' | 'delayed';
+      scheduled_at?: string | null;
+      accounts?: string[];
+    };
+
+    const publishType = (publish_type === 'scheduled' || publish_type === 'delayed') ? publish_type : 'immediate';
+    const scheduledAt = scheduled_at ? new Date(String(scheduled_at)) : null;
+    if (publishType !== 'immediate' && (!scheduledAt || Number.isNaN(scheduledAt.getTime()))) {
+      return res.status(400).json({ success: false, error: 'scheduled_at is required for scheduled/delayed publish_type' });
+    }
+
+    const postRows = await pool.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
+    if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const existing = await client.query('SELECT id FROM social_post_settings WHERE post_id=$1', [String(postId)]);
+      const settingId = existing.rows[0]?.id ? String(existing.rows[0].id) : randomUUID();
+
+      if (existing.rows.length) {
+        await client.query(
+          `UPDATE social_post_settings SET template=$1, publish_type=$2, scheduled_at=$3 WHERE post_id=$4`,
+          [String(template), publishType, publishType !== 'immediate' ? scheduledAt!.toISOString() : null, String(postId)]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO social_post_settings (id, post_id, template, publish_type, scheduled_at)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [settingId, String(postId), String(template), publishType, publishType !== 'immediate' ? scheduledAt!.toISOString() : null]
+        );
+      }
+
+      await client.query('DELETE FROM social_post_targets WHERE social_post_id=$1', [settingId]);
+      const ids = Array.isArray(accounts) ? accounts.map((x) => String(x)).filter(Boolean) : [];
+      for (const accountId of ids) {
+        await client.query(
+          `INSERT INTO social_post_targets (id, social_post_id, social_account_id, enabled)
+           VALUES ($1,$2,$3,true)`,
+          [randomUUID(), settingId, accountId]
+        );
+      }
+
+      await client.query('COMMIT');
+      return res.json({ success: true, id: settingId });
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('v1 save social settings error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to save social settings' });
+  }
+});
+
+// GET /api/v1/posts/:postId/social-settings — fetch settings + targets
+app.get('/api/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
+  try {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { postId } = req.params;
+    const postRows = await pool.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
+    if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+    const settingsRows = await pool.query(
+      'SELECT id, post_id, template, publish_type, scheduled_at, created_at FROM social_post_settings WHERE post_id=$1',
+      [String(postId)]
+    );
+    const setting = settingsRows.rows[0] || null;
+    if (!setting) {
+      return res.json({ success: true, settings: null });
+    }
+
+    const targetRows = await pool.query(
+      `SELECT t.id, t.enabled, a.id as social_account_id, a.platform, a.account_type, a.account_id, a.account_name, a.profile_image
+       FROM social_post_targets t
+       JOIN social_accounts a ON a.id = t.social_account_id
+       WHERE t.social_post_id=$1
+       ORDER BY a.created_at DESC`,
+      [String(setting.id)]
+    );
+
+    return res.json({
+      success: true,
+      settings: {
+        ...setting,
+        accounts: targetRows.rows,
+      },
+    });
+  } catch (err) {
+    console.error('v1 fetch social settings error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch social settings' });
+  }
+});
+
 // DELETE /api/admin/platform-configs/:platform — reset config + disable (admin only)
 app.delete('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
   try {
@@ -4810,10 +5394,11 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
   if (!user) return;
   const { title = '', slug: rawSlug, content = '', excerpt = '', featured_image = '',
     status = 'draft', category_id, meta_title = '', meta_description = '', focus_keyword = '',
-    social_title = '', social_description = '', social_image = '', scheduled_at, tag_ids = [] } = req.body as {
+    social_title = '', social_description = '', social_image = '', social_automation = {}, scheduled_at, tag_ids = [] } = req.body as {
     title?: string; slug?: string; content?: string; excerpt?: string; featured_image?: string;
     status?: string; category_id?: string; meta_title?: string; meta_description?: string;
     focus_keyword?: string; social_title?: string; social_description?: string; social_image?: string;
+    social_automation?: any;
     scheduled_at?: string; tag_ids?: string[];
   };
   const id = randomUUID();
@@ -4821,16 +5406,29 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
   const published_at = status === 'published' ? new Date().toISOString() : null;
   const { rows } = await pool!.query(
     `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
-      meta_title,meta_description,focus_keyword,social_title,social_description,social_image,scheduled_at,published_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      meta_title,meta_description,focus_keyword,social_title,social_description,social_image,social_automation,scheduled_at,published_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
     [id, user.userId, title, slug, content, excerpt, featured_image, status,
      category_id || null, meta_title, meta_description, focus_keyword,
-     social_title, social_description, social_image, scheduled_at || null, published_at]
+     social_title, social_description, social_image, JSON.stringify(social_automation || {}), scheduled_at || null, published_at]
   );
   if (tag_ids.length) {
     await Promise.all(tag_ids.map((tid: string) =>
       pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, tid])
     ));
+  }
+
+  if (status === 'published') {
+    try {
+      await queueSocialAutomationForPublishedPost(user.userId, rows[0]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Social Automation queue failed';
+      console.error('Social Automation queue error:', err);
+      await pool!.query(
+        'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,error_message) VALUES ($1,$2,$3,$4,$5,$6)',
+        [randomUUID(), id, user.userId, 'facebook', 'failed', msg]
+      ).catch(() => undefined);
+    }
   }
   return res.json({ success: true, post: rows[0] });
 });
@@ -4842,10 +5440,11 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { title, slug: rawSlug, content, excerpt, featured_image, status,
     category_id, meta_title, meta_description, focus_keyword,
-    social_title, social_description, social_image, scheduled_at, tag_ids } = req.body as {
+    social_title, social_description, social_image, social_automation, scheduled_at, tag_ids } = req.body as {
     title?: string; slug?: string; content?: string; excerpt?: string; featured_image?: string;
     status?: string; category_id?: string; meta_title?: string; meta_description?: string;
     focus_keyword?: string; social_title?: string; social_description?: string; social_image?: string;
+    social_automation?: any;
     scheduled_at?: string; tag_ids?: string[];
   };
   const existing = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
@@ -4854,17 +5453,19 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
   const newTitle = title ?? cur.title;
   const newSlug = rawSlug?.trim() || (title ? slugify(title) : cur.slug);
   const newStatus = status ?? cur.status;
+  const willPublish = newStatus === 'published' && String(cur.status || '') !== 'published';
   const published_at = newStatus === 'published' && !cur.published_at ? new Date().toISOString() : cur.published_at;
   const { rows } = await pool!.query(
     `UPDATE blog_posts SET title=$1,slug=$2,content=$3,excerpt=$4,featured_image=$5,status=$6,
       category_id=$7,meta_title=$8,meta_description=$9,focus_keyword=$10,social_title=$11,
-      social_description=$12,social_image=$13,scheduled_at=$14,published_at=$15,updated_at=NOW()
-     WHERE id=$16 AND user_id=$17 RETURNING *`,
+      social_description=$12,social_image=$13,social_automation=$14,scheduled_at=$15,published_at=$16,updated_at=NOW()
+     WHERE id=$17 AND user_id=$18 RETURNING *`,
     [newTitle, newSlug, content ?? cur.content, excerpt ?? cur.excerpt, featured_image ?? cur.featured_image,
      newStatus, category_id !== undefined ? (category_id || null) : cur.category_id,
      meta_title ?? cur.meta_title, meta_description ?? cur.meta_description,
      focus_keyword ?? cur.focus_keyword, social_title ?? cur.social_title,
       social_description ?? cur.social_description, social_image ?? cur.social_image,
+      social_automation !== undefined ? JSON.stringify(social_automation || {}) : JSON.stringify(cur.social_automation || {}),
       scheduled_at !== undefined ? (scheduled_at || null) : cur.scheduled_at,
       published_at, id, user.userId]
   );
@@ -4874,6 +5475,19 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
       await Promise.all(tag_ids.map((tid: string) =>
         pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, tid])
       ));
+    }
+  }
+
+  if (willPublish) {
+    try {
+      await queueSocialAutomationForPublishedPost(user.userId, rows[0]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Social Automation queue failed';
+      console.error('Social Automation queue error:', err);
+      await pool!.query(
+        'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,error_message) VALUES ($1,$2,$3,$4,$5,$6)',
+        [randomUUID(), id, user.userId, 'facebook', 'failed', msg]
+      ).catch(() => undefined);
     }
   }
   return res.json({ success: true, post: rows[0] });
@@ -5005,7 +5619,10 @@ async function refreshLinkedInAccessToken(refreshToken: string) {
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
   if (!pool) return null;
   const rows = await pool.query(
-    'SELECT platform, access_token, refresh_token, token_data, expires_at FROM social_accounts WHERE user_id=$1 AND connected=true',
+    `SELECT platform, access_token, refresh_token, token_data, expires_at
+     FROM social_accounts
+     WHERE user_id=$1 AND connected=true AND COALESCE(access_token,'') <> ''
+       AND (account_type = 'profile' OR account_type IS NULL)`,
     [userId]
   );
   const match = rows.rows.find((r: any) => normalizePlatformId(r.platform) === platformId) as
@@ -5073,11 +5690,478 @@ async function getUserSettingValue(userId: string, key: string): Promise<any | n
   }
 }
 
+function safeJsonObject(value: any): Record<string, any> {
+  if (!value) return {};
+  if (typeof value === 'object') return value as Record<string, any>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, any>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function extractSocialAutomationSettings(post: Record<string, any>) {
+  const raw = safeJsonObject((post as any).social_automation);
+  const fb = raw?.platforms?.facebook ?? raw?.facebook ?? {};
+  const enabled = Boolean(fb?.enabled);
+  const destination = fb?.destination ?? {};
+  const destType: 'page' | 'group' | 'profile' = destination?.type === 'group' ? 'group' : destination?.type === 'profile' ? 'profile' : 'page';
+  const destId = String(destination?.id || '').trim();
+  const destName = destination?.name ? String(destination.name) : '';
+  const template = String(raw?.postFormat?.template || raw?.template || '').trim();
+  const scheduling = raw?.scheduling ?? {};
+  const mode: 'immediate' | 'schedule' | 'delay' =
+    scheduling?.mode === 'schedule' || scheduling?.mode === 'delay' ? scheduling.mode : 'immediate';
+  const scheduledFor = scheduling?.scheduledFor ? String(scheduling.scheduledFor) : null;
+  const delayMinutes = typeof scheduling?.delayMinutes === 'number' ? scheduling.delayMinutes : null;
+  const timezone = scheduling?.timezone ? String(scheduling.timezone) : null;
+  return {
+    enabled,
+    template,
+    scheduling: { mode, scheduledFor, delayMinutes, timezone },
+    facebook: { destination: { type: destType, id: destId, name: destName } },
+  };
+}
+
+async function ensureBullMqSocialAutomationQueue() {
+  if (socialAutomationQueue && socialAutomationWorker && socialAutomationRedis) return;
+  if (!isBullMqEnabled()) return;
+  if (!pool) throw new Error('BullMQ is enabled but DATABASE_URL is not configured');
+
+  socialAutomationRedis = new IORedis(REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+  });
+
+  socialAutomationQueue = new Queue(SOCIAL_AUTOMATION_QUEUE_NAME, {
+    connection: socialAutomationRedis as any,
+    defaultJobOptions: {
+      attempts: SOCIAL_AUTOMATION_MAX_ATTEMPTS,
+      backoff: { type: 'exponential', delay: SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS },
+      removeOnComplete: { count: 500 },
+      removeOnFail: { count: 500 },
+    },
+  });
+
+  socialAutomationWorker = new Worker(
+    SOCIAL_AUTOMATION_QUEUE_NAME,
+    async (job) => {
+      const taskId = String((job.data as any)?.taskId || '');
+      if (!taskId) return { ok: false, error: 'Missing taskId' };
+      const attemptNumber = (job.attemptsMade || 0) + 1;
+      const maxAttempts = typeof (job.opts as any)?.attempts === 'number' ? (job.opts as any).attempts : SOCIAL_AUTOMATION_MAX_ATTEMPTS;
+      return await processSocialAutomationTaskById(taskId, attemptNumber, maxAttempts);
+    },
+    { connection: socialAutomationRedis as any, concurrency: 5 }
+  );
+
+  socialAutomationWorker.on('error', (err) => {
+    console.error('[SocialAutomation] BullMQ worker error:', err);
+  });
+}
+
+async function enqueueBullMqJob(taskId: string, runAtIso: string) {
+  if (!isBullMqEnabled()) return;
+  await ensureBullMqSocialAutomationQueue();
+  if (!socialAutomationQueue) return;
+
+  const runAt = new Date(runAtIso);
+  const delay = Math.max(0, runAt.getTime() - Date.now());
+  try {
+    await socialAutomationQueue.add('social-publish', { taskId }, { jobId: taskId, delay });
+  } catch (err) {
+    // If the job already exists, treat as idempotent.
+    const msg = err instanceof Error ? err.message : String(err || '');
+    if (/Job.*already exists/i.test(msg)) return;
+    throw err;
+  }
+}
+
+async function resolveSocialAccountIdForLog(userId: string, platform: string, destination: any) {
+  if (!pool) return null;
+  const dest = destination || {};
+  const destType = String(dest.type || '').toLowerCase();
+  const accountType = destType === 'profile' ? 'profile' : destType === 'page' ? 'page' : null;
+  const accountId = String(dest.id || '').trim();
+  if (!accountType || !accountId) return null;
+  const { rows } = await pool.query(
+    `SELECT id FROM social_accounts WHERE user_id=$1 AND LOWER(platform)=LOWER($2) AND account_type=$3 AND account_id=$4 LIMIT 1`,
+    [userId, platform, accountType, accountId]
+  );
+  return rows.length ? String(rows[0].id) : null;
+}
+
+async function insertSocialPostLog(params: {
+  userId: string;
+  postId: string;
+  platform: string;
+  destination: any;
+  status: string;
+  apiResponse: any;
+  postedAtIso: string | null;
+}) {
+  if (!pool) return;
+  const socialAccountId = await resolveSocialAccountIdForLog(params.userId, params.platform, params.destination).catch(() => null);
+  await pool
+    .query(
+      `INSERT INTO social_post_logs (id, post_id, social_account_id, platform, status, api_response, posted_at)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+      [
+        randomUUID(),
+        params.postId,
+        socialAccountId,
+        params.platform,
+        params.status,
+        JSON.stringify(params.apiResponse ?? null),
+        params.postedAtIso,
+      ]
+    )
+    .catch(() => undefined);
+}
+
+async function processSocialAutomationTaskById(taskId: string, attemptNumber: number, maxAttempts: number) {
+  if (!pool) throw new Error('DATABASE_URL is not configured');
+
+  const taskRows = await pool.query(`SELECT * FROM social_automation_tasks WHERE id=$1 LIMIT 1`, [taskId]);
+  if (!taskRows.rows.length) return { ok: false, error: 'Task not found' };
+  const task = taskRows.rows[0] as any;
+
+  const userId = String(task.user_id);
+  const postId = String(task.post_id);
+  const platform = String(task.platform || 'facebook');
+  const logId = task.log_id ? String(task.log_id) : null;
+  const payload = safeJsonObject(task.payload);
+  const destination = payload?.destination || null;
+  const template = payload?.template ? String(payload.template) : '';
+
+  await pool.query(
+    `UPDATE social_automation_tasks SET status='pending', attempts=attempts+1, updated_at=NOW() WHERE id=$1`,
+    [taskId]
+  );
+
+  try {
+    const postRows = await pool.query(
+      `SELECT p.*,
+        ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
+       FROM blog_posts p
+       WHERE p.id=$1 AND p.user_id=$2`,
+      [postId, userId]
+    );
+    if (!postRows.rows.length) throw new Error('Post not found');
+
+    const result = await publishToplatform(userId, postRows.rows[0], platform, {
+      template,
+      facebookDestination: destination,
+    });
+
+    await pool.query(
+      `UPDATE social_automation_tasks SET status=$2, last_error=$3, updated_at=NOW() WHERE id=$1`,
+      [taskId, result.status, result.error || null]
+    );
+
+    if (logId) {
+      await pool.query(
+        `UPDATE publishing_logs
+         SET status=$1, platform_post_id=$2, error_message=$3, response=$4
+         WHERE id=$5 AND user_id=$6`,
+        [result.status, result.platformPostId || null, result.error || null, result as any, logId, userId]
+      );
+    } else {
+      await pool
+        .query(
+          'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message,response) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)',
+          [randomUUID(), postId, userId, platform, result.status, result.platformPostId || null, result.error || null, JSON.stringify(result as any)]
+        )
+        .catch(() => undefined);
+    }
+
+    await insertSocialPostLog({
+      userId,
+      postId,
+      platform,
+      destination,
+      status: result.status,
+      apiResponse: result,
+      postedAtIso: result.status === 'published' ? new Date().toISOString() : null,
+    });
+
+    return { ok: true, ...result };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Automation failed';
+
+    if (attemptNumber < maxAttempts) {
+      const retryAt = new Date(Date.now() + getRetryDelayMs(attemptNumber));
+      await pool
+        .query(
+          `UPDATE social_automation_tasks
+           SET status='scheduled', run_at=$2, last_error=$3, updated_at=NOW()
+           WHERE id=$1`,
+          [taskId, retryAt.toISOString(), msg]
+        )
+        .catch(() => undefined);
+      if (logId) {
+        await pool
+          .query(`UPDATE publishing_logs SET status='scheduled', error_message=$1 WHERE id=$2 AND user_id=$3`, [
+            msg,
+            logId,
+            userId,
+          ])
+          .catch(() => undefined);
+      }
+      throw new Error(msg);
+    }
+
+    await pool
+      .query(
+        `UPDATE social_automation_tasks
+         SET status='failed', last_error=$2, updated_at=NOW()
+         WHERE id=$1`,
+        [taskId, msg]
+      )
+      .catch(() => undefined);
+
+    if (logId) {
+      await pool
+        .query(`UPDATE publishing_logs SET status='failed', error_message=$1 WHERE id=$2 AND user_id=$3`, [
+          msg,
+          logId,
+          userId,
+        ])
+        .catch(() => undefined);
+    } else {
+      await pool
+        .query('INSERT INTO publishing_logs (id,post_id,user_id,platform,status,error_message,response) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)', [
+          randomUUID(),
+          postId,
+          userId,
+          platform,
+          'failed',
+          msg,
+          JSON.stringify({ error: msg }),
+        ])
+        .catch(() => undefined);
+    }
+
+    await insertSocialPostLog({
+      userId,
+      postId,
+      platform,
+      destination,
+      status: 'failed',
+      apiResponse: { error: msg },
+      postedAtIso: null,
+    });
+
+    return { ok: false, status: 'failed', error: msg };
+  }
+}
+
+async function enqueueSocialAutomationTask(params: {
+  userId: string;
+  postId: string;
+  platform: string;
+  runAt: Date;
+  payload: any;
+  accountLabel: string | null;
+}) {
+  if (!pool) return;
+  const now = Date.now();
+  const runAtIso = params.runAt.toISOString();
+  const initialStatus = params.runAt.getTime() > (now + 2000) ? 'scheduled' : 'pending';
+  const dest = safeJsonObject(params.payload)?.destination || {};
+  const destId = String(dest?.id || '').trim();
+  const destType = String(dest?.type || '').trim();
+
+  const existing = await pool.query(
+    `SELECT 1 FROM social_automation_tasks
+     WHERE user_id=$1 AND post_id=$2 AND LOWER(platform)=LOWER($3)
+       AND status IN ('scheduled','pending')
+       AND COALESCE(payload->'destination'->>'id','') = $4
+       AND COALESCE(payload->'destination'->>'type','') = $5
+     LIMIT 1`,
+    [params.userId, params.postId, params.platform, destId, destType]
+  );
+  if (existing.rows.length) return;
+
+  const logId = randomUUID();
+  await pool.query(
+    'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,account,scheduled_for) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    [
+      logId,
+      params.postId,
+      params.userId,
+      params.platform,
+      initialStatus,
+      params.accountLabel,
+      initialStatus === 'scheduled' ? runAtIso : null,
+    ]
+  );
+
+  const taskId = randomUUID();
+  await pool.query(
+    `INSERT INTO social_automation_tasks (id,user_id,post_id,platform,run_at,status,payload,log_id,attempts,updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,0,NOW())`,
+    [taskId, params.userId, params.postId, params.platform, runAtIso, initialStatus, JSON.stringify(params.payload || {}), logId]
+  );
+
+  await enqueueBullMqJob(taskId, runAtIso);
+}
+
+async function queueSocialAutomationForPublishedPost(userId: string, post: Record<string, any>) {
+  if (!pool) return;
+
+  const postId = String((post as any).id);
+
+  // Prefer Social Automation v2 settings if configured.
+  const v2 = await pool.query(
+    `SELECT s.*, t.id AS target_id, t.enabled AS target_enabled,
+      a.id AS social_account_id, a.platform AS account_platform, a.account_type, a.account_id, a.account_name
+     FROM social_post_settings s
+     JOIN social_post_targets t ON t.social_post_id=s.id
+     JOIN social_accounts a ON a.id=t.social_account_id
+     WHERE s.post_id=$1 AND t.enabled=true`,
+    [postId]
+  );
+
+  if (v2.rows.length) {
+    for (const row of v2.rows as any[]) {
+      const publishType = String(row.publish_type || 'immediate');
+      let runAt = new Date();
+      if (publishType === 'scheduled' || publishType === 'delayed') {
+        if (!row.scheduled_at) throw new Error(`Social Automation publish_type is '${publishType}' but scheduled_at is missing`);
+        const dt = new Date(String(row.scheduled_at));
+        if (Number.isNaN(dt.getTime())) throw new Error('Invalid Social Automation scheduled_at');
+        runAt = dt;
+      }
+
+      const destType = String(row.account_type || 'page').toLowerCase() === 'profile' ? 'profile' : 'page';
+      const destination = { type: destType, id: String(row.account_id || ''), name: String(row.account_name || '') };
+      const accountLabel = destType === 'profile' ? 'Profile' : (destination.name ? `Page: ${destination.name}` : `Page: ${destination.id}`);
+
+      await enqueueSocialAutomationTask({
+        userId,
+        postId,
+        platform: String(row.account_platform || 'facebook'),
+        runAt,
+        payload: { destination, template: String(row.template || '') },
+        accountLabel,
+      });
+    }
+    return;
+  }
+
+  // Legacy: derive settings from blog_posts.social_automation JSON.
+  const s = extractSocialAutomationSettings(post);
+  if (!s.enabled) return;
+
+  const now = Date.now();
+  let runAt = new Date(now);
+  if (s.scheduling.mode === 'delay') {
+    const mins = Math.max(1, Number(s.scheduling.delayMinutes || 10));
+    runAt = new Date(now + mins * 60_000);
+  } else if (s.scheduling.mode === 'schedule') {
+    if (!s.scheduling.scheduledFor) throw new Error('Social Automation is set to schedule but no scheduled time was provided');
+    const dt = new Date(s.scheduling.scheduledFor);
+    if (Number.isNaN(dt.getTime())) throw new Error('Invalid Social Automation scheduled time');
+    runAt = dt;
+  }
+
+  const accountLabel =
+    s.facebook.destination.type === 'group'
+      ? (s.facebook.destination.name ? `Group: ${s.facebook.destination.name}` : (s.facebook.destination.id ? `Group: ${s.facebook.destination.id}` : null))
+      : s.facebook.destination.type === 'page'
+        ? (s.facebook.destination.name ? `Page: ${s.facebook.destination.name}` : (s.facebook.destination.id ? `Page: ${s.facebook.destination.id}` : null))
+        : 'Profile';
+
+  await enqueueSocialAutomationTask({
+    userId,
+    postId,
+    platform: 'facebook',
+    runAt,
+    payload: { destination: s.facebook.destination, template: s.template },
+    accountLabel,
+  });
+}
+
+let socialAutomationWorkerStarted = false;
+
+async function processDueSocialAutomationTasks() {
+  if (!pool) return;
+
+  const { rows: tasks } = await pool.query(
+    `SELECT * FROM social_automation_tasks
+     WHERE status IN ('scheduled','pending') AND run_at <= NOW()
+     ORDER BY run_at ASC
+     LIMIT 10`
+  );
+
+  for (const task of tasks) {
+    const taskId = String((task as any).id);
+    try {
+      const attemptNumber = Number((task as any).attempts || 0) + 1;
+      await processSocialAutomationTaskById(taskId, attemptNumber, SOCIAL_AUTOMATION_MAX_ATTEMPTS);
+    } catch (err) {
+      // A thrown error often means "retry scheduled" (state has already been updated).
+      void err;
+    }
+  }
+}
+
+function startSocialAutomationWorker() {
+  if (socialAutomationWorkerStarted) return;
+  socialAutomationWorkerStarted = true;
+
+  // Process due tasks in the background. Keep it lightweight; this server is single-process.
+  setInterval(() => {
+    void processDueSocialAutomationTasks().catch(() => undefined);
+  }, 5000);
+}
+
+function startSocialAutomationProcessor() {
+  if (!pool) return;
+  if (isBullMqEnabled()) {
+    void (async () => {
+      try {
+        await ensureBullMqSocialAutomationQueue();
+        // Best-effort reconciliation: if tasks exist in Postgres (e.g., after a redeploy),
+        // re-enqueue them into Redis by task id. Duplicate job ids are treated as idempotent.
+        const { rows } = await pool.query(
+          `SELECT id, run_at FROM social_automation_tasks
+           WHERE status IN ('scheduled','pending')
+           ORDER BY run_at ASC
+           LIMIT 200`
+        );
+        for (const r of rows as any[]) {
+          await enqueueBullMqJob(String(r.id), String(r.run_at));
+        }
+      } catch (err) {
+        console.error('[SocialAutomation] BullMQ init failed, falling back to DB worker:', err);
+        startSocialAutomationWorker();
+      }
+    })();
+    return;
+  }
+  startSocialAutomationWorker();
+}
+
+function renderMessageTemplate(template: string, vars: Record<string, string>) {
+  const tpl = String(template || '');
+  return tpl.replace(/\{([a-zA-Z0-9_]+)\}/g, (m, key) => {
+    if (Object.prototype.hasOwnProperty.call(vars, key)) return vars[key] ?? '';
+    return m;
+  });
+}
+
 // Helper: publish a blog post to a single platform, return result
 async function publishToplatform(
   userId: string,
   post: Record<string, any>,
-  platform: string
+  platform: string,
+  options?: { template?: string; facebookDestination?: any }
 ): Promise<{ status: string; platformPostId?: string; error?: string }> {
   try {
     if (platform === 'wordpress') {
@@ -5129,20 +6213,43 @@ async function publishToplatform(
       };
     }
 
-    const caption = String(post.excerpt || '').trim() || String(post.title || '').trim();
-    const hashtags = toHashtags((post as any).tag_names);
     const postUrl = buildPostUrl(post);
     const featuredImage = String(post.featured_image || '').trim();
 
+    let author = '';
+    try {
+      if (pool) {
+        const u = await pool.query('SELECT full_name, username FROM users WHERE id=$1', [userId]);
+        const row: any = u.rows[0] || {};
+        author = String(row.full_name || row.username || '').trim();
+      }
+    } catch {
+      author = '';
+    }
+
     const maxLen = platformId === 'twitter' ? 260 : 3000;
-    const textParts = [
+    const customTemplate = String(options?.template || '').trim();
+    const fallbackCaption = String(post.excerpt || '').trim() || String(post.title || '').trim();
+    const fallbackHashtags = toHashtags((post as any).tag_names);
+    const fallbackTextParts = [
       String(post.title || '').trim(),
-      caption,
-      hashtags,
+      fallbackCaption,
+      fallbackHashtags,
       postUrl,
       featuredImage ? featuredImage : '',
     ].filter(Boolean);
-    const text = textParts.join('\n\n').slice(0, maxLen);
+
+    const text =
+      (customTemplate
+        ? renderMessageTemplate(customTemplate, {
+            title: String(post.title || ''),
+            excerpt: String(post.excerpt || ''),
+            url: postUrl,
+            featured_image: featuredImage,
+            author: author,
+          })
+        : fallbackTextParts.join('\n\n')
+      ).trim().slice(0, maxLen);
 
     if (platformId === 'linkedin') {
       let authorUrn = token_data?.sub ? `urn:li:person:${token_data.sub}` : null;
@@ -5216,18 +6323,30 @@ async function publishToplatform(
 
     if (platformId === 'facebook') {
       const graphBase = 'https://graph.facebook.com/v19.0';
-      const settings = (await getUserSettingValue(userId, 'posts-automation-settings')) || {};
-      const rawSelected = String(settings?.selectedAccountMap?.facebook || '').trim();
-      let desiredType: 'page' | 'group' = settings?.facebookTarget === 'group' ? 'group' : 'page';
+
+      const override = options?.facebookDestination && typeof options.facebookDestination === 'object'
+        ? (options.facebookDestination as any)
+        : null;
+
+      let desiredType: 'page' | 'group' = 'page';
       let desiredId = '';
-      if (rawSelected.startsWith('page:')) {
-        desiredType = 'page';
-        desiredId = rawSelected.slice('page:'.length).trim();
-      } else if (rawSelected.startsWith('group:')) {
-        desiredType = 'group';
-        desiredId = rawSelected.slice('group:'.length).trim();
-      } else if (rawSelected) {
-        desiredId = rawSelected;
+
+      if (override && (override.type === 'page' || override.type === 'group')) {
+        desiredType = override.type;
+        desiredId = String(override.id || '').trim();
+      } else {
+        const settings = (await getUserSettingValue(userId, 'posts-automation-settings')) || {};
+        const rawSelected = String(settings?.selectedAccountMap?.facebook || '').trim();
+        desiredType = settings?.facebookTarget === 'group' ? 'group' : 'page';
+        if (rawSelected.startsWith('page:')) {
+          desiredType = 'page';
+          desiredId = rawSelected.slice('page:'.length).trim();
+        } else if (rawSelected.startsWith('group:')) {
+          desiredType = 'group';
+          desiredId = rawSelected.slice('group:'.length).trim();
+        } else if (rawSelected) {
+          desiredId = rawSelected;
+        }
       }
 
       if (desiredType === 'group') {
@@ -5247,6 +6366,38 @@ async function publishToplatform(
           throw new Error(respData?.error?.message || `Facebook API error ${resp.status}`);
         }
         return { status: 'published', platformPostId: String(respData?.id || '') };
+      }
+
+      // Prefer stored page token if present (saved via /api/v1/social/accounts).
+      if (desiredId && pool) {
+        try {
+          const stored = await pool.query(
+            `SELECT access_token FROM social_accounts
+             WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
+             LIMIT 1`,
+            [userId, desiredId]
+          );
+          const pageToken = String(stored.rows[0]?.access_token || '').trim();
+          if (pageToken) {
+            const body = new URLSearchParams({
+              message: text,
+              ...(postUrl ? { link: postUrl } : {}),
+              access_token: pageToken,
+            });
+            const resp = await axios.post(`${graphBase}/${encodeURIComponent(desiredId)}/feed`, body.toString(), {
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              validateStatus: () => true,
+              timeout: 15000,
+            });
+            const respData: any = resp.data || {};
+            if (resp.status >= 400) {
+              throw new Error(respData?.error?.message || `Facebook API error ${resp.status}`);
+            }
+            return { status: 'published', platformPostId: String(respData?.id || '') };
+          }
+        } catch {
+          // ignore; fallback to /me/accounts lookup
+        }
       }
 
       const pagesResp = await axios.get(`${graphBase}/me/accounts?access_token=${encodeURIComponent(access_token)}`, {
