@@ -1,11 +1,10 @@
-import { ChevronDown, CreditCard, FileText, KeyRound, LayoutGrid, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X } from 'lucide-react';
+import { ChevronDown, CreditCard, FileText, KeyRound, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
 import PricingManagement from '../components/admin/PricingManagement';
 import AdminCardsManagement from '../components/admin/AdminCardsManagement';
 import PaymentManagement from '../components/admin/PaymentManagement';
-import AdminIntegrationsManagement from '../components/admin/AdminIntegrationsManagement';
 import AdminAuthProviders from '../components/admin/AdminAuthProviders';
 import AdminPagesManagement from '../components/admin/AdminPagesManagement';
 import AdminMediaManagement from '../components/admin/AdminMediaManagement';
@@ -20,7 +19,6 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'pricing'
     | 'cards'
     | 'payments'
-    | 'integrations'
     | 'auth-providers'
     | 'settings'
     | 'audit'
@@ -37,7 +35,6 @@ const Admin = ({ currentUser }: AdminProps) => {
     pricing: '/admin/pricing',
     cards: '/admin/cards',
     payments: '/admin/payments',
-    integrations: '/admin/integrations',
     'auth-providers': '/admin/auth-providers',
     settings: '/admin/settings',
     audit: '/admin/audit',
@@ -74,7 +71,6 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true },
     { id: 'cards', label: 'Card Templates', icon: Image, active: true },
     { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
-    { id: 'integrations', label: 'Integrations', icon: LayoutGrid, active: true },
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
@@ -256,7 +252,6 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'pricing' && <PricingManagement />}
             {activeTab === 'cards' && <AdminCardsManagement />}
             {activeTab === 'payments' && <PaymentManagement />}
-            {activeTab === 'integrations' && <AdminIntegrationsManagement />}
             {activeTab === 'auth-providers' && <AdminAuthProviders />}
             {activeTab === 'media' && <AdminMediaManagement />}
             {activeTab === 'settings' && (

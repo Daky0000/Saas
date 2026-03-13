@@ -46,14 +46,6 @@ function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
               avatar.
             </p>
 
-            <h3 className="text-base font-semibold text-gray-800 mb-2 mt-4">2.2 Social Platform Connections</h3>
-            <p>
-              When you connect third-party platforms (Instagram, Facebook, LinkedIn, TikTok,
-              Twitter/X, Threads, WordPress, Mailchimp, etc.), we store OAuth access tokens,
-              refresh tokens, and platform-issued user identifiers. These credentials are used
-              solely to perform actions you explicitly authorize, such as publishing posts.
-            </p>
-
             <h3 className="text-base font-semibold text-gray-800 mb-2 mt-4">2.3 Content You Create</h3>
             <p>
               We store posts, captions, media references, card templates, and scheduling data you
@@ -133,7 +125,7 @@ function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
               for tax purposes, which we retain for up to 7 years).
             </p>
             <p className="mt-3">
-              OAuth tokens for disconnected integrations are deleted immediately upon disconnection.
+              Data related to disabled features is removed as part of normal account maintenance where applicable.
             </p>
           </section>
 
@@ -165,7 +157,7 @@ function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
               <li><strong>Deletion:</strong> Request deletion of your account and associated data.</li>
               <li><strong>Portability:</strong> Request your data in a machine-readable format.</li>
               <li><strong>Objection:</strong> Object to certain types of processing.</li>
-              <li><strong>Withdrawal of consent:</strong> Disconnect any integrated platform at any time from the Integrations page.</li>
+              <li><strong>Withdrawal of consent:</strong> Contact us to withdraw consent for optional processing where applicable.</li>
             </ul>
             <p className="mt-3">
               To exercise these rights, contact us at{' '}
