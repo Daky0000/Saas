@@ -4462,7 +4462,7 @@ app.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) =
     if (!clientId || !clientSecret) return res.status(400).send('Facebook integration not configured');
 
     const state = randomUUID();
-    const returnTo = String((req.query as any)?.returnTo || '').trim() || '/posts?view=editor&tab=social_automation&subtab=connections';
+    const returnTo = String((req.query as any)?.returnTo || '').trim() || '/posts?view=automation&subtab=connections';
 
     await dbQuery(
       `INSERT INTO oauth_states (state, user_id, platform, return_to, created_at, expires_at)
@@ -4497,11 +4497,56 @@ app.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) =
   }
 });
 
+// GET /api/v1/social/facebook/authorize-url — build OAuth URL (for SPAs using Bearer auth)
+app.get('/api/v1/social/facebook/authorize-url', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const cfg = await getPlatformConfig('facebook');
+    const clientId = String(cfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+    const clientSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+    if (!clientId || !clientSecret) return res.status(400).json({ success: false, error: 'Facebook integration not configured' });
+
+    const state = randomUUID();
+    const returnTo = String((req.query as any)?.returnTo || '').trim() || '/posts?view=automation&subtab=connections';
+
+    await dbQuery(
+      `INSERT INTO oauth_states (state, user_id, platform, return_to, created_at, expires_at)
+       VALUES ($1, $2, 'facebook', $3, NOW(), NOW() + INTERVAL '15 minutes')
+       ON CONFLICT (state) DO NOTHING`,
+      [state, auth.userId, returnTo]
+    );
+
+    const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
+    const scope = [
+      'public_profile',
+      'email',
+      'pages_show_list',
+      'pages_read_engagement',
+      'pages_manage_posts',
+    ].join(',');
+
+    const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
+    oauthUrl.searchParams.set('client_id', clientId);
+    oauthUrl.searchParams.set('redirect_uri', redirectUri);
+    oauthUrl.searchParams.set('state', state);
+    oauthUrl.searchParams.set('response_type', 'code');
+    oauthUrl.searchParams.set('scope', scope);
+
+    return res.json({ success: true, url: oauthUrl.toString() });
+  } catch (err) {
+    console.error('v1 facebook authorize-url error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to build authorize URL' });
+  }
+});
+
 // GET /api/v1/social/facebook/callback — OAuth redirect URI
 app.get('/api/v1/social/facebook/callback', async (req: Request, res: Response) => {
   const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
-  const fallbackOk = `${FRONTEND_URL}/posts?view=editor&tab=social_automation&subtab=connections`;
-  const fallbackErr = (msg: string) => `${FRONTEND_URL}/posts?view=editor&tab=social_automation&subtab=connections&error=${encodeURIComponent(msg)}`;
+  const fallbackOk = `${FRONTEND_URL}/posts?view=automation&subtab=connections`;
+  const fallbackErr = (msg: string) => `${FRONTEND_URL}/posts?view=automation&subtab=connections&error=${encodeURIComponent(msg)}`;
 
   try {
     const oauthError = String((req.query as any).error || '').trim();
@@ -6328,10 +6373,10 @@ async function publishToplatform(
         ? (options.facebookDestination as any)
         : null;
 
-      let desiredType: 'page' | 'group' = 'page';
+      let desiredType: 'page' | 'group' | 'profile' = 'page';
       let desiredId = '';
 
-      if (override && (override.type === 'page' || override.type === 'group')) {
+      if (override && (override.type === 'page' || override.type === 'group' || override.type === 'profile')) {
         desiredType = override.type;
         desiredId = String(override.id || '').trim();
       } else {
@@ -6347,6 +6392,24 @@ async function publishToplatform(
         } else if (rawSelected) {
           desiredId = rawSelected;
         }
+      }
+
+      if (desiredType === 'profile') {
+        const body = new URLSearchParams({
+          message: text,
+          ...(postUrl ? { link: postUrl } : {}),
+          access_token: access_token,
+        });
+        const resp = await axios.post(`${graphBase}/me/feed`, body.toString(), {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const respData: any = resp.data || {};
+        if (resp.status >= 400) {
+          throw new Error(respData?.error?.message || `Facebook API error ${resp.status}`);
+        }
+        return { status: 'published', platformPostId: String(respData?.id || '') };
       }
 
       if (desiredType === 'group') {
