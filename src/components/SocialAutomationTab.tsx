@@ -74,16 +74,18 @@ export default function SocialAutomationTab(_props: {
     setSubTab(_props.initialSubTab);
   }, [_props.initialSubTab]);
 
-  type ConnectedAccountRow = {
+  type SocialAccountRow = {
     id: string;
     platform: string;
-    handle?: string | null;
+    account_type: 'profile' | 'page' | 'group' | string;
+    account_id: string;
+    account_name: string;
+    profile_image?: string | null;
     connected: boolean;
-    expiresAt?: string | null;
-    token_data?: any;
+    created_at?: string;
   };
 
-  type FacebookTarget = { id: string; name: string; type: 'page' | 'group' };
+  type FacebookTarget = { id: string; name: string; type: 'page' };
 
   const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
   const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
@@ -92,7 +94,7 @@ export default function SocialAutomationTab(_props: {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  const [accounts, setAccounts] = useState<ConnectedAccountRow[]>([]);
+  const [accounts, setAccounts] = useState<SocialAccountRow[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [facebookTargets, setFacebookTargets] = useState<{ loading: boolean; pages: FacebookTarget[]; groups: FacebookTarget[]; error: string | null }>({
     loading: false,
@@ -107,17 +109,17 @@ export default function SocialAutomationTab(_props: {
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   const facebookAccount = useMemo(() => {
-    return accounts.find((a) => String(a.platform || '').toLowerCase() === 'facebook' && a.connected) || null;
+    return accounts.find((a) =>
+      String(a.platform || '').toLowerCase() === 'facebook'
+      && String(a.account_type || '').toLowerCase() === 'profile'
+      && a.connected
+    ) || null;
   }, [accounts]);
 
   const facebookProfile = useMemo(() => {
-    const td = facebookAccount?.token_data || {};
-    const name = String(td?.name || td?.user_name || '').trim() || 'Facebook Profile';
-    const avatar =
-      String(td?.picture?.data?.url || td?.picture_url || td?.avatar_url || '').trim() ||
-      String(td?.picture?.url || '').trim() ||
-      '';
-    const id = String(td?.id || td?.user_id || td?.uid || '').trim();
+    const name = String(facebookAccount?.account_name || '').trim() || 'Facebook Profile';
+    const avatar = String(facebookAccount?.profile_image || '').trim();
+    const id = String(facebookAccount?.account_id || '').trim();
     return { id, name, avatar };
   }, [facebookAccount]);
 
@@ -165,10 +167,13 @@ export default function SocialAutomationTab(_props: {
     setLoadingAccounts(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/accounts`, { headers: authHeaders() });
-      const data = res.ok ? (await res.json() as { success: boolean; data?: ConnectedAccountRow[]; error?: string }) : { success: false, error: 'Failed to load accounts' };
-      if (!data.success) throw new Error(data.error || 'Failed to load accounts');
-      setAccounts(data.data || []);
+      const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts`, { headers: authHeaders() });
+      const text = await res.text();
+      let parsed: any = null;
+      try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+      if (!res.ok) throw new Error(parsed?.error || 'Failed to load accounts');
+      if (!parsed?.success) throw new Error(parsed?.error || 'Failed to load accounts');
+      setAccounts(Array.isArray(parsed?.accounts) ? parsed.accounts : []);
     } catch (e) {
       setAccounts([]);
       setError(e instanceof Error ? e.message : 'Failed to load accounts');
@@ -184,16 +189,15 @@ export default function SocialAutomationTab(_props: {
     }
     setFacebookTargets((p) => ({ ...p, loading: true, error: null }));
     try {
-      const res = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
+      const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
       const data = res.ok
-        ? (await res.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; groups?: Array<{ id: string; name: string }>; error?: string })
-        : { success: false, error: 'Failed to load Facebook targets' };
-      if (!data.success) throw new Error(data.error || 'Failed to load Facebook targets');
+        ? (await res.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; error?: string })
+        : { success: false, error: 'Failed to load Facebook pages' };
+      if (!data.success) throw new Error(data.error || 'Failed to load Facebook pages');
       const pages = (data.pages || []).map((p) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
-      const groups = (data.groups || []).map((g) => ({ id: String(g.id), name: String(g.name || 'Facebook Group'), type: 'group' as const }));
-      setFacebookTargets({ loading: false, pages, groups, error: null });
+      setFacebookTargets({ loading: false, pages, groups: [], error: null });
     } catch (e) {
-      setFacebookTargets({ loading: false, pages: [], groups: [], error: e instanceof Error ? e.message : 'Failed to load Facebook targets' });
+      setFacebookTargets({ loading: false, pages: [], groups: [], error: e instanceof Error ? e.message : 'Failed to load Facebook pages' });
     }
   }, [API_BASE_URL, facebookAccount]);
 
@@ -201,31 +205,17 @@ export default function SocialAutomationTab(_props: {
     setError(null);
     setConnecting(true);
     try {
-      const state =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? (crypto as any).randomUUID()
-          : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
       const returnTo =
         postId
           ? `/posts?view=automation&postId=${encodeURIComponent(postId)}&subtab=connections`
           : '/posts?view=automation&subtab=connections';
-
-      const res = await fetch(`${API_BASE_URL}/api/oauth/state`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ state, platform: 'facebook', returnTo }),
-      });
-      if (!res.ok) throw new Error('Failed to start connection. Please try again.');
-
-      const authorizeUrl = new URL(`${API_BASE_URL}/api/oauth/facebook/authorize-url`);
-      authorizeUrl.searchParams.set('state', state);
+      const authorizeUrl = new URL(`${API_BASE_URL}/api/v1/social/facebook/authorize-url`);
+      authorizeUrl.searchParams.set('returnTo', returnTo);
       const urlRes = await fetch(authorizeUrl.toString(), { headers: authHeaders() });
       const text = await urlRes.text();
       let data: { success: boolean; url?: string; error?: string };
-      try {
-        data = JSON.parse(text) as any;
-      } catch {
+      try { data = JSON.parse(text) as any; }
+      catch {
         const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
         data = { success: false, error: preview ? `Invalid server response. ${preview}` : 'Invalid server response.' };
       }
@@ -241,7 +231,9 @@ export default function SocialAutomationTab(_props: {
     if (!confirm('Disconnect Facebook?')) return;
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/accounts/facebook`, { method: 'DELETE', headers: authHeaders() });
+      const profile = accounts.find((a) => String(a.platform || '').toLowerCase() === 'facebook' && String(a.account_type || '').toLowerCase() === 'profile') || null;
+      if (!profile) throw new Error('No Facebook connection found');
+      const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts/${encodeURIComponent(profile.id)}`, { method: 'DELETE', headers: authHeaders() });
       const data = res.ok ? (await res.json() as { success: boolean; error?: string }) : { success: false, error: 'Failed to disconnect' };
       if (!data.success) throw new Error(data.error || 'Failed to disconnect');
       await loadAccounts();
@@ -249,7 +241,7 @@ export default function SocialAutomationTab(_props: {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to disconnect');
     }
-  }, [API_BASE_URL, loadAccounts]);
+  }, [API_BASE_URL, accounts, loadAccounts]);
 
   const refreshLogs = useCallback(async () => {
     if (!postId) return;
@@ -309,7 +301,7 @@ export default function SocialAutomationTab(_props: {
 
       {!postId && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          Save the post first to enable OAuth return + per-post logs.
+          Select/Create a post first to enable to proceed.
         </div>
       )}
 
@@ -393,8 +385,8 @@ export default function SocialAutomationTab(_props: {
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-bold text-slate-900">Facebook Pages & Groups</div>
-                    <div className="text-xs text-slate-500 mt-0.5">Choose where this post will publish.</div>
+                    <div className="text-sm font-bold text-slate-900">Destination</div>
+                    <div className="text-xs text-slate-500 mt-0.5">Choose whether to post to a Page or your Profile.</div>
                   </div>
                   <button
                     type="button"
@@ -403,6 +395,28 @@ export default function SocialAutomationTab(_props: {
                   >
                     <RefreshCw size={12} /> Refresh
                   </button>
+                </div>
+
+                <div className="mt-3">
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1.5">Post to</label>
+                  <select
+                    value={settings.platforms.facebook.destination.type === 'profile' ? 'profile' : 'page'}
+                    onChange={(e) => {
+                      const nextType = e.target.value === 'profile' ? 'profile' : 'page';
+                      if (nextType === 'profile') {
+                        setFacebookDestination({ type: 'profile', id: facebookProfile.id || '', name: facebookProfile.name });
+                        return;
+                      }
+                      const cur = settings.platforms.facebook.destination;
+                      if (cur.type === 'page' && String(cur.id || '').trim()) return;
+                      const first = facebookTargets.pages[0];
+                      setFacebookDestination({ type: 'page', id: first?.id || '', name: first?.name || '' });
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:border-slate-400"
+                  >
+                    <option value="page">Facebook Page</option>
+                    <option value="profile">Facebook Profile</option>
+                  </select>
                 </div>
 
                 {facebookTargets.loading && (
@@ -418,30 +432,39 @@ export default function SocialAutomationTab(_props: {
 
                 {!facebookTargets.loading && !facebookTargets.error && (
                   <div className="mt-3 space-y-2">
-                    {[...facebookTargets.pages, ...facebookTargets.groups].length === 0 && (
-                      <div className="text-xs text-slate-400">No Pages/Groups available for this account.</div>
+                    {settings.platforms.facebook.destination.type === 'profile' && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                        Will attempt to publish to your Facebook Profile. If Facebook blocks profile publishing for your app, this will fail and be logged.
+                      </div>
                     )}
-                    {[...facebookTargets.pages, ...facebookTargets.groups].map((t) => {
-                      const active = (settings.platforms.facebook.destination.type === t.type && (settings.platforms.facebook.destination as any).id === t.id);
-                      return (
-                        <button
-                          key={`${t.type}:${t.id}`}
-                          type="button"
-                          onClick={() => setFacebookDestination({ type: t.type, id: t.id, name: t.name })}
-                          className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition ${
-                            active ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{t.name}</div>
-                            <div className="text-xs text-slate-500">{t.type === 'page' ? 'Page' : 'Group'}</div>
-                          </div>
-                          <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${active ? 'border-emerald-400 bg-emerald-500 text-white' : 'border-slate-300 text-transparent'}`}>
-                            <Check size={12} />
-                          </div>
-                        </button>
-                      );
-                    })}
+                    {settings.platforms.facebook.destination.type !== 'profile' && (
+                      <>
+                        {facebookTargets.pages.length === 0 && (
+                          <div className="text-xs text-slate-400">No Pages available for this account.</div>
+                        )}
+                        {facebookTargets.pages.map((t) => {
+                          const active = (settings.platforms.facebook.destination.type === 'page' && (settings.platforms.facebook.destination as any).id === t.id);
+                          return (
+                            <button
+                              key={`page:${t.id}`}
+                              type="button"
+                              onClick={() => setFacebookDestination({ type: 'page', id: t.id, name: t.name })}
+                              className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition ${
+                                active ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-slate-900">{t.name}</div>
+                                <div className="text-xs text-slate-500">Page</div>
+                              </div>
+                              <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${active ? 'border-emerald-400 bg-emerald-500 text-white' : 'border-slate-300 text-transparent'}`}>
+                                <Check size={12} />
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -459,7 +482,7 @@ export default function SocialAutomationTab(_props: {
                 <button
                   type="button"
                   onClick={() => void beginFacebookOAuth()}
-                  disabled={connecting}
+                  disabled={connecting || !postId}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
                 >
                   {connecting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
