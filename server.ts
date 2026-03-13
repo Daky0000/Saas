@@ -4748,6 +4748,56 @@ app.delete('/api/v1/social/accounts/:id', async (req: Request, res: Response) =>
   }
 });
 
+// POST /api/v1/posts/:postId/social-repost — queue an immediate repost (async worker)
+app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { postId } = req.params;
+    const platform = normalizePlatformId(String((req.body as any)?.platform || 'facebook'));
+    if (platform !== 'facebook') {
+      return res.status(400).json({ success: false, error: 'Only Facebook reposting is supported right now' });
+    }
+
+    const postRows = await pool.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
+    if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+    const destination = safeJsonObject((req.body as any)?.destination) || {};
+    const destTypeRaw = String(destination?.type || 'page').trim().toLowerCase();
+    const destType = destTypeRaw === 'profile' ? 'profile' : destTypeRaw === 'group' ? 'group' : 'page';
+    const destId = String(destination?.id || '').trim();
+    const destName = String(destination?.name || '').trim();
+
+    if (destType === 'group' && !destId) {
+      return res.status(400).json({ success: false, error: 'Facebook group destination id is required' });
+    }
+
+    const template = String((req.body as any)?.template || '').trim();
+    const accountLabel =
+      destType === 'profile'
+        ? 'Profile'
+        : destType === 'group'
+          ? (destName ? `Group: ${destName}` : (destId ? `Group: ${destId}` : null))
+          : (destName ? `Page: ${destName}` : (destId ? `Page: ${destId}` : null));
+
+    await enqueueSocialAutomationTask({
+      userId: auth.userId,
+      postId: String(postId),
+      platform: 'facebook',
+      runAt: new Date(),
+      payload: { destination: { type: destType, id: destId, name: destName }, template },
+      accountLabel,
+    });
+
+    return res.json({ success: true, queued: 1 });
+  } catch (err) {
+    console.error('v1 social repost error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to queue repost' });
+  }
+});
+
 // POST /api/v1/posts/:postId/social-settings — save settings + targets
 app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
   try {
