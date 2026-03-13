@@ -67,15 +67,13 @@ interface PostEditorProps {
   categories: BlogCategory[];
   tags: BlogTag[];
   profileWebsite: string;
-  authorName: string;
-  initialTab?: 'content' | 'media' | 'seo' | 'social_automation';
-  initialSocialSubTab?: SocialAutomationSubTab;
+  initialTab?: 'content' | 'media' | 'seo';
   onSaved: (post: BlogPost) => void;
   onBack: () => void;
   onMetaRefresh: () => Promise<void>;
 }
 
-function PostEditor({ postId, categories, tags, profileWebsite, authorName, initialTab, initialSocialSubTab, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
+function PostEditor({ postId, categories, tags, profileWebsite, initialTab, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
@@ -93,7 +91,7 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
   const [socialImage, setSocialImage] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
   const [sidebarTab, setSidebarTab] = useState<'details' | 'seo'>('details');
-  const [editorTab, setEditorTab] = useState<'content' | 'media' | 'seo' | 'social_automation'>(initialTab ?? 'content');
+  const [editorTab, setEditorTab] = useState<'content' | 'media' | 'seo'>(initialTab ?? 'content');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,36 +112,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
   const [publishLogs, setPublishLogs] = useState<PublishingLog[]>([]);
   const [savedPostId, setSavedPostId] = useState<string | null>(postId);
 
-  const normalizeSocialAutomation = useCallback((input: any): SocialAutomationSettings => {
-    const def = getDefaultSocialAutomationSettings();
-    const fb = input?.platforms?.facebook ?? input?.facebook ?? null;
-    return {
-      platforms: {
-        facebook: {
-          enabled: Boolean(fb?.enabled ?? def.platforms.facebook.enabled),
-          destination: (() => {
-            const d = fb?.destination;
-            const type = d?.type === 'group' ? 'group' : d?.type === 'profile' ? 'profile' : 'page';
-            const id = String(d?.id || '').trim();
-            const name = d?.name ? String(d.name) : '';
-            return { type, id, name } as any;
-          })(),
-        },
-      },
-      postFormat: {
-        template: String(input?.postFormat?.template || input?.template || def.postFormat.template),
-      },
-      scheduling: {
-        mode: (input?.scheduling?.mode === 'schedule' || input?.scheduling?.mode === 'delay') ? input.scheduling.mode : 'immediate',
-        scheduledFor: input?.scheduling?.scheduledFor ?? null,
-        timezone: input?.scheduling?.timezone ?? def.scheduling.timezone,
-        delayMinutes: typeof input?.scheduling?.delayMinutes === 'number' ? input.scheduling.delayMinutes : def.scheduling.delayMinutes,
-      },
-    };
-  }, []);
-
-  const [socialAutomation, setSocialAutomation] = useState<SocialAutomationSettings>(() => normalizeSocialAutomation(null));
-
   useEffect(() => {
     if (!initialTab) return;
     setEditorTab(initialTab);
@@ -151,14 +119,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
 
   const allCategories = [...categories, ...localCategories];
   const allTags = [...tags, ...localTags];
-
-  const postUrl = useMemo(() => {
-    const rawBase = (profileWebsite || (typeof window !== 'undefined' ? window.location.origin : '')).trim();
-    const base = rawBase ? rawBase.replace(/\/$/, '') : '';
-    const cleanSlug = slug.trim();
-    if (!base) return cleanSlug ? `/blog/${encodeURIComponent(cleanSlug)}` : '/blog';
-    return cleanSlug ? `${base}/blog/${encodeURIComponent(cleanSlug)}` : `${base}/blog`;
-  }, [profileWebsite, slug]);
 
   // Lightweight copies for real-time SEO analysis (avoid heavy parsing during save).
   const [seoHtml, setSeoHtml] = useState('');
@@ -201,7 +161,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
         setSocialTitle(post.social_title ?? '');
         setSocialDescription(post.social_description ?? '');
         setSocialImage(post.social_image ?? '');
-        setSocialAutomation(normalizeSocialAutomation((post as any).social_automation));
         setScheduledAt(post.scheduled_at ? post.scheduled_at.slice(0, 16) : '');
         editor.commands.setContent(post.content || '');
         setSeoHtml(post.content || '');
@@ -241,7 +200,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
         status: finalStatus, category_id: categoryId || null,
         meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeywords.join(', '),
         social_title: socialTitle, social_description: socialDescription, social_image: socialImage,
-        social_automation: socialAutomation,
         scheduled_at: finalStatus === 'scheduled' ? scheduledAt : null,
         tag_ids: selectedTagIds,
       };
@@ -650,7 +608,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
           { id: 'content', label: 'Content' },
           { id: 'media', label: 'Media' },
           { id: 'seo', label: 'SEO' },
-          { id: 'social_automation', label: 'Social Automation' },
         ] as const).map((t) => (
           <button
             key={t.id}
@@ -1305,20 +1262,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, authorName, init
         </div>
       )}
 
-      {editorTab === 'social_automation' && (
-        <SocialAutomationTab
-          postId={savedPostId ?? postId}
-          postUrl={postUrl}
-          postTitle={title}
-          postExcerpt={excerpt}
-          featuredImage={featuredImage}
-          authorName={authorName}
-          settings={socialAutomation}
-          onChange={setSocialAutomation}
-          initialSubTab={initialSocialSubTab}
-        />
-      )}
-
       {showMediaPicker && (
         <MediaLibraryModal
           onSelect={handleMediaSelect}
@@ -1477,7 +1420,239 @@ function TagsTab({ tags, onChange }: TagsTabProps) {
 
 // ── Posts List ───────────────────────────────────────────────────────────────────
 // New Automation UI (sub-tabs) - extends Automation only. Does not change post editor/publish logic.
-function AutomationTabV2() {
+function AutomationTabV2(props: {
+  initialPostId: string | null;
+  initialSubTab?: SocialAutomationSubTab;
+  profileWebsite: string;
+  authorName: string;
+  onOpenEditor: (id: string) => void;
+}) {
+  const useLegacy = typeof window !== 'undefined' && localStorage.getItem('use_legacy_automation_tab') === '1';
+  if (useLegacy) return <LegacyAutomationTabV2 />;
+  return <SocialAutomationPostsTab {...props} />;
+}
+
+function SocialAutomationPostsTab(props: {
+  initialPostId: string | null;
+  initialSubTab?: SocialAutomationSubTab;
+  profileWebsite: string;
+  authorName: string;
+  onOpenEditor: (id: string) => void;
+}) {
+  const normalizeSocialAutomation = useCallback((input: any): SocialAutomationSettings => {
+    const def = getDefaultSocialAutomationSettings();
+    const fb = input?.platforms?.facebook ?? input?.facebook ?? null;
+    return {
+      platforms: {
+        facebook: {
+          enabled: Boolean(fb?.enabled ?? def.platforms.facebook.enabled),
+          destination: (() => {
+            const d = fb?.destination;
+            const type = d?.type === 'group' ? 'group' : d?.type === 'profile' ? 'profile' : 'page';
+            const id = String(d?.id || '').trim();
+            const name = d?.name ? String(d.name) : '';
+            return { type, id, name } as any;
+          })(),
+        },
+      },
+      postFormat: {
+        template: String(input?.postFormat?.template || input?.template || def.postFormat.template),
+      },
+      scheduling: {
+        mode: (input?.scheduling?.mode === 'schedule' || input?.scheduling?.mode === 'delay') ? input.scheduling.mode : 'immediate',
+        scheduledFor: input?.scheduling?.scheduledFor ?? null,
+        timezone: input?.scheduling?.timezone ?? def.scheduling.timezone,
+        delayMinutes: typeof input?.scheduling?.delayMinutes === 'number' ? input.scheduling.delayMinutes : def.scheduling.delayMinutes,
+      },
+    };
+  }, []);
+
+  const [posts, setPosts] = useState<BlogPost[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(props.initialPostId);
+  const [postTitle, setPostTitle] = useState('');
+  const [postExcerpt, setPostExcerpt] = useState('');
+  const [featuredImage, setFeaturedImage] = useState('');
+  const [postSlug, setPostSlug] = useState('');
+  const [settings, setSettings] = useState<SocialAutomationSettings>(() => normalizeSocialAutomation(null));
+  const [loadingPost, setLoadingPost] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedPostId(props.initialPostId);
+  }, [props.initialPostId]);
+
+  useEffect(() => {
+    setLoadingPosts(true);
+    blogService
+      .listPosts({ status: 'all' })
+      .then((rows) => setPosts(rows))
+      .catch(() => setPosts([]))
+      .finally(() => setLoadingPosts(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPostId) {
+      setPostTitle('');
+      setPostExcerpt('');
+      setFeaturedImage('');
+      setPostSlug('');
+      setSettings(normalizeSocialAutomation(null));
+      setDirty(false);
+      return;
+    }
+    setLoadingPost(true);
+    setError(null);
+    setSuccess(null);
+    blogService
+      .getPost(selectedPostId)
+      .then((post) => {
+        setPostTitle(post.title || '');
+        setPostExcerpt(post.excerpt || '');
+        setFeaturedImage(post.featured_image || '');
+        setPostSlug(post.slug || '');
+        setSettings(normalizeSocialAutomation((post as any).social_automation));
+        setDirty(false);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Failed to load post');
+      })
+      .finally(() => setLoadingPost(false));
+  }, [normalizeSocialAutomation, selectedPostId]);
+
+  const postUrl = useMemo(() => {
+    const rawBase = (props.profileWebsite || (typeof window !== 'undefined' ? window.location.origin : '')).trim();
+    const base = rawBase ? rawBase.replace(/\/$/, '') : '';
+    const cleanSlug = postSlug.trim();
+    if (!base) return cleanSlug ? `/blog/${encodeURIComponent(cleanSlug)}` : '/blog';
+    return cleanSlug ? `${base}/blog/${encodeURIComponent(cleanSlug)}` : `${base}/blog`;
+  }, [postSlug, props.profileWebsite]);
+
+  const selectedLabel = useMemo(() => {
+    if (!selectedPostId) return 'Select a post…';
+    const p = posts.find((x) => x.id === selectedPostId) || null;
+    if (!p) return 'Selected post';
+    return (p.title || '(Untitled)') + ` — ${p.status}`;
+  }, [posts, selectedPostId]);
+
+  const refreshPosts = async () => {
+    setLoadingPosts(true);
+    try {
+      setPosts(await blogService.listPosts({ status: 'all' }));
+    } finally {
+      setLoadingPosts(false);
+    }
+  };
+
+  const save = async () => {
+    if (!selectedPostId) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await blogService.updatePost(selectedPostId, { social_automation: settings });
+      setDirty(false);
+      setSuccess('Saved.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight text-slate-950">Social Automation</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Configure connections, post format, scheduling, preview, and logs. Select a post to edit its automation settings.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedPostId && (
+            <button
+              type="button"
+              onClick={() => props.onOpenEditor(selectedPostId)}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Pencil size={14} />
+              Open Editor
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!selectedPostId || saving || !dirty}
+            className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            title={!selectedPostId ? 'Select a post first' : !dirty ? 'No changes' : 'Save'}
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Save
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div>}
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+          <div>
+            <div className="text-xs font-semibold text-slate-500 mb-1.5">Post</div>
+            <select
+              value={selectedPostId || ''}
+              onChange={(e) => { setSelectedPostId(e.target.value || null); }}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:border-slate-400"
+            >
+              <option value="">{loadingPosts ? 'Loading posts…' : 'Select a post…'}</option>
+              {posts.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {(p.title || '(Untitled)')} — {p.status}
+                </option>
+              ))}
+            </select>
+            <div className="mt-1 text-xs text-slate-500">Selected: <span className="font-semibold text-slate-700">{selectedLabel}</span></div>
+          </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => void refreshPosts()}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <RefreshCw size={14} /> Refresh list
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={loadingPost ? 'opacity-60 pointer-events-none' : ''}>
+        <SocialAutomationTab
+          postId={selectedPostId}
+          postUrl={postUrl}
+          postTitle={postTitle}
+          postExcerpt={postExcerpt}
+          featuredImage={featuredImage}
+          authorName={props.authorName}
+          settings={settings}
+          onChange={(next) => { setSettings(next); setDirty(true); }}
+          initialSubTab={props.initialSubTab}
+        />
+      </div>
+
+      {!selectedPostId && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Tip: Connect Facebook in the “Connections” sub-tab first, then select a post to configure where it will publish.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LegacyAutomationTabV2() {
   type AutomationSubTab = 'platforms' | 'accounts' | 'rules' | 'logs';
   const [subTab, setSubTab] = useState<AutomationSubTab>('accounts');
   const [customizePlatformId, setCustomizePlatformId] = useState<string | null>(null);
@@ -2763,8 +2938,9 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
 const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
   const [view, setView] = useState<PostsView>('posts');
   const [editPostId, setEditPostId] = useState<string | null>(null);
-  const [editorInitialTab, setEditorInitialTab] = useState<'content' | 'media' | 'seo' | 'social_automation' | undefined>(undefined);
-  const [editorInitialSocialSubTab, setEditorInitialSocialSubTab] = useState<SocialAutomationSubTab | undefined>(undefined);
+  const [editorInitialTab, setEditorInitialTab] = useState<'content' | 'media' | 'seo' | undefined>(undefined);
+  const [automationInitialPostId, setAutomationInitialPostId] = useState<string | null>(null);
+  const [automationInitialSubTab, setAutomationInitialSubTab] = useState<SocialAutomationSubTab | undefined>(undefined);
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [tags, setTags] = useState<BlogTag[]>([]);
 
@@ -2772,20 +2948,22 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const desired = params.get('view');
-    if (desired === 'automation') setView('automation');
+    if (desired === 'automation') {
+      setView('automation');
+      const id = params.get('postId');
+      setAutomationInitialPostId(id ? String(id) : null);
+      const sub = String(params.get('subtab') || '').trim().toLowerCase();
+      if (sub === 'connections' || sub === 'post_format' || sub === 'scheduling' || sub === 'preview' || sub === 'logs') {
+        setAutomationInitialSubTab(sub as SocialAutomationSubTab);
+      }
+    }
     if (desired === 'editor') {
       setView('editor');
       const id = params.get('postId');
       setEditPostId(id ? String(id) : null);
       const tab = String(params.get('tab') || '').trim().toLowerCase();
-      const sub = String(params.get('subtab') || '').trim().toLowerCase();
-      if (tab === 'media' || tab === 'seo' || tab === 'content' || tab === 'social_automation') {
+      if (tab === 'media' || tab === 'seo' || tab === 'content') {
         setEditorInitialTab(tab as any);
-      } else if (tab === 'social-automation' || tab === 'socialautomation') {
-        setEditorInitialTab('social_automation');
-      }
-      if (sub === 'connections' || sub === 'post_format' || sub === 'scheduling' || sub === 'preview' || sub === 'logs') {
-        setEditorInitialSocialSubTab(sub as SocialAutomationSubTab);
       }
     }
     if (params.has('view')) {
@@ -2812,7 +2990,6 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
   const openEditor = (id: string | null) => {
     setEditPostId(id);
     setEditorInitialTab(undefined);
-    setEditorInitialSocialSubTab(undefined);
     setView('editor');
   };
 
@@ -2825,7 +3002,7 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
     { id: 'posts', label: 'All Posts', icon: FileText },
     { id: 'categories', label: 'Categories', icon: FolderOpen },
     { id: 'tags', label: 'Tags', icon: Tag },
-    { id: 'automation', label: 'Automation', icon: Zap },
+    { id: 'automation', label: 'Social Automation', icon: Zap },
   ];
 
   return (
@@ -2869,9 +3046,7 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
           categories={categories}
           tags={tags}
           profileWebsite={currentUser?.website ?? ''}
-          authorName={currentUser?.name ?? ''}
           initialTab={editorInitialTab}
-          initialSocialSubTab={editorInitialSocialSubTab}
           onSaved={handlePostSaved}
           onBack={() => { setView('posts'); setEditPostId(null); }}
           onMetaRefresh={loadMeta}
@@ -2884,7 +3059,13 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
         <TagsTab tags={tags} onChange={() => void loadMeta()} />
       )}
       {view === 'automation' && (
-        <AutomationTabV2 />
+        <AutomationTabV2
+          initialPostId={automationInitialPostId}
+          initialSubTab={automationInitialSubTab}
+          profileWebsite={currentUser?.website ?? ''}
+          authorName={currentUser?.name ?? ''}
+          onOpenEditor={(id) => openEditor(id)}
+        />
       )}
     </div>
   );

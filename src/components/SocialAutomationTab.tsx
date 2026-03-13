@@ -208,8 +208,8 @@ export default function SocialAutomationTab(_props: {
 
       const returnTo =
         postId
-          ? `/posts?view=editor&postId=${encodeURIComponent(postId)}&tab=social_automation&subtab=connections`
-          : '/posts?view=editor&tab=social_automation&subtab=connections';
+          ? `/posts?view=automation&postId=${encodeURIComponent(postId)}&subtab=connections`
+          : '/posts?view=automation&subtab=connections';
 
       const res = await fetch(`${API_BASE_URL}/api/oauth/state`, {
         method: 'POST',
