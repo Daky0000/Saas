@@ -8,6 +8,7 @@ import PaymentManagement from '../components/admin/PaymentManagement';
 import AdminAuthProviders from '../components/admin/AdminAuthProviders';
 import AdminPagesManagement from '../components/admin/AdminPagesManagement';
 import AdminMediaManagement from '../components/admin/AdminMediaManagement';
+import AdminIntegrations from '../components/admin/AdminIntegrations';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -20,6 +21,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'cards'
     | 'payments'
     | 'auth-providers'
+    | 'integrations'
     | 'settings'
     | 'audit'
     | 'pages-home'
@@ -36,6 +38,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     cards: '/admin/cards',
     payments: '/admin/payments',
     'auth-providers': '/admin/auth-providers',
+    integrations: '/admin/integrations',
     settings: '/admin/settings',
     audit: '/admin/audit',
     'pages-home': '/admin/pages/home',
@@ -72,6 +75,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'cards', label: 'Card Templates', icon: Image, active: true },
     { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
+    { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
@@ -253,6 +257,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'cards' && <AdminCardsManagement />}
             {activeTab === 'payments' && <PaymentManagement />}
             {activeTab === 'auth-providers' && <AdminAuthProviders />}
+            {activeTab === 'integrations' && <AdminIntegrations />}
             {activeTab === 'media' && <AdminMediaManagement />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
