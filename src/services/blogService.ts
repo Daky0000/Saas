@@ -67,6 +67,7 @@ export interface BlogPost {
   social_title: string;
   social_description: string;
   social_image: string;
+  social_automation?: any;
   scheduled_at: string | null;
   published_at: string | null;
   created_at: string;
@@ -87,6 +88,7 @@ export interface BlogPostPayload {
   social_title?: string;
   social_description?: string;
   social_image?: string;
+  social_automation?: any;
   scheduled_at?: string | null;
   tag_ids?: string[];
 }

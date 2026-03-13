@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Plus, Search, Pencil, Trash2, Copy, FileText, Tag, FolderOpen,
   Bold, Italic, List, ListOrdered, Quote, Code, Image as ImageIcon,
@@ -12,11 +12,12 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TiptapImage from '@tiptap/extension-image';
 import { blogService, type BlogPost, type BlogCategory, type BlogTag, type BlogPostPayload } from '../services/blogService';
-import { distributionService, type ConnectedPlatform, type PublishingLog } from '../services/distributionService';
+import { distributionService, type PublishingLog } from '../services/distributionService';
+import { wordpressService } from '../services/wordpressService';
 import MediaLibraryModal from '../components/media/MediaLibraryModal';
 import SeoScoreBadge from '../components/SeoScoreBadge';
+import SocialAutomationTab, { getDefaultSocialAutomationSettings, type SocialAutomationSettings, type SocialAutomationSubTab } from '../components/SocialAutomationTab';
 import type { AppUser } from '../utils/userSession';
-import { wordpressService } from '../services/wordpressService';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 type PostsView = 'posts' | 'editor' | 'categories' | 'tags' | 'automation';
@@ -38,6 +39,7 @@ const DIST_STATUS_BADGE: Record<string, string> = {
   published: 'bg-emerald-100 text-emerald-700',
   failed: 'bg-red-100 text-red-700',
   pending: 'bg-yellow-100 text-yellow-700',
+  scheduled: 'bg-blue-100 text-blue-700',
 };
 
 const PLATFORM_ICONS: Record<string, string> = {
@@ -65,12 +67,15 @@ interface PostEditorProps {
   categories: BlogCategory[];
   tags: BlogTag[];
   profileWebsite: string;
+  authorName: string;
+  initialTab?: 'content' | 'media' | 'seo' | 'social_automation';
+  initialSocialSubTab?: SocialAutomationSubTab;
   onSaved: (post: BlogPost) => void;
   onBack: () => void;
   onMetaRefresh: () => Promise<void>;
 }
 
-function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
+function PostEditor({ postId, categories, tags, profileWebsite, authorName, initialTab, initialSocialSubTab, onSaved, onBack, onMetaRefresh }: PostEditorProps) {
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
@@ -88,6 +93,7 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
   const [socialImage, setSocialImage] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
   const [sidebarTab, setSidebarTab] = useState<'details' | 'seo'>('details');
+  const [editorTab, setEditorTab] = useState<'content' | 'media' | 'seo' | 'social_automation'>(initialTab ?? 'content');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,12 +111,43 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
   const [newTagName, setNewTagName] = useState('');
   const [creatingTag, setCreatingTag] = useState(false);
 
-  // Distribution
-  const [connectedPlatforms, setConnectedPlatforms] = useState<ConnectedPlatform[]>([]);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
-  const [distributing, setDistributing] = useState(false);
   const [publishLogs, setPublishLogs] = useState<PublishingLog[]>([]);
   const [savedPostId, setSavedPostId] = useState<string | null>(postId);
+
+  const normalizeSocialAutomation = useCallback((input: any): SocialAutomationSettings => {
+    const def = getDefaultSocialAutomationSettings();
+    const fb = input?.platforms?.facebook ?? input?.facebook ?? null;
+    return {
+      platforms: {
+        facebook: {
+          enabled: Boolean(fb?.enabled ?? def.platforms.facebook.enabled),
+          destination: (() => {
+            const d = fb?.destination;
+            const type = d?.type === 'group' ? 'group' : d?.type === 'profile' ? 'profile' : 'page';
+            const id = String(d?.id || '').trim();
+            const name = d?.name ? String(d.name) : '';
+            return { type, id, name } as any;
+          })(),
+        },
+      },
+      postFormat: {
+        template: String(input?.postFormat?.template || input?.template || def.postFormat.template),
+      },
+      scheduling: {
+        mode: (input?.scheduling?.mode === 'schedule' || input?.scheduling?.mode === 'delay') ? input.scheduling.mode : 'immediate',
+        scheduledFor: input?.scheduling?.scheduledFor ?? null,
+        timezone: input?.scheduling?.timezone ?? def.scheduling.timezone,
+        delayMinutes: typeof input?.scheduling?.delayMinutes === 'number' ? input.scheduling.delayMinutes : def.scheduling.delayMinutes,
+      },
+    };
+  }, []);
+
+  const [socialAutomation, setSocialAutomation] = useState<SocialAutomationSettings>(() => normalizeSocialAutomation(null));
+
+  useEffect(() => {
+    if (!initialTab) return;
+    setEditorTab(initialTab);
+  }, [initialTab]);
 
   const allCategories = [...categories, ...localCategories];
   const allTags = [...tags, ...localTags];
@@ -122,20 +159,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
     if (!base) return cleanSlug ? `/blog/${encodeURIComponent(cleanSlug)}` : '/blog';
     return cleanSlug ? `${base}/blog/${encodeURIComponent(cleanSlug)}` : `${base}/blog`;
   }, [profileWebsite, slug]);
-
-  const hashtags = useMemo(() => {
-    const map = new Map(allTags.map((t) => [t.id, t.name] as const));
-    return selectedTagIds
-      .map((id) => map.get(id))
-      .filter(Boolean)
-      .map((name) => `#${String(name).trim().replace(/\s+/g, '').replace(/^#/, '')}`)
-      .join(' ');
-  }, [allTags, selectedTagIds]);
-
-  const caption = useMemo(() => {
-    const cap = excerpt.trim();
-    return cap || title.trim();
-  }, [excerpt, title]);
 
   // Lightweight copies for real-time SEO analysis (avoid heavy parsing during save).
   const [seoHtml, setSeoHtml] = useState('');
@@ -178,6 +201,7 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
         setSocialTitle(post.social_title ?? '');
         setSocialDescription(post.social_description ?? '');
         setSocialImage(post.social_image ?? '');
+        setSocialAutomation(normalizeSocialAutomation((post as any).social_automation));
         setScheduledAt(post.scheduled_at ? post.scheduled_at.slice(0, 16) : '');
         editor.commands.setContent(post.content || '');
         setSeoHtml(post.content || '');
@@ -193,9 +217,8 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
       .finally(() => setLoading(false));
   }, [postId, editor]);
 
-  // Load connected platforms + existing publish logs
+  // Load existing publish logs
   useEffect(() => {
-    distributionService.getConnectedPlatforms().then(setConnectedPlatforms).catch(() => {});
     if (postId) {
       distributionService.getStatus(postId).then(setPublishLogs).catch(() => {});
     }
@@ -218,6 +241,7 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
         status: finalStatus, category_id: categoryId || null,
         meta_title: metaTitle, meta_description: metaDescription, focus_keyword: focusKeywords.join(', '),
         social_title: socialTitle, social_description: socialDescription, social_image: socialImage,
+        social_automation: socialAutomation,
         scheduled_at: finalStatus === 'scheduled' ? scheduledAt : null,
         tag_ids: selectedTagIds,
       };
@@ -231,26 +255,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
       setError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleDistribute = async () => {
-    const targetId = savedPostId ?? postId;
-    if (!targetId || selectedPlatforms.length === 0) return;
-    setDistributing(true);
-    try {
-      const results = await distributionService.publish(targetId, selectedPlatforms);
-      // Refresh publish logs
-      const updated = await distributionService.getStatus(targetId);
-      setPublishLogs(updated);
-      const failed = results.filter((r) => r.status === 'failed');
-      if (failed.length > 0) {
-        setError(`Some platforms failed: ${failed.map((f) => f.platform).join(', ')}`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Distribution failed');
-    } finally {
-      setDistributing(false);
     }
   };
 
@@ -317,12 +321,6 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
   const toggleTag = (id: string) => {
     setSelectedTagIds((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
-    );
-  };
-
-  const togglePlatform = (id: string) => {
-    setSelectedPlatforms((prev) =>
-      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
     );
   };
 
@@ -647,6 +645,27 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
 
+      <div className="flex items-center gap-1 border-b border-slate-200">
+        {([
+          { id: 'content', label: 'Content' },
+          { id: 'media', label: 'Media' },
+          { id: 'seo', label: 'SEO' },
+          { id: 'social_automation', label: 'Social Automation' },
+        ] as const).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setEditorTab(t.id)}
+            className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors -mb-px ${
+              editorTab === t.id ? 'border-slate-950 text-slate-950' : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {editorTab === 'content' && (
         <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
           {/* Left: Editor */}
           <div className="space-y-4">
@@ -916,69 +935,7 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
             />
           </div>
 
-          {/* Distribution Settings */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Zap size={15} className="text-amber-500" />
-              <h3 className="text-sm font-bold text-slate-900">Distribution</h3>
-            </div>
-            {connectedPlatforms.length === 0
-              ? <p className="text-xs text-slate-400 leading-relaxed">
-                  No platforms connected. Visit{' '}
-                  <button type="button" onClick={() => { window.history.pushState({}, '', '/integrations'); window.dispatchEvent(new PopStateEvent('popstate')); }}
-                    className="text-blue-600 hover:underline">Integrations</button>{' '}
-                  to connect platforms.
-                </p>
-              : <>
-                  <p className="text-xs text-slate-500 mb-3">Select platforms to publish to after saving.</p>
-                  <div className="space-y-2 mb-4">
-                    {connectedPlatforms.map((p) => (
-                      <label key={p.id} className="flex items-center gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedPlatforms.includes(p.id)}
-                          onChange={() => togglePlatform(p.id)}
-                          className="h-4 w-4 rounded border-slate-300 accent-slate-900"
-                        />
-                        <span className="text-lg leading-none">{PLATFORM_ICONS[p.id] ?? '🔗'}</span>
-                        <span className="text-sm font-medium text-slate-700">{p.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                  {selectedPlatforms.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => void handleDistribute()}
-                      disabled={distributing || !savedPostId}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
-                    >
-                      {distributing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      {distributing ? 'Publishing...' : `Publish to ${selectedPlatforms.length} platform${selectedPlatforms.length > 1 ? 's' : ''}`}
-                    </button>
-                  )}
-                  {!savedPostId && selectedPlatforms.length > 0 && (
-                    <p className="mt-2 text-xs text-slate-400">Save the post first to distribute.</p>
-                  )}
 
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-black text-slate-700">Preview</div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Featured image, caption (excerpt), hashtags (tags), and post URL.
-                    </p>
-                    {featuredImage ? (
-                      <img src={featuredImage} alt="" className="mt-3 h-44 w-full rounded-xl object-cover border border-slate-200 bg-white" />
-                    ) : (
-                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white p-6 text-center text-xs text-slate-400">
-                        No featured image selected.
-                      </div>
-                    )}
-                    <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
-                      {[caption, hashtags, postUrl].filter(Boolean).join('\n\n')}
-                    </div>
-                  </div>
-                </>
-            }
-          </div>
 
           {/* Publishing Status */}
           {publishLogs.length > 0 && (
@@ -1210,6 +1167,157 @@ function PostEditor({ postId, categories, tags, profileWebsite, onSaved, onBack,
           )}
         </div>
       </div>
+      )}
+
+      {editorTab === 'media' && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h3 className="text-sm font-bold text-slate-900 mb-3">Featured Image</h3>
+              {featuredImage
+                ? <div className="relative">
+                    <img src={featuredImage} alt="" className="h-56 w-full rounded-xl object-cover" />
+                    <div className="absolute inset-x-0 bottom-0 flex gap-2 p-2">
+                      <button type="button" onClick={() => openMedia('featured')}
+                        className="flex-1 rounded-lg bg-white/90 py-1.5 text-xs font-semibold text-slate-800 hover:bg-white">
+                        Change
+                      </button>
+                      <button type="button" onClick={() => setFeaturedImage('')}
+                        className="rounded-lg bg-red-500/90 px-2 py-1.5 text-xs font-semibold text-white hover:bg-red-600">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  </div>
+                : <button type="button" onClick={() => openMedia('featured')}
+                    className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-10 text-sm text-slate-500 hover:border-slate-400 hover:bg-slate-50">
+                    <ImageIcon size={22} className="text-slate-300" />
+                    Set featured image
+                  </button>
+              }
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h3 className="text-sm font-bold text-slate-900 mb-3">Social Image</h3>
+              {socialImage
+                ? <div className="relative">
+                    <img src={socialImage} alt="" className="h-56 w-full rounded-xl object-cover" />
+                    <div className="absolute inset-x-0 bottom-0 flex gap-2 p-2">
+                      <button type="button" onClick={() => openMedia('social')}
+                        className="flex-1 rounded-lg bg-white/90 py-1.5 text-xs font-semibold text-slate-800 hover:bg-white">
+                        Change
+                      </button>
+                      <button type="button" onClick={() => setSocialImage('')}
+                        className="rounded-lg bg-red-500/90 px-2 py-1.5 text-xs font-semibold text-white hover:bg-red-600">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  </div>
+                : <button type="button" onClick={() => openMedia('social')}
+                    className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-10 text-sm text-slate-500 hover:border-slate-400 hover:bg-slate-50">
+                    <ImageIcon size={22} className="text-slate-300" />
+                    Set social image
+                  </button>
+              }
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Tip</h3>
+              <p className="text-sm text-slate-500">
+                Use Media Library to pick images. Featured Image is used for your blog. Social Image is used for link sharing previews.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editorTab === 'seo' && (
+        <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">SEO Overview</h3>
+                  <p className="text-sm text-slate-500 mt-1">Improve metadata and content checks before publishing.</p>
+                </div>
+                <SeoScoreBadge score={seoAnalysis.score} />
+              </div>
+              <div className="mt-4 grid gap-2">
+                {seoAnalysis.checklist.map((c: any) => (
+                  <div key={c.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-700">{c.label}</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">{c.detail}</div>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                      c.status === 'pass' ? 'bg-emerald-100 text-emerald-700' : c.status === 'warn' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {c.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+              <h3 className="text-sm font-bold text-slate-900">Meta</h3>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Meta Title</label>
+                <input value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-slate-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Meta Description</label>
+                <textarea rows={3} value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-slate-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Focus Keyword(s)</label>
+                <input value={focusKeywords.join(', ')} onChange={(e) => setFocusKeywords(e.target.value.split(',').map((x) => x.trim()).filter(Boolean))}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-slate-400" />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+              <h3 className="text-sm font-bold text-slate-900">Social Sharing</h3>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social Title</label>
+                <input value={socialTitle} onChange={(e) => setSocialTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-slate-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social Description</label>
+                <textarea rows={2} value={socialDescription} onChange={(e) => setSocialDescription(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-slate-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social Image</label>
+                <button type="button" onClick={() => openMedia('social')}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  {socialImage ? 'Change Social Image' : 'Set Social Image'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editorTab === 'social_automation' && (
+        <SocialAutomationTab
+          postId={savedPostId ?? postId}
+          postUrl={postUrl}
+          postTitle={title}
+          postExcerpt={excerpt}
+          featuredImage={featuredImage}
+          authorName={authorName}
+          settings={socialAutomation}
+          onChange={setSocialAutomation}
+          initialSubTab={initialSocialSubTab}
+        />
+      )}
 
       {showMediaPicker && (
         <MediaLibraryModal
@@ -1364,140 +1472,8 @@ function TagsTab({ tags, onChange }: TagsTabProps) {
   );
 }
 
-// ── Automation Tab ────────────────────────────────────────────────────────────────
-function AutomationTab() {
-  const [logs, setLogs] = useState<PublishingLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [retrying, setRetrying] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await distributionService.getLogs();
-      setLogs(data);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
-  useEffect(() => { void load(); }, [load]);
-
-  const handleRetry = async (logId: string) => {
-    setRetrying(logId);
-    try {
-      await distributionService.retry(logId);
-      await load();
-    } catch {
-      // ignore
-    } finally {
-      setRetrying(null);
-    }
-  };
-
-  const platforms = Array.from(new Set(logs.map((l) => l.platform)));
-  const stats = {
-    total: logs.length,
-    published: logs.filter((l) => l.status === 'published').length,
-    failed: logs.filter((l) => l.status === 'failed').length,
-    pending: logs.filter((l) => l.status === 'pending').length,
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-2xl font-black tracking-tight text-slate-950">Automation</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Monitor automated post distribution across your connected platforms.
-        </p>
-      </div>
-
-      {/* Stats */}
-      {logs.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            { label: 'Total', value: stats.total, color: 'text-slate-900' },
-            { label: 'Published', value: stats.published, color: 'text-emerald-600' },
-            { label: 'Failed', value: stats.failed, color: 'text-red-600' },
-            { label: 'Pending', value: stats.pending, color: 'text-yellow-600' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className={`text-2xl font-black ${color}`}>{value}</div>
-              <div className="mt-0.5 text-xs font-semibold text-slate-500">{label}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Connected platforms info */}
-      {logs.length === 0 && !loading && (
-        <div className="rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center">
-          <Zap size={36} className="mx-auto mb-3 text-slate-200" />
-          <h3 className="text-base font-bold text-slate-700">No distribution activity yet</h3>
-          <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
-            Open a post in the editor and use the Distribution panel to publish to connected platforms.
-          </p>
-          {platforms.length === 0 && (
-            <button type="button"
-              onClick={() => { window.history.pushState({}, '', '/integrations'); window.dispatchEvent(new PopStateEvent('popstate')); }}
-              className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 mx-auto">
-              <ExternalLink size={14} /> Connect platforms
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Logs table */}
-      {logs.length > 0 && (
-        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-          <div className="hidden sm:grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-4 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 bg-slate-50">
-            <span>Post</span>
-            <span>Platform</span>
-            <span>Status</span>
-            <span>Date</span>
-            <span>Action</span>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {loading
-              ? <div className="flex items-center justify-center py-12"><Loader2 className="animate-spin text-slate-300" size={24} /></div>
-              : logs.map((log) => (
-                <div key={log.id} className="flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto_auto_auto] items-start sm:items-center gap-2 sm:gap-4 px-5 py-4 hover:bg-slate-50">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-slate-900">{log.post_title || log.post_id}</div>
-                    {log.error_message && (
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <AlertCircle size={11} className="text-red-400 shrink-0" />
-                        <span className="truncate text-xs text-red-500">{log.error_message}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-base">{PLATFORM_ICONS[log.platform] ?? '🔗'}</span>
-                    <span className="text-xs font-medium text-slate-600 capitalize">{log.platform}</span>
-                  </div>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${DIST_STATUS_BADGE[log.status] ?? 'bg-slate-100 text-slate-600'}`}>
-                    {log.status}
-                  </span>
-                  <span className="text-xs text-slate-400 whitespace-nowrap">{fmtDateTime(log.created_at)}</span>
-                  <div className="flex items-center gap-1">
-                    {log.status === 'failed' && (
-                      <button type="button" onClick={() => void handleRetry(log.id)} disabled={retrying === log.id}
-                        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">
-                        {retrying === log.id ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                        Retry
-                      </button>
-                    )}
-                    {log.status === 'published' && <CheckCircle2 size={16} className="text-emerald-500" />}
-                  </div>
-                </div>
-              ))
-            }
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Posts List ───────────────────────────────────────────────────────────────────
 // New Automation UI (sub-tabs) - extends Automation only. Does not change post editor/publish logic.
@@ -1505,8 +1481,6 @@ function AutomationTabV2() {
   type AutomationSubTab = 'platforms' | 'accounts' | 'rules' | 'logs';
   const [subTab, setSubTab] = useState<AutomationSubTab>('accounts');
   const [customizePlatformId, setCustomizePlatformId] = useState<string | null>(null);
-  // Keep legacy component referenced to satisfy TS noUnusedLocals while migrating UI safely.
-  void AutomationTab;
 
   type ConnectedAccountRow = {
     id: string;
@@ -1527,7 +1501,7 @@ function AutomationTabV2() {
   };
 
   const goIntegrations = () => {
-    window.history.pushState({}, '', '/integrations');
+    window.history.pushState({}, '', '/profile');
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
@@ -2789,6 +2763,8 @@ function PostsList({ onEdit, onNew }: PostsListProps) {
 const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
   const [view, setView] = useState<PostsView>('posts');
   const [editPostId, setEditPostId] = useState<string | null>(null);
+  const [editorInitialTab, setEditorInitialTab] = useState<'content' | 'media' | 'seo' | 'social_automation' | undefined>(undefined);
+  const [editorInitialSocialSubTab, setEditorInitialSocialSubTab] = useState<SocialAutomationSubTab | undefined>(undefined);
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [tags, setTags] = useState<BlogTag[]>([]);
 
@@ -2797,8 +2773,26 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
     const params = new URLSearchParams(window.location.search);
     const desired = params.get('view');
     if (desired === 'automation') setView('automation');
+    if (desired === 'editor') {
+      setView('editor');
+      const id = params.get('postId');
+      setEditPostId(id ? String(id) : null);
+      const tab = String(params.get('tab') || '').trim().toLowerCase();
+      const sub = String(params.get('subtab') || '').trim().toLowerCase();
+      if (tab === 'media' || tab === 'seo' || tab === 'content' || tab === 'social_automation') {
+        setEditorInitialTab(tab as any);
+      } else if (tab === 'social-automation' || tab === 'socialautomation') {
+        setEditorInitialTab('social_automation');
+      }
+      if (sub === 'connections' || sub === 'post_format' || sub === 'scheduling' || sub === 'preview' || sub === 'logs') {
+        setEditorInitialSocialSubTab(sub as SocialAutomationSubTab);
+      }
+    }
     if (params.has('view')) {
       params.delete('view');
+      params.delete('postId');
+      params.delete('tab');
+      params.delete('subtab');
       const qs = params.toString();
       window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
     }
@@ -2817,6 +2811,8 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
 
   const openEditor = (id: string | null) => {
     setEditPostId(id);
+    setEditorInitialTab(undefined);
+    setEditorInitialSocialSubTab(undefined);
     setView('editor');
   };
 
@@ -2873,6 +2869,9 @@ const Posts = ({ currentUser }: { currentUser: AppUser | null }) => {
           categories={categories}
           tags={tags}
           profileWebsite={currentUser?.website ?? ''}
+          authorName={currentUser?.name ?? ''}
+          initialTab={editorInitialTab}
+          initialSocialSubTab={editorInitialSocialSubTab}
           onSaved={handlePostSaved}
           onBack={() => { setView('posts'); setEditPostId(null); }}
           onMetaRefresh={loadMeta}

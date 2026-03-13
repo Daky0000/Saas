@@ -28,9 +28,12 @@ export interface PublishingLog {
   post_title?: string;
   user_id: string;
   platform: string;
-  status: 'published' | 'failed' | 'pending';
+  status: 'published' | 'failed' | 'pending' | 'scheduled';
   platform_post_id?: string;
+  account?: string | null;
   error_message?: string;
+  response?: any;
+  scheduled_for?: string | null;
   created_at: string;
 }
 
