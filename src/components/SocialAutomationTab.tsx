@@ -222,13 +222,16 @@ export default function SocialAutomationTab(_props: {
     setFacebookTargets((p) => ({ ...p, loading: true, error: null }));
     try {
       const v1Res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
-      if (v1Res.ok) {
-        const v1 = await v1Res.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; error?: string };
-        if (v1.success) {
-          const pages = (v1.pages || []).map((p) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
-          setFacebookTargets({ loading: false, pages, groups: [], error: null });
-          return;
-        }
+      const v1Text = await v1Res.text();
+      let v1: any = null;
+      try { v1 = v1Text ? JSON.parse(v1Text) : null; } catch { v1 = null; }
+      if (v1Res.ok && v1?.success) {
+        const pages = (v1.pages || []).map((p: any) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
+        setFacebookTargets({ loading: false, pages, groups: [], error: null });
+        return;
+      }
+      if (v1?.error) {
+        throw new Error(String(v1.error));
       }
 
       // Legacy fallback.
@@ -302,6 +305,52 @@ export default function SocialAutomationTab(_props: {
     }
   }, [API_BASE_URL, postId]);
 
+  const refreshLogs = useCallback(async () => {
+    if (!postId) return;
+    setLoadingLogs(true);
+    try {
+      const all = await distributionService.getStatus(postId);
+      setLogs(all.filter((l) => String(l.platform || '').toLowerCase() === 'facebook'));
+    } catch {
+      setLogs([]);
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [postId]);
+
+  const [reposting, setReposting] = useState(false);
+  const [repostResult, setRepostResult] = useState<string | null>(null);
+
+  const repostNow = useCallback(async () => {
+    if (!postId) return;
+    setError(null);
+    setRepostResult(null);
+    setReposting(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/posts/${encodeURIComponent(postId)}/social-repost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          platform: 'facebook',
+          template: settings.postFormat.template || DEFAULT_SOCIAL_AUTOMATION_TEMPLATE,
+          destination: settings.platforms.facebook.destination,
+        }),
+      });
+      const text = await res.text();
+      let data: any = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'Failed to queue repost');
+      }
+      setRepostResult('Queued repost successfully.');
+      void refreshLogs();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to queue repost');
+    } finally {
+      setReposting(false);
+    }
+  }, [API_BASE_URL, postId, refreshLogs, settings.platforms.facebook.destination, settings.postFormat.template]);
+
   const disconnectFacebook = useCallback(async () => {
     if (!confirm('Disconnect Facebook?')) return;
     setError(null);
@@ -323,19 +372,6 @@ export default function SocialAutomationTab(_props: {
       setError(e instanceof Error ? e.message : 'Failed to disconnect');
     }
   }, [API_BASE_URL, accounts, loadAccounts]);
-
-  const refreshLogs = useCallback(async () => {
-    if (!postId) return;
-    setLoadingLogs(true);
-    try {
-      const all = await distributionService.getStatus(postId);
-      setLogs(all.filter((l) => String(l.platform || '').toLowerCase() === 'facebook'));
-    } catch {
-      setLogs([]);
-    } finally {
-      setLoadingLogs(false);
-    }
-  }, [postId]);
 
   useEffect(() => { void loadAccounts(); }, [loadAccounts]);
   useEffect(() => { void loadFacebookTargets(); }, [loadFacebookTargets]);
@@ -382,7 +418,7 @@ export default function SocialAutomationTab(_props: {
 
       {!postId && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          Select/Create a post first to enable to proceed.
+          You can connect accounts now. Select/Create a post to configure per-post settings and logs.
         </div>
       )}
 
@@ -553,6 +589,32 @@ export default function SocialAutomationTab(_props: {
           </div>
 
           <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-900">Repost</h3>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-black text-slate-900">Repost to connected accounts</div>
+                  <div className="text-sm text-slate-500 mt-1">Queues a new publish job using your current template and destination.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void repostNow()}
+                  disabled={!postId || reposting || !facebookAccount || !settings.platforms.facebook.enabled}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+                  title={!postId ? 'Select/Create a post first' : !facebookAccount ? 'Connect Facebook first' : !settings.platforms.facebook.enabled ? 'Enable Facebook for this post' : 'Queue repost'}
+                >
+                  {reposting ? <Loader2 size={16} className="animate-spin text-slate-400" /> : <RefreshCw size={16} className="text-slate-500" />}
+                  Repost now
+                </button>
+              </div>
+              {repostResult && (
+                <div className="mt-3 text-xs text-emerald-700">{repostResult}</div>
+              )}
+              {!postId && (
+                <div className="mt-3 text-xs text-slate-400">Select/Create a post to enable reposting.</div>
+              )}
+            </div>
+
             <h3 className="text-sm font-bold text-slate-900">Add Connection</h3>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="flex items-start justify-between gap-4">
@@ -563,7 +625,7 @@ export default function SocialAutomationTab(_props: {
                 <button
                   type="button"
                   onClick={() => void beginFacebookOAuth()}
-                  disabled={connecting || !postId}
+                  disabled={connecting}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
                 >
                   {connecting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
