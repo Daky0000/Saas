@@ -1,2 +1,7 @@
 node_modules
 openai.chatgpt-26.304.20706-win32-arm64.vsix
+.agent/
+.agents/
+.claude/
+tmp_skills/
+skills-lock.json

@@ -29,6 +29,7 @@ import Landing from './pages/Landing';
 import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
+import OAuthCallback from './pages/OAuthCallback';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import {
@@ -206,6 +207,14 @@ function App() {
     let canceled = false;
 
     const pathname = window.location.pathname;
+    // OAuth callback routes must not be rewritten by the SPA router.
+    // These pages handle their own redirect logic and rely on preserving query params (code/state).
+    if (pathname.startsWith('/auth/')) {
+      setCurrentPathname(pathname);
+      return () => {
+        canceled = true;
+      };
+    }
 
     const hasSession = Boolean(localStorage.getItem('auth_session'));
     const token = localStorage.getItem('auth_token');
@@ -272,6 +281,10 @@ function App() {
       const pathname = window.location.pathname;
       setCurrentPathname(pathname);
 
+      if (pathname.startsWith('/auth/')) {
+        return;
+      }
+
       if (!isAuthenticated) {
         const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
         if (!publicPaths.includes(pathname)) {
@@ -326,6 +339,7 @@ function App() {
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={goToLogin} />;
   }
+  if (currentPathname.startsWith('/auth/')) return <OAuthCallback />;
 
   if (!isAuthenticated) {
     return <Auth onLogin={handleLogin} />;
