@@ -1712,7 +1712,7 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
     await storeUserConnection(auth.userId, platformDisplayName(platformId), tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [String(state)]).catch(() => undefined);
 
-    return res.json({ success: true, data: tokenData });
+    return res.json({ success: true, data: tokenData, returnTo: (stateRow as any).return_to || null });
   } catch (error) {
     console.error('OAuth callback error:', error);
     return res.status(500).json({
