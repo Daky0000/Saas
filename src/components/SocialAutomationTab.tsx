@@ -83,6 +83,7 @@ export default function SocialAutomationTab(_props: {
     profile_image?: string | null;
     connected: boolean;
     created_at?: string;
+    source?: 'v1' | 'legacy';
   };
 
   type FacebookTarget = { id: string; name: string; type: 'page' };
@@ -167,13 +168,44 @@ export default function SocialAutomationTab(_props: {
     setLoadingAccounts(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts`, { headers: authHeaders() });
-      const text = await res.text();
-      let parsed: any = null;
-      try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
-      if (!res.ok) throw new Error(parsed?.error || 'Failed to load accounts');
-      if (!parsed?.success) throw new Error(parsed?.error || 'Failed to load accounts');
-      setAccounts(Array.isArray(parsed?.accounts) ? parsed.accounts : []);
+      // Prefer v1 social accounts, but gracefully fall back to legacy /api/accounts if the backend isn't updated.
+      const v1Res = await fetch(`${API_BASE_URL}/api/v1/social/accounts`, { headers: authHeaders() });
+      const v1Text = await v1Res.text();
+      let v1: any = null;
+      try { v1 = v1Text ? JSON.parse(v1Text) : null; } catch { v1 = null; }
+      if (v1Res.ok && v1?.success && Array.isArray(v1?.accounts)) {
+        setAccounts(v1.accounts.map((a: any) => ({ ...a, source: 'v1' })));
+        return;
+      }
+
+      const legacyRes = await fetch(`${API_BASE_URL}/api/accounts`, { headers: authHeaders() });
+      const legacyText = await legacyRes.text();
+      let legacy: any = null;
+      try { legacy = legacyText ? JSON.parse(legacyText) : null; } catch { legacy = null; }
+      if (!legacyRes.ok) throw new Error(legacy?.error || v1?.error || 'Failed to load accounts');
+      if (!legacy?.success) throw new Error(legacy?.error || 'Failed to load accounts');
+
+      const rows: any[] = Array.isArray(legacy?.data) ? legacy.data : [];
+      const mapped: SocialAccountRow[] = rows.map((r) => {
+        const platform = String(r?.platform || '').trim() || 'unknown';
+        const td = r?.token_data || {};
+        const accountId = String(td?.id || td?.user_id || td?.uid || '').trim();
+        const accountName = String(td?.name || td?.user_name || '').trim() || `${platform} Profile`;
+        const profileImage =
+          String(td?.picture?.data?.url || td?.picture_url || td?.avatar_url || td?.picture?.url || '').trim() || null;
+        return {
+          id: String(r?.id || `${platform}-legacy`),
+          platform,
+          account_type: 'profile',
+          account_id: accountId,
+          account_name: accountName,
+          profile_image: profileImage,
+          connected: Boolean(r?.connected),
+          expiresAt: r?.expiresAt,
+          source: 'legacy',
+        } as any;
+      });
+      setAccounts(mapped);
     } catch (e) {
       setAccounts([]);
       setError(e instanceof Error ? e.message : 'Failed to load accounts');
@@ -189,12 +221,23 @@ export default function SocialAutomationTab(_props: {
     }
     setFacebookTargets((p) => ({ ...p, loading: true, error: null }));
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
-      const data = res.ok
-        ? (await res.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; error?: string })
+      const v1Res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
+      if (v1Res.ok) {
+        const v1 = await v1Res.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; error?: string };
+        if (v1.success) {
+          const pages = (v1.pages || []).map((p) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
+          setFacebookTargets({ loading: false, pages, groups: [], error: null });
+          return;
+        }
+      }
+
+      // Legacy fallback.
+      const legacyRes = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
+      const legacy = legacyRes.ok
+        ? (await legacyRes.json() as { success: boolean; pages?: Array<{ id: string; name: string }>; groups?: Array<{ id: string; name: string }>; error?: string })
         : { success: false, error: 'Failed to load Facebook pages' };
-      if (!data.success) throw new Error(data.error || 'Failed to load Facebook pages');
-      const pages = (data.pages || []).map((p) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
+      if (!legacy.success) throw new Error(legacy.error || 'Failed to load Facebook pages');
+      const pages = (legacy.pages || []).map((p) => ({ id: String(p.id), name: String(p.name || 'Facebook Page'), type: 'page' as const }));
       setFacebookTargets({ loading: false, pages, groups: [], error: null });
     } catch (e) {
       setFacebookTargets({ loading: false, pages: [], groups: [], error: e instanceof Error ? e.message : 'Failed to load Facebook pages' });
@@ -209,18 +252,50 @@ export default function SocialAutomationTab(_props: {
         postId
           ? `/posts?view=automation&postId=${encodeURIComponent(postId)}&subtab=connections`
           : '/posts?view=automation&subtab=connections';
-      const authorizeUrl = new URL(`${API_BASE_URL}/api/v1/social/facebook/authorize-url`);
-      authorizeUrl.searchParams.set('returnTo', returnTo);
-      const urlRes = await fetch(authorizeUrl.toString(), { headers: authHeaders() });
-      const text = await urlRes.text();
-      let data: { success: boolean; url?: string; error?: string };
-      try { data = JSON.parse(text) as any; }
-      catch {
-        const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
-        data = { success: false, error: preview ? `Invalid server response. ${preview}` : 'Invalid server response.' };
+
+      // Prefer v1 SPA endpoint. If backend isn't updated, fall back to legacy state + authorize-url flow.
+      try {
+        const authorizeUrl = new URL(`${API_BASE_URL}/api/v1/social/facebook/authorize-url`);
+        authorizeUrl.searchParams.set('returnTo', returnTo);
+        const urlRes = await fetch(authorizeUrl.toString(), { headers: authHeaders() });
+        const text = await urlRes.text();
+        let data: { success: boolean; url?: string; error?: string };
+        try { data = JSON.parse(text) as any; }
+        catch {
+          const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
+          data = { success: false, error: preview ? `Invalid server response. ${preview}` : 'Invalid server response.' };
+        }
+        if (urlRes.ok && data.success && data.url) {
+          window.location.href = data.url;
+          return;
+        }
+        throw new Error(data.error || 'v1 authorize-url not available');
+      } catch {
+        const state =
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? (crypto as any).randomUUID()
+            : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+        const res = await fetch(`${API_BASE_URL}/api/oauth/state`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ state, platform: 'facebook', returnTo }),
+        });
+        if (!res.ok) throw new Error('Failed to start connection. Please try again.');
+
+        const legacyAuthorizeUrl = new URL(`${API_BASE_URL}/api/oauth/facebook/authorize-url`);
+        legacyAuthorizeUrl.searchParams.set('state', state);
+        const urlRes = await fetch(legacyAuthorizeUrl.toString(), { headers: authHeaders() });
+        const text = await urlRes.text();
+        let data: { success: boolean; url?: string; error?: string };
+        try { data = JSON.parse(text) as any; }
+        catch {
+          const preview = text.slice(0, 160).replace(/\s+/g, ' ').trim();
+          data = { success: false, error: preview ? `Invalid server response. ${preview}` : 'Invalid server response.' };
+        }
+        if (!data.success || !data.url) throw new Error(data.error || 'Failed to build authorize URL');
+        window.location.href = data.url;
       }
-      if (!data.success || !data.url) throw new Error(data.error || 'Failed to build authorize URL');
-      window.location.href = data.url;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Connection failed');
       setConnecting(false);
@@ -233,9 +308,15 @@ export default function SocialAutomationTab(_props: {
     try {
       const profile = accounts.find((a) => String(a.platform || '').toLowerCase() === 'facebook' && String(a.account_type || '').toLowerCase() === 'profile') || null;
       if (!profile) throw new Error('No Facebook connection found');
-      const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts/${encodeURIComponent(profile.id)}`, { method: 'DELETE', headers: authHeaders() });
-      const data = res.ok ? (await res.json() as { success: boolean; error?: string }) : { success: false, error: 'Failed to disconnect' };
-      if (!data.success) throw new Error(data.error || 'Failed to disconnect');
+      if (profile.source === 'v1') {
+        const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts/${encodeURIComponent(profile.id)}`, { method: 'DELETE', headers: authHeaders() });
+        const data = res.ok ? (await res.json() as { success: boolean; error?: string }) : { success: false, error: 'Failed to disconnect' };
+        if (!data.success) throw new Error(data.error || 'Failed to disconnect');
+      } else {
+        const res = await fetch(`${API_BASE_URL}/api/accounts/facebook`, { method: 'DELETE', headers: authHeaders() });
+        const data = res.ok ? (await res.json() as { success: boolean; error?: string }) : { success: false, error: 'Failed to disconnect' };
+        if (!data.success) throw new Error(data.error || 'Failed to disconnect');
+      }
       await loadAccounts();
       setFacebookTargets({ loading: false, pages: [], groups: [], error: null });
     } catch (e) {
