@@ -8,6 +8,7 @@ import {
   Menu,
   Palette,
   Receipt,
+  Waypoints,
   Settings,
   TrendingUp,
   X,
@@ -20,6 +21,7 @@ import Analytics from './pages/Analytics';
 import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
 import Media from './pages/Media';
+import Integrations from './pages/Integrations';
 import Auth from './pages/Auth';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
@@ -46,7 +48,8 @@ type PageType =
   | 'admin'
   | 'analytics'
   | 'profile'
-  | 'media';
+  | 'media'
+  | 'integrations';
 
 type AuthMeResponse = {
   success: boolean;
@@ -75,6 +78,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   analytics: '/analytics',
   profile: '/profile',
   media: '/media',
+  integrations: '/integrations',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -346,9 +350,10 @@ function App() {
     { id: 'posts' as const, label: 'Posts', icon: FileText },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
     { id: 'media' as const, label: 'Media', icon: Image },
+    { id: 'integrations' as const, label: 'Integrations', icon: Waypoints },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
-    { id: 'profile' as const, label: 'Profile', icon: Settings },
+    { id: 'profile' as const, label: 'Settings', icon: Settings },
   ];
 
   const renderPage = () => {
@@ -369,6 +374,8 @@ function App() {
         return <Profile currentUser={authUser} onUserUpdated={handleUserUpdated} />;
       case 'media':
         return <Media />;
+      case 'integrations':
+        return <Integrations />;
       default:
         return <Dashboard currentUser={authUser} />;
     }

@@ -26,6 +26,11 @@ const WORDPRESS_ENCRYPTION_KEY = (() => {
   return scryptSync(raw, 'salt', 32);
 })();
 
+const INTEGRATIONS_ENCRYPTION_KEY = (() => {
+  const raw = process.env.INTEGRATIONS_ENCRYPTION_KEY || process.env.JWT_SECRET || 'default-integrations-key';
+  return scryptSync(raw, 'salt', 32);
+})();
+
 const app = express();
 const PORT = process.env.PORT || process.env.BACKEND_PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
@@ -152,6 +157,8 @@ async function ensureDatabase() {
       token_expires_at TIMESTAMPTZ,
       access_token TEXT,
       refresh_token TEXT,
+      access_token_encrypted TEXT,
+      refresh_token_encrypted TEXT,
       token_data JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -196,6 +203,8 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS profile_image TEXT;`).catch(() => undefined);
   await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ;`).catch(() => undefined);
   await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS access_token_encrypted TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS refresh_token_encrypted TEXT;`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS social_accounts_user_platform_idx ON social_accounts (user_id, platform_id);`).catch(() => undefined);
 
   // Best-effort backfill of `platform_id` for existing connections.
@@ -224,6 +233,9 @@ async function ensureDatabase() {
     CREATE TABLE IF NOT EXISTS integrations (
       id BIGSERIAL PRIMARY KEY,
       provider TEXT NOT NULL,
+      name TEXT,
+      slug TEXT,
+      type TEXT,
       client_id TEXT,
       client_secret TEXT,
       redirect_url TEXT,
@@ -232,6 +244,42 @@ async function ensureDatabase() {
     );
   `);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS integrations_provider_unique_idx ON integrations (LOWER(provider));`).catch(() => undefined);
+  await pool.query(`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS name TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS slug TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS type TEXT;`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS integrations_slug_unique_idx ON integrations (slug);`).catch(() => undefined);
+  await pool.query(`UPDATE integrations SET slug = LOWER(COALESCE(slug, provider)) WHERE slug IS NOT NULL OR provider IS NOT NULL;`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_integrations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      integration_id BIGINT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
+      access_token TEXT,
+      refresh_token TEXT,
+      token_expiry TIMESTAMPTZ,
+      account_id TEXT,
+      account_name TEXT,
+      status TEXT NOT NULL DEFAULT 'connected',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS user_integrations_user_id_idx ON user_integrations (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS user_integrations_user_integration_unique_idx ON user_integrations (user_id, integration_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS integration_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      integration_id BIGINT REFERENCES integrations(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      response JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS integration_logs_user_idx ON integration_logs (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS integration_logs_integration_idx ON integration_logs (integration_id);`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS data_deletion_requests (
@@ -395,6 +443,21 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS alt_text TEXT DEFAULT ''`).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS caption TEXT DEFAULT ''`).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => undefined);
+
+  // Seed integrations registry (best-effort; idempotent)
+  await pool.query(
+    `INSERT INTO integrations (provider, name, slug, type, enabled)
+     VALUES
+      ('wordpress','WordPress','wordpress','cms', true),
+      ('facebook','Facebook','facebook','social', true),
+      ('instagram','Instagram','instagram','social', true),
+      ('linkedin','LinkedIn','linkedin','social', true),
+      ('twitter','X (Twitter)','twitter','social', true),
+      ('pinterest','Pinterest','pinterest','social', true),
+      ('mailchimp','Mailchimp','mailchimp','marketing', true)
+     ON CONFLICT (slug) DO UPDATE
+      SET name = EXCLUDED.name, provider = EXCLUDED.provider, type = EXCLUDED.type;`
+  ).catch(() => undefined);
 
   // Blog post management tables
   await pool.query(`
@@ -1796,6 +1859,283 @@ app.get('/api/facebook/targets', async (req: Request, res: Response) => {
   }
 });
 
+// Instagram (Graph API) targets via Facebook Pages
+// GET /api/instagram/targets — list pages with connected Instagram Business accounts
+app.get('/api/instagram/targets', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const accessToken = String(fbConn?.access_token || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please connect Facebook first' });
+    }
+
+    const graphBase = 'https://graph.facebook.com/v19.0';
+    const resp = await axios.get(
+      `${graphBase}/me/accounts?fields=id,name,instagram_business_account{id,username}&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+      { validateStatus: () => true, timeout: 15000 }
+    );
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.error?.message || `Meta API error ${resp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    const pages = Array.isArray(data?.data) ? data.data : [];
+    const targets = pages
+      .map((p: any) => {
+        const ig = p?.instagram_business_account || null;
+        const igId = ig?.id ? String(ig.id).trim() : '';
+        return {
+          pageId: String(p?.id || '').trim(),
+          pageName: String(p?.name || '').trim(),
+          instagramId: igId || null,
+          instagramUsername: ig?.username ? String(ig.username).trim() : null,
+        };
+      })
+      .filter((t: any) => t.pageId);
+
+    return res.json({ success: true, targets });
+  } catch (error) {
+    console.error('Instagram targets error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Instagram targets' });
+  }
+});
+
+// POST /api/instagram/connect — save a selected Instagram Business account (stores Page token for publishing)
+app.post('/api/instagram/connect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { pageId, instagramId, instagramUsername } = req.body as { pageId?: string; instagramId?: string; instagramUsername?: string };
+    const pid = String(pageId || '').trim();
+    const igId = String(instagramId || '').trim();
+    if (!pid || !igId) return res.status(400).json({ success: false, error: 'pageId and instagramId are required' });
+
+    // Prefer stored Page token if present
+    let pageToken = '';
+    const stored = await pool.query(
+      `SELECT access_token, access_token_encrypted
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
+       LIMIT 1`,
+      [auth.userId, pid]
+    );
+    const storedRow: any = stored.rows[0] || {};
+    let decrypted = '';
+    if (storedRow?.access_token_encrypted) {
+      try {
+        decrypted = decryptIntegrationSecret(String(storedRow.access_token_encrypted));
+      } catch {
+        decrypted = '';
+      }
+    }
+    pageToken = String(decrypted || storedRow?.access_token || '').trim();
+
+    if (!pageToken) {
+      // Fallback: fetch /me/accounts to retrieve the Page access_token
+      const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
+      const accessToken = String(fbConn?.access_token || '').trim();
+      if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
+
+      const graphBase = 'https://graph.facebook.com/v19.0';
+      const pagesResp = await axios.get(
+        `${graphBase}/me/accounts?fields=id,access_token&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+        { validateStatus: () => true, timeout: 15000 }
+      );
+      const pagesData: any = pagesResp.data || {};
+      if (pagesResp.status >= 400) {
+        const msg = pagesData?.error?.message || `Meta API error ${pagesResp.status}`;
+        return res.status(400).json({ success: false, error: msg });
+      }
+      const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
+      const match = pages.find((p: any) => String(p?.id || '').trim() === pid);
+      pageToken = String(match?.access_token || '').trim();
+    }
+
+    if (!pageToken) return res.status(400).json({ success: false, error: 'Facebook Page access token not available. Save a Page under Facebook first.' });
+
+    const pageTokenEncrypted = encryptIntegrationSecret(pageToken);
+
+    await pool.query(
+      `INSERT INTO social_accounts
+        (id, user_id, platform, account_type, account_id, account_name, connected, connected_at, access_token, access_token_encrypted, token_data, created_at)
+       VALUES ($1,$2,'instagram','profile',$3,$4,true,NOW(),$5,$6,$7::jsonb,NOW())
+       ON CONFLICT (user_id, platform) WHERE account_type = 'profile' DO UPDATE
+         SET account_id=EXCLUDED.account_id,
+             account_name=EXCLUDED.account_name,
+             connected=true,
+             connected_at=NOW(),
+             access_token=EXCLUDED.access_token,
+             access_token_encrypted=EXCLUDED.access_token_encrypted,
+             token_data=EXCLUDED.token_data`,
+      [
+        randomUUID(),
+        auth.userId,
+        igId,
+        String(instagramUsername || '').trim() || null,
+        null,
+        pageTokenEncrypted,
+        JSON.stringify({ pageId: pid }),
+      ]
+    );
+
+    await upsertUserIntegration({
+      userId: auth.userId,
+      integrationSlug: 'instagram',
+      accessTokenEncrypted: pageTokenEncrypted,
+      refreshTokenEncrypted: null,
+      tokenExpiry: null,
+      accountId: igId,
+      accountName: String(instagramUsername || '').trim() || null,
+      status: 'connected',
+    });
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'instagram',
+      eventType: 'connection_attempt',
+      status: 'success',
+      response: { pageId: pid, instagramId: igId },
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Instagram connect error:', error);
+    await logIntegrationEvent({
+      userId: null,
+      integrationSlug: 'instagram',
+      eventType: 'connection_attempt',
+      status: 'failed',
+      response: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
+    return res.status(500).json({ success: false, error: 'Failed to connect Instagram' });
+  }
+});
+
+// Pinterest
+// GET /api/pinterest/boards — list boards for the connected Pinterest user
+app.get('/api/pinterest/boards', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'pinterest');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) return res.status(400).json({ success: false, error: 'Pinterest access token missing or expired — please connect Pinterest' });
+
+    const resp = await axios.get('https://api.pinterest.com/v5/boards?page_size=100', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.message || data?.error || `Pinterest API error ${resp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const boards = Array.isArray(data?.items)
+      ? data.items.map((b: any) => ({ id: String(b?.id || '').trim(), name: String(b?.name || '').trim() })).filter((b: any) => b.id)
+      : [];
+
+    return res.json({ success: true, boards });
+  } catch (error) {
+    console.error('Pinterest boards error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest boards' });
+  }
+});
+
+// Mailchimp (API key)
+app.post('/api/integrations/mailchimp/connect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const { apiKey, serverPrefix } = req.body as { apiKey?: string; serverPrefix?: string };
+    const key = String(apiKey || '').trim();
+    const prefix = String(serverPrefix || '').trim();
+    if (!key || !prefix) return res.status(400).json({ success: false, error: 'apiKey and serverPrefix are required' });
+
+    const resp = await axios.get(`https://${prefix}.api.mailchimp.com/3.0/`, {
+      auth: { username: 'anystring', password: key },
+      validateStatus: () => true,
+      timeout: 8000,
+    });
+    if (resp.status !== 200) return res.status(400).json({ success: false, error: 'Invalid Mailchimp API key or server prefix' });
+
+    const tokenEncrypted = encryptIntegrationSecret(JSON.stringify({ apiKey: key, serverPrefix: prefix }));
+    await upsertUserIntegration({
+      userId: auth.userId,
+      integrationSlug: 'mailchimp',
+      accessTokenEncrypted: tokenEncrypted,
+      refreshTokenEncrypted: null,
+      tokenExpiry: null,
+      accountId: prefix,
+      accountName: 'Mailchimp',
+      status: 'connected',
+    });
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'mailchimp',
+      eventType: 'connection_attempt',
+      status: 'success',
+      response: { serverPrefix: prefix },
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Mailchimp connect error:', error);
+    await logIntegrationEvent({
+      userId: null,
+      integrationSlug: 'mailchimp',
+      eventType: 'connection_attempt',
+      status: 'failed',
+      response: { error: error instanceof Error ? error.message : 'Connect failed' },
+    });
+    return res.status(500).json({ success: false, error: 'Failed to connect Mailchimp' });
+  }
+});
+
+app.delete('/api/integrations/mailchimp/disconnect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.json({ success: true });
+
+    await upsertUserIntegration({
+      userId: auth.userId,
+      integrationSlug: 'mailchimp',
+      accessTokenEncrypted: null,
+      refreshTokenEncrypted: null,
+      tokenExpiry: null,
+      accountId: null,
+      accountName: null,
+      status: 'disconnected',
+    });
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'mailchimp',
+      eventType: 'disconnect',
+      status: 'info',
+      response: {},
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Mailchimp disconnect error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to disconnect Mailchimp' });
+  }
+});
+
 // Disconnect account
 app.delete('/api/accounts/:platform', async (req: Request, res: Response) => {
   try {
@@ -1874,6 +2214,8 @@ function platformDisplayName(platformId: string) {
       return 'LinkedIn';
     case 'twitter':
       return 'Twitter';
+    case 'pinterest':
+      return 'Pinterest';
     case 'tiktok':
       return 'TikTok';
     case 'threads':
@@ -1902,6 +2244,8 @@ async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?
       return exchangeLinkedInCode(code);
     case 'facebook':
       return exchangeFacebookCode(code);
+    case 'pinterest':
+      return exchangePinterestCode(code);
     case 'threads':
       return exchangeThreadsCode(code);
     case 'tiktok':
@@ -1909,6 +2253,32 @@ async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?
     default:
       throw new Error('Unsupported platform');
   }
+}
+
+async function exchangePinterestCode(code: string) {
+  const cfg = await getPlatformConfig('pinterest');
+  const clientId = String(cfg.clientId || process.env.VITE_PINTEREST_CLIENT_ID || '').trim();
+  const clientSecret = String(cfg.clientSecret || process.env.PINTEREST_CLIENT_SECRET || '').trim();
+  const redirectUri = resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_PINTEREST_REDIRECT_URI || '');
+  if (!clientId || !clientSecret) throw new Error('Pinterest client credentials not configured');
+
+  const data = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+  });
+
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  const resp = await axios.post('https://api.pinterest.com/v5/oauth/token', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400) {
+    const msg = (resp.data as any)?.message || (resp.data as any)?.error || `Pinterest token exchange failed (${resp.status})`;
+    throw new Error(msg);
+  }
+  return resp.data;
 }
 
 async function exchangeInstagramCode(code: string) {
@@ -2128,11 +2498,16 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   const platRow = await dbQuery<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', [platformId]).catch(() => ({ rows: [] } as any));
   const platformDbId = platRow?.rows?.[0]?.id ?? null;
 
+  const accessTokenRaw = String(tokenData?.access_token ?? tokenData?.accessToken ?? '').trim();
+  const refreshTokenRaw = String(tokenData?.refresh_token ?? tokenData?.refreshToken ?? '').trim();
+  const accessTokenEncrypted = accessTokenRaw ? encryptIntegrationSecret(accessTokenRaw) : null;
+  const refreshTokenEncrypted = refreshTokenRaw ? encryptIntegrationSecret(refreshTokenRaw) : null;
+
   await dbQuery(
     `
     INSERT INTO social_accounts
-      (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, handle, followers, connected, connected_at, expires_at, token_expires_at, access_token, refresh_token, token_data)
-    VALUES ($1, $2, $3, $4, 'profile', $5, $6, $7, $8, $9, true, NOW(), $10, $11, $12, $13, $14)
+      (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, handle, followers, connected, connected_at, expires_at, token_expires_at, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data)
+    VALUES ($1, $2, $3, $4, 'profile', $5, $6, $7, $8, $9, true, NOW(), $10, $11, $12, $13, $14, $15, $16)
     ON CONFLICT (user_id, platform) WHERE account_type = 'profile' DO UPDATE
       SET platform_id = EXCLUDED.platform_id,
           account_id = EXCLUDED.account_id,
@@ -2146,6 +2521,8 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
           token_expires_at = EXCLUDED.token_expires_at,
           access_token = EXCLUDED.access_token,
           refresh_token = EXCLUDED.refresh_token,
+          access_token_encrypted = EXCLUDED.access_token_encrypted,
+          refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
           token_data = EXCLUDED.token_data;
   `,
     [
@@ -2160,11 +2537,32 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
       followers,
       expiresAt,
       tokenExpiresAt,
-      tokenData?.access_token ?? tokenData?.accessToken ?? null,
-      tokenData?.refresh_token ?? tokenData?.refreshToken ?? null,
+      null,
+      null,
+      accessTokenEncrypted,
+      refreshTokenEncrypted,
       tokenData || {},
     ]
   );
+
+  await upsertUserIntegration({
+    userId,
+    integrationSlug: platformId,
+    accessTokenEncrypted,
+    refreshTokenEncrypted,
+    tokenExpiry: expiresAt,
+    accountId,
+    accountName,
+    status: 'connected',
+  });
+
+  await logIntegrationEvent({
+    userId,
+    integrationSlug: platformId,
+    eventType: 'connection_attempt',
+    status: 'success',
+    response: { platform: platformId, accountId, accountName },
+  });
 }
 
 async function getUserConnectedAccounts(userId: string): Promise<any[]> {
@@ -2194,6 +2592,27 @@ async function removeUserConnection(userId: string, platform: string): Promise<v
   if (!pool) return;
   // Platform values are stored in display-case (e.g. "Twitter") but callers may send lowercase (e.g. "twitter").
   await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND LOWER(platform) = LOWER($2)', [userId, platform]);
+
+  const platformId = normalizePlatformId(platform);
+  if (platformId) {
+    await upsertUserIntegration({
+      userId,
+      integrationSlug: platformId,
+      accessTokenEncrypted: null,
+      refreshTokenEncrypted: null,
+      tokenExpiry: null,
+      accountId: null,
+      accountName: null,
+      status: 'disconnected',
+    });
+    await logIntegrationEvent({
+      userId,
+      integrationSlug: platformId,
+      eventType: 'disconnect',
+      status: 'info',
+      response: {},
+    });
+  }
 }
 
 async function testPlatformConnection(userId: string, platform: string): Promise<any> {
@@ -2242,6 +2661,97 @@ function resolveBackendRedirectUri(uri: string | undefined, req?: Request): stri
   const base = getBackendPublicUrl(req);
   if (!base) return raw.startsWith('/') ? raw : `/${raw}`;
   return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
+}
+
+// --- Integrations: encryption + logs ---
+function encryptIntegrationSecret(plain: string): string {
+  const iv = randomBytes(16);
+  const cipher = createCipheriv('aes-256-gcm', INTEGRATIONS_ENCRYPTION_KEY, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, enc]).toString('base64');
+}
+
+function decryptIntegrationSecret(encrypted: string): string {
+  const buf = Buffer.from(String(encrypted || ''), 'base64');
+  const iv = buf.subarray(0, 16);
+  const authTag = buf.subarray(16, 32);
+  const data = buf.subarray(32);
+  const decipher = createDecipheriv('aes-256-gcm', INTEGRATIONS_ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  return decipher.update(data).toString('utf8') + decipher.final('utf8');
+}
+
+async function getIntegrationRowBySlug(slug: string): Promise<{ id: number; slug: string; name: string | null; type: string | null } | null> {
+  if (!pool) return null;
+  const s = String(slug || '').trim().toLowerCase();
+  if (!s) return null;
+  const result = await dbQuery<{ id: number; slug: string; name: string | null; type: string | null }>(
+    `SELECT id, slug, name, type FROM integrations WHERE slug = $1 LIMIT 1`,
+    [s]
+  ).catch(() => ({ rows: [] } as any));
+  return result.rows[0] ?? null;
+}
+
+async function logIntegrationEvent(params: {
+  userId: string | null;
+  integrationSlug: string | null;
+  eventType: string;
+  status: 'success' | 'failed' | 'info';
+  response?: any;
+}) {
+  if (!pool) return;
+  const integration = params.integrationSlug ? await getIntegrationRowBySlug(params.integrationSlug) : null;
+  await dbQuery(
+    `INSERT INTO integration_logs (id, user_id, integration_id, event_type, status, response, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())`,
+    [
+      randomUUID(),
+      params.userId,
+      integration?.id ?? null,
+      String(params.eventType || '').slice(0, 80),
+      params.status,
+      JSON.stringify(params.response ?? {}),
+    ]
+  ).catch(() => undefined);
+}
+
+async function upsertUserIntegration(params: {
+  userId: string;
+  integrationSlug: string;
+  accessTokenEncrypted?: string | null;
+  refreshTokenEncrypted?: string | null;
+  tokenExpiry?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  status: 'connected' | 'disconnected' | 'error';
+}) {
+  if (!pool) return;
+  const integration = await getIntegrationRowBySlug(params.integrationSlug);
+  if (!integration) return;
+  await dbQuery(
+    `INSERT INTO user_integrations
+      (id, user_id, integration_id, access_token, refresh_token, token_expiry, account_id, account_name, status, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+     ON CONFLICT (user_id, integration_id) DO UPDATE
+       SET access_token = EXCLUDED.access_token,
+           refresh_token = EXCLUDED.refresh_token,
+           token_expiry = EXCLUDED.token_expiry,
+           account_id = EXCLUDED.account_id,
+           account_name = EXCLUDED.account_name,
+           status = EXCLUDED.status`,
+    [
+      randomUUID(),
+      params.userId,
+      integration.id,
+      params.accessTokenEncrypted ?? null,
+      params.refreshTokenEncrypted ?? null,
+      params.tokenExpiry ?? null,
+      params.accountId ?? null,
+      params.accountName ?? null,
+      params.status,
+    ]
+  ).catch(() => undefined);
 }
 
 // --- WordPress: encryption and storage (credentials never logged) ---
@@ -2441,11 +2951,36 @@ app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
       [id, auth.userId, site, username, encrypted]
     );
 
+    await upsertUserIntegration({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      accessTokenEncrypted: null,
+      refreshTokenEncrypted: null,
+      tokenExpiry: null,
+      accountId: site,
+      accountName: String(username || '').trim() || null,
+      status: 'connected',
+    });
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      eventType: 'connection_attempt',
+      status: 'success',
+      response: { siteUrl: site },
+    });
+
     return res.json({ success: true, message: 'WordPress Connected Successfully' });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('password')) {
       console.error('WordPress connect error:', err.message);
     }
+    await logIntegrationEvent({
+      userId: null,
+      integrationSlug: 'wordpress',
+      eventType: 'connection_attempt',
+      status: 'failed',
+      response: { error: err instanceof Error ? err.message : 'Connection failed' },
+    });
     return res.status(500).json({ success: false, error: 'Connection failed' });
   }
 });
@@ -2482,6 +3017,25 @@ app.delete('/api/wordpress/disconnect', async (req: Request, res: Response) => {
     }
     await dbQuery('DELETE FROM make_webhook_connections WHERE user_id = $1', [auth.userId]);
     await dbQuery('DELETE FROM wordpress_connections WHERE user_id = $1', [auth.userId]);
+
+    await upsertUserIntegration({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      accessTokenEncrypted: null,
+      refreshTokenEncrypted: null,
+      tokenExpiry: null,
+      accountId: null,
+      accountName: null,
+      status: 'disconnected',
+    });
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      eventType: 'disconnect',
+      status: 'info',
+      response: {},
+    });
+
     return res.json({ success: true });
   } catch (err) {
     console.error('WordPress disconnect error:', err);
@@ -2662,6 +3216,130 @@ app.get('/api/wordpress/tags', async (req: Request, res: Response) => {
 });
 
 // POST /api/wordpress/publish �?create post (optionally upload featured image, set meta)
+// GET /api/wordpress/posts — import/list posts from WordPress
+app.get('/api/wordpress/posts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const conn = await getWordPressConnection(auth.userId);
+    if (!conn) return res.status(400).json({ success: false, error: 'WordPress not connected' });
+
+    const page = Math.max(1, Number((req.query as any).page || 1));
+    const perPage = Math.min(100, Math.max(1, Number((req.query as any).per_page || 20)));
+    const status = String((req.query as any).status || '').trim();
+
+    const appPassword = decryptWordPressPassword(conn.appPasswordEncrypted);
+    const path = `/wp/v2/posts?per_page=${perPage}&page=${page}${status ? `&status=${encodeURIComponent(status)}` : ''}`;
+    const { data, status: s, error } = await wpRequest(conn.siteUrl, conn.username, appPassword, 'GET', path);
+    if (s !== 200) return res.status(400).json({ success: false, error: error || 'Failed to fetch posts' });
+    return res.json({ success: true, data: Array.isArray(data) ? data : [] });
+  } catch (err) {
+    console.error('WordPress list posts error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch posts' });
+  }
+});
+
+// GET /api/wordpress/posts/:id — fetch a single post
+app.get('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const conn = await getWordPressConnection(auth.userId);
+    if (!conn) return res.status(400).json({ success: false, error: 'WordPress not connected' });
+
+    const postId = String(req.params.id || '').trim();
+    if (!/^[0-9]+$/.test(postId)) return res.status(400).json({ success: false, error: 'Invalid post id' });
+
+    const appPassword = decryptWordPressPassword(conn.appPasswordEncrypted);
+    const { data, status: s, error } = await wpRequest(conn.siteUrl, conn.username, appPassword, 'GET', `/wp/v2/posts/${postId}`);
+    if (s !== 200) return res.status(400).json({ success: false, error: error || 'Failed to fetch post' });
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('WordPress get post error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch post' });
+  }
+});
+
+// PATCH /api/wordpress/posts/:id — update a post
+app.patch('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const conn = await getWordPressConnection(auth.userId);
+    if (!conn) return res.status(400).json({ success: false, error: 'WordPress not connected' });
+
+    const postId = String(req.params.id || '').trim();
+    if (!/^[0-9]+$/.test(postId)) return res.status(400).json({ success: false, error: 'Invalid post id' });
+
+    const appPassword = decryptWordPressPassword(conn.appPasswordEncrypted);
+    const payload = req.body && typeof req.body === 'object' ? req.body : {};
+    const { data, status: s, error } = await wpRequest(conn.siteUrl, conn.username, appPassword, 'POST', `/wp/v2/posts/${postId}`, { data: payload });
+    if (s !== 200) return res.status(400).json({ success: false, error: error || 'Failed to update post' });
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      eventType: 'post_updated',
+      status: 'success',
+      response: { postId: Number(postId) },
+    });
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('WordPress update post error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update post' });
+  }
+});
+
+// POST /api/wordpress/media/upload — upload media to WordPress
+app.post('/api/wordpress/media/upload', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const conn = await getWordPressConnection(auth.userId);
+    if (!conn) return res.status(400).json({ success: false, error: 'WordPress not connected' });
+
+    const { fileBase64, filename } = req.body as { fileBase64?: string; filename?: string };
+    const base64 = typeof fileBase64 === 'string' ? fileBase64.replace(/^data:.*;base64,/, '') : '';
+    if (!base64) return res.status(400).json({ success: false, error: 'fileBase64 is required' });
+
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(base64, 'base64');
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid fileBase64' });
+    }
+
+    const safeName = typeof filename === 'string' && filename.trim() ? filename.trim() : 'upload.jpg';
+
+    const FormData = (await import('form-data')).default;
+    const form = new FormData();
+    form.append('file', buffer, { filename: safeName, contentType: 'image/jpeg' });
+
+    const appPassword = decryptWordPressPassword(conn.appPasswordEncrypted);
+    const { data, status: s, error } = await wpRequest(conn.siteUrl, conn.username, appPassword, 'POST', '/wp/v2/media', { formData: form });
+    if (s !== 201 && s !== 200) return res.status(400).json({ success: false, error: error || 'Failed to upload media' });
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      eventType: 'media_uploaded',
+      status: 'success',
+      response: { mediaId: data?.id || null },
+    });
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('WordPress media upload error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to upload media' });
+  }
+});
+
+// POST /api/wordpress/publish 锟?create post (optionally upload featured image, set meta)
 app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -2771,6 +3449,15 @@ app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
     }
 
     const isDraft = postPayload.status === 'draft';
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'wordpress',
+      eventType: 'post_published',
+      status: 'success',
+      response: { postId: postId || null, status: postPayload.status },
+    });
+
     return res.json({
       success: true,
       message: isDraft ? 'Post Saved as Draft' : 'Post Published Successfully',
@@ -3948,10 +4635,11 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
-  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
+  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'public_profile,email,pages_manage_posts,pages_read_engagement,pages_show_list,business_management,instagram_basic,instagram_content_publish', idField: 'appId' },
   // LinkedIn scopes are space-separated
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile w_member_social r_emailaddress', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
+  pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
@@ -4030,7 +4718,8 @@ app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) =
       platform === 'threads' ||
       platform === 'twitter' ||
       platform === 'linkedin' ||
-      platform === 'tiktok';
+      platform === 'tiktok' ||
+      platform === 'pinterest';
     const secretValue =
       platform === 'instagram' || platform === 'facebook' || platform === 'threads'
         ? cfg.appSecret
@@ -4447,6 +5136,146 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/integrations/catalog — supported integrations + admin/user status (auth required)
+app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp'] as const;
+
+    const integrations: Array<{
+      slug: string;
+      name: string;
+      type: 'cms' | 'social' | 'marketing' | 'other';
+      adminEnabled: boolean;
+      configured: boolean;
+      connected: boolean;
+      connection: Record<string, any> | null;
+    }> = [];
+
+    if (!pool) {
+      for (const slug of SUPPORTED_SLUGS) {
+        const configRow = inMemoryPlatformConfigs.get(slug);
+        integrations.push({
+          slug,
+          name: slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1),
+          type: slug === 'wordpress' ? 'cms' : slug === 'mailchimp' ? 'marketing' : 'social',
+          adminEnabled: configRow ? Boolean(configRow.enabled) : slug === 'wordpress' || slug === 'mailchimp',
+          configured:
+            slug === 'wordpress' || slug === 'mailchimp'
+              ? true
+              : Boolean(configRow?.config && Object.keys(configRow.config || {}).length > 0),
+          connected: false,
+          connection: null,
+        });
+      }
+      return res.json({ success: true, integrations });
+    }
+
+    const configRows = await pool.query('SELECT platform, config, enabled FROM platform_configs');
+    const cfgMap = new Map<string, { config: Record<string, any>; enabled: boolean }>();
+    for (const r of configRows.rows as any[]) {
+      const platform = String(r.platform || '').toLowerCase();
+      cfgMap.set(platform, { config: r.config || {}, enabled: Boolean(r.enabled) });
+    }
+
+    const wpConnRows = await pool.query('SELECT site_url, username, created_at FROM wordpress_connections WHERE user_id=$1 LIMIT 1', [auth.userId]);
+    const wpConn = wpConnRows.rows[0] || null;
+
+    const socialRows = await pool.query(
+      `SELECT platform, account_type, account_id, account_name, connected, created_at
+       FROM social_accounts
+       WHERE user_id=$1 AND connected=true`,
+      [auth.userId]
+    );
+
+    const userIntegrationRows = await pool.query(
+      `SELECT i.slug, ui.status, ui.account_id, ui.account_name, ui.created_at
+       FROM user_integrations ui
+       JOIN integrations i ON i.id = ui.integration_id
+       WHERE ui.user_id = $1`,
+      [auth.userId]
+    );
+    const userIntegrationMap = new Map<string, any>();
+    for (const r of userIntegrationRows.rows as any[]) {
+      userIntegrationMap.set(String(r.slug || '').toLowerCase(), r);
+    }
+
+    const hasPlatformProfile = (slug: string) =>
+      (socialRows.rows as any[]).some((r) => normalizePlatformId(r.platform) === slug && (r.account_type === 'profile' || !r.account_type));
+
+    const getPrimaryAccount = (slug: string) => {
+      const match = (socialRows.rows as any[]).find((r) => normalizePlatformId(r.platform) === slug);
+      if (!match) return null;
+      return {
+        accountType: match.account_type || 'profile',
+        accountId: match.account_id || null,
+        accountName: match.account_name || null,
+        connectedAt: match.created_at || null,
+      };
+    };
+
+    for (const slug of SUPPORTED_SLUGS) {
+      const registry = await getIntegrationRowBySlug(slug);
+      const name =
+        registry?.name ||
+        (slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1));
+      const type = (registry?.type as any) || (slug === 'wordpress' ? 'cms' : 'social');
+
+      const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : slug === 'wordpress' || slug === 'mailchimp';
+      const cfg = cfgMap.get(slug)?.config || {};
+
+      let configured = false;
+      if (slug === 'wordpress') {
+        configured = true;
+      } else if (slug === 'mailchimp') {
+        configured = true;
+      } else {
+        const meta = OAUTH_AUTH_URLS[slug];
+        if (meta) {
+          const clientId = String((cfg as any)[meta.idField] || '').trim();
+          const redirectUri = String((cfg as any).redirectUri || '').trim();
+          const secretRequired = slug === 'facebook' || slug === 'twitter' || slug === 'linkedin' || slug === 'tiktok' || slug === 'threads' || slug === 'pinterest';
+          const secretValue = String((cfg as any).clientSecret || (cfg as any).appSecret || '').trim();
+          configured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
+        }
+      }
+
+      const connected =
+        slug === 'wordpress'
+          ? Boolean(wpConn)
+          : slug === 'mailchimp'
+            ? String(userIntegrationMap.get('mailchimp')?.status || '').toLowerCase() === 'connected'
+            : slug === 'instagram'
+              ? Boolean(getPrimaryAccount('instagram'))
+              : hasPlatformProfile(slug);
+
+      const connection =
+        slug === 'wordpress'
+          ? wpConn
+            ? { siteUrl: wpConn.site_url, username: wpConn.username, connectedAt: wpConn.created_at }
+            : null
+          : slug === 'mailchimp'
+            ? userIntegrationMap.get('mailchimp')
+              ? {
+                  accountId: userIntegrationMap.get('mailchimp')?.account_id ?? null,
+                  accountName: userIntegrationMap.get('mailchimp')?.account_name ?? null,
+                  connectedAt: userIntegrationMap.get('mailchimp')?.created_at ?? null,
+                }
+              : null
+            : getPrimaryAccount(slug);
+
+      integrations.push({ slug, name, type, adminEnabled, configured, connected, connection });
+    }
+
+    return res.json({ success: true, integrations });
+  } catch (error) {
+    console.error('Get integration catalog error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch integrations' });
+  }
+});
+
 // ── API v1: Social Automation endpoints ─────────────────────────────────────────
 
 // GET /api/v1/social/facebook/connect — start OAuth and redirect to Facebook
@@ -4645,6 +5474,7 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
     let profileImage: string | null = null;
     let accessTokenToStore: string | null = null;
     let tokenExpiresAtToStore: string | null = null;
+    let accessTokenEncryptedToStore: string | null = null;
 
     // Facebook: when saving a Page target, fetch the Page access_token from /me/accounts using the user's profile token.
     if (platformSlug === 'facebook' && accountType === 'page') {
@@ -4669,21 +5499,24 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
       profileImage = match?.picture?.data?.url ? String(match.picture.data.url) : null;
       tokenExpiresAtToStore = null;
       if (!accessTokenToStore) return res.status(400).json({ success: false, error: 'Facebook Page access token not available' });
+      accessTokenEncryptedToStore = encryptIntegrationSecret(accessTokenToStore);
+      accessTokenToStore = null;
     }
 
     const id = randomUUID();
     await pool.query(
-      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, token_expires_at, access_token, connected, connected_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW(),NOW())
+      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, token_expires_at, access_token, access_token_encrypted, connected, connected_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,NOW(),NOW())
        ON CONFLICT (user_id, platform, account_type, account_id) DO UPDATE
          SET account_name=EXCLUDED.account_name,
              platform_id=EXCLUDED.platform_id,
              profile_image=COALESCE(EXCLUDED.profile_image, social_accounts.profile_image),
              token_expires_at=COALESCE(EXCLUDED.token_expires_at, social_accounts.token_expires_at),
              access_token=COALESCE(EXCLUDED.access_token, social_accounts.access_token),
+             access_token_encrypted=COALESCE(EXCLUDED.access_token_encrypted, social_accounts.access_token_encrypted),
              connected=true,
              connected_at=NOW()`,
-      [id, auth.userId, platformSlug, platformDbId, accountType, accountId, accountName, profileImage, tokenExpiresAtToStore, accessTokenToStore]
+      [id, auth.userId, platformSlug, platformDbId, accountType, accountId, accountName, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
     );
 
     const row = await pool.query(
@@ -5634,6 +6467,7 @@ function normalizePlatformId(value: string): string {
   if (raw === 'linkedin') return 'linkedin';
   if (raw === 'facebook') return 'facebook';
   if (raw === 'instagram') return 'instagram';
+  if (raw === 'pinterest') return 'pinterest';
   if (raw === 'tiktok') return 'tiktok';
   if (raw === 'threads') return 'threads';
   if (raw === 'wordpress') return 'wordpress';
@@ -5660,6 +6494,8 @@ type PublishableSocialConnection = {
   platform: string;
   access_token: string;
   token_data: any;
+  account_id?: string | null;
+  account_name?: string | null;
 };
 
 function computeExpiresAtIso(expiresInSeconds: unknown): string | null {
@@ -5714,30 +6550,57 @@ async function refreshLinkedInAccessToken(refreshToken: string) {
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
   if (!pool) return null;
   const rows = await pool.query(
-    `SELECT platform, access_token, refresh_token, token_data, expires_at
+    `SELECT platform, account_id, account_name, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data, expires_at
      FROM social_accounts
-     WHERE user_id=$1 AND connected=true AND COALESCE(access_token,'') <> ''
+     WHERE user_id=$1 AND connected=true AND (COALESCE(access_token,'') <> '' OR COALESCE(access_token_encrypted,'') <> '')
        AND (account_type = 'profile' OR account_type IS NULL)`,
     [userId]
   );
   const match = rows.rows.find((r: any) => normalizePlatformId(r.platform) === platformId) as
-    | { platform: string; access_token: string | null; refresh_token: string | null; token_data: any; expires_at: string | null }
+    | {
+        platform: string;
+        account_id: string | null;
+        account_name: string | null;
+        access_token: string | null;
+        refresh_token: string | null;
+        access_token_encrypted: string | null;
+        refresh_token_encrypted: string | null;
+        token_data: any;
+        expires_at: string | null;
+      }
     | undefined;
   if (!match) return null;
 
-  const accessToken = String(match.access_token || '').trim();
-  const refreshToken = String(match.refresh_token || '').trim();
+  let decryptedAccess = '';
+  if (match.access_token_encrypted) {
+    try {
+      decryptedAccess = decryptIntegrationSecret(match.access_token_encrypted);
+    } catch {
+      decryptedAccess = '';
+    }
+  }
+  let decryptedRefresh = '';
+  if (match.refresh_token_encrypted) {
+    try {
+      decryptedRefresh = decryptIntegrationSecret(match.refresh_token_encrypted);
+    } catch {
+      decryptedRefresh = '';
+    }
+  }
+
+  const accessToken = String(decryptedAccess || match.access_token || '').trim();
+  const refreshToken = String(decryptedRefresh || match.refresh_token || '').trim();
   const tokenData = match.token_data || {};
 
   const expiresAtMs = match.expires_at ? new Date(match.expires_at).getTime() : NaN;
   const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + 60_000 : false;
   if (!isExpired) {
-    if (!accessToken) return { platform: match.platform, access_token: '', token_data: tokenData };
-    return { platform: match.platform, access_token: accessToken, token_data: tokenData };
+    if (!accessToken) return { platform: match.platform, access_token: '', token_data: tokenData, account_id: match.account_id, account_name: match.account_name };
+    return { platform: match.platform, access_token: accessToken, token_data: tokenData, account_id: match.account_id, account_name: match.account_name };
   }
 
   if (!refreshToken) {
-    return { platform: match.platform, access_token: '', token_data: tokenData };
+    return { platform: match.platform, access_token: '', token_data: tokenData, account_id: match.account_id, account_name: match.account_name };
   }
 
   let refreshed: any = null;
@@ -5756,23 +6619,44 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   const mergedTokenData = { ...(tokenData || {}), ...(refreshed || {}) };
 
   if (nextAccess) {
+    const nextAccessEncrypted = encryptIntegrationSecret(nextAccess);
+    const nextRefreshEncrypted = nextRefresh ? encryptIntegrationSecret(nextRefresh) : null;
     try {
       await pool.query(
         `UPDATE social_accounts
          SET access_token=$3,
              refresh_token=$4,
-             expires_at=$5,
-             token_data = COALESCE(token_data, '{}'::jsonb) || $6::jsonb
+             access_token_encrypted=$5,
+             refresh_token_encrypted=$6,
+             expires_at=$7,
+             token_data = COALESCE(token_data, '{}'::jsonb) || $8::jsonb
          WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`,
-        [userId, match.platform, nextAccess, nextRefresh, nextExpiresAt, JSON.stringify(refreshed || {})]
+        [userId, match.platform, null, null, nextAccessEncrypted, nextRefreshEncrypted, nextExpiresAt, JSON.stringify(refreshed || {})]
       );
+      await upsertUserIntegration({
+        userId,
+        integrationSlug: platformId,
+        accessTokenEncrypted: nextAccessEncrypted,
+        refreshTokenEncrypted: nextRefreshEncrypted,
+        tokenExpiry: nextExpiresAt,
+        accountId: null,
+        accountName: null,
+        status: 'connected',
+      });
+      await logIntegrationEvent({
+        userId,
+        integrationSlug: platformId,
+        eventType: 'token_refresh',
+        status: 'success',
+        response: { expiresAt: nextExpiresAt },
+      });
     } catch {
       // ignore persistence issues; still return refreshed token for this request
     }
-    return { platform: match.platform, access_token: nextAccess, token_data: mergedTokenData };
+    return { platform: match.platform, access_token: nextAccess, token_data: mergedTokenData, account_id: match.account_id, account_name: match.account_name };
   }
 
-  return { platform: match.platform, access_token: '', token_data: tokenData };
+  return { platform: match.platform, access_token: '', token_data: tokenData, account_id: match.account_id, account_name: match.account_name };
 }
 
 async function getUserSettingValue(userId: string, key: string): Promise<any | null> {
@@ -6283,6 +7167,13 @@ async function publishToplatform(
         if (post.focus_keyword) { meta._yoast_wpseo_focuskw = post.focus_keyword; meta.rank_math_focus_keyword = post.focus_keyword; }
         await wpRequest(conn.siteUrl, conn.username, appPassword, 'POST', `/wp/v2/posts/${postId}`, { data: { meta } });
       }
+      await logIntegrationEvent({
+        userId,
+        integrationSlug: 'wordpress',
+        eventType: 'post_published',
+        status: 'success',
+        response: { postId: postId || null },
+      });
       return { status: 'published', platformPostId: String(wpData?.id || '') };
     }
 
@@ -6296,16 +7187,112 @@ async function publishToplatform(
     const PLATFORM_NAMES: Record<string, string> = {
       linkedin: 'LinkedIn', twitter: 'Twitter / X', facebook: 'Facebook',
       instagram: 'Instagram', threads: 'Threads', tiktok: 'TikTok',
+      pinterest: 'Pinterest',
     };
     const platformName = PLATFORM_NAMES[platformId] || platformId;
 
     if (platformId === 'instagram') {
-      // Current OAuth wiring is Instagram Basic Display (read-only). Publishing requires Instagram Graph API.
-      return {
-        status: 'failed',
-        error:
-          'Instagram publishing is not supported. To publish to Instagram you must use Instagram Graph API (Business/Creator account linked to a Facebook Page) and request publish permissions.',
+      const igUserId = String(conn.account_id || '').trim();
+      if (!igUserId) {
+        return { status: 'failed', error: 'Instagram is not connected. Select an Instagram Business account under Integrations → Instagram.' };
+      }
+      if (!featuredImage || !/^https?:\\/\\//i.test(featuredImage)) {
+        return { status: 'failed', error: 'Instagram publishing requires a public image URL. Set a featured image first.' };
+      }
+
+      const caption = text;
+      const graphBase = 'https://graph.facebook.com/v19.0';
+
+      const createBody = new URLSearchParams({
+        image_url: featuredImage,
+        caption,
+        access_token: access_token,
+      });
+      const createResp = await axios.post(`${graphBase}/${encodeURIComponent(igUserId)}/media`, createBody.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 20000,
+      });
+      const createData: any = createResp.data || {};
+      if (createResp.status >= 400) {
+        const msg = createData?.error?.message || `Instagram create media failed (${createResp.status})`;
+        return { status: 'failed', error: msg };
+      }
+      const creationId = String(createData?.id || '').trim();
+      if (!creationId) return { status: 'failed', error: 'Instagram create media did not return a creation id' };
+
+      const publishBody = new URLSearchParams({
+        creation_id: creationId,
+        access_token: access_token,
+      });
+      const pubResp = await axios.post(`${graphBase}/${encodeURIComponent(igUserId)}/media_publish`, publishBody.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 20000,
+      });
+      const pubData: any = pubResp.data || {};
+      if (pubResp.status >= 400) {
+        const msg = pubData?.error?.message || `Instagram publish failed (${pubResp.status})`;
+        return { status: 'failed', error: msg };
+      }
+
+      const igPostId = String(pubData?.id || '').trim();
+      await logIntegrationEvent({
+        userId,
+        integrationSlug: 'instagram',
+        eventType: 'post_published',
+        status: 'success',
+        response: { platformPostId: igPostId || null },
+      });
+      return { status: 'published', platformPostId: igPostId || creationId };
+    }
+
+    if (platformId === 'pinterest') {
+      if (!featuredImage || !/^https?:\\/\\//i.test(featuredImage)) {
+        return { status: 'failed', error: 'Pinterest publishing requires a public image URL. Set a featured image first.' };
+      }
+
+      let boardId: string | null = null;
+      if (pool) {
+        const boardRows = await pool.query(
+          `SELECT account_id
+           FROM social_accounts
+           WHERE user_id=$1 AND platform='pinterest' AND account_type='board' AND connected=true
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [userId]
+        );
+        boardId = boardRows.rows[0]?.account_id ? String(boardRows.rows[0].account_id).trim() : null;
+      }
+      if (!boardId) return { status: 'failed', error: 'Select a Pinterest board under Integrations → Pinterest → Manage.' };
+
+      const pinBody: any = {
+        board_id: boardId,
+        title: String(post.title || '').trim().slice(0, 100) || 'New post',
+        description: String(post.excerpt || '').trim().slice(0, 500),
+        link: postUrl || undefined,
+        media_source: { source_type: 'image_url', url: featuredImage },
       };
+
+      const pinResp = await axios.post('https://api.pinterest.com/v5/pins', pinBody, {
+        headers: { Authorization: `Bearer ${access_token}` },
+        validateStatus: () => true,
+        timeout: 20000,
+      });
+      const pinData: any = pinResp.data || {};
+      if (pinResp.status >= 400) {
+        const msg = pinData?.message || pinData?.error || `Pinterest API error ${pinResp.status}`;
+        return { status: 'failed', error: msg };
+      }
+      const pinId = String(pinData?.id || '').trim();
+      await logIntegrationEvent({
+        userId,
+        integrationSlug: 'pinterest',
+        eventType: 'post_published',
+        status: 'success',
+        response: { platformPostId: pinId || null, boardId },
+      });
+      return { status: 'published', platformPostId: pinId || '' };
     }
 
     const postUrl = buildPostUrl(post);
@@ -6485,12 +7472,21 @@ async function publishToplatform(
       if (desiredId && pool) {
         try {
           const stored = await pool.query(
-            `SELECT access_token FROM social_accounts
+            `SELECT access_token, access_token_encrypted FROM social_accounts
              WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
              LIMIT 1`,
             [userId, desiredId]
           );
-          const pageToken = String(stored.rows[0]?.access_token || '').trim();
+          const storedRow: any = stored.rows[0] || {};
+          let decrypted = '';
+          if (storedRow?.access_token_encrypted) {
+            try {
+              decrypted = decryptIntegrationSecret(String(storedRow.access_token_encrypted));
+            } catch {
+              decrypted = '';
+            }
+          }
+          const pageToken = String(decrypted || storedRow?.access_token || '').trim();
           if (pageToken) {
             const body = new URLSearchParams({
               message: text,
@@ -6630,6 +7626,7 @@ app.get('/api/distribution/connected', async (req: Request, res: Response) => {
     const SOCIAL_NAMES: Record<string, string> = {
       instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn',
       twitter: 'Twitter / X', tiktok: 'TikTok', threads: 'Threads',
+      pinterest: 'Pinterest',
     };
     const seen = new Set<string>();
     for (const row of socialRows.rows) {
