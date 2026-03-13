@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  ArrowRight, BarChart3, Calendar, Globe, Image, Share2, Zap,
+  ArrowRight, BarChart3, Calendar, Image, Share2, Zap,
   type LucideIcon,
 } from 'lucide-react';
 import { fetchPageContent } from '../services/pageContentService';
@@ -42,7 +42,6 @@ export const defaultHomepageContent: HomepageContent = {
       { icon: 'Share2', title: 'Multi-Platform Publishing', description: 'Publish to Instagram, TikTok, LinkedIn, Facebook, Twitter/X, Threads, and more in one click.' },
       { icon: 'Image', title: 'Card Designer', description: 'Build stunning branded visuals with our drag-and-drop template editor. No design skills required.' },
       { icon: 'BarChart3', title: 'Analytics', description: 'Track performance across platforms. Understand what works and double down on it.' },
-      { icon: 'Globe', title: 'Integrations', description: 'Connect WordPress, Mailchimp, and 10+ other tools your team already uses.' },
       { icon: 'Zap', title: 'Lightning Fast', description: 'A snappy, responsive interface built for speed — because every second counts.' },
     ],
   },
@@ -63,7 +62,7 @@ export const defaultHomepageContent: HomepageContent = {
 
 // ─── Icon map ─────────────────────────────────────────────────────────────────
 
-const ICON_MAP: Record<string, LucideIcon> = { Calendar, Share2, Image, BarChart3, Globe, Zap };
+const ICON_MAP: Record<string, LucideIcon> = { Calendar, Share2, Image, BarChart3, Zap };
 
 const FeatureIcon = ({ name, size = 18 }: { name: string; size?: number }) => {
   const Icon: LucideIcon = ICON_MAP[name] ?? Zap;
@@ -192,7 +191,7 @@ function AppMockup() {
         <div className="flex h-52 sm:h-72">
           {/* Sidebar */}
           <div className="w-[180px] border-r border-[#f3f4f6] bg-[#fafafa] hidden sm:flex flex-col p-3 gap-1">
-            {['Dashboard', 'Posts', 'Cards', 'Analytics', 'Integrations'].map((item, i) => (
+            {['Dashboard', 'Posts', 'Cards', 'Analytics'].map((item, i) => (
               <div key={i} className={`h-8 rounded-lg flex items-center px-3 text-[11px] font-medium ${i === 1 ? 'bg-[#5b6cf9]/10 text-[#5b6cf9]' : 'text-[#9ca3af]'}`}>
                 {item}
               </div>

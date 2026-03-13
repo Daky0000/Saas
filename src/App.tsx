@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
-  BookOpen,
   FileText,
   Image,
   LogOut,
@@ -16,7 +15,6 @@ import {
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
-import Instructions from './pages/Instructions';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
 import Pricing from './pages/Pricing';
@@ -29,7 +27,6 @@ import Landing from './pages/Landing';
 import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
-import OAuthCallback from './pages/OAuthCallback';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import {
@@ -45,7 +42,6 @@ type PageType =
   | 'dashboard'
   | 'posts'
   | 'cards'
-  | 'instructions'
   | 'pricing'
   | 'admin'
   | 'analytics'
@@ -74,7 +70,6 @@ const PAGE_PATHS: Record<PageType, string> = {
   dashboard: '/dashboard',
   posts: '/posts',
   cards: '/cards',
-  instructions: '/instructions',
   pricing: '/pricing',
   admin: '/admin/users',
   analytics: '/analytics',
@@ -207,15 +202,6 @@ function App() {
     let canceled = false;
 
     const pathname = window.location.pathname;
-    // OAuth callback routes must not be rewritten by the SPA router.
-    // These pages handle their own redirect logic and rely on preserving query params (code/state).
-    if (pathname.startsWith('/auth/')) {
-      setCurrentPathname(pathname);
-      return () => {
-        canceled = true;
-      };
-    }
-
     const hasSession = Boolean(localStorage.getItem('auth_session'));
     const token = localStorage.getItem('auth_token');
     const loggedIn = Boolean(hasSession || token);
@@ -281,10 +267,6 @@ function App() {
       const pathname = window.location.pathname;
       setCurrentPathname(pathname);
 
-      if (pathname.startsWith('/auth/')) {
-        return;
-      }
-
       if (!isAuthenticated) {
         const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
         if (!publicPaths.includes(pathname)) {
@@ -339,7 +321,6 @@ function App() {
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={goToLogin} />;
   }
-  if (currentPathname.startsWith('/auth/')) return <OAuthCallback />;
 
   if (!isAuthenticated) {
     return <Auth onLogin={handleLogin} />;
@@ -364,7 +345,6 @@ function App() {
     { id: 'dashboard' as const, label: 'Dashboard', icon: BarChart4 },
     { id: 'posts' as const, label: 'Posts', icon: FileText },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
-    { id: 'instructions' as const, label: 'Instructions', icon: BookOpen },
     { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
@@ -379,8 +359,6 @@ function App() {
         return <Posts currentUser={authUser} />;
       case 'cards':
         return <Cards />;
-      case 'instructions':
-        return <Instructions />;
       case 'pricing':
         return <Pricing />;
       case 'admin':

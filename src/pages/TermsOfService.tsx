@@ -115,27 +115,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">6. Third-Party Integrations</h2>
-            <p>
-              Dakyworld Hub connects to third-party platforms such as Instagram, Facebook, LinkedIn,
-              TikTok, Twitter/X, Threads, WordPress, and Mailchimp. Your use of these integrations
-              is also governed by the respective third parties' terms of service and privacy policies.
-              We are not responsible for:
-            </p>
-            <ul className="list-disc pl-5 mt-3 space-y-2">
-              <li>Changes to third-party APIs that affect platform functionality</li>
-              <li>Actions taken by third-party platforms in response to your content</li>
-              <li>Data practices of third-party services once data is transmitted to them</li>
-              <li>Account suspensions or restrictions imposed by third-party platforms</li>
-            </ul>
-            <p className="mt-3">
-              You authorize Dakyworld Hub to act on your behalf when interacting with connected
-              platforms using the credentials you provide.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">7. Subscription and Payments</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">6. Subscription and Payments</h2>
 
             <h3 className="text-base font-semibold text-gray-800 mb-2 mt-4">7.1 Plans and Billing</h3>
             <p>
@@ -166,7 +146,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">8. Termination</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">7. Termination</h2>
             <p>
               Either party may terminate the account at any time. We may suspend or terminate your
               account immediately if you violate these Terms, engage in fraudulent activity, or if
@@ -187,21 +167,20 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">9. Disclaimer of Warranties</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">8. Disclaimer of Warranties</h2>
             <p>
               Dakyworld Hub is provided "as is" and "as available" without warranties of any kind,
               express or implied. We do not warrant that:
             </p>
             <ul className="list-disc pl-5 mt-3 space-y-2">
               <li>The platform will be uninterrupted, error-free, or completely secure</li>
-              <li>Content published through integrations will appear on target platforms without delay</li>
-              <li>Third-party APIs will remain available or unchanged</li>
+              <li>External services and dependencies will remain available or unchanged</li>
               <li>The platform will meet your specific business requirements</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">10. Limitation of Liability</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">9. Limitation of Liability</h2>
             <p>
               To the maximum extent permitted by applicable law, Dakyworld and its affiliates,
               directors, employees, and licensors shall not be liable for any indirect, incidental,
@@ -217,7 +196,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">11. Indemnification</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">10. Indemnification</h2>
             <p>
               You agree to indemnify, defend, and hold harmless Dakyworld and its affiliates from
               any claims, damages, losses, or expenses (including reasonable attorneys' fees) arising
@@ -227,7 +206,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">12. Governing Law and Disputes</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">11. Governing Law and Disputes</h2>
             <p>
               These Terms are governed by the laws of the applicable jurisdiction, without regard to
               conflict of law principles. Any disputes arising from these Terms or your use of
@@ -238,7 +217,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">13. Changes to These Terms</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">12. Changes to These Terms</h2>
             <p>
               We may update these Terms from time to time. We will notify you of material changes by
               email or via an in-app notice at least 14 days before the changes take effect. Continued
@@ -247,7 +226,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">14. Contact Us</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">13. Contact Us</h2>
             <p>
               If you have questions about these Terms, please contact us:
             </p>
