@@ -2,10 +2,7 @@
  * WordPress connection and publishing via app backend (credentials never sent to frontend).
  */
 
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
-  ? ''
-  : rawApiBaseUrl.replace(/\/$/, '');
+import { API_BASE_URL } from '../utils/apiBase';
 
 const authHeaders = (): Record<string, string> => {
   if (typeof window === 'undefined') return {};
