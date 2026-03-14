@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { AppUser, normalizeUser } from '../utils/userSession';
+import { API_BASE_URL } from '../utils/apiBase';
 
 type AuthProps = {
   onLogin: (user: AppUser) => void;
@@ -39,11 +40,6 @@ const safeJson = async <T,>(response: Response): Promise<{ data: T | null; rawTe
 };
 
 const FB_APP_ID = (import.meta.env.VITE_FACEBOOK_APP_ID as string | undefined) || '';
-
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
-  ? ''
-  : rawApiBaseUrl.replace(/\/$/, '');
 
 interface SocialProvider {
   provider: string;
