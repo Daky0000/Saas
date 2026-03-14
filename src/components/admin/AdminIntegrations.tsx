@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle, ExternalLink, Loader2, Power, SlidersHorizontal, TestTube2, X } from 'lucide-react';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 type PlatformField = {
   id: string;
@@ -25,9 +26,6 @@ type PlatformRow = {
   config: Record<string, any>;
   enabled: boolean;
 };
-
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
 
 const authHeaders = (): Record<string, string> => {
   if (typeof window === 'undefined') return {};
@@ -376,4 +374,3 @@ export default function AdminIntegrations() {
     </div>
   );
 }
-

@@ -5,10 +5,7 @@ import {
   UpdatePricingPlanInput,
 } from '../types/pricing';
 
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
-  ? ''
-  : rawApiBaseUrl.replace(/\/$/, '');
+import { API_BASE_URL } from '../utils/apiBase';
 
 const authHeaders = () => {
   if (typeof window === 'undefined') return {} as Record<string, string>;

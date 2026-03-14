@@ -1,7 +1,4 @@
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
-  ? ''
-  : rawApiBaseUrl.replace(/\/$/, '');
+import { API_BASE_URL } from '../utils/apiBase';
 
 export async function fetchPageContent<T>(slug: string): Promise<T | null> {
   try {

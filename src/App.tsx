@@ -31,6 +31,7 @@ import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
+import { API_BASE_URL } from './utils/apiBase';
 import {
   AppUser,
   clearStoredUser,
@@ -63,11 +64,6 @@ const safeJson = async <T,>(response: Response): Promise<T | null> => {
     return null;
   }
 };
-
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com')
-  ? ''
-  : rawApiBaseUrl.replace(/\/$/, '');
 
 const PAGE_PATHS: Record<PageType, string> = {
   dashboard: '/dashboard',
