@@ -31,7 +31,7 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 function fmtDate(iso: string | null | undefined) {
-  if (!iso) return '�?;
+  if (!iso) return '-';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -1231,4 +1231,5 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
     </div>
   );
 }
+
 
