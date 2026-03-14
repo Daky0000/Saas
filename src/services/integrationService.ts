@@ -18,6 +18,77 @@ export type IntegrationCatalogItem = {
   connection: Record<string, any> | null;
 };
 
+const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationType }> = [
+  { slug: 'wordpress', name: 'WordPress', type: 'cms' },
+  { slug: 'facebook', name: 'Facebook', type: 'social' },
+  { slug: 'instagram', name: 'Instagram', type: 'social' },
+  { slug: 'linkedin', name: 'LinkedIn', type: 'social' },
+  { slug: 'twitter', name: 'X (Twitter)', type: 'social' },
+  { slug: 'pinterest', name: 'Pinterest', type: 'social' },
+  { slug: 'mailchimp', name: 'Mailchimp', type: 'marketing' },
+];
+
+const normalizePlatform = (value: string) => {
+  const v = String(value || '').trim().toLowerCase();
+  if (!v) return '';
+  if (v === 'x' || v.includes('twitter')) return 'twitter';
+  if (v.includes('facebook')) return 'facebook';
+  if (v.includes('instagram')) return 'instagram';
+  if (v.includes('linkedin')) return 'linkedin';
+  if (v.includes('pinterest')) return 'pinterest';
+  if (v.includes('wordpress')) return 'wordpress';
+  if (v.includes('mailchimp')) return 'mailchimp';
+  if (v.includes('threads')) return 'threads';
+  if (v.includes('tiktok')) return 'tiktok';
+  return v;
+};
+
+const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: IntegrationCatalogItem[]; error?: string }> => {
+  try {
+    const [enabledRes, accountsRes, wpRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/integrations/enabled`, { headers: authHeaders() }),
+      fetch(`${API_BASE_URL}/api/accounts`, { headers: authHeaders() }),
+      fetch(`${API_BASE_URL}/api/wordpress/status`, { headers: authHeaders() }),
+    ]);
+
+    const enabledData = await enabledRes.json().catch(() => ({} as any));
+    const accountsData = await accountsRes.json().catch(() => ({} as any));
+    const wpData = await wpRes.json().catch(() => ({} as any));
+
+    const enabled = Array.isArray(enabledData.enabled) ? enabledData.enabled.map(normalizePlatform) : [];
+    const enabledSet = new Set(enabled.filter(Boolean));
+    const accounts = Array.isArray(accountsData.data) ? accountsData.data : [];
+    const connectedSet = new Set(
+      accounts
+        .filter((acc: any) => acc?.connected !== false)
+        .map((acc: any) => normalizePlatform(acc.platform))
+        .filter(Boolean)
+    );
+
+    const wpConnected = Boolean(wpData?.connected);
+
+    const integrations: IntegrationCatalogItem[] = FALLBACK_CATALOG.map((item) => {
+      const adminEnabled = enabledSet.size ? enabledSet.has(item.slug) || item.slug === 'wordpress' || item.slug === 'mailchimp' : true;
+      const configured = item.slug === 'wordpress' || item.slug === 'mailchimp' ? true : adminEnabled;
+      const connected =
+        item.slug === 'wordpress'
+          ? wpConnected
+          : item.slug === 'mailchimp'
+            ? false
+            : connectedSet.has(item.slug);
+      const connection =
+        item.slug === 'wordpress' && wpConnected
+          ? { siteUrl: wpData?.siteUrl || null, connectedAt: null }
+          : null;
+      return { ...item, adminEnabled, configured, connected, connection };
+    });
+
+    return { success: true, integrations };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Failed to load integrations' };
+  }
+};
+
 async function sha256Base64Url(input: string): Promise<string> {
   const enc = new TextEncoder();
   const digest = await crypto.subtle.digest('SHA-256', enc.encode(input));
@@ -38,6 +109,9 @@ function randomString(length = 48) {
 export const integrationService = {
   async getCatalog(): Promise<{ success: boolean; integrations?: IntegrationCatalogItem[]; error?: string }> {
     const res = await fetch(`${API_BASE_URL}/api/integrations/catalog`, { headers: authHeaders() });
+    if (res.status === 404) {
+      return fallbackCatalog();
+    }
     const data = await res.json().catch(() => ({} as any));
     if (!res.ok) return { success: false, error: data.error || 'Failed to load integrations' };
     return { success: true, integrations: data.integrations || [] };
