@@ -32,7 +32,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
     const nextValue = value || '';
     const current = editor.getHTML();
     if (current !== nextValue) {
-      editor.commands.setContent(nextValue, false);
+      editor.commands.setContent(nextValue, { emitUpdate: false });
     }
   }, [editor, value]);
 
