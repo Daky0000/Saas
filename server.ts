@@ -38,6 +38,11 @@ const INTEGRATIONS_ENCRYPTION_KEY = (() => {
 
 const app = express();
 const PORT = process.env.PORT || process.env.BACKEND_PORT || 5000;
+
+// Health check — registered first so Railway can reach it immediately on startup
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const DATABASE_URL = process.env.DATABASE_URL;
 const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
@@ -8436,11 +8441,6 @@ app.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
     console.error('Meta deauthorize error:', error);
     return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
   }
-});
-
-// Health check
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Root route
