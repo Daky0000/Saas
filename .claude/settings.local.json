@@ -29,7 +29,9 @@
       "Read(//c/Users/ASUS/.claude/projects/d--Saas/memory//**)",
       "Bash(git add src/components/admin/AdminFabricBuilder.tsx src/components/admin/AdminCardsManagement.tsx src/App.tsx src/pages/Integrations.tsx)",
       "Bash(git add assets/ dist/ index.html 404.html)",
-      "Bash(ls d:/Saas/src/pages/Admin*)"
+      "Bash(ls d:/Saas/src/pages/Admin*)",
+      "Bash(gh run:*)",
+      "Bash(where gh:*)"
     ]
   }
 }
