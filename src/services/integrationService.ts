@@ -170,8 +170,16 @@ export const integrationService = {
     error?: string;
   }> {
     const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
+    if (res.status === 404) {
+      const legacyRes = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
+      const legacyData = await legacyRes.json().catch(() => ({} as any));
+      if (!legacyRes.ok) {
+        return { success: false, error: legacyData.error || `Failed to load pages (${legacyRes.status})` };
+      }
+      return { success: true, pages: legacyData.pages || [], missingPermissions: legacyData.missingPermissions || [] };
+    }
     const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to load pages' };
+    if (!res.ok) return { success: false, error: data.error || `Failed to load pages (${res.status})` };
     return { success: true, pages: data.pages || [], missingPermissions: data.missingPermissions || [] };
   },
 

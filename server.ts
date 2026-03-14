@@ -1822,6 +1822,9 @@ app.get('/api/facebook/targets', async (req: Request, res: Response) => {
     const pagesData: any = pagesResp.data || {};
     if (pagesResp.status >= 400) {
       const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
+      if (missingPermissions.length > 0) {
+        return res.json({ success: true, pages: [], missingPermissions, warning: msg });
+      }
       return res.status(400).json({ success: false, error: msg });
     }
     const pages = Array.isArray(pagesData?.data)
