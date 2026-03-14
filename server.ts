@@ -8384,7 +8384,7 @@ app.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
     }
 
     const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
-    const statusUrl = `${FRONTEND_URL.replace(/\\/$/, '')}/data-deletion?code=${encodeURIComponent(confirmationCode)}`;
+    const statusUrl = `${FRONTEND_URL.replace(/\/$/, '')}/data-deletion?code=${encodeURIComponent(confirmationCode)}`;
 
     // Meta expects: { url, confirmation_code }
     return res.json({ url: statusUrl, confirmation_code: confirmationCode });
