@@ -2,34 +2,34 @@ import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } 
 import { resolve } from 'node:path';
 
 const rootDir = resolve(process.cwd());
-const distDir = resolve(rootDir, 'dist');
-const distIndex = resolve(distDir, 'index.html');
-const distAssets = resolve(distDir, 'assets');
-const dist404 = resolve(distDir, '404.html');
-const noJekyll = resolve(distDir, '.nojekyll');
+const docsDir = resolve(rootDir, 'docs');
+const docsIndex = resolve(docsDir, 'index.html');
+const docsAssets = resolve(docsDir, 'assets');
+const docs404 = resolve(docsDir, '404.html');
+const noJekyll = resolve(docsDir, '.nojekyll');
 
 console.log('Starting post-build sync process for GitHub Pages...');
 
-if (!existsSync(distIndex)) {
-  throw new Error('dist/index.html not found. Run the Vite build before syncing.');
+if (!existsSync(docsIndex)) {
+  throw new Error('docs/index.html not found. Run the Vite build before syncing.');
 }
 
-if (!existsSync(distAssets)) {
-  throw new Error('dist/assets not found. Run the Vite build before syncing.');
+if (!existsSync(docsAssets)) {
+  throw new Error('docs/assets not found. Run the Vite build before syncing.');
 }
 
-const assets = readdirSync(distAssets);
+const assets = readdirSync(docsAssets);
 const jsBundle = assets.find((file) => /^index-.*\.js$/.test(file));
 const cssBundle = assets.find((file) => /^index-.*\.css$/.test(file));
 
 if (!jsBundle || !cssBundle) {
-  throw new Error('Expected built index JS/CSS bundles were not found in dist/assets.');
+  throw new Error('Expected built index JS/CSS bundles were not found in docs/assets.');
 }
 
-const jsBundlePath = resolve(distAssets, jsBundle);
-const cssBundlePath = resolve(distAssets, cssBundle);
-const finalJsPath = resolve(distAssets, 'app.js');
-const finalCssPath = resolve(distAssets, 'app.css');
+const jsBundlePath = resolve(docsAssets, jsBundle);
+const cssBundlePath = resolve(docsAssets, cssBundle);
+const finalJsPath = resolve(docsAssets, 'app.js');
+const finalCssPath = resolve(docsAssets, 'app.css');
 
 // Rename hashed assets to stable names
 cpSync(jsBundlePath, finalJsPath);
@@ -39,9 +39,9 @@ cpSync(cssBundlePath, finalCssPath);
 rmSync(jsBundlePath);
 rmSync(cssBundlePath);
 const jsMap = assets.find(f => f === `${jsBundle}.map`);
-if (jsMap) rmSync(resolve(distAssets, jsMap));
+if (jsMap) rmSync(resolve(docsAssets, jsMap));
 const cssMap = assets.find(f => f === `${cssBundle}.map`);
-if (cssMap) rmSync(resolve(distAssets, cssMap));
+if (cssMap) rmSync(resolve(docsAssets, cssMap));
 
 
 const cacheBust = Date.now().toString();
@@ -50,12 +50,12 @@ const rewriteHtml = (html) =>
     .replace(/src="\/assets\/index-[^"]+\.js"/, `src="/assets/app.js?v=${cacheBust}"`)
     .replace(/href="\/assets\/index-[^"]+\.css"/, `href="/assets/app.css?v=${cacheBust}"`);
 
-const builtHtml = readFileSync(distIndex, 'utf8');
+const builtHtml = readFileSync(docsIndex, 'utf8');
 const syncedHtml = rewriteHtml(builtHtml);
 
-// Overwrite index.html and create 404.html within dist
-writeFileSync(distIndex, syncedHtml, 'utf8');
-writeFileSync(dist404, syncedHtml, 'utf8');
+// Overwrite index.html and create 404.html within docs
+writeFileSync(docsIndex, syncedHtml, 'utf8');
+writeFileSync(docs404, syncedHtml, 'utf8');
 writeFileSync(noJekyll, '', 'utf8');
 
-console.log(`Synced GitHub Pages files within 'dist' directory. Stable files: app.js, app.css`);
+console.log(`Synced GitHub Pages files within 'docs' directory. Stable files: app.js, app.css`);
