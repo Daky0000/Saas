@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight, BarChart3, Calendar, Image, Share2, Zap, type LucideIcon, MessageSquare, Bell, List, Plus, Users, Settings, Mic, Video, ChevronRight, Hash, Search, Home, ChevronDown
 } from 'lucide-react';
 import { fetchPageContent } from '../services/pageContentService';
-import PublicNav from '../components/landing/PublicNav';
 import PublicFooter from '../components/landing/PublicFooter';
 
 // ─── TYPES AND DEFAULTS FROM OLD FILE (to keep features, stats, etc. working) ──────────────────
@@ -268,10 +267,6 @@ export default function Landing({ onLoginClick }: LandingProps) {
 
   useEffect(() => {
     void fetchPageContent<HomepageContent>('homepage').then((d) => { if (d) setContent(d); });
-  }, []);
-
-  const scrollToFeatures = useCallback(() => {
-    featuresRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
   const { features, stats, cta } = content;
