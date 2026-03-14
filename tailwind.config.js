@@ -7,7 +7,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Urbanist', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
       },
       colors: {
         primary: {
@@ -34,15 +34,42 @@ export default {
           800: '#5b21b6',
           900: '#4c1d95',
         },
+        'primary-blue': '#3B82F6',
+        'dark-blue': '#2563EB',
+        'light-gray-bg': '#F8FAFC',
+        'text-dark': '#1E293B',
+        'text-gray': '#64748B',
+        'text-light-gray': '#94A3B8',
+        'badge-green-bg': '#ECFDF5',
+        'badge-green-text': '#059669',
+        'border-gray': '#E2E8F0',
+        'sidebar-dark': '#1E293B',
+        'online-green': '#22C55E',
+        'purple-accent': '#8B5CF6',
       },
-      boxShadow: {
-        'sm-light': '0 1px 2px 0 rgba(0, 0, 0, 0.04)',
-        'card': '0 4px 6px -1px rgba(0, 0, 0, 0.08)',
-        'card-hover': '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+      fontSize: {
+        'h1': ['4.5rem', { lineHeight: '1.1', fontWeight: '700' }],
+        'h2': ['3rem', { lineHeight: '1.2', fontWeight: '600' }],
+        'body-large': ['1.25rem', { lineHeight: '1.6', fontWeight: '400' }],
+        'body-reg': ['1rem', { lineHeight: '1.5', fontWeight: '400' }],
+        'body-small': ['0.875rem', { lineHeight: '1.5', fontWeight: '400' }],
+        'nav': ['1rem', { lineHeight: '1.5', fontWeight: '500' }],
+        'btn': ['1rem', { lineHeight: '1.5', fontWeight: '600' }],
+        'caption': ['0.75rem', { lineHeight: '1.4', fontWeight: '500' }],
       },
       borderRadius: {
-        'xl': '0.875rem',
-        '2xl': '1rem',
+        'sm': '6px',
+        'md': '8px',
+        'lg': '12px',
+        'xl': '16px',
+        '2xl': '24px',
+        'full': '9999px',
+      },
+      boxShadow: {
+        'card': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        'elevated': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+        'app-preview': '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        'floating-icon': '0 4px 20px rgba(59, 130, 246, 0.15)',
       },
     },
   },
