@@ -163,11 +163,16 @@ export const integrationService = {
     return { success: true };
   },
 
-  async listFacebookPages(): Promise<{ success: boolean; pages?: Array<{ id: string; name: string; picture?: string | null }>; error?: string }> {
+  async listFacebookPages(): Promise<{
+    success: boolean;
+    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+    missingPermissions?: string[];
+    error?: string;
+  }> {
     const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
     const data = await res.json().catch(() => ({} as any));
     if (!res.ok) return { success: false, error: data.error || 'Failed to load pages' };
-    return { success: true, pages: data.pages || [] };
+    return { success: true, pages: data.pages || [], missingPermissions: data.missingPermissions || [] };
   },
 
   async listInstagramTargets(): Promise<{ success: boolean; targets?: Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>; error?: string }> {

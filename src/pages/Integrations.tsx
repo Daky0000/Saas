@@ -143,8 +143,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [wpAppPassword, setWpAppPassword] = useState('');
 
   // Facebook pages
-  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string; picture?: string | null }>>([]);
+  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>>([]);
   const [fbLoading, setFbLoading] = useState(false);
+  const [fbMissingPermissions, setFbMissingPermissions] = useState<string[]>([]);
 
   // Instagram targets
   const [igTargets, setIgTargets] = useState<Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>>([]);
@@ -212,9 +213,11 @@ export default function Integrations({ onNavigateSettings }: Props) {
       const res = await integrationService.listFacebookPages();
       if (!res.success) throw new Error(res.error || 'Failed to load pages');
       setFbPages(res.pages || []);
+      setFbMissingPermissions(res.missingPermissions || []);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to load pages');
       setFbPages([]);
+      setFbMissingPermissions([]);
     } finally {
       setFbLoading(false);
     }
@@ -720,14 +723,26 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         <li>Reconnect and accept the `pages_show_list` permission prompt.</li>
                         <li>If you are not an app admin/tester, ask your workspace admin to add you or request App Review for `pages_show_list`.</li>
                       </ul>
+                      {fbMissingPermissions.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                          Missing Facebook permissions: {fbMissingPermissions.join(', ')}. Reconnect and approve them.
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="grid gap-2">
+                      {fbMissingPermissions.length > 0 ? (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+                          Missing Facebook permissions: {fbMissingPermissions.join(', ')}. Reconnect Facebook and approve these permissions to publish.
+                        </div>
+                      ) : null}
                       {fbPages.map((p) => (
                         <button
                           key={p.id}
                           type="button"
+                          disabled={p.can_publish === false}
                           onClick={async () => {
+                            if (p.can_publish === false) return;
                             setBusy(`fb-page-${p.id}`);
                             try {
                               const res = await integrationService.saveSocialTarget({
@@ -746,13 +761,22 @@ export default function Integrations({ onNavigateSettings }: Props) {
                               setBusy(null);
                             }
                           }}
-                          className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left hover:bg-slate-50"
+                          className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left ${
+                            p.can_publish === false
+                              ? 'border-amber-200 bg-amber-50 text-amber-800'
+                              : 'border-slate-200 bg-white hover:bg-slate-50'
+                          }`}
                         >
                           <div className="min-w-0">
                             <div className="truncate text-sm font-semibold text-slate-900">{p.name}</div>
                             <div className="text-xs text-slate-500">{p.id}</div>
+                            {p.can_publish === false ? (
+                              <div className="mt-1 text-xs text-amber-700">No publish access. Ask for Editor/Admin role.</div>
+                            ) : null}
                           </div>
-                          <span className="text-xs font-semibold text-slate-600">Save</span>
+                          <span className={`text-xs font-semibold ${p.can_publish === false ? 'text-amber-700' : 'text-slate-600'}`}>
+                            {p.can_publish === false ? 'No Access' : 'Save'}
+                          </span>
                         </button>
                       ))}
                     </div>
