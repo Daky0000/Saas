@@ -153,12 +153,20 @@ export default function AdminIntegrations() {
     setSaveError(null);
     setTestMessage(null);
     try {
+      const def = PLATFORMS.find((p) => p.id === id) ?? null;
       const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${encodeURIComponent(id)}`, { headers: authHeaders() });
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) throw new Error(data.error || 'Failed to load config');
       const cfg = data.config?.config || data.config || {};
       const row = rows[id] || { platform: id, config: {}, enabled: false };
-      setForm(Object.fromEntries(Object.entries({ ...row.config, ...cfg }).map(([k, v]) => [k, String(v ?? '')])));
+      const merged = { ...row.config, ...cfg } as Record<string, unknown>;
+      if (def?.fields.some((field) => field.id === 'redirectUri')) {
+        const current = String(merged.redirectUri ?? '').trim();
+        if (!current) {
+          merged.redirectUri = buildRedirectUri(id);
+        }
+      }
+      setForm(Object.fromEntries(Object.entries(merged).map(([k, v]) => [k, String(v ?? '')])));
     } catch (e) {
       setForm({});
       setSaveError(e instanceof Error ? e.message : 'Failed to load config');

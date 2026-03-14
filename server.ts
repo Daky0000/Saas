@@ -2259,7 +2259,7 @@ async function exchangePinterestCode(code: string) {
   const cfg = await getPlatformConfig('pinterest');
   const clientId = String(cfg.clientId || process.env.VITE_PINTEREST_CLIENT_ID || '').trim();
   const clientSecret = String(cfg.clientSecret || process.env.PINTEREST_CLIENT_SECRET || '').trim();
-  const redirectUri = resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_PINTEREST_REDIRECT_URI || '');
+  const redirectUri = resolveOAuthRedirectUri('pinterest', cfg.redirectUri || process.env.VITE_PINTEREST_REDIRECT_URI);
   if (!clientId || !clientSecret) throw new Error('Pinterest client credentials not configured');
 
   const data = new URLSearchParams({
@@ -2287,7 +2287,7 @@ async function exchangeInstagramCode(code: string) {
     client_id: cfg.appId || process.env.VITE_INSTAGRAM_APP_ID || '',
     client_secret: cfg.appSecret || process.env.INSTAGRAM_APP_SECRET || '',
     grant_type: 'authorization_code',
-    redirect_uri: resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_INSTAGRAM_REDIRECT_URI),
+    redirect_uri: resolveOAuthRedirectUri('instagram', cfg.redirectUri || process.env.VITE_INSTAGRAM_REDIRECT_URI),
     code,
   });
   const response = await axios.post('https://api.instagram.com/oauth/access_token', data, {
@@ -2300,7 +2300,7 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string) {
   const cfg = await getPlatformConfig('twitter');
   const clientId = cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '';
   const clientSecret = cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '';
-  const redirectUri = resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI || '');
+  const redirectUri = resolveOAuthRedirectUri('twitter', cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI);
 
   const data = new URLSearchParams({
     client_id: clientId,
@@ -2327,7 +2327,7 @@ async function exchangeLinkedInCode(code: string) {
   const data = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI || ''),
+    redirect_uri: resolveOAuthRedirectUri('linkedin', cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI),
     client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '',
     client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '',
   });
@@ -2344,11 +2344,12 @@ async function exchangeLinkedInCode(code: string) {
 
 async function exchangeFacebookCode(code: string, redirectUriOverride?: string) {
   const cfg = await getPlatformConfig('facebook');
+  const redirectUri = resolveOAuthRedirectUri('facebook', redirectUriOverride || cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI);
   const response = await axios.get('https://graph.facebook.com/v18.0/oauth/access_token', {
     params: {
       client_id: cfg.appId || process.env.VITE_FACEBOOK_APP_ID,
       client_secret: cfg.appSecret || process.env.FACEBOOK_APP_SECRET,
-      redirect_uri: redirectUriOverride || cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI,
+      redirect_uri: redirectUri,
       code,
     },
   });
@@ -2395,7 +2396,7 @@ async function exchangeThreadsCode(code: string) {
     process.env.VITE_THREADS_APP_SECRET ||
     process.env.INSTAGRAM_APP_SECRET ||
     '';
-  const redirectUri = resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI || '');
+  const redirectUri = resolveOAuthRedirectUri('threads', cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI);
 
   if (!clientId || !clientSecret || !redirectUri) {
     throw new Error('Threads credentials not configured');
@@ -2456,7 +2457,7 @@ async function exchangeTikTokCode(code: string) {
     client_secret: cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '',
     code,
     grant_type: 'authorization_code',
-    redirect_uri: resolveBackendRedirectUri(cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI || ''),
+    redirect_uri: resolveOAuthRedirectUri('tiktok', cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI),
   });
   const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', data.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -4378,8 +4379,10 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     const now = new Date().toISOString();
 
     const normalizedConfig: Record<string, string> = { ...(config as any) };
-    if (typeof normalizedConfig.redirectUri === 'string') {
-      normalizedConfig.redirectUri = resolveBackendRedirectUri(normalizedConfig.redirectUri, req);
+    const platformKey = String(platform || '').trim().toLowerCase();
+    if (OAUTH_AUTH_URLS[platformKey]) {
+      const incomingRedirect = typeof normalizedConfig.redirectUri === 'string' ? normalizedConfig.redirectUri : '';
+      normalizedConfig.redirectUri = resolveOAuthRedirectUri(platformKey, incomingRedirect, req);
     }
 
     if (hasDatabase()) {
@@ -4644,6 +4647,27 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
 
+const DEFAULT_OAUTH_REDIRECTS: Record<string, string> = {
+  instagram: '/auth/instagram/callback',
+  facebook: '/auth/facebook/callback',
+  linkedin: '/auth/linkedin/callback',
+  twitter: '/auth/twitter/callback',
+  pinterest: '/auth/pinterest/callback',
+  tiktok: '/auth/tiktok/callback',
+  threads: '/auth/threads/callback',
+};
+
+function getDefaultOAuthRedirectPath(platform: string): string {
+  const key = String(platform || '').trim().toLowerCase();
+  return DEFAULT_OAUTH_REDIRECTS[key] || `/auth/${key}/callback`;
+}
+
+function resolveOAuthRedirectUri(platform: string, redirectUri?: string, req?: Request): string {
+  if (!OAUTH_AUTH_URLS[platform]) return '';
+  const raw = String(redirectUri || '').trim() || getDefaultOAuthRedirectPath(platform);
+  return resolveBackendRedirectUri(raw, req);
+}
+
 // GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
   app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
   try {
@@ -4659,7 +4683,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
 
     const cfg = await getPlatformConfig(platform);
     const clientId = cfg[meta.idField];
-    const redirectUri = resolveBackendRedirectUri(cfg.redirectUri, req);
+    const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
 
     if (!clientId || !redirectUri) {
       return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
@@ -4724,7 +4748,8 @@ app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) =
       platform === 'instagram' || platform === 'facebook' || platform === 'threads'
         ? cfg.appSecret
         : cfg.clientSecret;
-    const configured = Boolean(clientId && cfg.redirectUri && (!secretRequired || secretValue));
+    const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
+    const configured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
 
     return res.json({ success: true, configured });
   } catch {
@@ -5235,7 +5260,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
         const meta = OAUTH_AUTH_URLS[slug];
         if (meta) {
           const clientId = String((cfg as any)[meta.idField] || '').trim();
-          const redirectUri = String((cfg as any).redirectUri || '').trim();
+          const redirectUri = resolveOAuthRedirectUri(slug, String((cfg as any).redirectUri || ''), req);
           const secretRequired = slug === 'facebook' || slug === 'twitter' || slug === 'linkedin' || slug === 'tiktok' || slug === 'threads' || slug === 'pinterest';
           const secretValue = String((cfg as any).clientSecret || (cfg as any).appSecret || '').trim();
           configured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
@@ -5917,7 +5942,8 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
         const meta = OAUTH_AUTH_URLS[platform];
         if (!meta) return res.json({ success: false, error: 'Unsupported platform' });
         const clientId = cfg[meta.idField];
-        if (!clientId || !cfg.redirectUri) return res.json({ success: false, error: 'Credentials not configured' });
+        const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
+        if (!clientId || !redirectUri) return res.json({ success: false, error: 'Credentials not configured' });
         return res.json({ success: true, message: 'Credentials are saved. Test the OAuth flow by clicking "Test OAuth" on the user page.' });
       }
     }
