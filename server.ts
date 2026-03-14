@@ -5443,8 +5443,29 @@ app.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => 
     if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
 
     const graphBase = 'https://graph.facebook.com/v19.0';
+    const requiredPermissions = ['pages_show_list', 'pages_manage_posts'];
+    let missingPermissions: string[] = [];
+    try {
+      const permsResp = await axios.get(
+        `${graphBase}/me/permissions?access_token=${encodeURIComponent(accessToken)}`,
+        { validateStatus: () => true, timeout: 15000 }
+      );
+      if (permsResp.status < 400) {
+        const perms = Array.isArray((permsResp.data as any)?.data) ? (permsResp.data as any).data : [];
+        const granted = new Set(
+          perms
+            .filter((p: any) => String(p?.status || '').toLowerCase() === 'granted')
+            .map((p: any) => String(p?.permission || '').toLowerCase())
+            .filter(Boolean)
+        );
+        missingPermissions = requiredPermissions.filter((perm) => !granted.has(perm));
+      }
+    } catch {
+      missingPermissions = [];
+    }
+
     const pagesResp = await axios.get(
-      `${graphBase}/me/accounts?fields=id,name,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+      `${graphBase}/me/accounts?fields=id,name,tasks,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(accessToken)}`,
       { validateStatus: () => true, timeout: 15000 }
     );
     const pagesData: any = pagesResp.data || {};
@@ -5454,15 +5475,21 @@ app.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => 
     }
     const pages = Array.isArray(pagesData?.data)
       ? pagesData.data
-          .map((p: any) => ({
-            id: String(p?.id || '').trim(),
-            name: String(p?.name || '').trim(),
-            picture: p?.picture?.data?.url ? String(p.picture.data.url) : null,
-          }))
+          .map((p: any) => {
+            const tasks = Array.isArray(p?.tasks) ? p.tasks.map((t: any) => String(t)) : [];
+            const canPublish = tasks.includes('CREATE_CONTENT') || tasks.includes('MANAGE');
+            return {
+              id: String(p?.id || '').trim(),
+              name: String(p?.name || '').trim(),
+              picture: p?.picture?.data?.url ? String(p.picture.data.url) : null,
+              tasks,
+              can_publish: canPublish,
+            };
+          })
           .filter((p: any) => p.id)
       : [];
 
-    return res.json({ success: true, pages });
+    return res.json({ success: true, pages, missingPermissions });
   } catch (err) {
     console.error('v1 facebook pages error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook pages' });
@@ -5509,7 +5536,7 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
 
       const graphBase = 'https://graph.facebook.com/v19.0';
       const pagesResp = await axios.get(
-        `${graphBase}/me/accounts?fields=id,name,access_token,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(profileToken)}`,
+        `${graphBase}/me/accounts?fields=id,name,access_token,tasks,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(profileToken)}`,
         { validateStatus: () => true, timeout: 15000 }
       );
       const pagesData: any = pagesResp.data || {};
@@ -5520,6 +5547,14 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
       const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
       const match = pages.find((p: any) => String(p?.id || '').trim() === accountId);
       if (!match) return res.status(400).json({ success: false, error: 'Selected Facebook Page not found or access not available' });
+      const tasks = Array.isArray(match?.tasks) ? match.tasks.map((t: any) => String(t)) : [];
+      const canPublish = tasks.includes('CREATE_CONTENT') || tasks.includes('MANAGE');
+      if (!canPublish) {
+        return res.status(400).json({
+          success: false,
+          error: 'You do not have permission to publish to this Facebook Page. Ask for Editor/Admin access.',
+        });
+      }
       accessTokenToStore = String(match?.access_token || '').trim() || null;
       profileImage = match?.picture?.data?.url ? String(match.picture.data.url) : null;
       tokenExpiresAtToStore = null;
@@ -5559,6 +5594,28 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
          ON CONFLICT (user_id, social_account_id) DO UPDATE SET active=true`,
         [randomUUID(), auth.userId, saved.id]
       ).catch(() => undefined);
+    }
+
+    if (platformSlug === 'facebook' && accountType === 'page') {
+      try {
+        const current = (await getUserSettingValue(auth.userId, 'posts-automation-settings')) || {};
+        const next = {
+          ...(current || {}),
+          facebookTarget: 'page',
+          selectedAccountMap: {
+            ...(current?.selectedAccountMap || {}),
+            facebook: `page:${accountId}`,
+          },
+        };
+        await dbQuery(
+          `INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
+           VALUES ($1, $2, $3::jsonb, NOW(), NOW())
+           ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [auth.userId, 'posts-automation-settings', JSON.stringify(next)]
+        );
+      } catch {
+        // ignore settings persistence failures
+      }
     }
 
     return res.json({ success: true, account: saved });
