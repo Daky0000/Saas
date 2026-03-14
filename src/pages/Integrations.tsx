@@ -711,7 +711,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       <Loader2 size={22} className="animate-spin text-slate-400" />
                     </div>
                   ) : fbPages.length === 0 ? (
-                    <div className="text-sm text-slate-500">No Pages found. Make sure you have Pages and the app has `pages_show_list` permission.</div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <div className="font-semibold text-slate-700">No Pages found</div>
+                      <div className="mt-1 text-xs text-slate-500">Try the steps below, then reconnect Facebook.</div>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-600">
+                        <li>Make sure you are logged into the Facebook account that manages the Page.</li>
+                        <li>Create a Facebook Page if you do not have one yet.</li>
+                        <li>Reconnect and accept the `pages_show_list` permission prompt.</li>
+                        <li>If you are not an app admin/tester, ask your workspace admin to add you or request App Review for `pages_show_list`.</li>
+                      </ul>
+                    </div>
                   ) : (
                     <div className="grid gap-2">
                       {fbPages.map((p) => (
