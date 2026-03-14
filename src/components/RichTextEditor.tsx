@@ -1,4 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react';
+import { useEffect } from 'react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Bold, Italic, List, ListOrdered, Quote, Code, Image as ImageIcon, Heading1, Heading2, Heading3, Undo2, Redo2 } from 'lucide-react';
@@ -25,6 +26,15 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
       onChange(editor.getHTML());
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    const nextValue = value || '';
+    const current = editor.getHTML();
+    if (current !== nextValue) {
+      editor.commands.setContent(nextValue, false);
+    }
+  }, [editor, value]);
 
   if (!editor) {
     return null;
