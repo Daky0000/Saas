@@ -29,6 +29,7 @@ import Landing from './pages/Landing';
 import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
+import OAuthCallback from './pages/OAuthCallback';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { API_BASE_URL } from './utils/apiBase';
@@ -202,6 +203,12 @@ function App() {
     let canceled = false;
 
     const pathname = window.location.pathname;
+    if (pathname.startsWith('/auth/')) {
+      setCurrentPathname(pathname);
+      return () => {
+        canceled = true;
+      };
+    }
     const hasSession = Boolean(localStorage.getItem('auth_session'));
     const token = localStorage.getItem('auth_token');
     if (hasSession && !token) {
@@ -270,6 +277,9 @@ function App() {
     const handlePopState = () => {
       const pathname = window.location.pathname;
       setCurrentPathname(pathname);
+      if (pathname.startsWith('/auth/')) {
+        return;
+      }
 
       if (!isAuthenticated) {
         const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
@@ -321,6 +331,7 @@ function App() {
   if (currentPathname === '/terms') return <TermsOfService />;
   if (currentPathname === '/tools') return <Tools onLoginClick={goToLogin} />;
   if (currentPathname === '/data-deletion') return <DataDeletion />;
+  if (currentPathname.startsWith('/auth/')) return <OAuthCallback />;
   if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={goToLogin} />;
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={goToLogin} />;
