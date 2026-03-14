@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle, ExternalLink, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
+import { CheckCircle, ExternalLink, Info, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
 import { wordpressService } from '../services/wordpressService';
 
@@ -13,12 +13,86 @@ type ModalState =
   | { type: 'facebook-pages' }
   | { type: 'instagram' }
   | { type: 'pinterest' }
-  | { type: 'mailchimp' };
+  | { type: 'mailchimp' }
+  | { type: 'details'; slug: string };
+
+type IntegrationMeta = {
+  slug: string;
+  name: string;
+  overview: string;
+  steps: string[];
+  requirements?: string[];
+  adminSteps?: string[];
+};
+
+const INTEGRATION_META: Record<string, IntegrationMeta> = {
+  wordpress: {
+    slug: 'wordpress',
+    name: 'WordPress',
+    overview: 'Connect with Application Passwords to publish posts, sync categories, and manage content.',
+    steps: ['Create an Application Password in WordPress.', 'Enter your site URL, username, and app password.', 'Save & verify the connection.'],
+    requirements: ['WordPress 5.6+ with Application Passwords enabled.'],
+  },
+  facebook: {
+    slug: 'facebook',
+    name: 'Facebook',
+    overview: 'Connect Facebook to publish to your profile or Pages and enable automated posting.',
+    steps: ['Connect Facebook via OAuth.', 'Choose a Page to save a Page token (optional).', 'Select Facebook in Posts → Distribution.'],
+    requirements: ['Meta app with OAuth configured.', 'Pages permission for Page publishing.'],
+    adminSteps: ['Set App ID, App Secret, and Redirect URL in Admin settings.', 'Enable Facebook for users.'],
+  },
+  instagram: {
+    slug: 'instagram',
+    name: 'Instagram',
+    overview: 'Publish images through the Instagram Graph API (Business/Creator accounts).',
+    steps: ['Connect Facebook first.', 'Open Instagram → Connect and pick a Business account.', 'Publish from Posts → Distribution.'],
+    requirements: ['Instagram Business/Creator linked to a Facebook Page.'],
+    adminSteps: ['Reuse Facebook app credentials for Instagram Graph.', 'Enable Instagram for users.'],
+  },
+  linkedin: {
+    slug: 'linkedin',
+    name: 'LinkedIn',
+    overview: 'Publish posts and track analytics via LinkedIn OAuth.',
+    steps: ['Connect LinkedIn via OAuth.', 'Confirm the account in Integrations.', 'Publish from Posts → Distribution.'],
+    requirements: ['LinkedIn app with Products enabled.'],
+    adminSteps: ['Set Client ID/Secret and Redirect URL.', 'Enable LinkedIn for users.'],
+  },
+  twitter: {
+    slug: 'twitter',
+    name: 'X (Twitter)',
+    overview: 'Publish tweets with OAuth 2.0 + PKCE using the X API v2.',
+    steps: ['Connect X via OAuth.', 'Confirm the account in Integrations.', 'Publish from Posts → Distribution.'],
+    requirements: ['X developer app with OAuth 2.0 enabled.'],
+    adminSteps: ['Set Client ID/Secret and Redirect URL.', 'Enable X for users.'],
+  },
+  pinterest: {
+    slug: 'pinterest',
+    name: 'Pinterest',
+    overview: 'Create Pins to selected boards using the Pinterest API.',
+    steps: ['Connect Pinterest via OAuth.', 'Open Manage and select a board.', 'Publish from Posts → Distribution.'],
+    requirements: ['Pinterest app with proper scopes.'],
+    adminSteps: ['Set App ID/Secret and Redirect URL.', 'Enable Pinterest for users.'],
+  },
+  mailchimp: {
+    slug: 'mailchimp',
+    name: 'Mailchimp',
+    overview: 'Connect via API key and server prefix to sync marketing data.',
+    steps: ['Generate an API key in Mailchimp.', 'Enter API key + server prefix (e.g., us19).', 'Save the connection.'],
+    requirements: ['Mailchimp account with API access.'],
+  },
+};
 
 const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   connected: { bg: 'bg-emerald-50', text: 'text-emerald-700' },
   disconnected: { bg: 'bg-slate-100', text: 'text-slate-600' },
   disabled: { bg: 'bg-amber-50', text: 'text-amber-700' },
+};
+
+const formatDate = (value?: string | null) => {
+  if (!value) return '';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString();
 };
 
 function Card({
@@ -212,6 +286,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
     const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest'].includes(slug);
+    const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
+    const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || '';
 
     const disabledReason = !item.adminEnabled
       ? 'Disabled by admin.'
@@ -223,12 +299,19 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
     if (slug === 'wordpress') {
       return (
-        <Card
-          title={item.name}
-          description="Connect your WordPress site using Application Passwords. Publish, update, import posts and sync categories/tags."
-          statusLabel={item.connected ? 'Connected' : 'Disconnected'}
-          statusTone={item.connected ? 'connected' : 'disconnected'}
+      <Card
+        title={item.name}
+        description="Connect your WordPress site using Application Passwords. Publish, update, import posts and sync categories/tags."
+        statusLabel={item.connected ? 'Connected' : 'Disconnected'}
+        statusTone={item.connected ? 'connected' : 'disconnected'}
+      >
+        <button
+          type="button"
+          onClick={() => setModal({ type: 'details', slug })}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
         >
+          <Info size={16} /> Steps
+        </button>
           {!item.connected ? (
             <button
               type="button"
@@ -268,6 +351,13 @@ export default function Integrations({ onNavigateSettings }: Props) {
           statusLabel={item.connected ? 'Connected' : 'Disconnected'}
           statusTone={item.connected ? 'connected' : 'disconnected'}
         >
+          <button
+            type="button"
+            onClick={() => setModal({ type: 'details', slug })}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            <Info size={16} /> Steps
+          </button>
           {!item.connected ? (
             <button
               type="button"
@@ -327,6 +417,13 @@ export default function Integrations({ onNavigateSettings }: Props) {
         statusTone={statusTone}
         disabledReason={disabledReason}
       >
+        <button
+          type="button"
+          onClick={() => setModal({ type: 'details', slug })}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+        >
+          <Info size={16} /> Steps
+        </button>
         {slug === 'instagram' ? (
           <>
             <button
@@ -396,6 +493,13 @@ export default function Integrations({ onNavigateSettings }: Props) {
             <Settings2 size={16} /> Manage
           </button>
         ) : null}
+
+        {item.connected ? (
+          <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            {connectedLabel ? <div className="font-semibold">Connected as {connectedLabel}</div> : null}
+            {connectedAt ? <div>Connected {formatDate(connectedAt)}</div> : null}
+          </div>
+        ) : null}
       </Card>
     );
   };
@@ -427,9 +531,29 @@ export default function Integrations({ onNavigateSettings }: Props) {
           <Loader2 size={28} className="animate-spin text-slate-400" />
         </div>
       ) : error ? (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+          <div className="font-semibold">We couldn't load integrations.</div>
+          <div className="mt-1">{error}</div>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
       ) : (
         <>
+          {items.every((i) => !i.connected) ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="text-sm font-black text-slate-900">Get started in 3 steps</div>
+              <ol className="mt-3 list-decimal pl-5 text-sm text-slate-600">
+                <li>Ask an admin to configure and enable the integration.</li>
+                <li>Connect your account here in Integrations.</li>
+                <li>Publish from Posts → Distribution.</li>
+              </ol>
+            </div>
+          ) : null}
           <section className="space-y-3">
             <div className="text-sm font-black text-slate-900">CMS Platforms</div>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cms.map(renderActions)}</div>
@@ -473,7 +597,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       ? 'Instagram (Business accounts)'
                       : modal.type === 'pinterest'
                         ? 'Pinterest boards'
-                        : 'Mailchimp'}
+                        : modal.type === 'mailchimp'
+                          ? 'Mailchimp'
+                          : INTEGRATION_META[modal.slug]?.name || 'Integration details'}
               </div>
               <button
                 type="button"
@@ -485,6 +611,45 @@ export default function Integrations({ onNavigateSettings }: Props) {
             </div>
 
             <div className="px-6 py-5">
+              {modal.type === 'details' ? (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    {INTEGRATION_META[modal.slug]?.overview || 'Follow the steps below to connect this integration.'}
+                  </div>
+
+                  {INTEGRATION_META[modal.slug]?.requirements?.length ? (
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Requirements</div>
+                      <ul className="mt-2 list-disc pl-5 text-sm text-slate-600">
+                        {INTEGRATION_META[modal.slug].requirements!.map((req) => (
+                          <li key={req}>{req}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">User steps</div>
+                    <ol className="mt-2 list-decimal pl-5 text-sm text-slate-600">
+                      {(INTEGRATION_META[modal.slug]?.steps || ['Connect the integration.']).map((step) => (
+                        <li key={step}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  {INTEGRATION_META[modal.slug]?.adminSteps?.length ? (
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Admin steps</div>
+                      <ol className="mt-2 list-decimal pl-5 text-sm text-slate-600">
+                        {INTEGRATION_META[modal.slug].adminSteps!.map((step) => (
+                          <li key={step}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {modal.type === 'wordpress' ? (
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">

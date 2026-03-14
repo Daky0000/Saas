@@ -33,6 +33,13 @@ const authHeaders = (): Record<string, string> => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+const getBackendBase = () => {
+  if (typeof window === 'undefined') return API_BASE_URL;
+  return API_BASE_URL || window.location.origin;
+};
+
+const buildRedirectUri = (platformId: string) => `${getBackendBase()}/auth/${platformId}/callback`;
+
 const PLATFORMS: PlatformDef[] = [
   {
     id: 'wordpress',
@@ -345,6 +352,28 @@ export default function AdminIntegrations() {
                         placeholder={f.placeholder}
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                       />
+                      {f.id === 'redirectUri' ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setForm((prev) => ({ ...prev, [f.id]: buildRedirectUri(activeDef.id) }))}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Use default redirect
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const value = buildRedirectUri(activeDef.id);
+                              navigator.clipboard?.writeText(value);
+                            }}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Copy default
+                          </button>
+                          <span className="text-[11px] text-slate-500">{buildRedirectUri(activeDef.id)}</span>
+                        </div>
+                      ) : null}
                       <div className="mt-1 text-[11px] leading-5 text-slate-500">{f.helpText}</div>
                     </div>
                   ))}
