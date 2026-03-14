@@ -204,7 +204,11 @@ function App() {
     const pathname = window.location.pathname;
     const hasSession = Boolean(localStorage.getItem('auth_session'));
     const token = localStorage.getItem('auth_token');
-    const loggedIn = Boolean(hasSession || token);
+    if (hasSession && !token) {
+      localStorage.removeItem('auth_session');
+      clearStoredUser();
+    }
+    const loggedIn = Boolean(token);
     setIsAuthenticated(loggedIn);
 
     if (loggedIn) {
