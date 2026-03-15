@@ -6,3 +6,4 @@ openai.chatgpt-26.304.20706-win32-arm64.vsix
 .claude/
 tmp_skills/
 skills-lock.json
+tmp_skills_disabled/
