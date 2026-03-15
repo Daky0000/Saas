@@ -22,6 +22,7 @@ import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
 import Media from './pages/Media';
 import Integrations from './pages/Integrations';
+import Automation from './pages/Automation';
 import Auth from './pages/Auth';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
@@ -51,7 +52,8 @@ type PageType =
   | 'analytics'
   | 'profile'
   | 'media'
-  | 'integrations';
+  | 'integrations'
+  | 'automation';
 
 type AuthMeResponse = {
   success: boolean;
@@ -76,6 +78,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   profile: '/profile',
   media: '/media',
   integrations: '/integrations',
+  automation: '/automation',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -359,6 +362,7 @@ function App() {
   const menuItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: BarChart4 },
     { id: 'posts' as const, label: 'Posts', icon: FileText },
+    { id: 'automation' as const, label: 'Automation', icon: Settings },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
     { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'integrations' as const, label: 'Integrations', icon: Waypoints },
@@ -373,6 +377,8 @@ function App() {
         return <Dashboard currentUser={authUser} />;
       case 'posts':
         return <Posts currentUser={authUser} />;
+      case 'automation':
+        return <Automation />;
       case 'cards':
         return <Cards />;
       case 'pricing':

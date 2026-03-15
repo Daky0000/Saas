@@ -146,6 +146,14 @@ async function schedulePost(platformName, postObject, ctx, scheduledAt) {
   return job.id;
 }
 
+async function removeJob(jobId) {
+  if (!postQueue || !jobId) return false;
+  const job = await postQueue.getJob(jobId);
+  if (!job) return false;
+  await job.remove();
+  return true;
+}
+
 async function retryJob(jobId) {
   if (!postQueue) return false;
   const job = await postQueue.getJob(jobId);
@@ -154,4 +162,4 @@ async function retryJob(jobId) {
   return true;
 }
 
-module.exports = { createQueue, schedulePost, retryJob, getRetryDelayMs };
+module.exports = { createQueue, postQueue, schedulePost, removeJob, retryJob, getRetryDelayMs };
