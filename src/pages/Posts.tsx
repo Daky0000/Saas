@@ -17,6 +17,7 @@ import {
   Calendar as CalendarIcon,
   CheckCircle2,
   XCircle,
+  Settings,
 } from 'lucide-react';
 import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, type BlogTag } from '../services/blogService';
 import type { AppUser } from '../utils/userSession';
@@ -1213,7 +1214,7 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
       )}
 
       {view === 'posts' && <PostsList onEdit={(id) => openEditor(id)} onNew={() => openEditor(null)} />}
-      {view === 'calendar' && <Calendar onEdit={(id) => openEditor(id)} />}
+      {view === 'calendar' && <Calendar onEditPost={(id: string | null) => openEditor(id)} />}
       {view === 'automation' && <Automation />}
       {view === 'categories' && <CategoriesTab categories={categories} onChange={() => void loadMeta()} />}
       {view === 'tags' && <TagsTab tags={tags} onChange={() => void loadMeta()} />}

@@ -7,8 +7,6 @@ import {
   Activity,
   CheckCircle,
   XCircle,
-  Play,
-  Pause,
   Trash2,
   Edit,
 } from 'lucide-react';
