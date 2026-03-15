@@ -31,7 +31,17 @@
       "Bash(git add assets/ dist/ index.html 404.html)",
       "Bash(ls d:/Saas/src/pages/Admin*)",
       "Bash(gh run:*)",
-      "Bash(where gh:*)"
+      "Bash(where gh:*)",
+      "Bash(git -C /d/Saas add -A)",
+      "Bash(git -C /d/Saas diff --cached --name-only)",
+      "Bash(git -C /d/Saas reset HEAD dist/)",
+      "Bash(git -C /d/Saas status --short)",
+      "Bash(git -C /d/Saas add .claude/settings.local.json)",
+      "Bash(git -C:*)",
+      "Bash(git -C /d/Saas push origin master)",
+      "Bash(git rm:*)",
+      "Bash(git add:*)",
+      "Bash(ls /d/Saas/*.toml)"
     ]
   }
 }
