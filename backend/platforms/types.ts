@@ -1,4 +1,4 @@
-﻿export type PostDestination = {
+export type PostDestination = {
   type?: string;
   id?: string;
   name?: string;
@@ -7,16 +7,18 @@
 export type PostMedia = {
   url: string;
   mimeType?: string;
-  type?: 'image' | 'video' | 'gif' | 'other';
+  type?: 'image' | 'video' | 'reel' | 'story' | 'gif' | 'other';
+  size?: number; // bytes — used for resumable upload decisions
 };
 
 export type PostContent = {
   text: string;
   link?: string;
+  title?: string;
 };
 
 export type PostObject = {
-  type?: string;
+  type?: string; // 'FEED_POST' | 'REEL' | 'STORY' | 'VIDEO'
   content: PostContent;
   media?: PostMedia[];
   destination?: PostDestination;
@@ -35,8 +37,28 @@ export type PlatformPostResult = {
   raw?: any;
 };
 
+export type AnalyticsResult = {
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  impressions?: number;
+  reach?: number;
+  clicks?: number;
+  saves?: number;
+  raw?: any;
+};
+
+export type TokenRefreshResult = {
+  ok: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: Date;
+  error?: string;
+};
+
 export type PlatformContext = {
   accessToken: string;
+  refreshToken?: string;
   accountId?: string | null;
   accountName?: string | null;
   tokenData?: any;
@@ -53,6 +75,7 @@ export interface SocialPlatform {
   name: string;
   validate(post: PostObject): ValidationResult;
   post(post: PostObject, ctx: PlatformContext): Promise<PlatformPostResult>;
-  getPostAnalytics?(postId: string, ctx: PlatformContext): Promise<any>;
-  refreshToken?(ctx: PlatformContext): Promise<any>;
+  getPostAnalytics?(postId: string, ctx: PlatformContext): Promise<AnalyticsResult>;
+  refreshToken?(ctx: PlatformContext): Promise<TokenRefreshResult>;
+  handleError(error: any): { retryable: boolean; message: string };
 }
