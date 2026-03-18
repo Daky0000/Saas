@@ -7,6 +7,7 @@ import postsRoutes from "./routes/posts.routes";
 import integrationsRoutes from "./routes/integrations.routes";
 import automationRoutes from "./routes/automation.routes";
 import { startScheduler } from "./services/automation/scheduler";
+import { seedDefaultUsers } from "./utils/seed-default-users";
 
 dotenv.config();
 
@@ -53,4 +54,5 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   startScheduler();
+  seedDefaultUsers();
 });
