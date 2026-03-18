@@ -449,7 +449,7 @@ export const IntegrationsPage: React.FC = () => {
                         {account.accountName || "N/A"}
                       </p>
                       <p className="text-xs text-slate-400">
-                        {account.accountEmail || "N/A"} ¡¤ {account.createdAt ? new Date(account.createdAt).toLocaleDateString() : "N/A"}
+                        {account.accountEmail || "N/A"} Â¡Â¤ {account.createdAt ? new Date(account.createdAt).toLocaleDateString() : "N/A"}
                       </p>
                     </div>
                     <button
