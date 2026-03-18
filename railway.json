@@ -5,7 +5,7 @@
   },
   "deploy": {
     "startCommand": "tsx server.ts",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/api/health",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
