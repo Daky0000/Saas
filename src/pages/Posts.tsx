@@ -14,7 +14,6 @@ import {
   Clock,
   Save,
   Sparkles,
-  Calendar as CalendarIcon,
   CheckCircle2,
   XCircle,
   Settings,
@@ -23,10 +22,8 @@ import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, ty
 import type { AppUser } from '../utils/userSession';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import RichTextEditor from '../components/RichTextEditor';
-import Automation from './Automation';
-import Calendar from './Calendar';
 
-type PostsView = 'posts' | 'editor' | 'categories' | 'tags' | 'calendar' | 'automation';
+type PostsView = 'posts' | 'editor' | 'categories' | 'tags';
 
 const STATUS_BADGE: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
@@ -1172,8 +1169,6 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
   const NAV_TABS: { id: PostsView; label: string; icon: React.ElementType }[] = useMemo(
     () => [
       { id: 'posts', label: 'All Posts', icon: FileText },
-      { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
-      { id: 'automation', label: 'Post Automation', icon: Settings },
       { id: 'categories', label: 'Categories', icon: FolderOpen },
       { id: 'tags', label: 'Tags', icon: Tag },
     ],
@@ -1214,8 +1209,6 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
       )}
 
       {view === 'posts' && <PostsList onEdit={(id) => openEditor(id)} onNew={() => openEditor(null)} />}
-      {view === 'calendar' && <Calendar onEditPost={(id: string | null) => openEditor(id)} />}
-      {view === 'automation' && <Automation />}
       {view === 'categories' && <CategoriesTab categories={categories} onChange={() => void loadMeta()} />}
       {view === 'tags' && <TagsTab tags={tags} onChange={() => void loadMeta()} />}
 
