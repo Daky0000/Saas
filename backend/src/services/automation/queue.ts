@@ -11,7 +11,11 @@ import { WordPressAdapter } from "./platform-adapters/wordpress.adapter";
 
 const prisma = new PrismaClient();
 
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+const redisUrl = process.env.REDIS_URL;
+if (!redisUrl) {
+  throw new Error("REDIS_URL is required to run the post queue");
+}
+
 export const postQueue = new Queue("posts", redisUrl);
 
 const adapters: Record<string, any> = {

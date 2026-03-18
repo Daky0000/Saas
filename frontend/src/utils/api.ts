@@ -1,6 +1,8 @@
 import axios, { AxiosInstance } from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+const defaultApiUrl =
+  typeof window !== "undefined" ? `${window.location.origin}/api` : "/api";
+const API_URL = import.meta.env.VITE_API_URL || defaultApiUrl;
 
 const api: AxiosInstance = axios.create({
   baseURL: API_URL,

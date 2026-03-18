@@ -6,7 +6,7 @@ import { IntegrationService } from "../services/integration.service";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://marketing.dakyworld.com";
 
 type StatePayload = {
   type: "integration_state";

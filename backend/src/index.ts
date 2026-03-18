@@ -14,7 +14,21 @@ const app: Express = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:5173" }));
+const configuredOrigins = (process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const fallbackOrigin = "https://marketing.dakyworld.com";
+const allowedOrigins = configuredOrigins.length
+  ? configuredOrigins
+  : [fallbackOrigin];
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Routes
@@ -37,6 +51,6 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
   startScheduler();
 });
