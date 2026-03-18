@@ -1,4 +1,12 @@
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 
 const rootDir = resolve(process.cwd());
@@ -7,6 +15,9 @@ const docsIndex = resolve(docsDir, 'index.html');
 const docsAssets = resolve(docsDir, 'assets');
 const docs404 = resolve(docsDir, '404.html');
 const noJekyll = resolve(docsDir, '.nojekyll');
+const rootAssets = resolve(rootDir, 'assets');
+const rootIndex = resolve(rootDir, 'index.html');
+const root404 = resolve(rootDir, '404.html');
 
 console.log('Starting post-build sync process for GitHub Pages...');
 
@@ -59,3 +70,14 @@ writeFileSync(docs404, syncedHtml, 'utf8');
 writeFileSync(noJekyll, '', 'utf8');
 
 console.log(`Synced GitHub Pages files within 'docs' directory. Stable files: app.js, app.css`);
+
+// Mirror docs output to repository root for master/root Pages deployments
+if (existsSync(rootAssets)) {
+  rmSync(rootAssets, { recursive: true, force: true });
+}
+mkdirSync(rootAssets, { recursive: true });
+cpSync(docsAssets, rootAssets, { recursive: true });
+writeFileSync(rootIndex, syncedHtml, 'utf8');
+writeFileSync(root404, syncedHtml, 'utf8');
+
+console.log(`Mirrored GitHub Pages files to repository root.`);
