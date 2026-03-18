@@ -15,6 +15,7 @@ datasource db {
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
+  username  String?  @unique
   password  String   // hashed
   firstName String?
   lastName  String?
@@ -35,6 +36,7 @@ model User {
 
   @@index([agencyId])
   @@index([email])
+  @@index([username])
 }
 
 enum Role {

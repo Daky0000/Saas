@@ -6,6 +6,37 @@ const prisma = new PrismaClient();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
 export class AuthService {
+  private static sanitizeUsername(raw: string) {
+    return raw.trim().toLowerCase();
+  }
+
+  private static async resolveUsername(
+    email: string,
+    username?: string
+  ): Promise<string> {
+    const provided = username ? this.sanitizeUsername(username) : "";
+    if (provided) {
+      const existing = await prisma.user.findUnique({
+        where: { username: provided },
+      });
+      if (existing) throw new Error("Username already taken");
+      return provided;
+    }
+
+    const base = this.sanitizeUsername(email.split("@")[0] || "user");
+    let candidate = base || "user";
+    let suffix = 0;
+    while (
+      await prisma.user.findUnique({
+        where: { username: candidate },
+      })
+    ) {
+      suffix += 1;
+      candidate = `${base}${suffix}`;
+    }
+    return candidate;
+  }
+
   // Hash password
   static async hashPassword(password: string): Promise<string> {
     const salt = await bcrypt.genSalt(10);
@@ -42,10 +73,16 @@ export class AuthService {
   }
 
   // Sign up
-  static async signup(email: string, password: string, agencyName: string) {
+  static async signup(
+    email: string,
+    password: string,
+    agencyName: string,
+    username?: string
+  ) {
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) throw new Error("User already exists");
 
+    const resolvedUsername = await this.resolveUsername(email, username);
     const hashedPassword = await this.hashPassword(password);
 
     // Create agency
@@ -57,6 +94,7 @@ export class AuthService {
     const user = await prisma.user.create({
       data: {
         email,
+        username: resolvedUsername,
         password: hashedPassword,
         firstName: "",
         agencyId: agency.id,
@@ -67,12 +105,21 @@ export class AuthService {
     const token = this.generateToken(user.id, agency.id);
     const refreshToken = this.generateRefreshToken(user.id);
 
-    return { user: { id: user.id, email: user.email }, token, refreshToken };
+    return {
+      user: { id: user.id, email: user.email, username: user.username },
+      token,
+      refreshToken,
+    };
   }
 
   // Login
-  static async login(email: string, password: string) {
-    const user = await prisma.user.findUnique({ where: { email } });
+  static async login(identifier: string, password: string) {
+    const normalized = identifier.trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: normalized }, { username: normalized }],
+      },
+    });
     if (!user) throw new Error("Invalid credentials");
 
     const isValidPassword = await this.comparePassword(password, user.password);
@@ -81,7 +128,11 @@ export class AuthService {
     const token = this.generateToken(user.id, user.agencyId);
     const refreshToken = this.generateRefreshToken(user.id);
 
-    return { user: { id: user.id, email: user.email }, token, refreshToken };
+    return {
+      user: { id: user.id, email: user.email, username: user.username },
+      token,
+      refreshToken,
+    };
   }
 
   // Refresh token

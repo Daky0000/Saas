@@ -4,14 +4,20 @@ import api from "../utils/api";
 interface User {
   id: string;
   email: string;
+  username?: string | null;
 }
 
 interface AuthStore {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  signup: (email: string, password: string, agencyName: string) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  signup: (
+    email: string,
+    password: string,
+    agencyName: string,
+    username?: string
+  ) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -28,13 +34,19 @@ export const useAuthStore = create<AuthStore>((set) => ({
   token: localStorage.getItem("token"),
   isLoading: false,
 
-  signup: async (email: string, password: string, agencyName: string) => {
+  signup: async (
+    email: string,
+    password: string,
+    agencyName: string,
+    username?: string
+  ) => {
     set({ isLoading: true });
     try {
       const response = await api.post("/auth/signup", {
         email,
         password,
         agencyName,
+        username,
       });
       const { user, token, refreshToken } = response.data;
 
@@ -49,10 +61,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
     }
   },
 
-  login: async (email: string, password: string) => {
+  login: async (identifier: string, password: string) => {
     set({ isLoading: true });
     try {
-      const response = await api.post("/auth/login", { email, password });
+      const response = await api.post("/auth/login", {
+        identifier,
+        password,
+      });
       const { user, token, refreshToken } = response.data;
 
       localStorage.setItem("token", token);

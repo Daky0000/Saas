@@ -9,6 +9,7 @@ export const SignupPage: React.FC = () => {
 
   const [formData, setFormData] = useState({
     email: "",
+    username: "",
     password: "",
     agencyName: "",
   });
@@ -26,7 +27,12 @@ export const SignupPage: React.FC = () => {
     setError("");
 
     try {
-      await signup(formData.email, formData.password, formData.agencyName);
+      await signup(
+        formData.email,
+        formData.password,
+        formData.agencyName,
+        formData.username || undefined
+      );
       navigate("/dashboard");
     } catch (err: any) {
       setError(err.response?.data?.error || "Signup failed");
@@ -71,6 +77,14 @@ export const SignupPage: React.FC = () => {
                 onChange={handleChange}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950/40 px-4 py-2 text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none"
                 required
+              />
+              <input
+                type="text"
+                name="username"
+                placeholder="Username (optional)"
+                value={formData.username}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/40 px-4 py-2 text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none"
               />
               <input
                 type="email"

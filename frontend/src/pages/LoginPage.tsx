@@ -8,7 +8,7 @@ export const LoginPage: React.FC = () => {
   const isLoading = useAuthStore((state) => state.isLoading);
 
   const [formData, setFormData] = useState({
-    email: "",
+    identifier: "",
     password: "",
   });
   const [error, setError] = useState("");
@@ -25,7 +25,7 @@ export const LoginPage: React.FC = () => {
     setError("");
 
     try {
-      await login(formData.email, formData.password);
+      await login(formData.identifier, formData.password);
       navigate("/dashboard");
     } catch (err: any) {
       setError(err.response?.data?.error || "Login failed");
@@ -52,7 +52,7 @@ export const LoginPage: React.FC = () => {
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 shadow-xl">
             <h2 className="text-2xl font-semibold">Login</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Use your email and password to continue.
+              Use your email or username to continue.
             </p>
 
             {error && (
@@ -63,10 +63,10 @@ export const LoginPage: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
               <input
-                type="email"
-                name="email"
-                placeholder="Email"
-                value={formData.email}
+                type="text"
+                name="identifier"
+                placeholder="Email or username"
+                value={formData.identifier}
                 onChange={handleChange}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950/40 px-4 py-2 text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none"
                 required
