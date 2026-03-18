@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
+import { seedDefaultUsersNow } from "../utils/seed-default-users";
 
 const prisma = new PrismaClient();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
@@ -119,7 +120,7 @@ export class AuthService {
   static async login(identifier: string, password: string) {
     const normalized = identifier.trim();
 
-    const user = await prisma.user.findFirst({
+    let user = await prisma.user.findFirst({
       where: {
         OR: [
           { email: { equals: normalized, mode: "insensitive" } },
@@ -127,6 +128,20 @@ export class AuthService {
         ],
       },
     });
+
+    if (!user && process.env.SEED_DEFAULT_USERS === "true") {
+      const seeded = await seedDefaultUsersNow();
+      if (seeded) {
+        user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { email: { equals: normalized, mode: "insensitive" } },
+              { username: { equals: normalized, mode: "insensitive" } },
+            ],
+          },
+        });
+      }
+    }
 
     if (!user) throw new Error("Invalid credentials");
 
