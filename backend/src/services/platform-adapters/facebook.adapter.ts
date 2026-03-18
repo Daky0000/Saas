@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { UserIntegration } from "@prisma/client";
 import { logIntegrationEvent } from "../../utils/integration-log";
 
@@ -123,6 +123,9 @@ export class FacebookAdapter {
         }
       );
       const data = resp.data?.data || [];
+      if (!Array.isArray(data) || data.length === 0) {
+        return null;
+      }
       const sumMetric = (name: string) => {
         const metric = data.find((item: any) => item.name === name);
         return (metric?.values || []).reduce(
@@ -172,6 +175,9 @@ export class FacebookAdapter {
         }
       );
       const data = resp.data?.data || [];
+      if (!Array.isArray(data) || data.length === 0) {
+        return null;
+      }
       const sumMetric = (name: string) => {
         const metric = data.find((item: any) => item.name === name);
         return (metric?.values || []).reduce(
@@ -189,3 +195,4 @@ export class FacebookAdapter {
       return { error: error?.message || "Facebook post metrics failed" };
     }
   }\n}
+

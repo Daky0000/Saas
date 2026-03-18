@@ -186,10 +186,7 @@ export class IntegrationService {
 
     const accounts = await this.getAccountsFromProvider(slug, tokens.accessToken);
     if (!accounts.length) {
-      accounts.push({
-        accountId: `${slug}-${userId}`,
-        accountName: `${slug} account`,
-      });
+      throw new Error("No accounts returned from provider");
     }
 
     const results = [] as UserIntegration[];
@@ -467,11 +464,24 @@ export class IntegrationService {
   }
 
   static async getUserIntegrations(userId: string) {
-    return prisma.userIntegration.findMany({
+    const integrations = await prisma.userIntegration.findMany({
       where: { userId },
-      include: { integration: true },
+      include: {
+        integration: true,
+        posts: {
+          where: { postedAt: { not: null } },
+          orderBy: { postedAt: "desc" },
+          take: 1,
+          select: { postedAt: true },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
+
+    return integrations.map(({ posts, ...integration }) => ({
+      ...integration,
+      lastUsed: posts[0]?.postedAt ?? null,
+    }));
   }
 
   static async getAccounts(userIntegrationId: string) {
@@ -588,7 +598,7 @@ export class IntegrationService {
       const accounts = await InstagramAdapter.getAccounts(accessToken);
       return accounts.map((acc: any) => ({
         accountId: acc.id,
-        accountName: acc.username || acc.name || "Instagram",
+        accountName: acc.username || acc.name || acc.id,
       }));
     }
 
@@ -598,7 +608,7 @@ export class IntegrationService {
       return [
         {
           accountId: profile.id,
-          accountName: profile.name || profile.username || "Twitter",
+          accountName: profile.name || profile.username || profile.id,
           accountEmail: profile.email,
         },
       ];
@@ -610,7 +620,7 @@ export class IntegrationService {
       return [
         {
           accountId: profile.id,
-          accountName: profile.name || "LinkedIn",
+          accountName: profile.name || profile.id,
           accountEmail: profile.email,
         },
       ];
@@ -621,10 +631,12 @@ export class IntegrationService {
       if (!boards?.length) return [];
       return boards.map((board: any) => ({
         accountId: board.id,
-        accountName: board.name || "Pinterest",
+        accountName: board.name || board.id,
       }));
     }
 
     return [];
   }
 }
+
+

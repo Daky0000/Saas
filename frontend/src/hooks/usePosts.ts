@@ -26,6 +26,36 @@ export type Post = {
   analytics?: any;
 };
 
+export type PlatformSelection = {
+  id: string;
+  platform: string;
+  accountName?: string | null;
+};
+
+export type AvailableIntegrations = Record<
+  string,
+  Array<{
+    id: string;
+    accountName?: string | null;
+    accountId?: string | null;
+    status?: string | null;
+    lastUsed?: string | null;
+    isSelectedForPost?: boolean;
+  }>
+>;
+
+export type PostWithPlatformsResponse = {
+  post: Post;
+  selectedIntegrations: PlatformSelection[];
+  availableIntegrations: AvailableIntegrations;
+};
+
+export type RescheduleOption = {
+  time: string;
+  date: string;
+  score: number;
+};
+
 const getErrorMessage = (error: any) =>
   error?.response?.data?.error || error?.message || "Something went wrong";
 
@@ -71,6 +101,19 @@ export const usePosts = () => {
     [run]
   );
 
+  const createDraft = useCallback(
+    async (title: string, content: string) => {
+      const payload = { title, content, status: "DRAFT" };
+      const data = await run(async () => {
+        const response = await api.post<Post>("/posts", payload);
+        return response.data;
+      });
+      setPosts((prev) => [data, ...prev]);
+      return data;
+    },
+    [run]
+  );
+
   const getPosts = useCallback(
     async (filters?: { status?: string; limit?: number; offset?: number }) => {
       const data = await run(async () => {
@@ -106,6 +149,100 @@ export const usePosts = () => {
       setPosts((prev) =>
         prev.map((post) => (post.id === postId ? { ...post, ...data } : post))
       );
+      return data;
+    },
+    [run]
+  );
+
+  const getPostWithIntegrations = useCallback(
+    async (postId: string) => {
+      const data = await run(async () => {
+        const response = await api.get<PostWithPlatformsResponse>(
+          `/posts/${postId}/with-platforms`
+        );
+        return response.data;
+      });
+      return data;
+    },
+    [run]
+  );
+
+  const savePlatformSelection = useCallback(
+    async (postId: string, integrationIds: string[]) => {
+      const data = await run(async () => {
+        const response = await api.put(`/posts/${postId}/platform-selection`, {
+          integrationIds,
+        });
+        return response.data;
+      });
+      return data;
+    },
+    [run]
+  );
+
+  const updatePostWithIntegrations = useCallback(
+    async (
+      postId: string,
+      payload: {
+        title?: string;
+        content?: string;
+        selectedIntegrationIds?: string[];
+      }
+    ) => {
+      const data = await run(async () => {
+        const response = await api.put<Post>(`/posts/${postId}`, payload);
+        return response.data;
+      });
+      setPosts((prev) =>
+        prev.map((post) => (post.id === postId ? { ...post, ...data } : post))
+      );
+      return data;
+    },
+    [run]
+  );
+
+  const getAvailableIntegrationsForPost = useCallback(
+    async (postId: string) => {
+      const data = await run(async () => {
+        const response = await api.get<PostWithPlatformsResponse>(
+          `/posts/${postId}/with-platforms`
+        );
+        return response.data.availableIntegrations;
+      });
+      return data;
+    },
+    [run]
+  );
+
+  const reschedulePost = useCallback(
+    async (postId: string, newTime: Date) => {
+      const data = await run(async () => {
+        const response = await api.post(`/posts/${postId}/reschedule`, {
+          scheduledAt: newTime.toISOString(),
+        });
+        return response.data;
+      });
+      setPosts((prev) =>
+        prev.map((post) =>
+          post.id === postId
+            ? { ...post, status: "SCHEDULED", scheduledAt: newTime.toISOString() }
+            : post
+        )
+      );
+      return data;
+    },
+    [run]
+  );
+
+  const getRescheduleOptions = useCallback(
+    async (postId: string, daysAhead = 7) => {
+      const data = await run(async () => {
+        const response = await api.get<RescheduleOption[]>(
+          `/posts/${postId}/reschedule-options`,
+          { params: { daysAhead } }
+        );
+        return response.data;
+      });
       return data;
     },
     [run]
@@ -163,26 +300,6 @@ export const usePosts = () => {
     [run]
   );
 
-  const reschedulePost = useCallback(
-    async (postId: string, newTime: Date) => {
-      const data = await run(async () => {
-        const response = await api.post(`/posts/${postId}/schedule`, {
-          scheduledAt: newTime.toISOString(),
-        });
-        return response.data;
-      });
-      setPosts((prev) =>
-        prev.map((post) =>
-          post.id === postId
-            ? { ...post, status: "SCHEDULED", scheduledAt: newTime.toISOString() }
-            : post
-        )
-      );
-      return data;
-    },
-    [run]
-  );
-
   const deletePost = useCallback(
     async (postId: string) => {
       const data = await run(async () => {
@@ -200,16 +317,21 @@ export const usePosts = () => {
     loading,
     error,
     createPostWithIntegrations,
+    createDraft,
     getPosts,
     getPendingPosts,
     getPostedPosts,
     getFailedPosts,
     getPostStatus,
+    getPostWithIntegrations,
+    savePlatformSelection,
+    updatePostWithIntegrations,
+    getAvailableIntegrationsForPost,
+    reschedulePost,
+    getRescheduleOptions,
     postNow,
     cancelPost,
     retryPost,
-    reschedulePost,
     deletePost,
   };
 };
-

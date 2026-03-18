@@ -1,4 +1,4 @@
-import axios from "axios";
+
 import { PrismaClient, PostStatus } from "@prisma/client";
 import { logIntegrationEvent } from "../utils/integration-log";
 import { decryptToken } from "../utils/encryption";
@@ -106,8 +106,11 @@ const normalizeMetrics = (metrics: StandardMetrics) => {
   } as StandardMetrics;
 };
 
-const getPlatformMetricsFromAnalytics = (analytics: any, platform: string) => {
-  if (!analytics) return emptyMetrics();
+const getPlatformMetricsFromAnalytics = (
+  analytics: any,
+  platform: string
+): StandardMetrics | null => {
+  if (!analytics) return null;
   switch (platform) {
     case "instagram":
       return normalizeMetrics({
@@ -184,7 +187,7 @@ const getPlatformMetricsFromAnalytics = (analytics: any, platform: string) => {
         engagementRate: 0,
       });
     default:
-      return emptyMetrics();
+      return null;
   }
 };
 
@@ -222,7 +225,8 @@ export class AnalyticsService {
       orderBy: { date: "asc" },
     });
 
-    const cacheFresh = cached.length >= daysList.length &&
+    const cacheFresh =
+      cached.length >= daysList.length &&
       cached.every((row) => Date.now() - row.updatedAt.getTime() < 60 * 60 * 1000);
 
     if (!refresh && cacheFresh) {
@@ -231,6 +235,11 @@ export class AnalyticsService {
 
     const platform = integration.integration.slug;
     const metrics = await this.fetchMetricsFromApi(integration, range);
+
+    if (!metrics) {
+      return cached;
+    }
+
     await this.storeDailyMetrics(integration, platform, metrics, daysList);
 
     return prisma.platformDailyMetrics.findMany({
@@ -311,6 +320,10 @@ export class AnalyticsService {
       ? decryptToken(integration.accessToken)
       : "";
 
+    if (!accessToken) {
+      return null;
+    }
+
     try {
       switch (integration.integration.slug) {
         case "facebook":
@@ -346,7 +359,7 @@ export class AnalyticsService {
         case "tiktok":
           return await this.fetchTikTokMetrics(accessToken, integration.accountId, range);
         default:
-          return emptyMetrics();
+          return null;
       }
     } catch (error: any) {
       await logIntegrationEvent({
@@ -357,7 +370,7 @@ export class AnalyticsService {
         status: "failed",
         errorMessage: error?.message || "Analytics fetch failed",
       });
-      return emptyMetrics();
+      return null;
     }
   }
 
@@ -383,25 +396,9 @@ export class AnalyticsService {
 
     if (record) return record;
 
-    return prisma.platformDailyMetrics.create({
-      data: {
-        userIntegrationId,
-        agencyId: integration.user.agencyId,
-        userId: integration.userId,
-        date: day,
-        platform,
-        postsPublished: 0,
-        totalReach: 0,
-        totalImpressions: 0,
-        totalEngagement: 0,
-        totalLikes: 0,
-        totalComments: 0,
-        totalShares: 0,
-        totalSaves: 0,
-        engagementRate: 0,
-      },
-    });
+    return null;
   }
+
   static async aggregateMonthlyMetrics(
     userIntegrationId: string,
     year: number,
@@ -423,18 +420,22 @@ export class AnalyticsService {
       },
     });
 
+    if (!rows.length) return null;
+
     const totals = sumMetrics(
-      rows.map((row) => normalizeMetrics({
-        postsPublished: row.postsPublished,
-        totalReach: row.totalReach,
-        totalImpressions: row.totalImpressions,
-        totalEngagement: row.totalEngagement,
-        totalLikes: row.totalLikes,
-        totalComments: row.totalComments,
-        totalShares: row.totalShares,
-        totalSaves: row.totalSaves,
-        engagementRate: row.engagementRate,
-      }))
+      rows.map((row) =>
+        normalizeMetrics({
+          postsPublished: row.postsPublished,
+          totalReach: row.totalReach,
+          totalImpressions: row.totalImpressions,
+          totalEngagement: row.totalEngagement,
+          totalLikes: row.totalLikes,
+          totalComments: row.totalComments,
+          totalShares: row.totalShares,
+          totalSaves: row.totalSaves,
+          engagementRate: row.engagementRate,
+        })
+      )
     );
 
     const engagementRate = calcEngagementRate(
@@ -517,8 +518,13 @@ export class AnalyticsService {
       include: { integration: true },
     });
 
-    const platforms = [] as any[];
+    const platforms = [] as Array<{
+      platform: string;
+      accountName?: string | null;
+      metrics: StandardMetrics | null;
+    }>;
     const combinedMetrics = emptyMetrics();
+    let hasData = false;
 
     for (const integration of integrations) {
       const dailyMetrics = await prisma.platformDailyMetrics.findMany({
@@ -528,28 +534,39 @@ export class AnalyticsService {
         },
       });
 
+      if (!dailyMetrics.length) {
+        platforms.push({
+          platform: integration.integration.slug,
+          accountName: integration.accountName,
+          metrics: null,
+        });
+        continue;
+      }
+
       const totals = sumMetrics(
-        dailyMetrics.map((row) => normalizeMetrics({
-          postsPublished: row.postsPublished,
-          totalReach: row.totalReach,
-          totalImpressions: row.totalImpressions,
-          totalEngagement: row.totalEngagement,
-          totalLikes: row.totalLikes,
-          totalComments: row.totalComments,
-          totalShares: row.totalShares,
-          totalSaves: row.totalSaves,
-          engagementRate: row.engagementRate,
-        }))
+        dailyMetrics.map((row) =>
+          normalizeMetrics({
+            postsPublished: row.postsPublished,
+            totalReach: row.totalReach,
+            totalImpressions: row.totalImpressions,
+            totalEngagement: row.totalEngagement,
+            totalLikes: row.totalLikes,
+            totalComments: row.totalComments,
+            totalShares: row.totalShares,
+            totalSaves: row.totalSaves,
+            engagementRate: row.engagementRate,
+          })
+        )
       );
 
       const normalized = normalizeMetrics(totals);
-
       platforms.push({
         platform: integration.integration.slug,
         accountName: integration.accountName,
         metrics: normalized,
       });
 
+      hasData = true;
       combinedMetrics.postsPublished += normalized.postsPublished;
       combinedMetrics.totalReach += normalized.totalReach;
       combinedMetrics.totalImpressions += normalized.totalImpressions;
@@ -558,6 +575,23 @@ export class AnalyticsService {
       combinedMetrics.totalComments += normalized.totalComments;
       combinedMetrics.totalShares += normalized.totalShares;
       combinedMetrics.totalSaves += normalized.totalSaves;
+    }
+
+    if (!hasData) {
+      return {
+        dateRange: range,
+        platforms,
+        combined: null as StandardMetrics | null,
+        trends: null as
+          | Array<{
+              date: string;
+              totalEngagement: number;
+              totalReach: number;
+              totalImpressions?: number;
+            }>
+          | null,
+        topPlatforms: [],
+      };
     }
 
     combinedMetrics.engagementRate = calcEngagementRate(
@@ -569,48 +603,59 @@ export class AnalyticsService {
       where: { agencyId, date: { gte: range.start, lte: range.end } },
     });
 
-    const trends = Array.from(
-      new Map(
-        allDaily.map((row) => {
-          const dateKey = new Date(row.date).toISOString().split("T")[0];
-          return [dateKey, row];
-        })
-      ).keys()
-    ).map((dateKey) => {
-      const rows = allDaily.filter(
-        (row) => new Date(row.date).toISOString().split("T")[0] === dateKey
-      );
-      const dayTotals = sumMetrics(
-        rows.map((row) => normalizeMetrics({
-          postsPublished: row.postsPublished,
-          totalReach: row.totalReach,
-          totalImpressions: row.totalImpressions,
-          totalEngagement: row.totalEngagement,
-          totalLikes: row.totalLikes,
-          totalComments: row.totalComments,
-          totalShares: row.totalShares,
-          totalSaves: row.totalSaves,
-          engagementRate: row.engagementRate,
-        }))
-      );
-      return {
-        date: dateKey,
-        totalEngagement: dayTotals.totalEngagement,
-        totalReach: dayTotals.totalReach,
-        totalImpressions: dayTotals.totalImpressions,
-      };
-    });
+    let trends:
+      | Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }>
+      | null = null;
 
-    trends.sort((a, b) => (a.date > b.date ? 1 : -1));
+    if (allDaily.length) {
+      trends = Array.from(
+        new Map(
+          allDaily.map((row) => {
+            const dateKey = new Date(row.date).toISOString().split("T")[0];
+            return [dateKey, row];
+          })
+        ).keys()
+      ).map((dateKey) => {
+        const rows = allDaily.filter(
+          (row) => new Date(row.date).toISOString().split("T")[0] === dateKey
+        );
+        const dayTotals = sumMetrics(
+          rows.map((row) =>
+            normalizeMetrics({
+              postsPublished: row.postsPublished,
+              totalReach: row.totalReach,
+              totalImpressions: row.totalImpressions,
+              totalEngagement: row.totalEngagement,
+              totalLikes: row.totalLikes,
+              totalComments: row.totalComments,
+              totalShares: row.totalShares,
+              totalSaves: row.totalSaves,
+              engagementRate: row.engagementRate,
+            })
+          )
+        );
+        return {
+          date: dateKey,
+          totalEngagement: dayTotals.totalEngagement,
+          totalReach: dayTotals.totalReach,
+          totalImpressions: dayTotals.totalImpressions,
+        };
+      });
+
+      trends.sort((a, b) => (a.date > b.date ? 1 : -1));
+    }
 
     const topPlatforms = [...platforms]
+      .filter((item) => item.metrics)
       .sort(
-        (a, b) => b.metrics.totalEngagement - a.metrics.totalEngagement
+        (a, b) =>
+          (b.metrics?.totalEngagement || 0) -
+          (a.metrics?.totalEngagement || 0)
       )
       .slice(0, 5)
       .map((item) => ({
         platform: item.platform,
-        engagement: item.metrics.totalEngagement,
+        engagement: item.metrics?.totalEngagement || 0,
       }));
 
     return {
@@ -621,10 +666,14 @@ export class AnalyticsService {
         totalReach: combinedMetrics.totalReach,
         totalImpressions: combinedMetrics.totalImpressions,
         totalEngagement: combinedMetrics.totalEngagement,
+        totalLikes: combinedMetrics.totalLikes,
+        totalComments: combinedMetrics.totalComments,
+        totalShares: combinedMetrics.totalShares,
+        totalSaves: combinedMetrics.totalSaves,
         engagementRate: combinedMetrics.engagementRate,
-        topPlatforms,
-        trends,
       },
+      trends,
+      topPlatforms,
     };
   }
 
@@ -644,18 +693,22 @@ export class AnalyticsService {
       orderBy: { date: "asc" },
     });
 
+    if (!dailyMetrics.length) return null;
+
     const totals = sumMetrics(
-      dailyMetrics.map((row) => normalizeMetrics({
-        postsPublished: row.postsPublished,
-        totalReach: row.totalReach,
-        totalImpressions: row.totalImpressions,
-        totalEngagement: row.totalEngagement,
-        totalLikes: row.totalLikes,
-        totalComments: row.totalComments,
-        totalShares: row.totalShares,
-        totalSaves: row.totalSaves,
-        engagementRate: row.engagementRate,
-      }))
+      dailyMetrics.map((row) =>
+        normalizeMetrics({
+          postsPublished: row.postsPublished,
+          totalReach: row.totalReach,
+          totalImpressions: row.totalImpressions,
+          totalEngagement: row.totalEngagement,
+          totalLikes: row.totalLikes,
+          totalComments: row.totalComments,
+          totalShares: row.totalShares,
+          totalSaves: row.totalSaves,
+          engagementRate: row.engagementRate,
+        })
+      )
     );
 
     return {
@@ -694,28 +747,44 @@ export class AnalyticsService {
         platform,
         status: integration.status,
         platformPostId: integration.platformPostId,
-        metrics: {
-          likes: metrics.totalLikes,
-          comments: metrics.totalComments,
-          shares: metrics.totalShares,
-          reach: metrics.totalReach,
-          impressions: metrics.totalImpressions,
-        },
+        metrics: metrics
+          ? {
+              likes: metrics.totalLikes,
+              comments: metrics.totalComments,
+              shares: metrics.totalShares,
+              reach: metrics.totalReach,
+              impressions: metrics.totalImpressions,
+            }
+          : null,
       };
     });
 
+    const metricsList = platforms
+      .map((item) => item.metrics)
+      .filter((item): item is NonNullable<typeof item> => !!item);
+
+    if (!metricsList.length) {
+      return {
+        post: { id: post.id, title: post.title, content: post.content },
+        platforms,
+        combined: null,
+      };
+    }
+
     const combined = sumMetrics(
-      platforms.map((item) => normalizeMetrics({
-        postsPublished: 1,
-        totalReach: item.metrics.reach,
-        totalImpressions: item.metrics.impressions,
-        totalEngagement: item.metrics.likes + item.metrics.comments + item.metrics.shares,
-        totalLikes: item.metrics.likes,
-        totalComments: item.metrics.comments,
-        totalShares: item.metrics.shares,
-        totalSaves: 0,
-        engagementRate: 0,
-      }))
+      metricsList.map((item) =>
+        normalizeMetrics({
+          postsPublished: 1,
+          totalReach: item.reach,
+          totalImpressions: item.impressions,
+          totalEngagement: item.likes + item.comments + item.shares,
+          totalLikes: item.likes,
+          totalComments: item.comments,
+          totalShares: item.shares,
+          totalSaves: 0,
+          engagementRate: 0,
+        })
+      )
     );
 
     return {
@@ -766,7 +835,7 @@ export class AnalyticsService {
       where: {
         agencyId,
         createdById: userId,
-        status: { in: [PostStatus.POSTED, PostStatus.FAILED] },
+        status: PostStatus.POSTED,
         createdAt: { gte: range.start, lte: range.end },
       },
       include: {
@@ -782,26 +851,29 @@ export class AnalyticsService {
       const platforms = post.platformIntegrations.map(
         (integration) => integration.userIntegration.integration.slug
       );
-      const metrics = sumMetrics(
-        platforms.map((platform) =>
-          getPlatformMetricsFromAnalytics(post.analytics, platform)
-        )
-      );
-      const normalized = normalizeMetrics(metrics);
+      const metricsList = post.analytics
+        ? platforms
+            .map((platform) => getPlatformMetricsFromAnalytics(post.analytics, platform))
+            .filter((item): item is StandardMetrics => !!item)
+        : [];
+
+      const metrics = metricsList.length ? sumMetrics(metricsList) : null;
+      const normalized = metrics ? normalizeMetrics(metrics) : null;
+
       return {
         id: post.id,
         title: post.title,
         platforms,
-        engagement: normalized.totalEngagement,
-        reach: normalized.totalReach,
-        impressions: normalized.totalImpressions,
+        engagement: normalized ? normalized.totalEngagement : null,
+        reach: normalized ? normalized.totalReach : null,
+        impressions: normalized ? normalized.totalImpressions : null,
         postedAt: post.postedAt || post.createdAt,
-        engagementRate: normalized.engagementRate,
+        engagementRate: normalized ? normalized.engagementRate : null,
       };
     });
 
     return rows
-      .sort((a, b) => b.engagement - a.engagement)
+      .sort((a, b) => (b.engagement ?? -1) - (a.engagement ?? -1))
       .slice(0, limit);
   }
 
@@ -810,6 +882,8 @@ export class AnalyticsService {
     const rows = await prisma.platformDailyMetrics.findMany({
       where: { agencyId, date: { gte: range.start, lte: range.end } },
     });
+
+    if (!rows.length) return [];
 
     const grouped = new Map<string, StandardMetrics>();
     rows.forEach((row) => {
@@ -845,42 +919,14 @@ export class AnalyticsService {
     pageId: string,
     dateRange: DateRange
   ) {
-    if (!accessToken || !pageId) return emptyMetrics();
+    if (!accessToken || !pageId) return null;
     try {
       const resp = await FacebookAdapter.getPageMetrics(
         pageId,
         accessToken,
         dateRange
       );
-      return normalizeMetrics({
-        postsPublished: 0,
-        totalReach: resp.reach || 0,
-        totalImpressions: resp.impressions || 0,
-        totalEngagement: resp.engagement || 0,
-        totalLikes: resp.likes || 0,
-        totalComments: resp.comments || 0,
-        totalShares: resp.shares || 0,
-        totalSaves: resp.saves || 0,
-        engagementRate: 0,
-        rawData: resp.raw,
-      });
-    } catch (error) {
-      return emptyMetrics();
-    }
-  }
-
-  static async fetchInstagramMetrics(
-    accessToken: string,
-    accountId: string,
-    dateRange: DateRange
-  ) {
-    if (!accessToken || !accountId) return emptyMetrics();
-    try {
-      const resp = await InstagramAdapter.getAccountMetrics(
-        accountId,
-        accessToken,
-        dateRange
-      );
+      if (!resp || resp.error) return null;
       return normalizeMetrics({
         postsPublished: 0,
         totalReach: resp.reach || 0,
@@ -894,7 +940,37 @@ export class AnalyticsService {
         rawData: resp.raw,
       });
     } catch {
-      return emptyMetrics();
+      return null;
+    }
+  }
+
+  static async fetchInstagramMetrics(
+    accessToken: string,
+    accountId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !accountId) return null;
+    try {
+      const resp = await InstagramAdapter.getAccountMetrics(
+        accountId,
+        accessToken,
+        dateRange
+      );
+      if (!resp || resp.error) return null;
+      return normalizeMetrics({
+        postsPublished: 0,
+        totalReach: resp.reach || 0,
+        totalImpressions: resp.impressions || 0,
+        totalEngagement: resp.engagement || 0,
+        totalLikes: resp.likes || 0,
+        totalComments: resp.comments || 0,
+        totalShares: resp.shares || 0,
+        totalSaves: resp.saves || 0,
+        engagementRate: 0,
+        rawData: resp.raw,
+      });
+    } catch {
+      return null;
     }
   }
 
@@ -903,13 +979,14 @@ export class AnalyticsService {
     userId: string,
     dateRange: DateRange
   ) {
-    if (!accessToken || !userId) return emptyMetrics();
+    if (!accessToken || !userId) return null;
     try {
       const resp = await TwitterAdapter.getUserMetrics(
         userId,
         accessToken,
         dateRange
       );
+      if (!resp || resp.error) return null;
       return normalizeMetrics({
         postsPublished: resp.posts || 0,
         totalReach: resp.impressions || 0,
@@ -923,7 +1000,7 @@ export class AnalyticsService {
         rawData: resp.raw,
       });
     } catch {
-      return emptyMetrics();
+      return null;
     }
   }
 
@@ -932,13 +1009,14 @@ export class AnalyticsService {
     organizationId: string,
     dateRange: DateRange
   ) {
-    if (!accessToken || !organizationId) return emptyMetrics();
+    if (!accessToken || !organizationId) return null;
     try {
       const resp = await LinkedInAdapter.getOrganizationMetrics(
         organizationId,
         accessToken,
         dateRange
       );
+      if (!resp || resp.error) return null;
       return normalizeMetrics({
         postsPublished: resp.posts || 0,
         totalReach: resp.reach || 0,
@@ -952,7 +1030,7 @@ export class AnalyticsService {
         rawData: resp.raw,
       });
     } catch {
-      return emptyMetrics();
+      return null;
     }
   }
 
@@ -961,7 +1039,7 @@ export class AnalyticsService {
     _businessAccountId: string,
     _dateRange: DateRange
   ) {
-    return emptyMetrics();
+    return null;
   }
 
   static async fetchPinterestMetrics(
@@ -969,13 +1047,14 @@ export class AnalyticsService {
     boardId: string,
     dateRange: DateRange
   ) {
-    if (!accessToken || !boardId) return emptyMetrics();
+    if (!accessToken || !boardId) return null;
     try {
       const resp = await PinterestAdapter.getBoardMetrics(
         boardId,
         accessToken,
         dateRange
       );
+      if (!resp || resp.error) return null;
       return normalizeMetrics({
         postsPublished: resp.posts || 0,
         totalReach: resp.reach || 0,
@@ -989,17 +1068,10 @@ export class AnalyticsService {
         rawData: resp.raw,
       });
     } catch {
-      return emptyMetrics();
+      return null;
     }
   }
 }
-
-
-
-
-
-
-
 
 
 

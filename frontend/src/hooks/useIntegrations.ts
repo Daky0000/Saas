@@ -1,4 +1,4 @@
-﻿import { useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import api from "../utils/api";
 
 export type Integration = {
@@ -17,6 +17,7 @@ export type UserIntegration = {
   accountEmail?: string | null;
   status?: string | null;
   tokenExpiry?: string | null;
+  lastUsed?: string | null;
   createdAt?: string;
   integration?: Integration;
 };
@@ -173,3 +174,4 @@ export const useIntegrations = () => {
     getLogs,
   };
 };
+

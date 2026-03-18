@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { PlatformSelector } from "../components/Posts/PlatformSelector";
+import { RescheduleDialog } from "../components/Posts/RescheduleDialog";
 import { ScheduleSelector } from "../components/Posts/ScheduleSelector";
 import { PostPreview } from "../components/Posts/PostPreview";
 import { AutomationTab } from "../components/Posts/AutomationTab";
@@ -41,13 +43,13 @@ const looksLikeUrl = (value?: string | null) =>
   !!value && (value.startsWith("http://") || value.startsWith("https://"));
 
 export const PostsPage: React.FC = () => {
+  const navigate = useNavigate();
   const { myIntegrations, getMyIntegrations } = useIntegrations();
   const {
     createPostWithIntegrations,
     getPosts,
     postNow,
     retryPost,
-    reschedulePost,
     cancelPost,
     deletePost,
   } = usePosts();
@@ -72,7 +74,6 @@ export const PostsPage: React.FC = () => {
     message: string;
   } | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<Post | null>(null);
-  const [rescheduleDate, setRescheduleDate] = useState<Date | null>(null);
   const [detailPost, setDetailPost] = useState<Post | null>(null);
 
   const selectedIntegrationRecords = useMemo(
@@ -163,27 +164,7 @@ export const PostsPage: React.FC = () => {
         message: err?.response?.data?.error || "Failed to create post",
       });
     }
-  };
-
-  const handleReschedule = async () => {
-    if (!rescheduleTarget) return;
-    try {
-      if (!rescheduleDate) {
-        await postNow(rescheduleTarget.id);
-      } else {
-        await reschedulePost(rescheduleTarget.id, rescheduleDate);
-      }
-      setRescheduleTarget(null);
-      setRescheduleDate(null);
-      refreshAll();
-    } catch (err: any) {
-      setToast({
-        type: "error",
-        message: err?.response?.data?.error || "Reschedule failed",
-      });
-    }
-  };
-
+  };\n
   const handleCancel = async (postId: string) => {
     if (!confirm("Cancel the scheduled post?")) return;
     try {
@@ -227,6 +208,13 @@ export const PostsPage: React.FC = () => {
               Create, schedule, and track multi-platform publishing.
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => navigate("/posts/new")}
+            className="rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
+          >
+            New Post
+          </button>
         </div>
 
         {toast && (
@@ -371,11 +359,15 @@ export const PostsPage: React.FC = () => {
                       <div className="flex gap-2">
                         <button
                           type="button"
+                          onClick={() => navigate(`/posts/${post.id}`)}
+                          className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             setRescheduleTarget(post);
-                            setRescheduleDate(
-                              post.scheduledAt ? new Date(post.scheduledAt) : null
-                            );
                           }}
                           className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
                         >
@@ -417,6 +409,13 @@ export const PostsPage: React.FC = () => {
                       <div className="flex gap-2">
                         <button
                           type="button"
+                          onClick={() => navigate(`/posts/${post.id}`)}
+                          className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => postNow(post.id).then(refreshAll)}
                           className="rounded-lg bg-indigo-500 px-3 py-2 text-xs text-white"
                         >
@@ -426,7 +425,6 @@ export const PostsPage: React.FC = () => {
                           type="button"
                           onClick={() => {
                             setRescheduleTarget(post);
-                            setRescheduleDate(null);
                           }}
                           className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
                         >
@@ -603,29 +601,25 @@ export const PostsPage: React.FC = () => {
         )}
       </div>
 
-      <Modal
+      <RescheduleDialog
         open={!!rescheduleTarget}
-        title="Reschedule Post"
-        size="md"
-        onClose={() => {
+        postId={rescheduleTarget?.id ?? null}
+        postTitle={rescheduleTarget?.title}
+        currentScheduledAt={rescheduleTarget?.scheduledAt ?? null}
+        platforms={
+          rescheduleTarget?.platformStatuses?.map((status) => ({
+            id: `${status.platform}-${status.accountName}`,
+            platform: status.platform,
+            accountName: status.accountName,
+          })) || []
+        }
+        onClose={() => setRescheduleTarget(null)}
+        onRescheduled={() => {
           setRescheduleTarget(null);
-          setRescheduleDate(null);
+          setToast({ type: "success", message: "Post rescheduled" });
+          refreshAll();
         }}
-      >
-        <ScheduleSelector
-          scheduledAt={rescheduleDate}
-          onChange={setRescheduleDate}
-        />
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={handleReschedule}
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-xs text-white"
-          >
-            Save
-          </button>
-        </div>
-      </Modal>
+      />
 
       <Modal
         open={!!detailPost}
@@ -667,6 +661,18 @@ export const PostsPage: React.FC = () => {
     </div>
   );
 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

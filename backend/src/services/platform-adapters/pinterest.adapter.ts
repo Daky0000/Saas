@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { UserIntegration } from "@prisma/client";
 import { logIntegrationEvent } from "../../utils/integration-log";
 
@@ -65,27 +65,10 @@ export class PinterestAdapter {
     }
   }
   static async getBoardMetrics(
-    boardId: string,
-    accessToken: string,
+    _boardId: string,
+    _accessToken: string,
     _dateRange: { start: Date; end: Date }
   ) {
-    try {
-      const resp = await axios.get(
-        `https://api.pinterest.com/v5/boards/${boardId}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      return {
-        posts: 0,
-        impressions: 0,
-        reach: 0,
-        engagement: 0,
-        likes: 0,
-        comments: 0,
-        shares: 0,
-        saves: 0,
-        raw: resp.data,
-      };
-    } catch (error: any) {
-      return { error: error?.message || "Pinterest metrics failed" };
-    }
+    return null;
   }\n}
+

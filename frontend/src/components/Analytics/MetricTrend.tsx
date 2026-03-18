@@ -1,8 +1,8 @@
-ï»¿import React from "react";
+import React from "react";
 
 type Props = {
-  value: number;
-  percentageChange: number;
+  value?: number | null;
+  percentageChange?: number | null;
   label: string;
 };
 
@@ -11,13 +11,20 @@ export const MetricTrend: React.FC<Props> = ({
   percentageChange,
   label,
 }) => {
+  const hasValue = value !== null && value !== undefined;
+  const hasTrend = percentageChange !== null && percentageChange !== undefined;
   const color =
-    percentageChange > 0
+    percentageChange && percentageChange > 0
       ? "text-emerald-300"
-      : percentageChange < 0
+      : percentageChange && percentageChange < 0
         ? "text-red-300"
         : "text-slate-400";
-  const symbol = percentageChange > 0 ? "â†‘" : percentageChange < 0 ? "â†“" : "â€“";
+  const symbol =
+    percentageChange && percentageChange > 0
+      ? "¡ü"
+      : percentageChange && percentageChange < 0
+        ? "¡ý"
+        : "¨C";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
@@ -25,12 +32,20 @@ export const MetricTrend: React.FC<Props> = ({
         {label}
       </p>
       <div className="mt-2 flex items-end justify-between">
-        <p className="text-xl font-semibold text-slate-100">
-          {value.toLocaleString()}
-        </p>
-        <span className={`text-xs font-semibold ${color}`}>
-          {symbol} {percentageChange.toFixed(1)}%
-        </span>
+        {hasValue ? (
+          <p className="text-xl font-semibold text-slate-100">
+            {Number(value).toLocaleString()}
+          </p>
+        ) : (
+          <p className="text-sm font-semibold text-slate-500">N/A</p>
+        )}
+        {hasTrend ? (
+          <span className={`text-xs font-semibold ${color}`}>
+            {symbol} {Number(percentageChange).toFixed(1)}%
+          </span>
+        ) : (
+          <span className="text-xs text-slate-500">N/A</span>
+        )}
       </div>
     </div>
   );
