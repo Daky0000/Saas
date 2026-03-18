@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus,
   Search,
@@ -16,8 +16,10 @@ import {
   Sparkles,
   CheckCircle2,
   XCircle,
+  ChevronDown,
 } from 'lucide-react';
 import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, type BlogTag } from '../services/blogService';
+import { socialPostService, type SocialAccount } from '../services/socialPostService';
 import type { AppUser } from '../utils/userSession';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import RichTextEditor from '../components/RichTextEditor';
@@ -33,6 +35,26 @@ const STATUS_BADGE: Record<string, string> = {
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return '-';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function toLocalInputValue(iso: string | null | undefined) {
+  if (!iso) return '';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '';
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
+function toIsoFromLocal(value: string) {
+  if (!value) return null;
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toISOString();
+}
+
+function formatPlatformName(value: string) {
+  if (!value) return '';
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function slugify(input: string) {
@@ -296,7 +318,6 @@ function CategoriesTab({ categories, onChange }: { categories: BlogCategory[]; o
     await blogService.deleteCategory(id);
     onChange();
   };
-
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -344,8 +365,7 @@ function CategoriesTab({ categories, onChange }: { categories: BlogCategory[]; o
             ))
           )}
         </div>
-      </div>
-    </div>
+      </div></div>
   );
 }
 
@@ -371,7 +391,6 @@ function TagsTab({ tags, onChange }: { tags: BlogTag[]; onChange: () => void }) 
     await blogService.deleteTag(id);
     onChange();
   };
-
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -412,8 +431,7 @@ function TagsTab({ tags, onChange }: { tags: BlogTag[]; onChange: () => void }) 
             ))
           )}
         </div>
-      </div>
-    </div>
+      </div></div>
   );
 }
 
@@ -447,7 +465,6 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
     const copy = await blogService.duplicatePost(id);
     setPosts((p) => [copy, ...p]);
   };
-
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -522,8 +539,7 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </div></div>
   );
 }
 
@@ -566,6 +582,19 @@ function PostEditor({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [socialSelectedIds, setSocialSelectedIds] = useState<string[]>([]);
+  const [socialPublishType, setSocialPublishType] = useState<'immediate' | 'scheduled'>('immediate');
+  const [socialScheduledAt, setSocialScheduledAt] = useState('');
+  const [socialAccountsLoading, setSocialAccountsLoading] = useState(false);
+  const [socialSettingsLoading, setSocialSettingsLoading] = useState(false);
+  const [socialSaving, setSocialSaving] = useState(false);
+  const [socialError, setSocialError] = useState<string | null>(null);
+  const [rescheduleMenuOpen, setRescheduleMenuOpen] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleDraft, setRescheduleDraft] = useState('');
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
+
   useEffect(() => {
     if (!postId) return;
     setLoading(true);
@@ -591,6 +620,55 @@ function PostEditor({
       })
       .catch(() => setError('Failed to load post'))
       .finally(() => setLoading(false));
+  }, [postId]);
+
+  const loadSocialAccounts = useCallback(async () => {
+    setSocialAccountsLoading(true);
+    setSocialError(null);
+    try {
+      const accounts = await socialPostService.listAccounts();
+      setSocialAccounts(accounts);
+    } catch (e) {
+      setSocialError(e instanceof Error ? e.message : 'Failed to load social accounts');
+    } finally {
+      setSocialAccountsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSocialAccounts();
+  }, [loadSocialAccounts]);
+
+  useEffect(() => {
+    if (!postId) {
+      setSocialSelectedIds([]);
+      setSocialPublishType('immediate');
+      setSocialScheduledAt('');
+      return;
+    }
+
+    setSocialSettingsLoading(true);
+    setSocialError(null);
+    socialPostService
+      .getSettings(postId)
+      .then((settings) => {
+        if (!settings) {
+          setSocialSelectedIds([]);
+          setSocialPublishType('immediate');
+          setSocialScheduledAt('');
+          return;
+        }
+        const selected = settings.accounts?.filter((acc) => acc.enabled).map((acc) => acc.social_account_id) ?? [];
+        setSocialSelectedIds(selected);
+        setSocialPublishType(settings.publish_type === 'scheduled' ? 'scheduled' : 'immediate');
+        setSocialScheduledAt(toLocalInputValue(settings.scheduled_at));
+      })
+      .catch((e) => {
+        setSocialError(e instanceof Error ? e.message : 'Failed to load social settings');
+      })
+      .finally(() => {
+        setSocialSettingsLoading(false);
+      });
   }, [postId]);
 
   const toggleTag = (id: string) => {
@@ -631,6 +709,134 @@ function PostEditor({
     setAutomationSettings((prev) => ({ ...prev, ...patch }));
   };
 
+  const timezoneLabel = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
+    } catch {
+      return 'Local';
+    }
+  }, []);
+
+  const isSocialLoading = socialAccountsLoading || socialSettingsLoading;
+
+  const groupedAccounts = useMemo(() => {
+    const groups: Record<string, SocialAccount[]> = {};
+    socialAccounts.forEach((account) => {
+      const key = (account.platform || 'other').toLowerCase();
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(account);
+    });
+    return groups;
+  }, [socialAccounts]);
+
+  const selectedAccounts = useMemo(
+    () => socialAccounts.filter((account) => socialSelectedIds.includes(account.id)),
+    [socialAccounts, socialSelectedIds]
+  );
+
+  const persistSocialSettings = useCallback(
+    async (overrides?: { selectedIds?: string[]; publishType?: 'immediate' | 'scheduled'; scheduledAt?: string }) => {
+      if (!postId) return;
+      const publishType = overrides?.publishType ?? socialPublishType;
+      const selectedIds = overrides?.selectedIds ?? socialSelectedIds;
+      const scheduledAtValue = overrides?.scheduledAt ?? socialScheduledAt;
+
+      if (publishType !== 'immediate') {
+        if (!scheduledAtValue) {
+          setSocialError('Select a schedule time before rescheduling.');
+          return;
+        }
+        const when = new Date(scheduledAtValue);
+        if (Number.isNaN(when.getTime()) || when <= new Date()) {
+          setSocialError('Reschedule time must be in the future.');
+          return;
+        }
+      }
+
+      setSocialSaving(true);
+      setSocialError(null);
+      try {
+        await socialPostService.saveSettings(postId, {
+          template: content,
+          publish_type: publishType,
+          scheduled_at: publishType === 'immediate' ? null : toIsoFromLocal(scheduledAtValue),
+          accounts: selectedIds,
+        });
+      } catch (e) {
+        setSocialError(e instanceof Error ? e.message : 'Failed to save social settings');
+      } finally {
+        setSocialSaving(false);
+      }
+    },
+    [postId, socialPublishType, socialSelectedIds, socialScheduledAt, content]
+  );
+
+  const toggleSocialAccount = (accountId: string) => {
+    const next = socialSelectedIds.includes(accountId)
+      ? socialSelectedIds.filter((id) => id !== accountId)
+      : [...socialSelectedIds, accountId];
+    setSocialSelectedIds(next);
+    if (postId) {
+      void persistSocialSettings({ selectedIds: next });
+    }
+  };
+
+  const handleScheduleModeChange = (nextMode: 'immediate' | 'scheduled') => {
+    setSocialPublishType(nextMode);
+    if (nextMode === 'immediate') {
+      setSocialScheduledAt('');
+      if (postId) {
+        void persistSocialSettings({ publishType: 'immediate', scheduledAt: '' });
+      }
+    }
+  };
+
+  const handleScheduleAtChange = (value: string) => {
+    setSocialScheduledAt(value);
+    if (postId && socialPublishType === 'scheduled' && value) {
+      void persistSocialSettings({ scheduledAt: value });
+    }
+  };
+
+  const openRescheduleDialog = () => {
+    setRescheduleDraft(socialScheduledAt || '');
+    setRescheduleOpen(true);
+    setRescheduleMenuOpen(false);
+  };
+
+  const handleRescheduleConfirm = async () => {
+    if (!rescheduleDraft) {
+      setSocialError('Select a new schedule time.');
+      return;
+    }
+    const nextTime = new Date(rescheduleDraft);
+    if (Number.isNaN(nextTime.getTime()) || nextTime <= new Date()) {
+      setSocialError('Reschedule time must be in the future.');
+      return;
+    }
+
+    setRescheduleSaving(true);
+    try {
+      await persistSocialSettings({ publishType: 'scheduled', scheduledAt: rescheduleDraft });
+      setSocialPublishType('scheduled');
+      setSocialScheduledAt(rescheduleDraft);
+      setRescheduleOpen(false);
+    } finally {
+      setRescheduleSaving(false);
+    }
+  };
+
+  const handleArchivePost = async () => {
+    if (!postId) return;
+    if (!confirm('Archive this post?')) return;
+    try {
+      const saved = await blogService.updatePost(postId, { status: 'draft' });
+      onSaved(saved);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to archive');
+    }
+  };
+
   const seo = useMemo(
     () =>
       buildSeoAnalysis({
@@ -652,6 +858,11 @@ function PostEditor({
     setSaving(true);
     setError(null);
     try {
+      if (nextStatus === 'published' && socialAccounts.length > 0 && socialSelectedIds.length === 0) {
+        setError('Select at least one platform to publish.');
+        return;
+      }
+
       const finalStatus = nextStatus ?? status;
       const payload: BlogPostPayload = {
         title,
@@ -668,7 +879,28 @@ function PostEditor({
         focus_keyword: focusKeywords.join(', '),
         social_automation: automationSettings,
       };
+
       const saved = postId ? await blogService.updatePost(postId, payload) : await blogService.createPost(payload);
+
+      const shouldPersistSocial = socialSelectedIds.length > 0 || socialPublishType !== 'immediate';
+      if (shouldPersistSocial) {
+        const scheduleIso = socialPublishType === 'immediate' ? null : toIsoFromLocal(socialScheduledAt);
+        if (socialPublishType !== 'immediate' && !scheduleIso) {
+          setSocialError('Select a schedule time for social posting.');
+        } else {
+          try {
+            await socialPostService.saveSettings(saved.id, {
+              template: content,
+              publish_type: socialPublishType,
+              scheduled_at: scheduleIso,
+              accounts: socialSelectedIds,
+            });
+          } catch (e) {
+            setSocialError(e instanceof Error ? e.message : 'Failed to save social settings');
+          }
+        }
+      }
+
       onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save');
@@ -677,7 +909,7 @@ function PostEditor({
     }
   };
 
-    return (
+  return (
     <div className={loading ? 'opacity-60 pointer-events-none' : ''}>
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -688,7 +920,7 @@ function PostEditor({
           <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">{postId ? 'Edit Post' : 'Create Post'}</h2>
           <p className="mt-1 text-sm text-slate-500">Write, optimize, and automate your post in one place.</p>
         </div>
-        <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => void save('draft')}
@@ -698,10 +930,57 @@ function PostEditor({
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
             Save draft
           </button>
+
+          {postId ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setRescheduleMenuOpen((prev) => !prev)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 hover:bg-slate-50"
+              >
+                Reschedule
+                <ChevronDown size={14} className={rescheduleMenuOpen ? 'rotate-180' : ''} />
+              </button>
+              {rescheduleMenuOpen ? (
+                <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-xl z-20">
+                  <button
+                    type="button"
+                    onClick={openRescheduleDialog}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50"
+                  >
+                    Reschedule Post
+                  </button>
+                  <div className="h-px bg-slate-100" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRescheduleMenuOpen(false);
+                      alert('Schedule history is coming soon.');
+                    }}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50"
+                  >
+                    View Schedule History
+                  </button>
+                  <div className="h-px bg-slate-100" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRescheduleMenuOpen(false);
+                      void handleArchivePost();
+                    }}
+                    className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                  >
+                    Archive Post
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <button
             type="button"
             onClick={() => void save('published')}
-            disabled={saving}
+            disabled={saving || (socialAccounts.length > 0 && socialSelectedIds.length === 0)}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
@@ -909,8 +1188,113 @@ function PostEditor({
                 </button>
               </div>
 
-              {sidebarTab === 'post' ? (
+                            {sidebarTab === 'post' ? (
                 <div className="pt-4 space-y-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Post To</div>
+                      {isSocialLoading ? <Loader2 size={14} className="animate-spin text-slate-400" /> : null}
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">Select platforms to post to.</p>
+
+                    {socialAccounts.length === 0 ? (
+                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+                        No platforms connected yet.
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-3">
+                        {Object.entries(groupedAccounts).map(([platform, accounts]) => (
+                          <div key={platform} className="space-y-2">
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                              {formatPlatformName(platform)}
+                            </div>
+                            {accounts.map((account) => {
+                              const checked = socialSelectedIds.includes(account.id);
+                              return (
+                                <label
+                                  key={account.id}
+                                  className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${
+                                    checked ? 'border-slate-300 bg-slate-50' : 'border-slate-200 bg-white'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleSocialAccount(account.id)}
+                                    className="mt-1"
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-slate-800">
+                                      {account.account_name || account.account_id}
+                                    </div>
+                                    <div className="text-xs text-slate-500">{account.account_type || 'Account'}</div>
+                                  </div>
+                                  {account.connected === false ? (
+                                    <span className="ml-auto text-[10px] font-semibold uppercase text-amber-600">Disconnected</span>
+                                  ) : null}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                      <span>{socialSelectedIds.length} selected</span>
+                      {socialSaving ? <span className="text-slate-400">Saving...</span> : null}
+                    </div>
+
+                    {socialError ? <div className="mt-2 text-xs text-red-600">{socialError}</div> : null}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.history.pushState({}, '', '/integrations');
+                        window.dispatchEvent(new PopStateEvent('popstate'));
+                      }}
+                      className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                    >
+                      + Connect More Platforms
+                    </button>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Schedule</div>
+                    <div className="mt-3 space-y-2 text-sm text-slate-600">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="social-schedule"
+                          checked={socialPublishType === 'immediate'}
+                          onChange={() => handleScheduleModeChange('immediate')}
+                        />
+                        Post now
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="social-schedule"
+                          checked={socialPublishType === 'scheduled'}
+                          onChange={() => handleScheduleModeChange('scheduled')}
+                        />
+                        Schedule for later
+                      </label>
+                    </div>
+
+                    {socialPublishType === 'scheduled' ? (
+                      <div className="mt-3 space-y-2">
+                        <input
+                          type="datetime-local"
+                          value={socialScheduledAt}
+                          onChange={(e) => handleScheduleAtChange(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                        />
+                        <div className="text-[11px] text-slate-400">Timezone: {timezoneLabel}</div>
+                      </div>
+                    ) : null}
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5">Featured Image</label>
                     <div className="space-y-2">
@@ -1135,12 +1519,156 @@ function PostEditor({
                     ))}
                   </div>
                 </div>
+              )} className="text-slate-400 hover:text-slate-700">
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        value={focusKeywordInput}
+                        onChange={(e) => setFocusKeywordInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ',') {
+                            e.preventDefault();
+                            addFocusKeywords(focusKeywordInput);
+                            setFocusKeywordInput('');
+                          }
+                        }}
+                        className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs outline-none focus:border-slate-400"
+                        placeholder="Add keywords and press Enter"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          addFocusKeywords(focusKeywordInput);
+                          setFocusKeywordInput('');
+                        }}
+                        className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {seo.sections.map((section) => (
+                      <div key={section.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold text-slate-700">{section.title}</div>
+                          <span
+                            className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                              section.status === 'All Good'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : section.status === '1 Error'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-red-100 text-red-700'
+                            }`}
+                          >
+                            {section.status}
+                          </span>
+                        </div>
+                        <div className="mt-2 space-y-2">
+                          {section.checks.map((check) => (
+                            <div key={check.id} className="flex items-start gap-2 text-xs text-slate-600">
+                              {check.pass ? (
+                                <CheckCircle2 size={14} className="text-emerald-500 mt-0.5" />
+                              ) : (
+                                <XCircle size={14} className="text-red-400 mt-0.5" />
+                              )}
+                              <span>{check.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>
         </div>
       )}
     </div>
+      {rescheduleOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-10">
+          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div className="text-sm font-black text-slate-900">Reschedule Post</div>
+              <button
+                type="button"
+                onClick={() => setRescheduleOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Post</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">{title || '(Untitled)'}</div>
+              </div>
+
+              <div className="text-xs text-slate-500">
+                Current schedule:{' '}
+                {socialScheduledAt ? new Date(socialScheduledAt).toLocaleString() : 'Not scheduled'}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">New schedule</label>
+                <input
+                  type="datetime-local"
+                  value={rescheduleDraft}
+                  onChange={(e) => setRescheduleDraft(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                />
+                <div className="mt-1 text-[11px] text-slate-400">Timezone: {timezoneLabel}</div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Preview:{' '}
+                {rescheduleDraft ? new Date(rescheduleDraft).toLocaleString() : 'Select a schedule time.'}
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Posting to</div>
+                {selectedAccounts.length === 0 ? (
+                  <div className="mt-2 text-xs text-slate-500">No platforms selected.</div>
+                ) : (
+                  <div className="mt-2 space-y-1">
+                    {selectedAccounts.map((acc) => (
+                      <div key={acc.id} className="text-sm text-slate-700">
+                        {formatPlatformName(acc.platform)} - {acc.account_name || acc.account_id}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {socialError ? <div className="text-xs text-red-600">{socialError}</div> : null}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setRescheduleOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRescheduleConfirm()}
+                disabled={rescheduleSaving}
+                className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {rescheduleSaving ? 'Rescheduling...' : 'Reschedule'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
   );
 }
 
@@ -1173,7 +1701,6 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
     ],
     []
   );
-
   return (
     <div className="space-y-6 pb-8">
       {view !== 'editor' && (
@@ -1227,10 +1754,29 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
         />
       )}
 
-      <div className="hidden">{currentUser?.id}</div>
-    </div>
+      <div className="hidden">{currentUser?.id}</div></div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
