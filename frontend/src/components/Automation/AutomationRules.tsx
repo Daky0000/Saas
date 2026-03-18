@@ -98,7 +98,7 @@ export const AutomationRules: React.FC<Props> = ({
                     {rule.description || "No description"}
                   </div>
                   <div className="mt-2 text-xs text-slate-500">
-                    Trigger: {rule.triggerType} ¡¤ Action: {rule.actionType}
+                    Trigger: {rule.triggerType} Â· Action: {rule.actionType}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -200,7 +200,7 @@ export const AutomationRules: React.FC<Props> = ({
                     onChange={() => toggleIntegration(integration.id)}
                   />
                   <span>
-                    {integration.platform} ¡¤ {integration.accountName}
+                    {integration.platform} Â· {integration.accountName}
                   </span>
                 </label>
               ))}
