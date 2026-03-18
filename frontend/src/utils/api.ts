@@ -1,8 +1,8 @@
 import axios, { AxiosInstance } from "axios";
 
-const defaultApiUrl =
-  typeof window !== "undefined" ? `${window.location.origin}/api` : "/api";
-const API_URL = import.meta.env.VITE_API_URL || defaultApiUrl;
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  "https://contentflow-api-production.up.railway.app/api";
 
 const api: AxiosInstance = axios.create({
   baseURL: API_URL,
