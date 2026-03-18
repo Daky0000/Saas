@@ -3,10 +3,14 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { authMiddleware, AuthRequest } from "../middleware/auth.middleware";
 import { IntegrationService } from "../services/integration.service";
+import { PrismaClient } from "@prisma/client";
 
 const router = Router();
+const prisma = new PrismaClient();
+
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://marketing.dakyworld.com";
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://marketing.dakyworld.com";
 
 type StatePayload = {
   type: "integration_state";
@@ -31,11 +35,27 @@ const verifyState = (token: string) => {
   return payload;
 };
 
-// GET /api/integrations - list all integrations
-router.get("/", authMiddleware, async (_req: AuthRequest, res: Response) => {
+// GET /api/integrations
+router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const integrations = await IntegrationService.getIntegrations();
+    const type = req.query.type as string | undefined;
+    const integrations = await IntegrationService.getIntegrations(type);
     res.json(integrations);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// GET /api/integrations/:slug
+router.get("/:slug", authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const integration = await prisma.integration.findUnique({
+      where: { slug: req.params.slug },
+    });
+    if (!integration) {
+      return res.status(404).json({ error: "Integration not found" });
+    }
+    res.json(integration);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }
@@ -138,29 +158,15 @@ router.post(
   }
 );
 
-// GET /api/integrations/my/all
-router.get(
-  "/my/all",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const integrations = await IntegrationService.getUserIntegrations(req.userId!);
-      res.json(integrations);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-// DELETE /api/integrations/:id/disconnect
-router.delete(
-  "/:id/disconnect",
+// POST /api/integrations/:integrationId/disconnect
+router.post(
+  "/:integrationId/disconnect",
   authMiddleware,
   async (req: AuthRequest, res: Response) => {
     try {
       const result = await IntegrationService.disconnectIntegration(
         req.userId!,
-        req.params.id
+        req.params.integrationId
       );
       res.json(result);
     } catch (error: any) {
@@ -169,21 +175,62 @@ router.delete(
   }
 );
 
-// POST /api/integrations/:id/accounts
-router.post(
-  "/:id/accounts",
+// GET /api/integrations/:integrationId/accounts
+router.get(
+  "/:integrationId/accounts",
   authMiddleware,
-  async (_req: AuthRequest, res: Response) => {
-    res.json({ accounts: [] });
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const accounts = await IntegrationService.getAccounts(
+        req.params.integrationId
+      );
+      res.json(accounts);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
   }
 );
 
-// GET /api/integrations/:id/status
-router.get(
-  "/:id/status",
+// POST /api/integrations/:integrationId/validate
+router.post(
+  "/:integrationId/validate",
   authMiddleware,
-  async (_req: AuthRequest, res: Response) => {
-    res.json({ status: "unknown" });
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const status = await IntegrationService.getIntegrationStatus(
+        req.params.integrationId
+      );
+      res.json(status);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
+
+// GET /api/integrations/logs/:integrationId
+router.get(
+  "/logs/:integrationId",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const limit = Number(req.query.limit || 50);
+      const offset = Number(req.query.offset || 0);
+      const eventType = req.query.eventType as string | undefined;
+
+      const logs = await prisma.integrationLog.findMany({
+        where: {
+          integrationId: req.params.integrationId,
+          ...(eventType ? { eventType } : {}),
+        },
+        take: limit,
+        skip: offset,
+        orderBy: { createdAt: "desc" },
+      });
+
+      res.json(logs);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
   }
 );
 

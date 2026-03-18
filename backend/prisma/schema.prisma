@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,6 +5,430 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model auth_providers {
+  provider   String    @id
+  config     Json      @default("{}")
+  enabled    Boolean   @default(false)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model blog_categories {
+  id         String       @id
+  user_id    String
+  name       String
+  slug       String
+  created_at DateTime?    @default(now()) @db.Timestamptz(6)
+  users      users        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  blog_posts blog_posts[]
+}
+
+model blog_post_tags {
+  post_id    String
+  tag_id     String
+  blog_posts blog_posts @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  blog_tags  blog_tags  @relation(fields: [tag_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([post_id, tag_id])
+}
+
+model blog_posts {
+  id                      String                    @id
+  user_id                 String
+  title                   String                    @default("")
+  slug                    String                    @default("")
+  content                 String                    @default("")
+  excerpt                 String?                   @default("")
+  featured_image          String?                   @default("")
+  status                  String                    @default("draft")
+  category_id             String?
+  meta_title              String?                   @default("")
+  meta_description        String?                   @default("")
+  focus_keyword           String?                   @default("")
+  social_title            String?                   @default("")
+  social_description      String?                   @default("")
+  social_image            String?                   @default("")
+  scheduled_at            DateTime?                 @db.Timestamptz(6)
+  published_at            DateTime?                 @db.Timestamptz(6)
+  created_at              DateTime?                 @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime?                 @default(now()) @db.Timestamptz(6)
+  social_automation       Json?                     @default("{}")
+  blog_post_tags          blog_post_tags[]
+  blog_categories         blog_categories?          @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  users                   users                     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  social_automation_tasks social_automation_tasks[]
+  social_post_logs        social_post_logs[]
+  social_post_settings    social_post_settings?
+}
+
+model blog_tags {
+  id             String           @id
+  user_id        String
+  name           String
+  slug           String
+  created_at     DateTime?        @default(now()) @db.Timestamptz(6)
+  blog_post_tags blog_post_tags[]
+  users          users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model card_templates {
+  id              String    @id
+  name            String
+  description     String?
+  design_data     Json      @db.Json
+  cover_image_url String?
+  is_published    Boolean?  @default(false)
+  created_at      DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model data_deletion_requests {
+  code         String    @id
+  platform     String    @default("meta")
+  meta_user_id String?
+  status       String    @default("received")
+  payload      Json?     @default("{}")
+  created_at   DateTime? @default(now()) @db.Timestamptz(6)
+  completed_at DateTime? @db.Timestamptz(6)
+
+  @@index([meta_user_id])
+}
+
+model integration_logs {
+  id             String        @id
+  user_id        String?
+  integration_id BigInt?
+  event_type     String
+  status         String
+  response       Json?         @default("{}")
+  created_at     DateTime?     @default(now()) @db.Timestamptz(6)
+  integrations   integrations? @relation(fields: [integration_id], references: [id], onUpdate: NoAction)
+  users          users?        @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([integration_id], map: "integration_logs_integration_idx")
+  @@index([user_id], map: "integration_logs_user_idx")
+}
+
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model integrations {
+  id                BigInt              @id @default(autoincrement())
+  provider          String
+  name              String?
+  slug              String?             @unique(map: "integrations_slug_unique_idx")
+  type              String?
+  client_id         String?
+  client_secret     String?
+  redirect_url      String?
+  enabled           Boolean             @default(true)
+  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  integration_logs  integration_logs[]
+  user_integrations user_integrations[]
+}
+
+model make_webhook_connections {
+  id                    String    @id
+  user_id               String?   @unique
+  webhook_url_encrypted String
+  created_at            DateTime? @default(now()) @db.Timestamptz(6)
+  users                 users?    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model media_images {
+  id            String    @id
+  user_id       String
+  file_name     String
+  original_name String
+  file_size     Int       @default(0)
+  file_type     String    @default("image/jpeg")
+  width         Int?
+  height        Int?
+  upload_date   DateTime? @default(now()) @db.Timestamptz(6)
+  url           String
+  thumbnail_url String?
+  tags          String[]  @default([])
+  used_in       Json?     @default("[]")
+  category      String?   @default("user")
+  alt_text      String?   @default("")
+  caption       String?   @default("")
+  description   String?   @default("")
+  users         users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model oauth_states {
+  state         String    @id
+  user_id       String?
+  platform      String
+  created_at    DateTime? @default(now()) @db.Timestamptz(6)
+  expires_at    DateTime? @default(dbgenerated("(now() + '00:15:00'::interval)")) @db.Timestamptz(6)
+  return_to     String?
+  code_verifier String?
+}
+
+model page_content {
+  slug       String    @id
+  content    Json      @default("{}")
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model payment_transactions {
+  id                 String    @id
+  amount             Decimal   @db.Decimal(12, 2)
+  currency           String    @default("GHS")
+  description        String?
+  status             String    @default("pending")
+  provider           String    @default("hubtel")
+  client_reference   String?   @unique
+  provider_reference String?
+  customer_name      String?
+  customer_email     String?
+  customer_phone     String?
+  checkout_url       String?
+  metadata           Json?
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model platform_configs {
+  platform   String    @id
+  config     Json      @default("{}")
+  enabled    Boolean   @default(false)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model platform_rate_counters {
+  id           BigInt    @id @default(autoincrement())
+  platform     String
+  period_start DateTime  @db.Date
+  period_end   DateTime  @db.Date
+  counter      Int       @default(0)
+  updated_at   DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@unique([platform, period_start, period_end], map: "platform_rate_counters_unique_idx")
+}
+
+model pricing_plans {
+  id                  String    @id
+  name                String
+  description         String
+  price               Decimal   @db.Decimal(10, 2)
+  billing_period      String    @default("monthly")
+  features            String[]  @default([])
+  is_active           Boolean?  @default(true)
+  created_at          DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime? @default(now()) @db.Timestamptz(6)
+  discount_percentage Decimal?  @default(0) @db.Decimal(5, 2)
+  is_on_sale          Boolean?  @default(false)
+}
+
+model publishing_logs {
+  id               String    @id
+  post_id          String
+  user_id          String
+  platform         String
+  status           String    @default("pending")
+  platform_post_id String?
+  error_message    String?
+  created_at       DateTime? @default(now()) @db.Timestamptz(6)
+  account          String?
+  response         Json?
+  scheduled_for    DateTime? @db.Timestamptz(6)
+  users            users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model social_accounts {
+  id                      String                @id
+  user_id                 String?
+  platform                String
+  handle                  String?
+  followers               Int?                  @default(0)
+  connected               Boolean?              @default(true)
+  connected_at            DateTime?             @default(now()) @db.Timestamptz(6)
+  expires_at              DateTime?             @db.Timestamptz(6)
+  access_token            String?
+  refresh_token           String?
+  token_data              Json?                 @default("{}")
+  platform_id             BigInt?
+  account_type            String?
+  account_id              String?
+  account_name            String?
+  profile_image           String?
+  token_expires_at        DateTime?             @db.Timestamptz(6)
+  created_at              DateTime?             @default(now()) @db.Timestamptz(6)
+  access_token_encrypted  String?
+  refresh_token_encrypted String?
+  needs_reapproval        Boolean?              @default(false)
+  social_platforms        social_platforms?     @relation(fields: [platform_id], references: [id], onUpdate: NoAction)
+  users                   users?                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  social_connections      social_connections[]
+  social_post_logs        social_post_logs[]
+  social_post_targets     social_post_targets[]
+
+  @@index([user_id, platform_id], map: "social_accounts_user_platform_idx")
+}
+
+model social_automation_tasks {
+  id         String     @id
+  user_id    String
+  post_id    String
+  platform   String
+  run_at     DateTime   @db.Timestamptz(6)
+  status     String     @default("scheduled")
+  payload    Json?      @default("{}")
+  log_id     String?
+  attempts   Int?       @default(0)
+  last_error String?
+  created_at DateTime?  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime?  @default(now()) @db.Timestamptz(6)
+  blog_posts blog_posts @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status, run_at], map: "social_automation_tasks_due_idx")
+}
+
+model social_connections {
+  id                String          @id
+  user_id           String
+  social_account_id String
+  active            Boolean         @default(true)
+  created_at        DateTime?       @default(now()) @db.Timestamptz(6)
+  social_accounts   social_accounts @relation(fields: [social_account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users             users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, social_account_id], map: "social_connections_user_account_unique_idx")
+  @@index([user_id], map: "social_connections_user_idx")
+}
+
+model social_platforms {
+  id              BigInt            @id @default(autoincrement())
+  name            String
+  slug            String            @unique
+  api_base_url    String?
+  enabled         Boolean           @default(true)
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  social_accounts social_accounts[]
+}
+
+model social_post_logs {
+  id                String           @id
+  post_id           String
+  social_account_id String?
+  platform          String
+  status            String
+  api_response      Json?
+  posted_at         DateTime?        @db.Timestamptz(6)
+  created_at        DateTime?        @default(now()) @db.Timestamptz(6)
+  blog_posts        blog_posts       @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  social_accounts   social_accounts? @relation(fields: [social_account_id], references: [id], onUpdate: NoAction)
+
+  @@index([post_id], map: "social_post_logs_post_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model social_post_settings {
+  id                  String                @id
+  post_id             String                @unique(map: "social_post_settings_post_unique_idx")
+  template            String?               @default("")
+  publish_type        String                @default("immediate")
+  scheduled_at        DateTime?             @db.Timestamptz(6)
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  blog_posts          blog_posts            @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  social_post_targets social_post_targets[]
+}
+
+model social_post_targets {
+  id                   String               @id
+  social_post_id       String
+  social_account_id    String
+  enabled              Boolean              @default(true)
+  social_accounts      social_accounts      @relation(fields: [social_account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  social_post_settings social_post_settings @relation(fields: [social_post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([social_post_id], map: "social_post_targets_post_idx")
+}
+
+model user_designs {
+  id            String    @id
+  user_id       String
+  name          String    @default("Untitled Design")
+  canvas_width  Int       @default(1080)
+  canvas_height Int       @default(1080)
+  canvas_data   Json      @default("{}")
+  thumbnail_url String?
+  created_at    DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime? @default(now()) @db.Timestamptz(6)
+  users         users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model user_integrations {
+  id             String       @id
+  user_id        String
+  integration_id BigInt
+  access_token   String?
+  refresh_token  String?
+  token_expiry   DateTime?    @db.Timestamptz(6)
+  account_id     String?
+  account_name   String?
+  status         String       @default("connected")
+  created_at     DateTime?    @default(now()) @db.Timestamptz(6)
+  integrations   integrations @relation(fields: [integration_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users          users        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, integration_id], map: "user_integrations_user_integration_unique_idx")
+  @@index([user_id])
+}
+
+model user_settings {
+  user_id    String
+  key        String
+  value      Json      @default("{}")
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, key])
+  @@index([user_id])
+}
+
+model users {
+  id                       String                    @id
+  email                    String                    @unique
+  username                 String?
+  password_hash            String
+  full_name                String?
+  phone                    String?
+  country                  String?
+  created_at               DateTime?                 @default(now()) @db.Timestamptz(6)
+  role                     String                    @default("user")
+  status                   String                    @default("active")
+  avatar_url               String?
+  cover_url                String?
+  last_login_at            DateTime?                 @db.Timestamptz(6)
+  website                  String?
+  blog_categories          blog_categories[]
+  blog_posts               blog_posts[]
+  blog_tags                blog_tags[]
+  integration_logs         integration_logs[]
+  make_webhook_connections make_webhook_connections?
+  media_images             media_images[]
+  publishing_logs          publishing_logs[]
+  social_accounts          social_accounts[]
+  social_automation_tasks  social_automation_tasks[]
+  social_connections       social_connections[]
+  user_designs             user_designs[]
+  user_integrations        user_integrations[]
+  user_settings            user_settings[]
+  wordpress_connections    wordpress_connections?
+}
+
+model wordpress_connections {
+  id                     String    @id
+  user_id                String?   @unique
+  site_url               String
+  username               String
+  app_password_encrypted String
+  created_at             DateTime? @default(now()) @db.Timestamptz(6)
+  users                  users?    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 // ============= USERS & AUTHENTICATION =============
@@ -30,6 +451,10 @@ model User {
   activityLogs       ActivityLog[]
   integrations       UserIntegration[]
   integrationLogs    IntegrationLog[]
+
+  dailyMetrics       PlatformDailyMetrics[]
+  monthlyMetrics     PlatformMonthlyMetrics[]
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -54,6 +479,10 @@ model Agency {
 
   socialAccounts SocialAccount[]
   posts          Post[]
+
+  dailyMetrics   PlatformDailyMetrics[]
+  monthlyMetrics PlatformMonthlyMetrics[]
+
 
   subscriptionTier SubscriptionTier @default(STARTER)
   createdAt        DateTime          @default(now())
@@ -207,12 +636,111 @@ model PostAnalytics {
   twitterRetweets    Int @default(0)
   twitterReplies     Int @default(0)
 
+  // Facebook metrics
+  facebookReach       Int @default(0)
+  facebookImpressions Int @default(0)
+  facebookLikes       Int @default(0)
+  facebookComments    Int @default(0)
+  facebookShares      Int @default(0)
   lastUpdated DateTime @default(now())
   createdAt   DateTime @default(now())
 
   @@index([postId])
 }
 
+// ============= PLATFORM METRICS (Daily Aggregation) =============
+
+model PlatformDailyMetrics {
+  id String @id @default(cuid())
+
+  userIntegration   UserIntegration @relation(fields: [userIntegrationId], references: [id], onDelete: Cascade)
+  userIntegrationId String
+
+  agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyId String
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  // Date tracking
+  date DateTime
+
+  // Platform (facebook, instagram, twitter, linkedin, tiktok, pinterest)
+  platform String
+
+  // Aggregated metrics for the day
+  postsPublished   Int @default(0)
+  totalReach       Int @default(0)
+  totalImpressions Int @default(0)
+  totalEngagement  Int @default(0)
+  totalLikes       Int @default(0)
+  totalComments    Int @default(0)
+  totalShares      Int @default(0)
+  totalSaves       Int @default(0)
+
+  // Engagement rate
+  engagementRate Float @default(0.0)
+
+  // Raw data (for detailed analysis)
+  rawData Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userIntegrationId, date, platform])
+  @@index([userIntegrationId])
+  @@index([agencyId])
+  @@index([userId])
+  @@index([date])
+  @@index([platform])
+  @@index([agencyId, date])
+  @@index([platform, date])
+}
+
+model PlatformMonthlyMetrics {
+  id String @id @default(cuid())
+
+  userIntegration   UserIntegration @relation(fields: [userIntegrationId], references: [id], onDelete: Cascade)
+  userIntegrationId String
+
+  agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyId String
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  // Month tracking (yyyy-mm)
+  year  Int
+  month Int
+
+  // Platform
+  platform String
+
+  // Aggregated for the month
+  postsPublished   Int @default(0)
+  totalReach       Int @default(0)
+  totalImpressions Int @default(0)
+  totalEngagement  Int @default(0)
+  totalLikes       Int @default(0)
+  totalComments    Int @default(0)
+  totalShares      Int @default(0)
+  totalSaves       Int @default(0)
+
+  // Growth metrics
+  growthRate     Float @default(0.0)
+  engagementRate Float @default(0.0)
+
+  // Top performing content
+  topPost Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userIntegrationId, year, month, platform])
+  @@index([userIntegrationId])
+  @@index([agencyId])
+  @@index([userId])
+}
 // ============= AUDIT LOG =============
 
 model ActivityLog {
@@ -248,9 +776,11 @@ model Integration {
   apiSecret    String?
   bearerToken  String?
   appId        String?
+  redirectUrl  String?
 
   userIntegrations UserIntegration[]
   integrationLogs  IntegrationLog[]
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -280,6 +810,10 @@ model UserIntegration {
 
   posts PostIntegration[]
   logs  IntegrationLog[]
+
+  dailyMetrics   PlatformDailyMetrics[]
+  monthlyMetrics PlatformMonthlyMetrics[]
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -360,3 +894,20 @@ model IntegrationLog {
   @@index([eventType])
   @@index([status])
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

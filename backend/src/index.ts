@@ -5,7 +5,9 @@ import authRoutes from "./routes/auth.routes";
 import oauthRoutes from "./routes/oauth.routes";
 import postsRoutes from "./routes/posts.routes";
 import integrationsRoutes from "./routes/integrations.routes";
+import myIntegrationsRoutes from "./routes/my-integrations.routes";
 import automationRoutes from "./routes/automation.routes";
+import analyticsRoutes from "./routes/analytics.routes";
 import { startScheduler } from "./services/automation/scheduler";
 import { seedDefaultUsers } from "./utils/seed-default-users";
 
@@ -37,7 +39,9 @@ app.use("/api/auth", authRoutes);
 app.use("/api/oauth", oauthRoutes);
 app.use("/api/posts", postsRoutes);
 app.use("/api/integrations", integrationsRoutes);
+app.use("/api/my-integrations", myIntegrationsRoutes);
 app.use("/api/automation", automationRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -56,3 +60,6 @@ app.listen(PORT, () => {
   startScheduler();
   seedDefaultUsers();
 });
+
+
+

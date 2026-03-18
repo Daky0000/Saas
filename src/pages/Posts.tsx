@@ -16,7 +16,6 @@ import {
   Sparkles,
   CheckCircle2,
   XCircle,
-  Settings,
 } from 'lucide-react';
 import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, type BlogTag } from '../services/blogService';
 import type { AppUser } from '../utils/userSession';
@@ -1232,5 +1231,6 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
     </div>
   );
 }
+
 
 
