@@ -234,7 +234,7 @@ export const PostEditorPage: React.FC = () => {
               onClick={handleBack}
               className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
             >
-              ก๛ Back
+              ยกรป Back
             </button>
             <div>
               <h1 className="text-2xl font-semibold">

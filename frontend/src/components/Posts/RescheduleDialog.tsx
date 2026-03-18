@@ -200,7 +200,7 @@ export const RescheduleDialog: React.FC<Props> = ({
                     className="flex w-full items-center justify-between rounded-md px-2 py-1 text-left hover:bg-slate-800"
                   >
                     <span>
-                      {option.date} ¡¤ {option.time}
+                      {option.date} Â¡Â¤ {option.time}
                     </span>
                     <span className="text-slate-400">{option.score}%</span>
                   </button>

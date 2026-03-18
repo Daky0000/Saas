@@ -38,7 +38,7 @@ export const RescheduleDropdown: React.FC<Props> = ({
         className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-xs text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
       >
         Reschedule
-        <span className="text-[10px]">¨‹</span>
+        <span className="text-[10px]">Â¨â€¹</span>
       </button>
 
       {open && !disabled && (
