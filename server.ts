@@ -4752,7 +4752,7 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
-  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'public_profile,email,pages_manage_posts,pages_read_engagement,pages_show_list,business_management,instagram_basic,instagram_content_publish', idField: 'appId' },
+  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'public_profile,pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
   // LinkedIn scopes are space-separated
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile w_member_social r_emailaddress', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
