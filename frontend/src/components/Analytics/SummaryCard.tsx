@@ -28,7 +28,7 @@ export const SummaryCard: React.FC<Props> = ({
       : trend && trend < 0
         ? "text-red-300"
         : "text-slate-400";
-  const trendSymbol = trend && trend > 0 ? "¡ü" : trend && trend < 0 ? "¡ı" : "¨C";
+  const trendSymbol = trend && trend > 0 ? "up" : trend && trend < 0 ? "down" : "-";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-sm">
