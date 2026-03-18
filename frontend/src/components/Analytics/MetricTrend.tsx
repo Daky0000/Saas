@@ -21,10 +21,10 @@ export const MetricTrend: React.FC<Props> = ({
         : "text-slate-400";
   const symbol =
     percentageChange && percentageChange > 0
-      ? "¡ü"
+      ? "up"
       : percentageChange && percentageChange < 0
-        ? "¡ý"
-        : "¨C";
+        ? "down"
+        : "-";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
