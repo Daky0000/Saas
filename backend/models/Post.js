@@ -1,7 +1,6 @@
 // Post model
 module.exports = (sequelize, DataTypes) => {
   const Post = sequelize.define('Post', {
-    user_id: { type: DataTypes.INTEGER, allowNull: false },
     connected_account_id: { type: DataTypes.INTEGER, allowNull: false },
     platform: { type: DataTypes.STRING },
     type: { type: DataTypes.STRING },
@@ -9,13 +8,11 @@ module.exports = (sequelize, DataTypes) => {
     media: { type: DataTypes.JSONB },
     status: { type: DataTypes.STRING, defaultValue: 'pending' },
     scheduledAt: { type: DataTypes.DATE },
-    jobId: { type: DataTypes.STRING, allowNull: true },
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
     platformResponse: { type: DataTypes.JSONB },
     errorLog: { type: DataTypes.TEXT }
   }, { tableName: 'posts', timestamps: false });
   Post.associate = models => {
-    Post.belongsTo(models.User, { foreignKey: 'user_id' });
     Post.belongsTo(models.ConnectedAccount, { foreignKey: 'connected_account_id' });
   };
   return Post;
