@@ -1,0 +1,40 @@
+{
+  "name": "marketing-workflow-backend",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:push": "prisma db push",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.79.0",
+    "@prisma/client": "^5.15.0",
+    "@sendgrid/mail": "latest",
+    "@sentry/node": "latest",
+    "@sentry/tracing": "latest",
+    "axios": "latest",
+    "bcryptjs": "latest",
+    "bull": "latest",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^5.15.0",
+    "redis": "latest"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "latest",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "latest",
+    "nodemon": "latest",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
