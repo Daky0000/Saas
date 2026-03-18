@@ -1,0 +1,362 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============= USERS & AUTHENTICATION =============
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String?  @unique
+  password  String   // hashed
+  firstName String?
+  lastName  String?
+  role      Role     @default(MANAGER)
+  agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyId  String
+
+  // Relationships
+  postsCreated       Post[]          @relation("createdBy")
+  approvalsRequested PostApproval[]  @relation("requestedBy")
+  approvalsGiven     PostApproval[]  @relation("approvedBy")
+  activityLogs       ActivityLog[]
+  integrations       UserIntegration[]
+  integrationLogs    IntegrationLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agencyId])
+  @@index([email])
+  @@index([username])
+}
+
+enum Role {
+  ADMIN    // Full access
+  MANAGER  // Can create & request approval
+  VIEWER   // Read-only
+}
+
+// ============= AGENCIES =============
+
+model Agency {
+  id    String  @id @default(cuid())
+  name  String
+  users User[]
+
+  socialAccounts SocialAccount[]
+  posts          Post[]
+
+  subscriptionTier SubscriptionTier @default(STARTER)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([name])
+}
+
+enum SubscriptionTier {
+  STARTER      // $199/month, 5 accounts
+  PROFESSIONAL // $499/month, 15 accounts
+  AGENCY       // $1299/month, unlimited
+}
+
+// ============= SOCIAL MEDIA ACCOUNTS =============
+
+model SocialAccount {
+  id       String @id @default(cuid())
+  agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyId String
+
+  platform        String // 'instagram', 'tiktok', 'linkedin', 'twitter'
+  accountUsername String
+  accountName     String?
+
+  // OAuth tokens (ENCRYPTED in production)
+  oauthToken        String?
+  oauthRefreshToken String?
+  isConnected       Boolean @default(false)
+
+  posts Post[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([agencyId, platform, accountUsername])
+  @@index([agencyId])
+  @@index([platform])
+}
+
+// ============= POSTS =============
+
+model Post {
+  id       String @id @default(cuid())
+  agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyId String
+
+  title   String
+  content Json   // { original, instagram, tiktok, linkedin, twitter }
+
+  status      PostStatus @default(DRAFT)
+  scheduledAt DateTime?
+  postedAt    DateTime?
+
+  // Creator
+  createdBy   User   @relation("createdBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdById String
+
+  // Which accounts to post to
+  socialAccounts SocialAccount[]
+
+  // Approval workflow
+  approvals PostApproval[]
+
+  // Analytics
+  analytics PostAnalytics?
+
+  // Platform integrations
+  platformIntegrations PostIntegration[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agencyId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([createdById])
+}
+
+enum PostStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  POSTED
+  FAILED
+  CHANGES_REQUESTED
+}
+
+// ============= POST APPROVAL WORKFLOW =============
+
+model PostApproval {
+  id     String @id @default(cuid())
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId String
+
+  // Who requested approval
+  requestedBy   User   @relation("requestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  requestedById String
+
+  // Who needs to approve
+  assignedTo   User   @relation("approvedBy", fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignedToId String
+
+  status   ApprovalStatus @default(PENDING)
+  comments String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+  @@index([status])
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+// ============= ANALYTICS =============
+
+model PostAnalytics {
+  id   String @id @default(cuid())
+  post Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId String @unique
+
+  // Instagram metrics
+  instagramReach      Int @default(0)
+  instagramImpressions Int @default(0)
+  instagramLikes      Int @default(0)
+  instagramComments   Int @default(0)
+  instagramShares     Int @default(0)
+  instagramSaves      Int @default(0)
+
+  // TikTok metrics
+  tiktokViews    Int @default(0)
+  tiktokLikes    Int @default(0)
+  tiktokComments Int @default(0)
+  tiktokShares   Int @default(0)
+
+  // LinkedIn metrics
+  linkedinImpressions Int @default(0)
+  linkedinLikes       Int @default(0)
+  linkedinComments    Int @default(0)
+
+  // Twitter metrics
+  twitterImpressions Int @default(0)
+  twitterLikes       Int @default(0)
+  twitterRetweets    Int @default(0)
+  twitterReplies     Int @default(0)
+
+  lastUpdated DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([postId])
+}
+
+// ============= AUDIT LOG =============
+
+model ActivityLog {
+  id   String @id @default(cuid())
+  user User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  action     String // 'post_created', 'post_approved', 'approval_requested'
+  entityType String // 'post', 'user', 'agency'
+  entityId   String
+  details    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============= INTEGRATIONS (Admin Setup) =============
+
+model Integration {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  type      String
+  enabled   Boolean  @default(true)
+
+  // Admin credentials
+  clientId     String?
+  clientSecret String?
+  apiKey       String?
+  apiSecret    String?
+  bearerToken  String?
+  appId        String?
+
+  userIntegrations UserIntegration[]
+  integrationLogs  IntegrationLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+}
+
+model UserIntegration {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  integrationId String
+
+  // User's tokens
+  accessToken  String?
+  refreshToken String?
+  tokenExpiry  DateTime?
+
+  // Account info
+  accountId    String
+  accountName  String
+  accountEmail String?
+
+  status ConnectionStatus @default(CONNECTED)
+
+  posts PostIntegration[]
+  logs  IntegrationLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, integrationId, accountId])
+  @@index([userId])
+  @@index([integrationId])
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  EXPIRED
+  ERROR
+}
+
+// ============= POSTS & INTEGRATIONS =============
+
+model PostIntegration {
+  id String @id @default(cuid())
+
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId String
+
+  userIntegration   UserIntegration @relation(fields: [userIntegrationId], references: [id], onDelete: Cascade)
+  userIntegrationId String
+
+  // Platform-specific data
+  platformPostId String?
+  content        String
+  media          Json?
+  status         PostPlatformStatus @default(PENDING)
+  error          String?
+  retryCount     Int      @default(0)
+  maxRetries     Int      @default(3)
+
+  postedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+  @@index([userIntegrationId])
+  @@index([status])
+}
+
+enum PostPlatformStatus {
+  PENDING
+  QUEUED
+  POSTED
+  FAILED
+  RETRY
+  SCHEDULED
+}
+
+// ============= LOGGING =============
+
+model IntegrationLog {
+  id String @id @default(cuid())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  integrationId String
+
+  userIntegration   UserIntegration? @relation(fields: [userIntegrationId], references: [id], onDelete: SetNull)
+  userIntegrationId String?
+
+  eventType    String
+  status       String
+
+  response     Json?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([status])
+}
