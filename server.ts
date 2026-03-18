@@ -2742,7 +2742,7 @@ async function publishToPlatform(userId: string, platform: string, content: any)
 
 async function getPlatformAnalytics(userId: string, platform: string): Promise<any> {
   // Implement fetching analytics
-  return { platform, followers: 0, engagement: 0, userId };
+  return null;
 }
 
 function resolveRedirectUri(uri: string | undefined): string {
@@ -8479,6 +8479,7 @@ app.listen(PORT, () => {
 });
 
 export default app;
+
 
 
 
