@@ -93,11 +93,21 @@ const seedDefaultUsersOnce = async () => {
   });
 };
 
+export const seedDefaultUsersNow = async () => {
+  if (process.env.SEED_DEFAULT_USERS !== "true") return false;
+
+  const userCount = await prisma.user.count();
+  if (userCount > 0) return false;
+
+  await seedDefaultUsersOnce();
+  return true;
+};
+
 export const seedDefaultUsers = async (attempt = 1): Promise<void> => {
   if (process.env.SEED_DEFAULT_USERS !== "true") return;
 
   try {
-    await seedDefaultUsersOnce();
+    await seedDefaultUsersNow();
     console.log("Default users ensured.");
   } catch (error) {
     console.error(`Default user seeding failed (attempt ${attempt}).`, error);
