@@ -4,6 +4,8 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 const DEFAULT_AGENCY = "Default Agency";
+const MAX_RETRIES = Number(process.env.SEED_DEFAULT_USERS_RETRIES || "5");
+const RETRY_DELAY_MS = Number(process.env.SEED_DEFAULT_USERS_DELAY_MS || "5000");
 
 const ensureAgency = async () => {
   let agency = await prisma.agency.findFirst({ where: { name: DEFAULT_AGENCY } });
@@ -33,15 +35,22 @@ const upsertUser = async ({
   agencyId: string;
 }) => {
   const hashed = await bcrypt.hash(password, 10);
-  const existing = await prisma.user.findUnique({ where: { email } });
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedUsername = username.trim().toLowerCase();
+  const existing = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
 
-  const usernameToUse = (await isUsernameAvailable(username, email))
-    ? username
+  const usernameToUse = (await isUsernameAvailable(
+    normalizedUsername,
+    normalizedEmail
+  ))
+    ? normalizedUsername
     : undefined;
 
   if (existing) {
     return prisma.user.update({
-      where: { email },
+      where: { email: normalizedEmail },
       data: {
         password: hashed,
         role,
@@ -53,7 +62,7 @@ const upsertUser = async ({
 
   return prisma.user.create({
     data: {
-      email,
+      email: normalizedEmail,
       username: usernameToUse,
       password: hashed,
       firstName: "",
@@ -64,30 +73,39 @@ const upsertUser = async ({
   });
 };
 
-export const seedDefaultUsers = async () => {
+const seedDefaultUsersOnce = async () => {
+  const agency = await ensureAgency();
+
+  await upsertUser({
+    email: "admin@example.com",
+    username: "admin",
+    password: "admin",
+    role: "ADMIN",
+    agencyId: agency.id,
+  });
+
+  await upsertUser({
+    email: "user@example.com",
+    username: "user",
+    password: "user",
+    role: "MANAGER",
+    agencyId: agency.id,
+  });
+};
+
+export const seedDefaultUsers = async (attempt = 1): Promise<void> => {
   if (process.env.SEED_DEFAULT_USERS !== "true") return;
 
   try {
-    const agency = await ensureAgency();
-
-    await upsertUser({
-      email: "admin@example.com",
-      username: "admin",
-      password: "admin",
-      role: "ADMIN",
-      agencyId: agency.id,
-    });
-
-    await upsertUser({
-      email: "user@example.com",
-      username: "user",
-      password: "user",
-      role: "MANAGER",
-      agencyId: agency.id,
-    });
-
+    await seedDefaultUsersOnce();
     console.log("Default users ensured.");
   } catch (error) {
-    console.error("Default user seeding failed:", error);
+    console.error(`Default user seeding failed (attempt ${attempt}).`, error);
+
+    if (attempt < MAX_RETRIES) {
+      setTimeout(() => {
+        void seedDefaultUsers(attempt + 1);
+      }, RETRY_DELAY_MS);
+    }
   }
 };

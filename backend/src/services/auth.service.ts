@@ -79,10 +79,13 @@ export class AuthService {
     agencyName: string,
     username?: string
   ) {
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingUser = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
     if (existingUser) throw new Error("User already exists");
 
-    const resolvedUsername = await this.resolveUsername(email, username);
+    const resolvedUsername = await this.resolveUsername(normalizedEmail, username);
     const hashedPassword = await this.hashPassword(password);
 
     // Create agency
@@ -93,7 +96,7 @@ export class AuthService {
     // Create user
     const user = await prisma.user.create({
       data: {
-        email,
+        email: normalizedEmail,
         username: resolvedUsername,
         password: hashedPassword,
         firstName: "",
@@ -115,11 +118,16 @@ export class AuthService {
   // Login
   static async login(identifier: string, password: string) {
     const normalized = identifier.trim();
+
     const user = await prisma.user.findFirst({
       where: {
-        OR: [{ email: normalized }, { username: normalized }],
+        OR: [
+          { email: { equals: normalized, mode: "insensitive" } },
+          { username: { equals: normalized, mode: "insensitive" } },
+        ],
       },
     });
+
     if (!user) throw new Error("Invalid credentials");
 
     const isValidPassword = await this.comparePassword(password, user.password);
