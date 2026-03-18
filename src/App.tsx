@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
+  ChevronDown,
   FileText,
   Image,
   LogOut,
@@ -30,6 +31,7 @@ import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
 import OAuthCallback from './pages/OAuthCallback';
+import PostAutomation from './pages/PostAutomation';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { API_BASE_URL } from './utils/apiBase';
@@ -48,6 +50,7 @@ type PageType =
   | 'cards'
   | 'pricing'
   | 'admin'
+  | 'post-automation'
   | 'analytics'
   | 'profile'
   | 'media'
@@ -69,6 +72,7 @@ const safeJson = async <T,>(response: Response): Promise<T | null> => {
 const PAGE_PATHS: Record<PageType, string> = {
   dashboard: '/dashboard',
   posts: '/posts',
+  'post-automation': '/posts/automation',
   cards: '/cards',
   pricing: '/pricing',
   admin: '/admin/users',
@@ -125,6 +129,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
+  const [postsMenuOpen, setPostsMenuOpen] = useState(false);
 
 
   useEffect(() => {
@@ -158,6 +163,9 @@ function App() {
   const navigateToPage = useCallback(
     (page: PageType, replace = false) => {
       setCurrentPage(page);
+      if (page === 'posts' || page === 'post-automation') {
+        setPostsMenuOpen(true);
+      }
       const path = PAGE_PATHS[page];
       if (window.location.pathname !== path || window.location.search) {
         navigatePath(path, replace);
@@ -262,6 +270,9 @@ function App() {
     const pageFromPath = getPageFromPath(pathname);
     if (pageFromPath) {
       setCurrentPage(pageFromPath);
+      if (pageFromPath === 'posts' || pageFromPath === 'post-automation') {
+        setPostsMenuOpen(true);
+      }
       return () => {
         canceled = true;
       };
@@ -293,6 +304,9 @@ function App() {
       const pageFromPath = getPageFromPath(pathname);
       if (pageFromPath) {
         setCurrentPage(pageFromPath);
+        if (pageFromPath === 'posts' || pageFromPath === 'post-automation') {
+          setPostsMenuOpen(true);
+        }
         return;
       }
 
@@ -358,7 +372,12 @@ function App() {
   const profileNeedsAttention = !isProfileComplete(authUser);
   const menuItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: BarChart4 },
-    { id: 'posts' as const, label: 'Posts', icon: FileText },
+    {
+      id: 'posts' as const,
+      label: 'Posts',
+      icon: FileText,
+      children: [{ id: 'post-automation' as const, label: 'Automation' }],
+    },
     { id: 'cards' as const, label: 'Cards', icon: Palette },
     { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'integrations' as const, label: 'Integrations', icon: Waypoints },
@@ -373,6 +392,8 @@ function App() {
         return <Dashboard currentUser={authUser} />;
       case 'posts':
         return <Posts currentUser={authUser} />;
+      case 'post-automation':
+        return <PostAutomation />;
       case 'cards':
         return <Cards />;
       case 'pricing':
@@ -407,28 +428,60 @@ function App() {
         <nav className="flex-1 p-4 space-y-2">
           {menuItems.map((item) => {
             const IconComponent = item.icon;
+            const hasChildren = Boolean(item.children?.length);
+            const isActive =
+              currentPage === item.id || item.children?.some((child) => child.id === currentPage);
+            const isOpen = item.id === 'posts' ? postsMenuOpen : true;
             return (
-              <button
-                key={item.id}
-                onClick={() => navigateToPage(item.id)}
-                className={`w-full relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
-                  currentPage === item.id
-                    ? 'bg-blue-50 text-blue-600 shadow-sm'
-                    : 'text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <IconComponent size={20} />
-                {sidebarOpen && <span>{item.label}</span>}
-                {item.id === 'profile' && profileNeedsAttention && (
-                  <span
-                    className="absolute right-3 top-3 text-red-500"
-                    title="Complete your profile"
-                    aria-label="Profile incomplete"
+              <div key={item.id} className="space-y-1">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => navigateToPage(item.id)}
+                    className={`w-full relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
+                      isActive ? 'bg-blue-50 text-blue-600 shadow-sm' : 'text-gray-700 hover:bg-gray-50'
+                    }`}
                   >
-                    <AlertCircle size={14} />
-                  </span>
+                    <IconComponent size={20} />
+                    {sidebarOpen && <span>{item.label}</span>}
+                    {item.id === 'profile' && profileNeedsAttention && (
+                      <span
+                        className="absolute right-3 top-3 text-red-500"
+                        title="Complete your profile"
+                        aria-label="Profile incomplete"
+                      >
+                        <AlertCircle size={14} />
+                      </span>
+                    )}
+                  </button>
+                  {hasChildren && sidebarOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setPostsMenuOpen((prev) => !prev)}
+                      aria-label="Toggle posts menu"
+                      className="h-10 w-10 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-50"
+                    >
+                      <ChevronDown size={18} className={isOpen ? '' : '-rotate-90'} />
+                    </button>
+                  )}
+                </div>
+                {hasChildren && sidebarOpen && isOpen && (
+                  <div className="ml-10 space-y-1">
+                    {item.children?.map((child) => (
+                      <button
+                        key={child.id}
+                        onClick={() => navigateToPage(child.id)}
+                        className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                          currentPage === child.id
+                            ? 'bg-blue-50 text-blue-600'
+                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
+                        }`}
+                      >
+                        <span>{child.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </nav>
@@ -477,25 +530,62 @@ function App() {
             <nav className="space-y-2">
               {menuItems.map((item) => {
                 const IconComponent = item.icon;
+                const hasChildren = Boolean(item.children?.length);
+                const isActive =
+                  currentPage === item.id || item.children?.some((child) => child.id === currentPage);
+                const isOpen = item.id === 'posts' ? postsMenuOpen : true;
                 return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      navigateToPage(item.id);
-                      setSidebarOpen(false);
-                    }}
-                    className={`w-full relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
-                      currentPage === item.id ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    <IconComponent size={20} />
-                    <span>{item.label}</span>
-                    {item.id === 'profile' && profileNeedsAttention && (
-                      <span className="absolute right-3 top-3 text-red-500" aria-label="Profile incomplete">
-                        <AlertCircle size={14} />
-                      </span>
+                  <div key={item.id} className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          navigateToPage(item.id);
+                          setSidebarOpen(false);
+                        }}
+                        className={`w-full relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
+                          isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        <IconComponent size={20} />
+                        <span>{item.label}</span>
+                        {item.id === 'profile' && profileNeedsAttention && (
+                          <span className="absolute right-3 top-3 text-red-500" aria-label="Profile incomplete">
+                            <AlertCircle size={14} />
+                          </span>
+                        )}
+                      </button>
+                      {hasChildren && (
+                        <button
+                          type="button"
+                          onClick={() => setPostsMenuOpen((prev) => !prev)}
+                          aria-label="Toggle posts menu"
+                          className="h-10 w-10 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-50"
+                        >
+                          <ChevronDown size={18} className={isOpen ? '' : '-rotate-90'} />
+                        </button>
+                      )}
+                    </div>
+                    {hasChildren && isOpen && (
+                      <div className="ml-10 space-y-1">
+                        {item.children?.map((child) => (
+                          <button
+                            key={child.id}
+                            onClick={() => {
+                              navigateToPage(child.id);
+                              setSidebarOpen(false);
+                            }}
+                            className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                              currentPage === child.id
+                                ? 'bg-blue-50 text-blue-600'
+                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
+                            }`}
+                          >
+                            <span>{child.label}</span>
+                          </button>
+                        ))}
+                      </div>
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </nav>

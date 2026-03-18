@@ -1,4 +1,4 @@
-﻿import Queue from "bull";
+import Queue from "bull";
 import {
   PrismaClient,
   PostPlatformStatus,
@@ -127,7 +127,13 @@ postQueue.process(async (job) => {
 
   if (!post) return;
 
-  if (![PostStatus.APPROVED, PostStatus.SCHEDULED].includes(post.status)) {
+  if (
+    ![
+      PostStatus.APPROVED,
+      PostStatus.SCHEDULED,
+      PostStatus.RECURRING,
+    ].includes(post.status)
+  ) {
     return;
   }
 
@@ -222,7 +228,16 @@ postQueue.process(async (job) => {
 
   if (!anyAttempted) return;
 
-  if (allPosted) {
+  if (post.isRecurring || post.status === PostStatus.RECURRING) {
+    await prisma.post.update({
+      where: { id: post.id },
+      data: {
+        status: PostStatus.RECURRING,
+        lastExecutedAt: new Date(),
+        postedAt: allPosted ? new Date() : post.postedAt,
+      },
+    });
+  } else if (allPosted) {
     await prisma.post.update({
       where: { id: post.id },
       data: { status: PostStatus.POSTED, postedAt: new Date() },
@@ -234,5 +249,3 @@ postQueue.process(async (job) => {
     });
   }
 });
-
-

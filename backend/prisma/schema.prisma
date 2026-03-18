@@ -451,6 +451,8 @@ model User {
   activityLogs       ActivityLog[]
   integrations       UserIntegration[]
   integrationLogs    IntegrationLog[]
+  automationRules    AutomationRule[]
+  automationLogs     AutomationLog[]
 
   dailyMetrics       PlatformDailyMetrics[]
   monthlyMetrics     PlatformMonthlyMetrics[]
@@ -479,6 +481,7 @@ model Agency {
 
   socialAccounts SocialAccount[]
   posts          Post[]
+  automationRules AutomationRule[]
 
   dailyMetrics   PlatformDailyMetrics[]
   monthlyMetrics PlatformMonthlyMetrics[]
@@ -537,6 +540,19 @@ model Post {
   scheduledAt DateTime?
   postedAt    DateTime?
 
+  // Automation Features
+  isRecurring        Boolean       @default(false)
+  recurringPattern   RecurringType?
+  recurringDayOfWeek Int?
+  recurringEndDate   DateTime?
+  nextScheduledRun   DateTime?
+  lastExecutedAt     DateTime?
+
+  // Optimization
+  bestTimeToPost   DateTime?
+  isOptimized      Boolean       @default(false)
+  optimizationNote String?
+
   // Creator
   createdBy   User   @relation("createdBy", fields: [createdById], references: [id], onDelete: Cascade)
   createdById String
@@ -552,6 +568,7 @@ model Post {
 
   // Platform integrations
   platformIntegrations PostIntegration[]
+  automationLogs       AutomationLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -559,6 +576,8 @@ model Post {
   @@index([agencyId])
   @@index([status])
   @@index([scheduledAt])
+  @@index([isRecurring])
+  @@index([nextScheduledRun])
   @@index([createdById])
 }
 
@@ -569,7 +588,16 @@ enum PostStatus {
   SCHEDULED
   POSTED
   FAILED
+  RECURRING
+  ARCHIVED
   CHANGES_REQUESTED
+}
+
+enum RecurringType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
 }
 
 // ============= POST APPROVAL WORKFLOW =============
@@ -646,6 +674,59 @@ model PostAnalytics {
   createdAt   DateTime @default(now())
 
   @@index([postId])
+}
+
+// ============= AUTOMATION LOGS =============
+
+model AutomationLog {
+  id String @id @default(cuid())
+
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId String
+
+  executedAt DateTime
+  status     String
+  message    String?
+
+  platformsExecuted Json?
+  totalEngagement   Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([executedAt])
+  @@index([status])
+}
+
+// ============= AUTOMATION RULES =============
+
+model AutomationRule {
+  id String @id @default(cuid())
+
+  agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyId String
+
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById String
+
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  triggerType      String
+  triggerCondition Json?
+
+  actionType          String
+  selectedIntegrations String[]
+
+  executeTime     String?
+  executeTimeZone String @default("UTC")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agencyId])
+  @@index([isActive])
 }
 
 // ============= PLATFORM METRICS (Daily Aggregation) =============

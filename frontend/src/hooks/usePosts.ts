@@ -1,4 +1,4 @@
-﻿import { useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import api from "../utils/api";
 
 export type PlatformStatus = {
@@ -7,6 +7,8 @@ export type PlatformStatus = {
   status: string;
   platformPostId?: string | null;
   postedAt?: string | null;
+  nextScheduledRun?: string | null;
+  isRecurring?: boolean;
   error?: string | null;
 };
 
@@ -17,6 +19,8 @@ export type Post = {
   status: string;
   scheduledAt?: string | null;
   postedAt?: string | null;
+  nextScheduledRun?: string | null;
+  isRecurring?: boolean;
   createdAt?: string;
   platformStatuses?: PlatformStatus[];
   analytics?: any;
@@ -208,3 +212,4 @@ export const usePosts = () => {
     deletePost,
   };
 };
+

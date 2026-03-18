@@ -1,7 +1,8 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { PlatformSelector } from "../components/Posts/PlatformSelector";
 import { ScheduleSelector } from "../components/Posts/ScheduleSelector";
 import { PostPreview } from "../components/Posts/PostPreview";
+import { AutomationTab } from "../components/Posts/AutomationTab";
 import { useIntegrations } from "../hooks/useIntegrations";
 import { usePosts } from "../hooks/usePosts";
 import type { Post } from "../hooks/usePosts";
@@ -52,7 +53,7 @@ export const PostsPage: React.FC = () => {
   } = usePosts();
 
   const [activeTab, setActiveTab] = useState<
-    "create" | "queue" | "posted" | "failed"
+    "create" | "automation" | "queue" | "posted" | "failed"
   >("queue");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -241,6 +242,7 @@ export const PostsPage: React.FC = () => {
         <div className="mt-8 flex flex-wrap gap-3">
           {[
             { key: "create", label: "Create" },
+            { key: "automation", label: "Automation" },
             { key: "queue", label: "Queue" },
             { key: "posted", label: "Posted" },
             { key: "failed", label: "Failed" },
@@ -337,6 +339,8 @@ export const PostsPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {activeTab === "automation" && <AutomationTab />}
 
         {activeTab === "queue" && (
           <div className="mt-8 space-y-6">
@@ -663,3 +667,7 @@ export const PostsPage: React.FC = () => {
     </div>
   );
 };
+
+
+
+
