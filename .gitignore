@@ -57,3 +57,11 @@ build
 # VS Code extensions
 *.vsix
 
+
+# Local tooling
+.claude/
+.vscode/
+files/
+skills-lock.json
+/src/
+tmp_skills_disabled/
