@@ -1,4 +1,4 @@
-﻿import { useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import api from "../utils/api";
 
 export type AnalyticsSummary = {
@@ -7,27 +7,27 @@ export type AnalyticsSummary = {
   totalImpressions: number;
   totalEngagement: number;
   engagementRate: number;
-  growthRate: number;
+  growthRate: number | null;
 };
 
 export type AnalyticsOverview = {
   dateRange: { start: string; end: string };
-  summary: AnalyticsSummary;
+  summary: AnalyticsSummary | null;
   platforms: Array<{
     platform: string;
-    reach: number;
-    impressions: number;
-    engagement: number;
-    engagementRate: number;
+    reach: number | null;
+    impressions: number | null;
+    engagement: number | null;
+    engagementRate: number | null;
   }>;
   topPlatforms: Array<{ platform: string; engagement: number }>;
-  trends: Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }>;
+  trends: Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }> | null;
 };
 
 export type PlatformMetric = {
   platform: string;
   accountName?: string;
-  metrics: any;
+  metrics: any | null;
 };
 
 export type TrendData = {
@@ -42,6 +42,12 @@ export type ComparisonData = {
   thisMonth: any;
   lastMonth: any;
   change: any;
+};
+
+type ApiResponse<T> = {
+  success: boolean;
+  data: T | null;
+  message?: string;
 };
 
 const getErrorMessage = (error: any) =>
@@ -75,13 +81,14 @@ export const useAnalytics = () => {
   const getOverviewAnalytics = useCallback(
     async (days: 30 | 60) => {
       const data = await run(async () => {
-        const resp = await api.get<AnalyticsOverview>("/analytics/overview", {
-          params: { days },
-        });
+        const resp = await api.get<ApiResponse<AnalyticsOverview>>(
+          "/analytics/overview",
+          { params: { days } }
+        );
         return resp.data;
       });
-      setAnalyticsData(data);
-      return data;
+      setAnalyticsData(data.data ?? null);
+      return data.data;
     },
     [run]
   );
@@ -89,13 +96,14 @@ export const useAnalytics = () => {
   const getPlatformMetrics = useCallback(
     async (days: 30 | 60) => {
       const data = await run(async () => {
-        const resp = await api.get<PlatformMetric[]>("/analytics/platforms", {
-          params: { days },
-        });
+        const resp = await api.get<ApiResponse<PlatformMetric[]>>(
+          "/analytics/platforms",
+          { params: { days } }
+        );
         return resp.data;
       });
-      setPlatformMetrics(data);
-      return data;
+      setPlatformMetrics(data.data ?? []);
+      return data.data;
     },
     [run]
   );
@@ -103,10 +111,11 @@ export const useAnalytics = () => {
   const getPlatformDetails = useCallback(
     async (platform: string, days: 30 | 60) => {
       return run(async () => {
-        const resp = await api.get(`/analytics/platforms/${platform}`, {
-          params: { days },
-        });
-        return resp.data;
+        const resp = await api.get<ApiResponse<any>>(
+          `/analytics/platforms/${platform}`,
+          { params: { days } }
+        );
+        return resp.data.data;
       });
     },
     [run]
@@ -115,13 +124,13 @@ export const useAnalytics = () => {
   const getTopContent = useCallback(
     async (days: 30 | 60, limit = 10) => {
       const data = await run(async () => {
-        const resp = await api.get<any[]>("/analytics/posts", {
+        const resp = await api.get<ApiResponse<any[]>>("/analytics/posts", {
           params: { days, limit },
         });
         return resp.data;
       });
-      setTopPosts(data);
-      return data;
+      setTopPosts(data.data ?? []);
+      return data.data;
     },
     [run]
   );
@@ -129,31 +138,34 @@ export const useAnalytics = () => {
   const getTrends = useCallback(
     async (days: 30 | 60) => {
       const data = await run(async () => {
-        const resp = await api.get<TrendData>("/analytics/trending", {
-          params: { days },
-        });
+        const resp = await api.get<ApiResponse<TrendData>>(
+          "/analytics/trending",
+          { params: { days } }
+        );
         return resp.data;
       });
-      setTrends(data);
-      return data;
+      setTrends(data.data ?? null);
+      return data.data;
     },
     [run]
   );
 
   const getComparison = useCallback(async () => {
     const data = await run(async () => {
-      const resp = await api.get<ComparisonData>("/analytics/comparison");
+      const resp = await api.get<ApiResponse<ComparisonData>>(
+        "/analytics/comparison"
+      );
       return resp.data;
     });
-    setComparison(data);
-    return data;
+    setComparison(data.data ?? null);
+    return data.data;
   }, [run]);
 
   const getPostMetrics = useCallback(
     async (postId: string) => {
       return run(async () => {
-        const resp = await api.get(`/analytics/posts/${postId}`);
-        return resp.data;
+        const resp = await api.get<ApiResponse<any>>(`/analytics/posts/${postId}`);
+        return resp.data.data;
       });
     },
     [run]

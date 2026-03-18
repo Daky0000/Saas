@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { UserIntegration } from "@prisma/client";
 import { logIntegrationEvent } from "../../utils/integration-log";
 
@@ -109,6 +109,9 @@ export class LinkedInAdapter {
         }
       );
       const elements = resp.data?.elements || [];
+      if (!Array.isArray(elements) || elements.length === 0) {
+        return null;
+      }
       const totals = elements.reduce(
         (acc: any, element: any) => {
           const stats = element.totalShareStatistics || {};
@@ -136,3 +139,4 @@ export class LinkedInAdapter {
       return { error: error?.message || "LinkedIn metrics failed" };
     }
   }\n}
+

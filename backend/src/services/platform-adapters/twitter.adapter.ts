@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { UserIntegration } from "@prisma/client";
 import { logIntegrationEvent } from "../../utils/integration-log";
 
@@ -143,6 +143,9 @@ export class TwitterAdapter {
         }
       );
       const tweets = resp.data?.data || [];
+      if (!Array.isArray(tweets) || tweets.length === 0) {
+        return null;
+      }
       const totals = tweets.reduce(
         (acc: any, tweet: any) => {
           const metrics = tweet.public_metrics || {};
@@ -169,3 +172,4 @@ export class TwitterAdapter {
       return { error: error?.message || "User metrics failed" };
     }
   }\n}
+

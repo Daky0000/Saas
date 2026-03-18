@@ -1,9 +1,14 @@
-﻿import { Router, Response } from "express";
-import { PrismaClient, PostStatus, PostPlatformStatus } from "@prisma/client";
+import { Router, Response } from "express";
+import { PrismaClient, PostPlatformStatus, PostStatus } from "@prisma/client";
 import { authMiddleware, AuthRequest } from "../middleware/auth.middleware";
-import { addPostToQueue, removePostJobs, retryFailedPost } from "../services/automation/queue";
+import {
+  addPostToQueue,
+  removePostJobs,
+  retryFailedPost,
+} from "../services/automation/queue";
 import { pickPlatformContent } from "../utils/platform-helpers";
 import { logIntegrationEvent } from "../utils/integration-log";
+import { PostService } from "../services/post.service";
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -12,6 +17,15 @@ const parseDate = (value?: string) => {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatCountdown = (value?: Date | null) => {
+  if (!value) return "Now";
+  const diff = value.getTime() - Date.now();
+  if (diff <= 0) return "Due";
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  return `${hours}h ${minutes}m`;
 };
 
 const buildPlatformStatuses = (post: any) => {
@@ -35,16 +49,52 @@ const getFirstIntegration = async (postId: string) => {
 // POST /api/posts
 router.post("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { title, content, integrationIds, scheduledAt, media } = req.body as {
+    const {
+      title,
+      content,
+      integrationIds,
+      scheduledAt,
+      media,
+      status,
+    } = req.body as {
       title?: string;
       content?: unknown;
       integrationIds?: string[];
       scheduledAt?: string;
       media?: any;
+      status?: PostStatus;
     };
 
     if (!title || !content) {
       return res.status(400).json({ error: "Missing title or content" });
+    }
+
+    const scheduledDate = parseDate(scheduledAt);
+    const now = new Date();
+    const wantsDraft =
+      status === PostStatus.DRAFT || !integrationIds || !integrationIds.length;
+
+    if (wantsDraft) {
+      const post = await prisma.post.create({
+        data: {
+          title,
+          content: content as any,
+          status: PostStatus.DRAFT,
+          scheduledAt: null,
+          agencyId: req.agencyId!,
+          createdById: req.userId!,
+        },
+        include: {
+          platformIntegrations: {
+            include: { userIntegration: { include: { integration: true } } },
+          },
+        },
+      });
+
+      return res.status(201).json({
+        ...post,
+        platformStatuses: buildPlatformStatuses(post),
+      });
     }
 
     if (!integrationIds || !Array.isArray(integrationIds) || !integrationIds.length) {
@@ -53,9 +103,7 @@ router.post("/", authMiddleware, async (req: AuthRequest, res: Response) => {
         .json({ error: "Select at least one integration" });
     }
 
-    const scheduledDate = parseDate(scheduledAt);
-    const now = new Date();
-    const status =
+    const computedStatus =
       scheduledDate && scheduledDate.getTime() > now.getTime()
         ? PostStatus.SCHEDULED
         : PostStatus.APPROVED;
@@ -73,7 +121,7 @@ router.post("/", authMiddleware, async (req: AuthRequest, res: Response) => {
       data: {
         title,
         content: content as any,
-        status,
+        status: computedStatus,
         scheduledAt: scheduledDate,
         agencyId: req.agencyId!,
         createdById: req.userId!,
@@ -139,10 +187,32 @@ router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   }
 });
 
+// GET /api/posts/:id/with-platforms
+router.get(
+  "/:id/with-platforms",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const data = await PostService.getPostWithIntegrations(
+        req.params.id,
+        req.agencyId!,
+        req.userId!
+      );
+      res.json({
+        post: data.post,
+        selectedIntegrations: data.selectedIntegrations,
+        availableIntegrations: data.availableIntegrations,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
+
 // GET /api/posts/:id
 router.get("/:id", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const post = await prisma.post.findFirst({
+      const post = await prisma.post.findFirst({
       where: { id: req.params.id, agencyId: req.agencyId! },
       include: {
         platformIntegrations: {
@@ -161,6 +231,217 @@ router.get("/:id", authMiddleware, async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: error.message });
   }
 });
+
+// PUT /api/posts/:id
+router.put(
+  "/:id",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { title, content, selectedIntegrationIds } = req.body as {
+        title?: string;
+        content?: unknown;
+        selectedIntegrationIds?: string[];
+      };
+
+      const updated = await PostService.updatePostWithIntegrations(
+        req.params.id,
+        { title, content, selectedIntegrationIds },
+        req.userId!,
+        req.agencyId!
+      );
+
+      if (!updated) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      res.json({
+        ...updated,
+        platformStatuses: buildPlatformStatuses(updated),
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
+
+// PUT /api/posts/:id/platform-selection
+router.put(
+  "/:id/platform-selection",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { integrationIds } = req.body as { integrationIds?: string[] };
+
+      const updated = await PostService.savePlatformSelection(
+        req.params.id,
+        integrationIds ?? [],
+        req.userId!,
+        req.agencyId!
+      );
+
+      const firstIntegration = integrationIds?.length
+        ? await getFirstIntegration(req.params.id)
+        : null;
+
+      if (firstIntegration) {
+        await logIntegrationEvent({
+          userId: req.userId!,
+          integrationId: firstIntegration.userIntegration.integrationId,
+          userIntegrationId: firstIntegration.userIntegrationId,
+          eventType: "platform_selection_updated",
+          status: "success",
+          response: { postId: req.params.id, integrationIds },
+        });
+      }
+
+      res.json({
+        ...updated,
+        platformStatuses: updated ? buildPlatformStatuses(updated) : [],
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
+
+// POST /api/posts/:id/reschedule
+router.post(
+  "/:id/reschedule",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { scheduledAt } = req.body as { scheduledAt?: string };
+      const scheduledDate = parseDate(scheduledAt);
+      if (!scheduledDate) {
+        return res.status(400).json({ error: "Invalid schedule date" });
+      }
+
+      const result = await PostService.reschedulePost(
+        req.params.id,
+        scheduledDate,
+        req.userId!,
+        req.agencyId!
+      );
+
+      res.json({
+        success: true,
+        newScheduledAt: scheduledDate.toISOString(),
+        countdown: formatCountdown(scheduledDate),
+        jobId: result.jobId,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
+
+// GET /api/posts/:id/reschedule-options
+router.get(
+  "/:id/reschedule-options",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const post = await prisma.post.findFirst({
+        where: { id: req.params.id, agencyId: req.agencyId! },
+      });
+      if (!post) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      const daysAhead = Number.parseInt(req.query.daysAhead as string, 10) || 7;
+      const safeDaysAhead = Math.min(30, Math.max(1, daysAhead));
+
+      const posts = await prisma.post.findMany({
+        where: {
+          agencyId: req.agencyId!,
+          status: PostStatus.POSTED,
+          postedAt: { not: null },
+        },
+        include: { analytics: true },
+      });
+
+      const byHour = new Map<number, { total: number; count: number }>();
+
+      posts.forEach((entry) => {
+        if (!entry.postedAt || !entry.analytics) return;
+        const analytics = entry.analytics;
+        const engagement =
+          (analytics.instagramLikes || 0) +
+          (analytics.instagramComments || 0) +
+          (analytics.instagramShares || 0) +
+          (analytics.instagramSaves || 0) +
+          (analytics.tiktokLikes || 0) +
+          (analytics.tiktokComments || 0) +
+          (analytics.tiktokShares || 0) +
+          (analytics.linkedinLikes || 0) +
+          (analytics.linkedinComments || 0) +
+          (analytics.twitterLikes || 0) +
+          (analytics.twitterRetweets || 0) +
+          (analytics.twitterReplies || 0) +
+          (analytics.facebookLikes || 0) +
+          (analytics.facebookComments || 0) +
+          (analytics.facebookShares || 0);
+
+        if (engagement <= 0) return;
+
+        const hour = entry.postedAt.getHours();
+        const current = byHour.get(hour) || { total: 0, count: 0 };
+        byHour.set(hour, {
+          total: current.total + engagement,
+          count: current.count + 1,
+        });
+      });
+
+      if (!byHour.size) {
+        return res.json([]);
+      }
+
+      const averages = Array.from(byHour.entries()).map(([hour, stats]) => ({
+        hour,
+        avg: stats.total / stats.count,
+      }));
+      const maxAvg = Math.max(...averages.map((item) => item.avg));
+      if (!Number.isFinite(maxAvg) || maxAvg <= 0) {
+        return res.json([]);
+      }
+
+      const topHours = averages
+        .sort((a, b) => b.avg - a.avg)
+        .slice(0, 3);
+
+      const formatHour = (hour: number) => {
+        const hours12 = ((hour + 11) % 12) + 1;
+        const suffix = hour >= 12 ? "PM" : "AM";
+        return `${hours12}:00 ${suffix}`;
+      };
+
+      const options: Array<{ time: string; date: string; score: number }> = [];
+      const base = new Date();
+
+      for (let i = 1; i <= safeDaysAhead; i += 1) {
+        const day = new Date(base);
+        day.setDate(base.getDate() + i);
+        const dateLabel = day.toISOString().split("T")[0];
+        topHours.forEach((slot) => {
+          const score = Math.max(
+            1,
+            Math.min(100, Math.round((slot.avg / maxAvg) * 100))
+          );
+          options.push({
+            time: formatHour(slot.hour),
+            date: dateLabel,
+            score,
+          });
+        });
+      }
+
+      res.json(options);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
 
 // POST /api/posts/:id/post-now
 router.post(
@@ -317,6 +598,7 @@ router.delete(
     }
   }
 );
+
 // POST /api/posts/:id/retry
 router.post(
   "/:id/retry",
@@ -388,4 +670,5 @@ router.get(
 );
 
 export default router;
+
 

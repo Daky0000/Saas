@@ -1,4 +1,4 @@
-ï»¿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useIntegrations } from "../hooks/useIntegrations";
 import type {
   Integration,
@@ -446,10 +446,10 @@ export const IntegrationsPage: React.FC = () => {
                   >
                     <div>
                       <p className="text-sm text-slate-100">
-                        {account.accountName || "Account"}
+                        {account.accountName || "N/A"}
                       </p>
                       <p className="text-xs text-slate-400">
-                        {account.accountEmail || "No email on file"} Â· {account.createdAt ? new Date(account.createdAt).toLocaleDateString() : ""}
+                        {account.accountEmail || "N/A"} ¡¤ {account.createdAt ? new Date(account.createdAt).toLocaleDateString() : "N/A"}
                       </p>
                     </div>
                     <button
@@ -503,3 +503,4 @@ export const IntegrationsPage: React.FC = () => {
     </div>
   );
 };
+

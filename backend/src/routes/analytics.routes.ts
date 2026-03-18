@@ -1,4 +1,4 @@
-﻿import { Router, Response } from "express";
+import { Router, Response } from "express";
 import { authMiddleware, AuthRequest } from "../middleware/auth.middleware";
 import { AnalyticsService } from "../services/analytics.service";
 import { AnalyticsSyncService } from "../services/analytics-sync.service";
@@ -53,6 +53,20 @@ router.get(
         days
       );
 
+      if (!analytics.combined) {
+        return res.json({
+          success: true,
+          data: {
+            dateRange: analytics.dateRange,
+            summary: null,
+            platforms: [],
+            topPlatforms: [],
+            trends: null,
+          },
+          message: "No data available yet",
+        });
+      }
+
       const range = buildRange(days);
       const previousRange = {
         start: new Date(range.start.getTime() - days * 24 * 60 * 60 * 1000),
@@ -67,30 +81,39 @@ router.get(
       });
 
       const previousTotals = sumTotals(previousRows);
-      const growthRate = calcGrowth(
-        analytics.combined.totalEngagement,
-        previousTotals.totalEngagement
-      );
+      const growthRate = previousTotals.totalEngagement
+        ? calcGrowth(
+            analytics.combined.totalEngagement,
+            previousTotals.totalEngagement
+          )
+        : null;
+
+      const platformData = analytics.platforms
+        .filter((item) => item.metrics)
+        .map((item) => ({
+          platform: item.platform,
+          reach: item.metrics?.totalReach ?? null,
+          impressions: item.metrics?.totalImpressions ?? null,
+          engagement: item.metrics?.totalEngagement ?? null,
+          engagementRate: item.metrics?.engagementRate ?? null,
+        }));
 
       res.json({
-        dateRange: analytics.dateRange,
-        summary: {
-          totalPosts: analytics.combined.postsPublished,
-          totalReach: analytics.combined.totalReach,
-          totalImpressions: analytics.combined.totalImpressions,
-          totalEngagement: analytics.combined.totalEngagement,
-          engagementRate: analytics.combined.engagementRate,
-          growthRate,
+        success: true,
+        data: {
+          dateRange: analytics.dateRange,
+          summary: {
+            totalPosts: analytics.combined.postsPublished,
+            totalReach: analytics.combined.totalReach,
+            totalImpressions: analytics.combined.totalImpressions,
+            totalEngagement: analytics.combined.totalEngagement,
+            engagementRate: analytics.combined.engagementRate,
+            growthRate,
+          },
+          platforms: platformData,
+          topPlatforms: analytics.topPlatforms ?? [],
+          trends: analytics.trends,
         },
-        platforms: analytics.platforms.map((item) => ({
-          platform: item.platform,
-          reach: item.metrics.totalReach,
-          impressions: item.metrics.totalImpressions,
-          engagement: item.metrics.totalEngagement,
-          engagementRate: item.metrics.engagementRate,
-        })),
-        topPlatforms: analytics.combined.topPlatforms,
-        trends: analytics.combined.trends,
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -109,13 +132,18 @@ router.get(
         req.agencyId!,
         days
       );
-      res.json(
-        analytics.platforms.map((item) => ({
-          platform: item.platform,
-          accountName: item.accountName,
-          metrics: item.metrics,
-        }))
-      );
+
+      const data = analytics.platforms.map((item) => ({
+        platform: item.platform,
+        accountName: item.accountName,
+        metrics: item.metrics,
+      }));
+
+      res.json({
+        success: true,
+        data,
+        message: data.length ? undefined : "No data available yet",
+      });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -137,14 +165,27 @@ router.get(
         include: { integration: true },
       });
       if (!integrations.length) {
-        return res.status(404).json({ error: "Platform not connected" });
+        return res.json({
+          success: true,
+          data: null,
+          message: "Platform not connected",
+        });
       }
 
       const details = await AnalyticsService.getPlatformAnalytics(
         integrations[0].id,
         days
       );
-      res.json(details);
+
+      if (!details) {
+        return res.json({
+          success: true,
+          data: null,
+          message: "No data for this platform",
+        });
+      }
+
+      res.json({ success: true, data: details });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -162,6 +203,15 @@ router.get(
         req.agencyId!,
         days
       );
+
+      if (!analytics.trends) {
+        return res.json({
+          success: true,
+          data: null,
+          message: "No data available yet",
+        });
+      }
+
       const topPosts = await AnalyticsService.getTopPosts(
         req.userId!,
         req.agencyId!,
@@ -175,20 +225,23 @@ router.get(
       );
 
       res.json({
-        engagementTrend: analytics.combined.trends.map((item) => ({
-          date: item.date,
-          value: item.totalEngagement,
-        })),
-        reachTrend: analytics.combined.trends.map((item) => ({
-          date: item.date,
-          value: item.totalReach,
-        })),
-        impressionsTrend: analytics.combined.trends.map((item) => ({
-          date: item.date,
-          value: item.totalImpressions,
-        })),
-        topPosts,
-        topPlatforms,
+        success: true,
+        data: {
+          engagementTrend: analytics.trends.map((item) => ({
+            date: item.date,
+            value: item.totalEngagement,
+          })),
+          reachTrend: analytics.trends.map((item) => ({
+            date: item.date,
+            value: item.totalReach,
+          })),
+          impressionsTrend: analytics.trends.map((item) => ({
+            date: item.date,
+            value: item.totalImpressions || 0,
+          })),
+          topPosts,
+          topPlatforms,
+        },
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -213,17 +266,27 @@ router.get(
         days
       );
 
-      if (sortBy === "reach") {
-        posts = posts.sort((a, b) => b.reach - a.reach);
-      } else if (sortBy === "date") {
-        posts = posts.sort(
-          (a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime()
-        );
-      } else {
-        posts = posts.sort((a, b) => b.engagement - a.engagement);
+      if (!posts.length) {
+        return res.json({
+          success: true,
+          data: [],
+          message: "No posts published yet",
+        });
       }
 
-      res.json(posts.slice(offset, offset + limit));
+      if (sortBy === "reach") {
+        posts = posts.sort((a, b) => (b.reach ?? -1) - (a.reach ?? -1));
+      } else if (sortBy === "date") {
+        posts = posts.sort(
+          (a, b) =>
+            new Date(b.postedAt).getTime() -
+            new Date(a.postedAt).getTime()
+        );
+      } else {
+        posts = posts.sort((a, b) => (b.engagement ?? -1) - (a.engagement ?? -1));
+      }
+
+      res.json({ success: true, data: posts.slice(offset, offset + limit) });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -236,7 +299,7 @@ router.get(
   async (req: AuthRequest, res: Response) => {
     try {
       const payload = await AnalyticsService.getPostAnalytics(req.params.postId);
-      res.json(payload);
+      res.json({ success: true, data: payload });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -254,6 +317,14 @@ router.get(
       const rows = await prisma.platformDailyMetrics.findMany({
         where: { agencyId: req.agencyId!, date: { gte: range.start, lte: range.end } },
       });
+
+      if (!rows.length) {
+        return res.json({
+          success: true,
+          data: null,
+          message: "No data available yet",
+        });
+      }
 
       const grouped = new Map<string, any>();
       rows.forEach((row) => {
@@ -294,7 +365,7 @@ router.get(
         growth: { posts: 0, engagement: 0, reach: 0 },
       };
 
-      res.json({ groupedData, comparison });
+      res.json({ success: true, data: { groupedData, comparison } });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -334,13 +405,15 @@ router.get(
 
       const rows = [
         ["Platform", "Reach", "Impressions", "Engagement", "Engagement Rate"],
-        ...analytics.platforms.map((item) => [
-          item.platform,
-          item.metrics.totalReach,
-          item.metrics.totalImpressions,
-          item.metrics.totalEngagement,
-          item.metrics.engagementRate,
-        ]),
+        ...(analytics.platforms
+          .filter((item) => item.metrics)
+          .map((item) => [
+            item.platform,
+            item.metrics?.totalReach ?? "",
+            item.metrics?.totalImpressions ?? "",
+            item.metrics?.totalEngagement ?? "",
+            item.metrics?.engagementRate ?? "",
+          ])),
       ];
 
       const csv = rows.map((row) => row.join(",")).join("\n");
@@ -378,16 +451,27 @@ router.get(
         where: { agencyId: req.agencyId!, date: { gte: lastStart, lte: lastEnd } },
       });
 
+      if (!currentRows.length && !lastRows.length) {
+        return res.json({
+          success: true,
+          data: null,
+          message: "No data available yet",
+        });
+      }
+
       const currentTotals = sumTotals(currentRows);
       const lastTotals = sumTotals(lastRows);
 
       res.json({
-        thisMonth: currentTotals,
-        lastMonth: lastTotals,
-        change: {
-          posts: calcGrowth(currentTotals.postsPublished, lastTotals.postsPublished),
-          engagement: calcGrowth(currentTotals.totalEngagement, lastTotals.totalEngagement),
-          reach: calcGrowth(currentTotals.totalReach, lastTotals.totalReach),
+        success: true,
+        data: {
+          thisMonth: currentTotals,
+          lastMonth: lastTotals,
+          change: {
+            posts: calcGrowth(currentTotals.postsPublished, lastTotals.postsPublished),
+            engagement: calcGrowth(currentTotals.totalEngagement, lastTotals.totalEngagement),
+            reach: calcGrowth(currentTotals.totalReach, lastTotals.totalReach),
+          },
         },
       });
     } catch (error: any) {

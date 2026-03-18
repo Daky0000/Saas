@@ -1,9 +1,9 @@
-ï»¿import React from "react";
+import React from "react";
 
 type Props = {
   title: string;
-  value: number;
-  trend: number;
+  value?: number | null;
+  trend?: number | null;
   icon: React.ReactNode;
   unit?: string;
 };
@@ -20,8 +20,15 @@ export const SummaryCard: React.FC<Props> = ({
   icon,
   unit,
 }) => {
-  const trendColor = trend > 0 ? "text-emerald-300" : trend < 0 ? "text-red-300" : "text-slate-400";
-  const trendSymbol = trend > 0 ? "â†‘" : trend < 0 ? "â†“" : "â€“";
+  const hasValue = value !== null && value !== undefined;
+  const hasTrend = trend !== null && trend !== undefined;
+  const trendColor =
+    trend && trend > 0
+      ? "text-emerald-300"
+      : trend && trend < 0
+        ? "text-red-300"
+        : "text-slate-400";
+  const trendSymbol = trend && trend > 0 ? "¡ü" : trend && trend < 0 ? "¡ý" : "¨C";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-sm">
@@ -29,17 +36,25 @@ export const SummaryCard: React.FC<Props> = ({
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-800 text-slate-200">
           {icon}
         </div>
-        <span className={`text-xs font-semibold ${trendColor}`}>
-          {trendSymbol} {formatTrend(trend)}
-        </span>
+        {hasTrend ? (
+          <span className={`text-xs font-semibold ${trendColor}`}>
+            {trendSymbol} {formatTrend(trend as number)}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-500">N/A</span>
+        )}
       </div>
       <p className="mt-4 text-xs uppercase tracking-[0.3em] text-slate-500">
         {title}
       </p>
-      <p className="mt-2 text-2xl font-semibold text-slate-100">
-        {value.toLocaleString()}
-        {unit ? <span className="text-sm text-slate-400"> {unit}</span> : null}
-      </p>
+      {hasValue ? (
+        <p className="mt-2 text-2xl font-semibold text-slate-100">
+          {Number(value).toLocaleString()}
+          {unit ? <span className="text-sm text-slate-400"> {unit}</span> : null}
+        </p>
+      ) : (
+        <p className="mt-2 text-lg font-semibold text-slate-500">N/A</p>
+      )}
     </div>
   );
 };

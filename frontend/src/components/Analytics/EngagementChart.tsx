@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -11,11 +11,31 @@ import {
 } from "recharts";
 
 type Props = {
-  data: Array<{ date: string; engagement: number }>;
+  data?: Array<{ date: string; engagement: number }> | null;
   title: string;
 };
 
 export const EngagementChart: React.FC<Props> = ({ data, title }) => {
+  if (!data || !data.length) {
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+        <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+        <div className="mt-4 flex h-56 flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 bg-slate-950/40 text-center text-sm text-slate-400">
+          <p className="text-sm font-semibold text-slate-300">No data available yet</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Publish posts to see engagement trends over time.
+          </p>
+          <a
+            href="/posts/new"
+            className="mt-4 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
+          >
+            Create First Post
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
       <div className="flex items-center justify-between">

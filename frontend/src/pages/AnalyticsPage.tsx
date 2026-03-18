@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   TrendingUp,
@@ -43,6 +43,22 @@ type PlatformDetails = {
   }>;
 };
 
+const EmptyState: React.FC<{ title: string; message: string }> = ({
+  title,
+  message,
+}) => (
+  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-center text-sm text-slate-400">
+    <p className="text-sm font-semibold text-slate-200">{title}</p>
+    <p className="mt-2 text-xs text-slate-500">{message}</p>
+    <a
+      href="/posts/new"
+      className="mt-4 inline-flex rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
+    >
+      Create First Post
+    </a>
+  </div>
+);
+
 export const AnalyticsPage: React.FC = () => {
   const {
     analyticsData,
@@ -66,7 +82,7 @@ export const AnalyticsPage: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [toast, setToast] = useState<string | null>(null);
-  const [platformSlug, setPlatformSlug] = useState<string>("facebook");
+  const [platformSlug, setPlatformSlug] = useState<string>("");
   const [platformDetails, setPlatformDetails] = useState<PlatformDetails | null>(
     null
   );
@@ -103,28 +119,32 @@ export const AnalyticsPage: React.FC = () => {
       .catch(() => setPlatformDetails(null));
   }, [platformSlug, selectedDays, getPlatformDetails]);
 
-  const summary = analyticsData?.summary;
+  const summary = analyticsData?.summary || null;
 
   const chartEngagement = useMemo(
     () =>
-      analyticsData?.trends?.map((item) => ({
-        date: item.date,
-        engagement: item.totalEngagement,
-      })) || [],
+      analyticsData?.trends
+        ? analyticsData.trends.map((item) => ({
+            date: item.date,
+            engagement: item.totalEngagement,
+          }))
+        : null,
     [analyticsData]
   );
 
   const chartReach = useMemo(
     () =>
-      analyticsData?.trends?.map((item) => ({
-        date: item.date,
-        engagement: item.totalReach,
-      })) || [],
+      analyticsData?.trends
+        ? analyticsData.trends.map((item) => ({
+            date: item.date,
+            engagement: item.totalReach,
+          }))
+        : null,
     [analyticsData]
   );
 
   const trendData = useMemo(() => {
-    if (!trends?.engagementTrend?.length) return [] as Array<{ date: string; engagement: number }>;
+    if (!trends?.engagementTrend?.length) return null;
     if (trendGroup === "daily") {
       return trends.engagementTrend.map((item) => ({
         date: item.date,
@@ -145,19 +165,22 @@ export const AnalyticsPage: React.FC = () => {
       }
       grouped.set(key, (grouped.get(key) || 0) + item.value);
     });
-    return Array.from(grouped.entries()).map(([date, engagement]) => ({ date, engagement }));
+    return Array.from(grouped.entries()).map(([date, engagement]) => ({
+      date,
+      engagement,
+    }));
   }, [trends, trendGroup]);
 
   const platformComparisonData = useMemo(
     () =>
       platformMetrics.map((item) => ({
         name: item.platform,
-        engagement: item.metrics?.totalEngagement || 0,
-        reach: item.metrics?.totalReach || 0,
-        impressions: item.metrics?.totalImpressions || 0,
+        engagement: item.metrics?.totalEngagement ?? null,
+        reach: item.metrics?.totalReach ?? null,
+        impressions: item.metrics?.totalImpressions ?? null,
       })),
     [platformMetrics]
-  );
+  );\n  const hasPlatformData = useMemo(\n    () => platformMetrics.some((item) => !!item.metrics),\n    [platformMetrics]\n  );\n
 
   const handleRefresh = async () => {
     try {
@@ -258,36 +281,42 @@ export const AnalyticsPage: React.FC = () => {
 
         {activeTab === "overview" && (
           <div className="mt-8 space-y-6">
+            {!summary && (
+              <EmptyState
+                title="No Data Available Yet"
+                message="You haven't published any posts yet. Once you do, analytics will appear here."
+              />
+            )}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <SummaryCard
                 title="Total Posts"
-                value={summary?.totalPosts || 0}
-                trend={summary?.growthRate || 0}
+                value={summary?.totalPosts}
+                trend={summary?.growthRate}
                 icon={<BarChart3 className="h-5 w-5" />}
                 unit="posts"
               />
               <SummaryCard
                 title="Total Reach"
-                value={summary?.totalReach || 0}
-                trend={summary?.growthRate || 0}
+                value={summary?.totalReach}
+                trend={summary?.growthRate}
                 icon={<Users className="h-5 w-5" />}
               />
               <SummaryCard
                 title="Impressions"
-                value={summary?.totalImpressions || 0}
-                trend={summary?.growthRate || 0}
+                value={summary?.totalImpressions}
+                trend={summary?.growthRate}
                 icon={<TrendingUp className="h-5 w-5" />}
               />
               <SummaryCard
                 title="Engagement"
-                value={summary?.totalEngagement || 0}
-                trend={summary?.growthRate || 0}
+                value={summary?.totalEngagement}
+                trend={summary?.growthRate}
                 icon={<Activity className="h-5 w-5" />}
               />
               <SummaryCard
                 title="Engagement Rate"
-                value={summary?.engagementRate || 0}
-                trend={summary?.growthRate || 0}
+                value={summary?.engagementRate}
+                trend={summary?.growthRate}
                 icon={<Gauge className="h-5 w-5" />}
                 unit="%"
               />
@@ -305,82 +334,103 @@ export const AnalyticsPage: React.FC = () => {
 
         {activeTab === "platforms" && (
           <div className="mt-8 space-y-6">
-            <div className="flex flex-wrap gap-2">
-              {platformMetrics.map((platform) => (
-                <button
-                  key={platform.platform}
-                  type="button"
-                  onClick={() => setPlatformSlug(platform.platform)}
-                  className={`rounded-full px-3 py-2 text-xs font-semibold ${
-                    platformSlug === platform.platform
-                      ? "bg-indigo-500 text-white"
-                      : "bg-slate-900/60 text-slate-300"
-                  }`}
-                >
-                  {platform.platform}
-                </button>
-              ))}
-            </div>
-
-            {platformDetails ? (
-              <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <MetricTrend
-                    label="Reach"
-                    value={platformDetails.metrics.totalReach || 0}
-                    percentageChange={0}
-                  />
-                  <MetricTrend
-                    label="Impressions"
-                    value={platformDetails.metrics.totalImpressions || 0}
-                    percentageChange={0}
-                  />
-                  <MetricTrend
-                    label="Engagement"
-                    value={platformDetails.metrics.totalEngagement || 0}
-                    percentageChange={0}
-                  />
-                  <MetricTrend
-                    label="Engagement Rate"
-                    value={platformDetails.metrics.engagementRate || 0}
-                    percentageChange={0}
-                  />
-                </div>
-
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                  <h3 className="text-sm font-semibold text-slate-100">
-                    Daily Breakdown
-                  </h3>
-                  <div className="mt-4 overflow-x-auto">
-                    <table className="min-w-full text-left text-xs text-slate-300">
-                      <thead>
-                        <tr className="border-b border-slate-800 text-slate-500">
-                          <th className="py-2 pr-4">Date</th>
-                          <th className="py-2 pr-4">Reach</th>
-                          <th className="py-2 pr-4">Impressions</th>
-                          <th className="py-2 pr-4">Engagement</th>
-                          <th className="py-2">Likes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {platformDetails.dailyBreakdown.map((row) => (
-                          <tr key={row.date} className="border-b border-slate-900">
-                            <td className="py-2 pr-4">
-                              {new Date(row.date).toLocaleDateString()}
-                            </td>
-                            <td className="py-2 pr-4">{row.reach}</td>
-                            <td className="py-2 pr-4">{row.impressions}</td>
-                            <td className="py-2 pr-4">{row.engagement}</td>
-                            <td className="py-2">{row.likes || 0}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+            {platformMetrics.length === 0 ? (
+              <EmptyState
+                title="No platforms connected"
+                message="Connect your first platform to start collecting analytics."
+              />
+            ) : !hasPlatformData ? (
+              <EmptyState
+                title="No platform data yet"
+                message="Publish posts to start seeing platform analytics."
+              />
             ) : (
-              <div className="text-sm text-slate-400">No platform data.</div>
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {platformMetrics.map((platform) => (
+                    <button
+                      key={platform.platform}
+                      type="button"
+                      onClick={() => setPlatformSlug(platform.platform)}
+                      className={`rounded-full px-3 py-2 text-xs font-semibold ${
+                        platformSlug === platform.platform
+                          ? "bg-indigo-500 text-white"
+                          : "bg-slate-900/60 text-slate-300"
+                      }`}
+                    >
+                      {platform.platform}
+                    </button>
+                  ))}
+                </div>
+
+                {platformDetails ? (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <MetricTrend
+                        label="Reach"
+                        value={platformDetails.metrics?.totalReach}
+                        percentageChange={null}
+                      />
+                      <MetricTrend
+                        label="Impressions"
+                        value={platformDetails.metrics?.totalImpressions}
+                        percentageChange={null}
+                      />
+                      <MetricTrend
+                        label="Engagement"
+                        value={platformDetails.metrics?.totalEngagement}
+                        percentageChange={null}
+                      />
+                      <MetricTrend
+                        label="Engagement Rate"
+                        value={platformDetails.metrics?.engagementRate}
+                        percentageChange={null}
+                      />
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                      <h3 className="text-sm font-semibold text-slate-100">
+                        Daily Breakdown
+                      </h3>
+                      <div className="mt-4 overflow-x-auto">
+                        {platformDetails.dailyBreakdown.length ? (
+                          <table className="min-w-full text-left text-xs text-slate-300">
+                            <thead>
+                              <tr className="border-b border-slate-800 text-slate-500">
+                                <th className="py-2 pr-4">Date</th>
+                                <th className="py-2 pr-4">Reach</th>
+                                <th className="py-2 pr-4">Impressions</th>
+                                <th className="py-2 pr-4">Engagement</th>
+                                <th className="py-2">Likes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {platformDetails.dailyBreakdown.map((row) => (
+                                <tr key={row.date} className="border-b border-slate-900">
+                                  <td className="py-2 pr-4">
+                                    {new Date(row.date).toLocaleDateString()}
+                                  </td>
+                                  <td className="py-2 pr-4">{row.reach}</td>
+                                  <td className="py-2 pr-4">{row.impressions}</td>
+                                  <td className="py-2 pr-4">{row.engagement}</td>
+                                  <td className="py-2">{row.likes ?? "N/A"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <p className="text-xs text-slate-400">No daily data yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No platform data"
+                    message="No analytics are available for this platform yet."
+                  />
+                )}
+              </>
             )}
           </div>
         )}
@@ -411,17 +461,21 @@ export const AnalyticsPage: React.FC = () => {
             </div>
             <EngagementChart data={trendData} title="Engagement Trend" />
             <EngagementChart
-              data={trends?.reachTrend?.map((item) => ({
-                date: item.date,
-                engagement: item.value,
-              })) || []}
+              data={
+                trends?.reachTrend?.map((item) => ({
+                  date: item.date,
+                  engagement: item.value,
+                })) || null
+              }
               title="Reach Trend"
             />
             <EngagementChart
-              data={trends?.impressionsTrend?.map((item) => ({
-                date: item.date,
-                engagement: item.value,
-              })) || []}
+              data={
+                trends?.impressionsTrend?.map((item) => ({
+                  date: item.date,
+                  engagement: item.value,
+                })) || null
+              }
               title="Impressions Trend"
             />
           </div>
@@ -429,42 +483,52 @@ export const AnalyticsPage: React.FC = () => {
 
         {activeTab === "comparison" && (
           <div className="mt-8 space-y-6">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <MetricTrend
-                label="Posts"
-                value={comparison?.thisMonth?.postsPublished || 0}
-                percentageChange={comparison?.change?.posts || 0}
+            {!comparison ? (
+              <EmptyState
+                title="No comparison data"
+                message="Publish posts to compare performance across periods."
               />
-              <MetricTrend
-                label="Engagement"
-                value={comparison?.thisMonth?.totalEngagement || 0}
-                percentageChange={comparison?.change?.engagement || 0}
-              />
-              <MetricTrend
-                label="Reach"
-                value={comparison?.thisMonth?.totalReach || 0}
-                percentageChange={comparison?.change?.reach || 0}
-              />
-            </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 text-xs text-slate-300">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <p className="text-slate-500">This Month</p>
-                  <p>Posts: {comparison?.thisMonth?.postsPublished || 0}</p>
-                  <p>Engagement: {comparison?.thisMonth?.totalEngagement || 0}</p>
-                  <p>Reach: {comparison?.thisMonth?.totalReach || 0}</p>
+            ) : (
+              <>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <MetricTrend
+                    label="Posts"
+                    value={comparison?.thisMonth?.postsPublished}
+                    percentageChange={comparison?.change?.posts}
+                  />
+                  <MetricTrend
+                    label="Engagement"
+                    value={comparison?.thisMonth?.totalEngagement}
+                    percentageChange={comparison?.change?.engagement}
+                  />
+                  <MetricTrend
+                    label="Reach"
+                    value={comparison?.thisMonth?.totalReach}
+                    percentageChange={comparison?.change?.reach}
+                  />
                 </div>
-                <div>
-                  <p className="text-slate-500">Last Month</p>
-                  <p>Posts: {comparison?.lastMonth?.postsPublished || 0}</p>
-                  <p>Engagement: {comparison?.lastMonth?.totalEngagement || 0}</p>
-                  <p>Reach: {comparison?.lastMonth?.totalReach || 0}</p>
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 text-xs text-slate-300">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-slate-500">This Month</p>
+                      <p>Posts: {comparison?.thisMonth?.postsPublished ?? "N/A"}</p>
+                      <p>Engagement: {comparison?.thisMonth?.totalEngagement ?? "N/A"}</p>
+                      <p>Reach: {comparison?.thisMonth?.totalReach ?? "N/A"}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Last Month</p>
+                      <p>Posts: {comparison?.lastMonth?.postsPublished ?? "N/A"}</p>
+                      <p>Engagement: {comparison?.lastMonth?.totalEngagement ?? "N/A"}</p>
+                      <p>Reach: {comparison?.lastMonth?.totalReach ?? "N/A"}</p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         )}
       </div>
     </div>
   );
 };
+
