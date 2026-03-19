@@ -23,6 +23,7 @@ import { LinkedInPlatform } from './backend/platforms/linkedin.js';
 import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
 import type { PostObject } from './backend/platforms/types.js';
 import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.js';
+import path from 'path';
 
 dotenv.config();
 
@@ -46,6 +47,8 @@ app.get('/health', (_req: Request, res: Response) => {
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+app.use(express.static(path.join(__dirname, 'docs')));
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const DATABASE_URL = process.env.DATABASE_URL;
 const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
@@ -8517,6 +8520,11 @@ app.use((err: any, req: Request, res: Response, next: Function) => {
 
   console.error('Unhandled API error:', err);
   return res.status(status).json({ success: false, error: message });
+});
+
+// SPA fallback
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'docs', 'index.html'));
 });
 
 // Start server
