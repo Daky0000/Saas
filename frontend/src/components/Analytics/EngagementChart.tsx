@@ -16,7 +16,13 @@ type Props = {
 };
 
 export const EngagementChart: React.FC<Props> = ({ data, title }) => {
-  if (!data || !data.length) {
+  const hasNonZeroData =
+    !!data &&
+    data.some(
+      (point) => point.engagement !== null && point.engagement !== undefined && point.engagement !== 0
+    );
+
+  if (!hasNonZeroData) {
     return (
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
         <h3 className="text-sm font-semibold text-slate-100">{title}</h3>

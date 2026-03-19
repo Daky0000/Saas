@@ -121,27 +121,28 @@ export const AnalyticsPage: React.FC = () => {
 
   const summary = analyticsData?.summary || null;
 
-  const chartEngagement = useMemo(
-    () =>
-      analyticsData?.trends
-        ? analyticsData.trends.map((item) => ({
-            date: item.date,
-            engagement: item.totalEngagement,
-          }))
-        : null,
-    [analyticsData]
-  );
+  const hasNonZeroChartData = (data: Array<{ date: string; engagement: number }> | null) =>
+    !!data && data.some((point) => point.engagement !== null && point.engagement !== undefined && point.engagement !== 0);
 
-  const chartReach = useMemo(
-    () =>
-      analyticsData?.trends
-        ? analyticsData.trends.map((item) => ({
-            date: item.date,
-            engagement: item.totalReach,
-          }))
-        : null,
-    [analyticsData]
-  );
+  const chartEngagement = useMemo(() => {
+    const data = analyticsData?.trends
+      ? analyticsData.trends.map((item) => ({
+          date: item.date,
+          engagement: item.totalEngagement,
+        }))
+      : null;
+    return hasNonZeroChartData(data) ? data : null;
+  }, [analyticsData]);
+
+  const chartReach = useMemo(() => {
+    const data = analyticsData?.trends
+      ? analyticsData.trends.map((item) => ({
+          date: item.date,
+          engagement: item.totalReach,
+        }))
+      : null;
+    return hasNonZeroChartData(data) ? data : null;
+  }, [analyticsData]);
 
   const trendData = useMemo(() => {
     if (!trends?.engagementTrend?.length) return null;
