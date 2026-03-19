@@ -2682,6 +2682,11 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
 
 async function getUserConnectedAccounts(userId: string): Promise<any[]> {
   if (!pool) return [];
+  
+  // Get list of admin-enabled platforms
+  const configResult = await dbQuery(`SELECT platform FROM platform_configs WHERE enabled = true`);
+  const enabledPlatforms = configResult.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+  
   const result = await dbQuery(
     `
     SELECT
@@ -2695,10 +2700,10 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
       expires_at AS "expiresAt",
       token_data AS "token_data"
     FROM social_accounts
-    WHERE user_id = $1
+    WHERE user_id = $1 AND LOWER(platform) = ANY($2)
     ORDER BY platform;
   `,
-    [userId]
+    [userId, enabledPlatforms]
   );
   return result.rows;
 }
@@ -5739,19 +5744,26 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/social/accounts — list saved accounts
+// GET /api/v1/social/accounts — list saved accounts (only admin-enabled platforms)
 app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
+    // Get list of admin-enabled platforms
+    const configRows = await pool.query(
+      `SELECT platform FROM platform_configs WHERE enabled = true`
+    );
+    const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+
+    // Return accounts only for admin-enabled platforms
     const { rows } = await pool.query(
       `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
        FROM social_accounts
-       WHERE user_id=$1
+       WHERE user_id=$1 AND LOWER(platform) = ANY($2)
        ORDER BY created_at DESC`,
-      [auth.userId]
+      [auth.userId, enabledPlatforms]
     );
     return res.json({ success: true, accounts: rows });
   } catch (err) {
@@ -5851,6 +5863,10 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
     const postRows = await pool.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
 
+    // Get list of admin-enabled platforms
+    const configRows = await pool.query(`SELECT platform FROM platform_configs WHERE enabled = true`);
+    const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -5873,12 +5889,28 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
 
       await client.query('DELETE FROM social_post_targets WHERE social_post_id=$1', [settingId]);
       const ids = Array.isArray(accounts) ? accounts.map((x) => String(x)).filter(Boolean) : [];
-      for (const accountId of ids) {
-        await client.query(
-          `INSERT INTO social_post_targets (id, social_post_id, social_account_id, enabled)
-           VALUES ($1,$2,$3,true)`,
-          [randomUUID(), settingId, accountId]
+      
+      // Validate that all accounts belong to admin-enabled platforms
+      if (ids.length > 0) {
+        const accountRows = await client.query(
+          `SELECT id, platform FROM social_accounts WHERE id = ANY($1) AND user_id = $2`,
+          [ids, auth.userId]
         );
+        const validAccounts = accountRows.rows.filter(
+          (acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase())
+        );
+        
+        if (validAccounts.length !== ids.length) {
+          throw new Error('Some selected accounts are from disabled platforms');
+        }
+
+        for (const accountId of ids) {
+          await client.query(
+            `INSERT INTO social_post_targets (id, social_post_id, social_account_id, enabled)
+             VALUES ($1,$2,$3,true)`,
+            [randomUUID(), settingId, accountId]
+          );
+        }
       }
 
       await client.query('COMMIT');
