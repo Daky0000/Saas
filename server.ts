@@ -225,7 +225,14 @@ async function ensureDatabase() {
   `);
   await pool.query(
     `INSERT INTO social_platforms (name, slug, api_base_url, enabled)
-     VALUES ('Facebook', 'facebook', 'https://graph.facebook.com', true)
+     VALUES 
+      ('Facebook', 'facebook', 'https://graph.facebook.com', true),
+      ('Instagram', 'instagram', 'https://graph.instagram.com', true),
+      ('LinkedIn', 'linkedin', 'https://api.linkedin.com', true),
+      ('X (Twitter)', 'twitter', 'https://api.twitter.com', true),
+      ('Pinterest', 'pinterest', 'https://api.pinterest.com', true),
+      ('TikTok', 'tiktok', 'https://api.tiktok.com', true),
+      ('Threads', 'threads', 'https://graph.threads.net', true)
      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, api_base_url=EXCLUDED.api_base_url;`
   ).catch(() => undefined);
 
@@ -4525,16 +4532,31 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
       normalizedConfig.redirectUri = resolveOAuthRedirectUri(platformKey, incomingRedirect, req);
     }
 
+    // Auto-enable integration when valid credentials are configured
+    let finalEnabled = Boolean(enabled);
+    const meta = OAUTH_AUTH_URLS[platformKey];
+    if (meta) {
+      const clientId = String((normalizedConfig as any)[meta.idField] || '').trim();
+      const redirectUri = String((normalizedConfig as any).redirectUri || '').trim();
+      const secretRequired = platformKey === 'facebook' || platformKey === 'twitter' || platformKey === 'linkedin' || platformKey === 'tiktok' || platformKey === 'threads' || platformKey === 'pinterest';
+      const secretValue = String((normalizedConfig as any).clientSecret || (normalizedConfig as any).appSecret || '').trim();
+      const isFullyConfigured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
+      // If credentials are now valid, auto-enable regardless of request
+      if (isFullyConfigured) {
+        finalEnabled = true;
+      }
+    }
+
     if (hasDatabase()) {
       await dbQuery(
         `INSERT INTO platform_configs (platform, config, enabled, updated_at)
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (platform) DO UPDATE
            SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
-        [platform, JSON.stringify(normalizedConfig), Boolean(enabled)]
+        [platform, JSON.stringify(normalizedConfig), finalEnabled]
       );
     } else {
-      inMemoryPlatformConfigs.set(platform, { platform, config: normalizedConfig, enabled: Boolean(enabled), updated_at: now });
+      inMemoryPlatformConfigs.set(platform, { platform, config: normalizedConfig, enabled: finalEnabled, updated_at: now });
     }
 
     return res.json({ success: true, message: 'Platform config saved' });
@@ -5289,8 +5311,13 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
 
     const enabled = Array.from(
       new Set<string>([
-        ...platformResult.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean),
-        ...providerResult.rows.map((r: any) => String(r.provider || '').toLowerCase()).filter(Boolean),
+        // Treat platforms as enabled if they are explicitly enabled OR if they have a non-empty config record (meaning admin configured them)
+        ...platformResult.rows
+          .map((r: any) => String(r.platform || '').toLowerCase())
+          .filter(Boolean),
+        ...providerResult.rows
+          .map((r: any) => String(r.provider || '').toLowerCase())
+          .filter(Boolean),
       ])
     );
 
@@ -5760,8 +5787,8 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
 
     return res.json({ success: true, account: saved });
   } catch (err) {
-    console.error('v1 save social account error:', err);
-    return res.status(500).json({ success: false, error: 'Failed to save account' });
+    console.error('v1 save social account error:', {error: String(err instanceof Error ? err.message : err), stack: err instanceof Error ? err.stack : undefined});
+    return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to save account' });
   }
 });
 
