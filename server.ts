@@ -2984,6 +2984,37 @@ async function getMakeWebhookConnection(userId: string): Promise<{ webhookUrlEnc
   return row ? { webhookUrlEncrypted: row.webhook_url_encrypted } : null;
 }
 
+async function ensureWordPressSocialAccount(userId: string) {
+  if (!pool) return;
+  const conn = await getWordPressConnection(userId);
+  const webhookConn = await getMakeWebhookConnection(userId);
+  if (!conn && !webhookConn) return;
+
+  const accountId = conn?.siteUrl ? String(conn.siteUrl).trim() : 'wordpress';
+  const accountName = conn?.username ? String(conn.username).trim() : 'WordPress';
+
+  const updateRes = await dbQuery(
+    `UPDATE social_accounts
+     SET account_name = $3,
+         connected = true,
+         connected_at = NOW()
+     WHERE user_id = $1 AND platform = 'wordpress' AND account_type = 'site' AND account_id = $2`,
+    [userId, accountId, accountName]
+  );
+  if (updateRes.rowCount === 0) {
+    await dbQuery(
+      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, connected, connected_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,true,NOW(),NOW())`,
+      [randomUUID(), userId, 'wordpress', null, 'site', accountId, accountName]
+    );
+  }
+}
+
+async function removeWordPressSocialAccount(userId: string) {
+  if (!pool) return;
+  await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND platform = $2', [userId, 'wordpress']);
+}
+
 function isValidWebhookUrl(url: string): boolean {
   const u = url.trim();
   return u.startsWith('https://') || u.startsWith('http://');
@@ -3134,6 +3165,8 @@ app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
       response: { siteUrl: site },
     });
 
+    await ensureWordPressSocialAccount(auth.userId);
+
     return res.json({ success: true, message: 'WordPress Connected Successfully' });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('password')) {
@@ -3182,6 +3215,7 @@ app.delete('/api/wordpress/disconnect', async (req: Request, res: Response) => {
     }
     await dbQuery('DELETE FROM make_webhook_connections WHERE user_id = $1', [auth.userId]);
     await dbQuery('DELETE FROM wordpress_connections WHERE user_id = $1', [auth.userId]);
+    await removeWordPressSocialAccount(auth.userId);
 
     await upsertUserIntegration({
       userId: auth.userId,
@@ -3262,6 +3296,8 @@ app.post('/api/wordpress/connect-webhook', async (req: Request, res: Response) =
       [id, auth.userId, encrypted]
     );
 
+    await ensureWordPressSocialAccount(auth.userId);
+
     return res.json({ success: true, message: 'WordPress (Make) connected successfully' });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('webhook')) {
@@ -3276,7 +3312,10 @@ app.delete('/api/wordpress/disconnect-webhook', async (req: Request, res: Respon
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (pool) await dbQuery('DELETE FROM make_webhook_connections WHERE user_id = $1', [auth.userId]);
+    if (pool) {
+      await dbQuery('DELETE FROM make_webhook_connections WHERE user_id = $1', [auth.userId]);
+      await removeWordPressSocialAccount(auth.userId);
+    }
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ success: false, error: 'Failed to disconnect' });
@@ -5839,11 +5878,8 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
     if (!auth) return;
     if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
-    // Get list of admin-enabled platforms
-    const configRows = await pool.query(
-      `SELECT platform FROM platform_configs WHERE enabled = true OR (config IS NOT NULL AND config <> '{}'::jsonb)`
-    );
-    const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+      // Ensure WordPress is represented as a social account so it can be selected in the post automation flow.
+      await ensureWordPressSocialAccount(auth.userId);
 
     // If no platforms explicitly enabled, allow all (default behavior)
     // If platforms are explicitly configured, only show those
