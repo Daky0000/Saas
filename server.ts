@@ -7986,16 +7986,16 @@ async function publishToplatform(
       // });
 
       // if (result.status === 'published') {
-        await logIntegrationEvent({
-          userId,
-          integrationSlug: 'linkedin',
-          eventType: 'post_published',
-          status: 'success',
-          response: { platformPostId: result.platformPostId || null },
-        });
-      }
+      //   await logIntegrationEvent({
+      //     userId,
+      //     integrationSlug: 'linkedin',
+      //     eventType: 'post_published',
+      //     status: 'success',
+      //     response: { platformPostId: result.platformPostId || null },
+      //   });
+      // }
 
-      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
     }
 
     if (platformId === 'twitter') {
@@ -8018,23 +8018,23 @@ async function publishToplatform(
 
       await acquirePlatformSlot('twitter');
       // const result = await twitterXPlatform.post(twitterPost, {
-        accessToken: access_token,
-        accountId: conn.account_id,
-        accountName: conn.account_name,
-        tokenData: token_data,
-      });
+      //   accessToken: access_token,
+      //   accountId: conn.account_id,
+      //   accountName: conn.account_name,
+      //   tokenData: token_data,
+      // });
 
-      if (result.status === 'published') {
-        await logIntegrationEvent({
-          userId,
-          integrationSlug: 'twitter',
-          eventType: 'post_published',
-          status: 'success',
-          response: { platformPostId: result.platformPostId || null },
-        });
-      }
+      // if (result.status === 'published') {
+      //   await logIntegrationEvent({
+      //     userId,
+      //     integrationSlug: 'twitter',
+      //     eventType: 'post_published',
+      //     status: 'success',
+      //     response: { platformPostId: result.platformPostId || null },
+      //   });
+      // }
 
-      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
     }
 
     if (platformId === 'facebook') {
