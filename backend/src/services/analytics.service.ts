@@ -76,6 +76,7 @@ const getDaysList = (range: DateRange) => {
 };
 
 const sumMetrics = (items: StandardMetrics[]) => {
+  if (!items.length) return null;
   return items.reduce(
     (acc, item) => {
       acc.postsPublished += item.postsPublished;
@@ -104,6 +105,20 @@ const normalizeMetrics = (metrics: StandardMetrics) => {
       metrics.totalImpressions
     ),
   } as StandardMetrics;
+};
+
+const isEmptyMetrics = (metrics: StandardMetrics | null) => {
+  if (!metrics) return true;
+  return (
+    metrics.postsPublished === 0 &&
+    metrics.totalReach === 0 &&
+    metrics.totalImpressions === 0 &&
+    metrics.totalEngagement === 0 &&
+    metrics.totalLikes === 0 &&
+    metrics.totalComments === 0 &&
+    metrics.totalShares === 0 &&
+    metrics.totalSaves === 0
+  );
 };
 
 const getPlatformMetricsFromAnalytics = (
@@ -200,6 +215,18 @@ const buildTrendSeries = (rows: any[], key: keyof StandardMetrics) => {
   return Array.from(grouped.entries())
     .map(([date, value]) => ({ date, value }))
     .sort((a, b) => (a.date > b.date ? 1 : -1));
+};
+
+const hasAnyNonZeroTrend = (
+  trend: Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }> | null
+) => {
+  if (!trend || !trend.length) return false;
+  return trend.some(
+    (item) =>
+      (item.totalEngagement ?? 0) !== 0 ||
+      (item.totalReach ?? 0) !== 0 ||
+      (item.totalImpressions ?? 0) !== 0
+  );
 };
 
 export class AnalyticsService {
@@ -438,6 +465,8 @@ export class AnalyticsService {
       )
     );
 
+    if (!totals) return null;
+
     const engagementRate = calcEngagementRate(
       totals.totalEngagement,
       totals.totalImpressions
@@ -559,22 +588,34 @@ export class AnalyticsService {
         )
       );
 
-      const normalized = normalizeMetrics(totals);
-      platforms.push({
-        platform: integration.integration.slug,
-        accountName: integration.accountName,
-        metrics: normalized,
-      });
+      if (totals) {
+        const normalized = normalizeMetrics(totals);
+        const hasRealMetrics = !isEmptyMetrics(normalized);
 
-      hasData = true;
-      combinedMetrics.postsPublished += normalized.postsPublished;
-      combinedMetrics.totalReach += normalized.totalReach;
-      combinedMetrics.totalImpressions += normalized.totalImpressions;
-      combinedMetrics.totalEngagement += normalized.totalEngagement;
-      combinedMetrics.totalLikes += normalized.totalLikes;
-      combinedMetrics.totalComments += normalized.totalComments;
-      combinedMetrics.totalShares += normalized.totalShares;
-      combinedMetrics.totalSaves += normalized.totalSaves;
+        platforms.push({
+          platform: integration.integration.slug,
+          accountName: integration.accountName,
+          metrics: hasRealMetrics ? normalized : null,
+        });
+
+        if (hasRealMetrics) {
+          hasData = true;
+          combinedMetrics.postsPublished += normalized.postsPublished;
+          combinedMetrics.totalReach += normalized.totalReach;
+          combinedMetrics.totalImpressions += normalized.totalImpressions;
+          combinedMetrics.totalEngagement += normalized.totalEngagement;
+          combinedMetrics.totalLikes += normalized.totalLikes;
+          combinedMetrics.totalComments += normalized.totalComments;
+          combinedMetrics.totalShares += normalized.totalShares;
+          combinedMetrics.totalSaves += normalized.totalSaves;
+        }
+      } else {
+        platforms.push({
+          platform: integration.integration.slug,
+          accountName: integration.accountName,
+          metrics: null,
+        });
+      }
     }
 
     if (!hasData) {
@@ -615,34 +656,46 @@ export class AnalyticsService {
             return [dateKey, row];
           })
         ).keys()
-      ).map((dateKey) => {
-        const rows = allDaily.filter(
-          (row) => new Date(row.date).toISOString().split("T")[0] === dateKey
-        );
-        const dayTotals = sumMetrics(
-          rows.map((row) =>
-            normalizeMetrics({
-              postsPublished: row.postsPublished,
-              totalReach: row.totalReach,
-              totalImpressions: row.totalImpressions,
-              totalEngagement: row.totalEngagement,
-              totalLikes: row.totalLikes,
-              totalComments: row.totalComments,
-              totalShares: row.totalShares,
-              totalSaves: row.totalSaves,
-              engagementRate: row.engagementRate,
-            })
-          )
-        );
-        return {
-          date: dateKey,
-          totalEngagement: dayTotals.totalEngagement,
-          totalReach: dayTotals.totalReach,
-          totalImpressions: dayTotals.totalImpressions,
-        };
-      });
+      )
+        .map((dateKey) => {
+          const rows = allDaily.filter(
+            (row) => new Date(row.date).toISOString().split("T")[0] === dateKey
+          );
+          const dayTotals = sumMetrics(
+            rows.map((row) =>
+              normalizeMetrics({
+                postsPublished: row.postsPublished,
+                totalReach: row.totalReach,
+                totalImpressions: row.totalImpressions,
+                totalEngagement: row.totalEngagement,
+                totalLikes: row.totalLikes,
+                totalComments: row.totalComments,
+                totalShares: row.totalShares,
+                totalSaves: row.totalSaves,
+                engagementRate: row.engagementRate,
+              })
+            )
+          );
+          if (!dayTotals) return null;
+          return {
+            date: dateKey,
+            totalEngagement: dayTotals.totalEngagement,
+            totalReach: dayTotals.totalReach,
+            totalImpressions: dayTotals.totalImpressions,
+          };
+        })
+        .filter((item): item is {
+          date: string;
+          totalEngagement: number;
+          totalReach: number;
+          totalImpressions?: number;
+        } => item !== null);
 
-      trends.sort((a, b) => (a.date > b.date ? 1 : -1));
+      if (!hasAnyNonZeroTrend(trends)) {
+        trends = null;
+      } else {
+        trends.sort((a, b) => (a.date > b.date ? 1 : -1));
+      }
     }
 
     const topPlatforms = [...platforms]
@@ -711,10 +764,15 @@ export class AnalyticsService {
       )
     );
 
+    if (!totals) return null;
+
+    const normalized = normalizeMetrics(totals);
+    if (isEmptyMetrics(normalized)) return null;
+
     return {
       platform: integration.integration.slug,
       accountName: integration.accountName,
-      metrics: normalizeMetrics(totals),
+      metrics: normalized,
       dailyBreakdown: dailyMetrics.map((row) => ({
         date: row.date,
         reach: row.totalReach,
@@ -786,6 +844,14 @@ export class AnalyticsService {
         })
       )
     );
+
+    if (!combined) {
+      return {
+        post: { id: post.id, title: post.title, content: post.content },
+        platforms,
+        combined: null,
+      };
+    }
 
     return {
       post: { id: post.id, title: post.title, content: post.content },

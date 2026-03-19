@@ -237,7 +237,7 @@ router.get(
           })),
           impressionsTrend: analytics.trends.map((item) => ({
             date: item.date,
-            value: item.totalImpressions || 0,
+            value: item.totalImpressions ?? null,
           })),
           topPosts,
           topPlatforms,
