@@ -1,6 +1,6 @@
 // Instagram Business Platform Module
-const { SocialPlatform } = require('./interface');
-class InstagramBusiness extends SocialPlatform {
+import { SocialPlatform } from './interface.js';
+export class InstagramBusinessPlatform extends SocialPlatform {
   async connectAccount(userToken) { /* OAuth logic */ }
   async refreshToken() { /* Refresh logic */ }
   async post(postObject) { /* Posting logic */ }
@@ -11,4 +11,3 @@ class InstagramBusiness extends SocialPlatform {
   async getPostAnalytics(postId) { /* Analytics logic */ }
   handleError(error) { /* Error handling */ }
 }
-module.exports = InstagramBusiness;

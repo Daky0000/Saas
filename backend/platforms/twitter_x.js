@@ -1,8 +1,8 @@
 // Twitter/X Platform Module
-const { SocialPlatform } = require('./interface');
+import { SocialPlatform } from './interface.js';
 let globalWriteCounter = 0;
 const X_MONTHLY_WRITE_LIMIT = 10000; // Example limit
-class TwitterX extends SocialPlatform {
+export class TwitterXPlatform extends SocialPlatform {
   async connectAccount(userToken) { /* OAuth logic */ }
   async refreshToken() { /* Refresh logic */ }
   async post(postObject) {
@@ -18,4 +18,3 @@ class TwitterX extends SocialPlatform {
   async getPostAnalytics(postId) { /* Analytics logic */ }
   handleError(error) { /* Error handling */ }
 }
-module.exports = TwitterX;

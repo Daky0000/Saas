@@ -1,5 +1,5 @@
 // SocialPlatform Interface
-class SocialPlatform {
+export class SocialPlatform {
   async connectAccount(userToken) { throw new Error('Not implemented'); }
   async refreshToken() { throw new Error('Not implemented'); }
   async post(postObject) { throw new Error('Not implemented'); }
@@ -7,4 +7,3 @@ class SocialPlatform {
   async getPostAnalytics(postId) { throw new Error('Not implemented'); }
   handleError(error) { throw new Error('Not implemented'); }
 }
-module.exports = { SocialPlatform };

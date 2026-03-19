@@ -1,6 +1,6 @@
 // LinkedIn Platform Module
-const { SocialPlatform } = require('./interface');
-class LinkedIn extends SocialPlatform {
+import { SocialPlatform } from './interface.js';
+export class LinkedInPlatform extends SocialPlatform {
   async connectAccount(userToken) { /* OAuth logic */ }
   async refreshToken() { /* Refresh logic */ }
   async post(postObject) { /* Posting logic */ }
@@ -11,4 +11,3 @@ class LinkedIn extends SocialPlatform {
   async getPostAnalytics(postId) { /* Analytics logic */ }
   handleError(error) { /* Error handling */ }
 }
-module.exports = LinkedIn;
