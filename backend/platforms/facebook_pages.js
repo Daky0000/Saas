@@ -1,6 +1,6 @@
 // Facebook Pages Platform Module
-const { SocialPlatform } = require('./interface');
-class FacebookPages extends SocialPlatform {
+import { SocialPlatform } from './interface.js';
+export class FacebookPagesPlatform extends SocialPlatform {
   async connectAccount(userToken) { /* OAuth logic */ }
   async refreshToken() { /* Refresh logic */ }
   async post(postObject) { /* Posting logic */ }
@@ -17,4 +17,3 @@ class FacebookPages extends SocialPlatform {
   async getPostAnalytics(postId) { /* Analytics logic */ }
   handleError(error) { /* Error handling */ }
 }
-module.exports = FacebookPages;
