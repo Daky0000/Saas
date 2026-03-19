@@ -7892,24 +7892,25 @@ async function publishToplatform(
 
       await acquirePlatformSlot('instagram');
       // const result = await instagramBusinessPlatform.post(instagramPost, {
-        accessToken: access_token,
-        accountId: conn.account_id,
-        accountName: conn.account_name,
-        tokenData: token_data,
-        helpers: { graphBase: 'https://graph.facebook.com/v19.0' },
-      });
+      //   accessToken: access_token,
+      //   accountId: conn.account_id,
+      //   accountName: conn.account_name,
+      //   tokenData: token_data,
+      //   helpers: { graphBase: 'https://graph.facebook.com/v19.0' },
+      // });
 
-      if (result.status === 'published') {
-        await logIntegrationEvent({
-          userId,
-          integrationSlug: 'instagram',
-          eventType: 'post_published',
-          status: 'success',
-          response: { platformPostId: result.platformPostId || null },
-        });
-      }
+      // if (result.status === 'published') {
+      //   await logIntegrationEvent({
+      //     userId,
+      //     integrationSlug: 'instagram',
+      //     eventType: 'post_published',
+      //     status: 'success',
+      //     response: { platformPostId: result.platformPostId || null },
+      //   });
+      // }
 
-      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      return { status: 'failed', error: 'Instagram publishing temporarily disabled' };
     }
 
     if (platformId === 'pinterest') {
@@ -7972,17 +7973,19 @@ async function publishToplatform(
       // }
 
       await acquirePlatformSlot('linkedin');
+      return { status: 'failed', error: 'LinkedIn publishing temporarily disabled' };
+      
       // const result = await linkedInPlatform.post(linkedinPost, {
-        accessToken: access_token,
-        accountId: conn.account_id,
-        accountName: conn.account_name,
-        tokenData: token_data,
-        helpers: {
-          resolveAuthorUrn: async (ctx: any) => resolveLinkedInAuthorUrn({ userId, accessToken: ctx.accessToken }),
-        },
-      });
+      //   accessToken: access_token,
+      //   accountId: conn.account_id,
+      //   accountName: conn.account_name,
+      //   tokenData: token_data,
+      //   helpers: {
+      //     resolveAuthorUrn: async (ctx: any) => resolveLinkedInAuthorUrn({ userId, accessToken: ctx.accessToken }),
+      //   },
+      // });
 
-      if (result.status === 'published') {
+      // if (result.status === 'published') {
         await logIntegrationEvent({
           userId,
           integrationSlug: 'linkedin',
@@ -8065,31 +8068,32 @@ async function publishToplatform(
 
       await acquirePlatformSlot('facebook');
       // const result = await facebookPagesPlatform.post(facebookPost, {
-        accessToken: access_token,
-        accountId: conn.account_id,
-        accountName: conn.account_name,
-        tokenData: token_data,
-        helpers: {
-          graphBase: 'https://graph.facebook.com/v19.0',
-          resolvePageToken: async (dest: any) => resolveFacebookPageToken({
-            userId,
-            userAccessToken: access_token,
-            destination: dest,
-          }),
-        },
-      });
+      //   accessToken: access_token,
+      //   accountId: conn.account_id,
+      //   accountName: conn.account_name,
+      //   tokenData: token_data,
+      //   helpers: {
+      //     graphBase: 'https://graph.facebook.com/v19.0',
+      //     resolvePageToken: async (dest: any) => resolveFacebookPageToken({
+      //       userId,
+      //       userAccessToken: access_token,
+      //       destination: dest,
+      //     }),
+      //   },
+      // });
 
-      if (result.status === 'published') {
-        await logIntegrationEvent({
-          userId,
-          integrationSlug: 'facebook',
-          eventType: 'post_published',
-          status: 'success',
-          response: { platformPostId: result.platformPostId || null },
-        });
-      }
+      // if (result.status === 'published') {
+      //   await logIntegrationEvent({
+      //     userId,
+      //     integrationSlug: 'facebook',
+      //     eventType: 'post_published',
+      //     status: 'success',
+      //     response: { platformPostId: result.platformPostId || null },
+      //   });
+      // }
 
-      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      return { status: 'failed', error: 'Facebook publishing temporarily disabled' };
     }
 
     if (platformId === 'threads') {
