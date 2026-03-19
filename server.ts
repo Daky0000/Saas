@@ -2687,8 +2687,9 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
   const configResult = await dbQuery(`SELECT platform FROM platform_configs WHERE enabled = true`);
   const enabledPlatforms = configResult.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
   
-  const result = await dbQuery(
-    `
+  // If no platforms explicitly enabled, allow all (default behavior)
+  // If platforms are explicitly configured, only show those
+  let query = `
     SELECT
       id,
       user_id AS "userId",
@@ -2700,11 +2701,17 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
       expires_at AS "expiresAt",
       token_data AS "token_data"
     FROM social_accounts
-    WHERE user_id = $1 AND LOWER(platform) = ANY($2)
-    ORDER BY platform;
-  `,
-    [userId, enabledPlatforms]
-  );
+    WHERE user_id = $1`;
+  const params: any[] = [userId];
+  
+  if (enabledPlatforms.length > 0) {
+    query += ` AND LOWER(platform) = ANY($2)`;
+    params.push(enabledPlatforms);
+  }
+  
+  query += ` ORDER BY platform;`;
+  
+  const result = await dbQuery(query, params);
   return result.rows;
 }
 
@@ -5757,14 +5764,21 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
     );
     const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
 
-    // Return accounts only for admin-enabled platforms
-    const { rows } = await pool.query(
-      `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
+    // If no platforms explicitly enabled, allow all (default behavior)
+    // If platforms are explicitly configured, only show those
+    let query = `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
        FROM social_accounts
-       WHERE user_id=$1 AND LOWER(platform) = ANY($2)
-       ORDER BY created_at DESC`,
-      [auth.userId, enabledPlatforms]
-    );
+       WHERE user_id=$1`;
+    const params: any[] = [auth.userId];
+    
+    if (enabledPlatforms.length > 0) {
+      query += ` AND LOWER(platform) = ANY($2)`;
+      params.push(enabledPlatforms);
+    }
+    
+    query += ` ORDER BY created_at DESC`;
+    
+    const { rows } = await pool.query(query, params);
     return res.json({ success: true, accounts: rows });
   } catch (err) {
     console.error('v1 list social accounts error:', err);
