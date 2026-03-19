@@ -22,7 +22,7 @@ import { InstagramBusinessPlatform } from './backend/platforms/instagram_busines
 import { LinkedInPlatform } from './backend/platforms/linkedin.js';
 import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
 import type { PostObject } from './backend/platforms/types.js';
-import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.js';
+// import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -640,15 +640,15 @@ async function ensureDatabase() {
   try {
     const { rows: existingRows } = await pool.query<{ id: string }>('SELECT id FROM card_templates LIMIT 1');
     if (existingRows.length === 0) {
-      const now = new Date().toISOString();
-      for (const t of SAMPLE_TEMPLATES) {
-        const tid = randomUUID();
-        await pool.query(
-          'INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [tid, t.name, t.description, JSON.stringify(t.designData), '', true, now, now],
-        );
-      }
-      console.log(`Seeded ${SAMPLE_TEMPLATES.length} card templates.`);
+      // const now = new Date().toISOString();
+      // for (const t of SAMPLE_TEMPLATES) {
+      //   const tid = randomUUID();
+      //   await pool.query(
+      //     'INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      //     [tid, t.name, t.description, JSON.stringify(t.designData), '', true, now, now],
+      //   );
+      // }
+      // console.log(`Seeded ${SAMPLE_TEMPLATES.length} card templates.`);
     }
   } catch (e) {
     console.warn('Card template seed skipped:', e);
