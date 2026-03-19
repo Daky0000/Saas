@@ -17,10 +17,10 @@ import {
   createHmac,
   timingSafeEqual,
 } from 'crypto';
-import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.js';
-import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
-import { LinkedInPlatform } from './backend/platforms/linkedin.js';
-import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
+// import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.js';
+// import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
+// import { LinkedInPlatform } from './backend/platforms/linkedin.js';
+// import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
 import type { PostObject } from './backend/platforms/types.js';
 // import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
 import path from 'path';
@@ -79,10 +79,10 @@ let dbReady = false;
 const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
 const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
 const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
-const facebookPagesPlatform = new FacebookPagesPlatform();
-const instagramBusinessPlatform = new InstagramBusinessPlatform();
-const linkedInPlatform = new LinkedInPlatform();
-const twitterXPlatform = new TwitterXPlatform();
+// const facebookPagesPlatform = new FacebookPagesPlatform();
+// const instagramBusinessPlatform = new InstagramBusinessPlatform();
+// const linkedInPlatform = new LinkedInPlatform();
+// const twitterXPlatform = new TwitterXPlatform();
 
 let socialAutomationQueue: Queue | null = null;
 let socialAutomationWorker: Worker | null = null;
@@ -7879,13 +7879,13 @@ async function publishToplatform(
         content: { text },
         media: [{ url: featuredImage, type: 'image' }],
       };
-      const validation = instagramBusinessPlatform.validate(instagramPost);
-      if (!validation.ok) {
-        return { status: 'failed', error: validation.error };
-      }
+      // const validation = instagramBusinessPlatform.validate(instagramPost);
+      // if (!validation.ok) {
+      //   return { status: 'failed', error: validation.error };
+      // }
 
       await acquirePlatformSlot('instagram');
-      const result = await instagramBusinessPlatform.post(instagramPost, {
+      // const result = await instagramBusinessPlatform.post(instagramPost, {
         accessToken: access_token,
         accountId: conn.account_id,
         accountName: conn.account_name,
@@ -7960,13 +7960,13 @@ async function publishToplatform(
         content: { text },
       };
 
-      const validation = linkedInPlatform.validate(linkedinPost);
-      if (!validation.ok) {
-        return { status: 'failed', error: validation.error };
-      }
+      // const validation = linkedInPlatform.validate(linkedinPost);
+      // if (!validation.ok) {
+      //   return { status: 'failed', error: validation.error };
+      // }
 
       await acquirePlatformSlot('linkedin');
-      const result = await linkedInPlatform.post(linkedinPost, {
+      // const result = await linkedInPlatform.post(linkedinPost, {
         accessToken: access_token,
         accountId: conn.account_id,
         accountName: conn.account_name,
@@ -8002,13 +8002,13 @@ async function publishToplatform(
         content: { text: text.slice(0, 280) },
       };
 
-      const validation = twitterXPlatform.validate(twitterPost);
-      if (!validation.ok) {
-        return { status: 'failed', error: validation.error };
-      }
+      // const validation = twitterXPlatform.validate(twitterPost);
+      // if (!validation.ok) {
+      //   return { status: 'failed', error: validation.error };
+      // }
 
       await acquirePlatformSlot('twitter');
-      const result = await twitterXPlatform.post(twitterPost, {
+      // const result = await twitterXPlatform.post(twitterPost, {
         accessToken: access_token,
         accountId: conn.account_id,
         accountName: conn.account_name,
@@ -8052,13 +8052,13 @@ async function publishToplatform(
         media,
       };
 
-      const validation = facebookPagesPlatform.validate(facebookPost);
-      if (!validation.ok) {
-        return { status: 'failed', error: validation.error };
-      }
+      // const validation = facebookPagesPlatform.validate(facebookPost);
+      // if (!validation.ok) {
+      //   return { status: 'failed', error: validation.error };
+      // }
 
       await acquirePlatformSlot('facebook');
-      const result = await facebookPagesPlatform.post(facebookPost, {
+      // const result = await facebookPagesPlatform.post(facebookPost, {
         accessToken: access_token,
         accountId: conn.account_id,
         accountName: conn.account_name,
