@@ -21,7 +21,7 @@ import {
 // import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
 // import { LinkedInPlatform } from './backend/platforms/linkedin.js';
 // import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
-import type { PostObject } from './backend/platforms/types.js';
+import type { PostObject } from './backend/platforms/types.ts';
 // import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -73,7 +73,13 @@ const allowedOrigins = new Set([
   ...extraOrigins,
 ]);
 
-const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+let pool: Pool | null = null;
+try {
+  pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+} catch (err) {
+  console.error('Failed to create database pool, running in in-memory mode:', err);
+  pool = null;
+}
 let dbReady = false;
 
 const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
