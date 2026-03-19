@@ -394,7 +394,24 @@ async function ensureDatabase() {
       enabled BOOLEAN NOT NULL DEFAULT false,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS platform_configs_platform_unique_idx ON platform_configs (platform);`).catch(() => undefined);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'platform_configs'::regclass
+          AND contype = 'u'
+          AND conname = 'platform_configs_platform_key'
+      ) THEN
+        ALTER TABLE platform_configs ADD CONSTRAINT platform_configs_platform_key UNIQUE (platform);
+      END IF;
+    END
+    $$;
+  `).catch(() => undefined);
 
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       key TEXT NOT NULL,
@@ -4516,7 +4533,7 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     const admin = await requireAdmin(req, res);
     if (!admin) return;
 
-    const { platform } = req.params;
+    const platform = String(req.params.platform || '').trim().toLowerCase();
     const { config, enabled } = req.body as { config: Record<string, string>; enabled: boolean };
 
     if (!config || typeof config !== 'object') {
@@ -4526,19 +4543,18 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     const now = new Date().toISOString();
 
     const normalizedConfig: Record<string, string> = { ...(config as any) };
-    const platformKey = String(platform || '').trim().toLowerCase();
-    if (OAUTH_AUTH_URLS[platformKey]) {
+    const meta = OAUTH_AUTH_URLS[platform];
+    if (meta) {
       const incomingRedirect = typeof normalizedConfig.redirectUri === 'string' ? normalizedConfig.redirectUri : '';
-      normalizedConfig.redirectUri = resolveOAuthRedirectUri(platformKey, incomingRedirect, req);
+      normalizedConfig.redirectUri = resolveOAuthRedirectUri(platform, incomingRedirect, req);
     }
 
     // Auto-enable integration when valid credentials are configured
     let finalEnabled = Boolean(enabled);
-    const meta = OAUTH_AUTH_URLS[platformKey];
     if (meta) {
       const clientId = String((normalizedConfig as any)[meta.idField] || '').trim();
       const redirectUri = String((normalizedConfig as any).redirectUri || '').trim();
-      const secretRequired = platformKey === 'facebook' || platformKey === 'twitter' || platformKey === 'linkedin' || platformKey === 'tiktok' || platformKey === 'threads' || platformKey === 'pinterest';
+      const secretRequired = platform === 'facebook' || platform === 'twitter' || platform === 'linkedin' || platform === 'tiktok' || platform === 'threads' || platform === 'pinterest';
       const secretValue = String((normalizedConfig as any).clientSecret || (normalizedConfig as any).appSecret || '').trim();
       const isFullyConfigured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
       // If credentials are now valid, auto-enable regardless of request
@@ -4548,13 +4564,20 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     }
 
     if (hasDatabase()) {
-      await dbQuery(
-        `INSERT INTO platform_configs (platform, config, enabled, updated_at)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (platform) DO UPDATE
-           SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
+      // Use update-then-insert to avoid requiring an existing unique constraint/index.
+      const updateRes = await dbQuery(
+        `UPDATE platform_configs
+         SET config = $2, enabled = $3, updated_at = NOW()
+         WHERE platform = $1`,
         [platform, JSON.stringify(normalizedConfig), finalEnabled]
       );
+      if (updateRes.rowCount === 0) {
+        await dbQuery(
+          `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [platform, JSON.stringify(normalizedConfig), finalEnabled]
+        );
+      }
     } else {
       inMemoryPlatformConfigs.set(platform, { platform, config: normalizedConfig, enabled: finalEnabled, updated_at: now });
     }
@@ -5298,10 +5321,11 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
       return res.json({ success: true, enabled });
     }
 
+    // Treat platforms as enabled if they are explicitly enabled OR if they have a non-empty config record.
     const platformResult = await dbQuery(
       `SELECT platform
        FROM platform_configs
-       WHERE enabled = true`
+       WHERE enabled = true OR (config IS NOT NULL AND config <> '{}'::jsonb)`
     );
     const providerResult = await dbQuery(
       `SELECT provider
@@ -5415,8 +5439,10 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
         (slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1));
       const type = (registry?.type as any) || (slug === 'wordpress' ? 'cms' : 'social');
 
-      const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : slug === 'wordpress' || slug === 'mailchimp';
       const cfg = cfgMap.get(slug)?.config || {};
+      const adminEnabledRaw = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : slug === 'wordpress' || slug === 'mailchimp';
+      const hasConfig = Object.keys(cfg || {}).length > 0;
+      const adminEnabled = adminEnabledRaw || (hasConfig && slug !== 'wordpress' && slug !== 'mailchimp');
 
       let configured = false;
       if (slug === 'wordpress') {
@@ -5731,20 +5757,27 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
     }
 
     const id = randomUUID();
-    await pool.query(
-      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, token_expires_at, access_token, access_token_encrypted, connected, connected_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,NOW(),NOW())
-       ON CONFLICT (user_id, platform, account_type, account_id) DO UPDATE
-         SET account_name=EXCLUDED.account_name,
-             platform_id=EXCLUDED.platform_id,
-             profile_image=COALESCE(EXCLUDED.profile_image, social_accounts.profile_image),
-             token_expires_at=COALESCE(EXCLUDED.token_expires_at, social_accounts.token_expires_at),
-             access_token=COALESCE(EXCLUDED.access_token, social_accounts.access_token),
-             access_token_encrypted=COALESCE(EXCLUDED.access_token_encrypted, social_accounts.access_token_encrypted),
-             connected=true,
-             connected_at=NOW()`,
-      [id, auth.userId, platformSlug, platformDbId, accountType, accountId, accountName, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
+    // Update existing account if it exists; otherwise insert a new record.
+    const existingUpdate = await pool.query(
+      `UPDATE social_accounts
+       SET account_name = $6,
+           platform_id = $4,
+           profile_image = COALESCE($8, profile_image),
+           token_expires_at = COALESCE($9, token_expires_at),
+           access_token = COALESCE($10, access_token),
+           access_token_encrypted = COALESCE($11, access_token_encrypted),
+           connected = true,
+           connected_at = NOW()
+       WHERE user_id = $2 AND platform = $3 AND account_type = $5 AND account_id = $7`,
+      [id, auth.userId, platformSlug, platformDbId, accountType, accountName, accountId, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
     );
+    if (existingUpdate.rowCount === 0) {
+      await pool.query(
+        `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, token_expires_at, access_token, access_token_encrypted, connected, connected_at, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,NOW(),NOW())`,
+        [id, auth.userId, platformSlug, platformDbId, accountType, accountId, accountName, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
+      );
+    }
 
     const row = await pool.query(
       `SELECT id, platform, account_type, account_id, account_name, profile_image, created_at
@@ -5755,12 +5788,19 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
 
     const saved = row.rows[0];
     if (saved?.id) {
-      await pool.query(
-        `INSERT INTO social_connections (id, user_id, social_account_id, active, created_at)
-         VALUES ($1,$2,$3,true,NOW())
-         ON CONFLICT (user_id, social_account_id) DO UPDATE SET active=true`,
-        [randomUUID(), auth.userId, saved.id]
-      ).catch(() => undefined);
+      const upsertConn = await pool.query(
+        `UPDATE social_connections
+         SET active = true
+         WHERE user_id = $1 AND social_account_id = $2`,
+        [auth.userId, saved.id]
+      );
+      if (upsertConn.rowCount === 0) {
+        await pool.query(
+          `INSERT INTO social_connections (id, user_id, social_account_id, active, created_at)
+           VALUES ($1,$2,$3,true,NOW())`,
+          [randomUUID(), auth.userId, saved.id]
+        ).catch(() => undefined);
+      }
     }
 
     if (platformSlug === 'facebook' && accountType === 'page') {
@@ -5801,7 +5841,7 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
 
     // Get list of admin-enabled platforms
     const configRows = await pool.query(
-      `SELECT platform FROM platform_configs WHERE enabled = true`
+      `SELECT platform FROM platform_configs WHERE enabled = true OR (config IS NOT NULL AND config <> '{}'::jsonb)`
     );
     const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
 
@@ -6037,13 +6077,19 @@ app.delete('/api/admin/platform-configs/:platform', async (req: Request, res: Re
     const now = new Date().toISOString();
 
     if (hasDatabase()) {
-      await dbQuery(
-        `INSERT INTO platform_configs (platform, config, enabled, updated_at)
-         VALUES ($1, '{}'::jsonb, false, NOW())
-         ON CONFLICT (platform) DO UPDATE
-           SET config = '{}'::jsonb, enabled = false, updated_at = NOW()`,
+      const updateRes = await dbQuery(
+        `UPDATE platform_configs
+         SET config = '{}'::jsonb, enabled = false, updated_at = NOW()
+         WHERE platform = $1`,
         [normalized]
       );
+      if (updateRes.rowCount === 0) {
+        await dbQuery(
+          `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+           VALUES ($1, '{}'::jsonb, false, NOW())`,
+          [normalized]
+        );
+      }
     } else {
       inMemoryPlatformConfigs.set(normalized, { platform: normalized, config: {}, enabled: false, updated_at: now });
     }
@@ -6098,16 +6144,23 @@ app.patch('/api/admin/platform-configs/:platform/toggle', async (req: Request, r
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { platform } = req.params as { platform: string };
+    const platform = String(req.params.platform || '').trim().toLowerCase();
     const { enabled } = req.body as { enabled: boolean };
     if (!platform) return res.status(400).json({ success: false, error: 'Platform required' });
     if (hasDatabase()) {
-      await dbQuery(
-        `INSERT INTO platform_configs (platform, config, enabled, updated_at)
-         VALUES ($1, '{}', $2, NOW())
-         ON CONFLICT (platform) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()`,
-        [platform, Boolean(enabled)],
+      const updateRes = await dbQuery(
+        `UPDATE platform_configs
+         SET enabled = $2, updated_at = NOW()
+         WHERE platform = $1`,
+        [platform, Boolean(enabled)]
       );
+      if (updateRes.rowCount === 0) {
+        await dbQuery(
+          `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+           VALUES ($1, '{}', $2, NOW())`,
+          [platform, Boolean(enabled)]
+        );
+      }
       return res.json({ success: true, enabled: Boolean(enabled) });
     }
     return res.json({ success: true, enabled: Boolean(enabled) });
