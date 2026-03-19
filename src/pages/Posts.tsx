@@ -16,8 +16,10 @@ import {
   Sparkles,
   CheckCircle2,
   XCircle,
+  MoreHorizontal,
 } from 'lucide-react';
 import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, type BlogTag } from '../services/blogService';
+import { socialPostService, type SocialAccount } from '../services/socialPostService';
 import type { AppUser } from '../utils/userSession';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import RichTextEditor from '../components/RichTextEditor';
@@ -422,6 +424,7 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'published' | 'scheduled'>('all');
+  const [dropdownOpen, setDropdownOpen] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -437,6 +440,12 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const handleClickOutside = () => setDropdownOpen(null);
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this post?')) return;
     await blogService.deletePost(id);
@@ -446,6 +455,29 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
   const handleDuplicate = async (id: string) => {
     const copy = await blogService.duplicatePost(id);
     setPosts((p) => [copy, ...p]);
+  };
+
+  const handleReschedule = async (id: string) => {
+    const newDate = prompt('Enter new schedule date/time (YYYY-MM-DDTHH:MM):');
+    if (!newDate) return;
+    try {
+      await blogService.updatePost(id, { scheduled_at: newDate });
+      setPosts((p) => p.map((post) => (post.id === id ? { ...post, scheduled_at: newDate } : post)));
+      setDropdownOpen(null);
+    } catch (error) {
+      alert('Failed to reschedule post');
+    }
+  };
+
+  const handleRepublish = async (id: string) => {
+    if (!confirm('Republish this post to connected social accounts?')) return;
+    try {
+      // For now, we'll just show a message since republish endpoint needs implementation
+      alert(`Republish functionality for post ${id} will be implemented soon`);
+      setDropdownOpen(null);
+    } catch (error) {
+      alert('Failed to republish post');
+    }
   };
 
   return (
@@ -506,7 +538,7 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
                       <span className="text-xs text-slate-400">Updated {fmtDate(post.updated_at)}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 relative">
                     <button type="button" onClick={() => onEdit(post.id)} title="Edit" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                       <Pencil size={14} />
                     </button>
@@ -516,6 +548,34 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
                     <button type="button" onClick={() => void handleDelete(post.id)} title="Delete" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600">
                       <Trash2 size={14} />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setDropdownOpen(dropdownOpen === post.id ? null : post.id)}
+                      title="More actions"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      <MoreHorizontal size={14} />
+                    </button>
+                    {dropdownOpen === post.id && (
+                      <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={() => void handleReschedule(post.id)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          <Clock size={14} />
+                          Reschedule Post
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleRepublish(post.id)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          <CheckCircle2 size={14} />
+                          Republish
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -562,6 +622,11 @@ function PostEditor({
     autoInternalLinks: false,
     scheduleAuditAt: '',
   });
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [selectedSocialAccounts, setSelectedSocialAccounts] = useState<string[]>([]);
+  const [socialTemplate, setSocialTemplate] = useState('');
+  const [socialPublishType, setSocialPublishType] = useState<'immediate' | 'scheduled' | 'delayed'>('immediate');
+  const [socialScheduledAt, setSocialScheduledAt] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -591,6 +656,28 @@ function PostEditor({
       })
       .catch(() => setError('Failed to load post'))
       .finally(() => setLoading(false));
+  }, [postId]);
+
+  useEffect(() => {
+    socialPostService
+      .listAccounts()
+      .then(setSocialAccounts)
+      .catch(() => {}); // Ignore errors for now
+  }, []);
+
+  useEffect(() => {
+    if (!postId) return;
+    socialPostService
+      .getSettings(postId)
+      .then((settings) => {
+        if (settings) {
+          setSocialTemplate(settings.template);
+          setSocialPublishType(settings.publish_type);
+          setSocialScheduledAt(settings.scheduled_at ? settings.scheduled_at.slice(0, 16) : '');
+          setSelectedSocialAccounts(settings.accounts.map((acc) => acc.social_account_id));
+        }
+      })
+      .catch(() => {}); // Ignore errors for now
   }, [postId]);
 
   const toggleTag = (id: string) => {
@@ -669,6 +756,18 @@ function PostEditor({
         social_automation: automationSettings,
       };
       const saved = postId ? await blogService.updatePost(postId, payload) : await blogService.createPost(payload);
+      
+      // Save social settings if we have a postId (after creation)
+      const finalPostId = saved.id;
+      if (selectedSocialAccounts.length > 0 || socialTemplate || socialPublishType !== 'immediate' || socialScheduledAt) {
+        await socialPostService.saveSettings(finalPostId, {
+          template: socialTemplate,
+          publish_type: socialPublishType,
+          scheduled_at: socialPublishType !== 'immediate' ? socialScheduledAt : null,
+          accounts: selectedSocialAccounts,
+        });
+      }
+      
       onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save');
@@ -800,6 +899,80 @@ function PostEditor({
                   <div className="text-xs font-semibold text-slate-600">Content Improvements</div>
                   <div className="text-sm text-slate-700">Focus on shortening long sentences and adding headings or lists for better readability.</div>
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold text-slate-600 mb-3">Social Media Automation</div>
+                {socialAccounts.length === 0 ? (
+                  <div className="text-xs text-slate-500">No social accounts connected. Connect accounts in your integrations settings.</div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {socialAccounts.map((account) => (
+                          <label key={account.id} className="flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={selectedSocialAccounts.includes(account.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedSocialAccounts(prev => [...prev, account.id]);
+                                } else {
+                                  setSelectedSocialAccounts(prev => prev.filter(id => id !== account.id));
+                                }
+                              }}
+                              className="rounded border-slate-300"
+                            />
+                            <div className="flex items-center gap-2">
+                              {account.profile_image && (
+                                <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />
+                              )}
+                              <span className="capitalize">{account.platform}</span>
+                              <span className="text-slate-500">•</span>
+                              <span>{account.account_name}</span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
+                      <textarea
+                        value={socialTemplate}
+                        onChange={(e) => setSocialTemplate(e.target.value)}
+                        placeholder="Custom message for social posts..."
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
+                        rows={2}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
+                        <select
+                          value={socialPublishType}
+                          onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                        >
+                          <option value="immediate">Immediate</option>
+                          <option value="scheduled">Scheduled</option>
+                          <option value="delayed">Delayed</option>
+                        </select>
+                      </div>
+                      {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
+                          <input
+                            type="datetime-local"
+                            value={socialScheduledAt}
+                            onChange={(e) => setSocialScheduledAt(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
