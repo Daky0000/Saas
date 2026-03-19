@@ -5760,16 +5760,16 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
     // Update existing account if it exists; otherwise insert a new record.
     const existingUpdate = await pool.query(
       `UPDATE social_accounts
-       SET account_name = $6,
-           platform_id = $4,
-           profile_image = COALESCE($8, profile_image),
-           token_expires_at = COALESCE($9, token_expires_at),
-           access_token = COALESCE($10, access_token),
-           access_token_encrypted = COALESCE($11, access_token_encrypted),
+       SET account_name = $5,
+           platform_id = $3,
+           profile_image = COALESCE($7, profile_image),
+           token_expires_at = COALESCE($8, token_expires_at),
+           access_token = COALESCE($9, access_token),
+           access_token_encrypted = COALESCE($10, access_token_encrypted),
            connected = true,
            connected_at = NOW()
-       WHERE user_id = $2 AND platform = $3 AND account_type = $5 AND account_id = $7`,
-      [id, auth.userId, platformSlug, platformDbId, accountType, accountName, accountId, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
+       WHERE user_id = $1 AND platform = $2 AND account_type = $4 AND account_id = $6`,
+      [auth.userId, platformSlug, platformDbId, accountType, accountName, accountId, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
     );
     if (existingUpdate.rowCount === 0) {
       await pool.query(
