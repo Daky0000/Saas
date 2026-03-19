@@ -24,6 +24,11 @@ import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
 import type { PostObject } from './backend/platforms/types.js';
 import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.js';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 dotenv.config();
 
