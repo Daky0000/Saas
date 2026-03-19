@@ -7,6 +7,7 @@
     "dev": "node scripts/use-source-index.mjs && vite",
     "dev:api": "ts-node server.ts",
     "start": "tsx server.ts",
+    "prebuild": "node scripts/clean-temp.mjs",
     "build": "node scripts/use-source-index.mjs && tsc && vite build && node scripts/sync-pages.mjs",
     "build:dist": "node scripts/use-source-index.mjs && tsc && vite build",
     "sync:pages": "node scripts/sync-pages.mjs",
