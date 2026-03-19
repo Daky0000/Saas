@@ -8538,7 +8538,7 @@ app.use((err: any, req: Request, res: Response, next: Function) => {
 });
 
 // SPA fallback
-app.get('*', (req, res) => {
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'docs', 'index.html'));
 });
 
