@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, type BlogTag } from '../services/blogService';
 import { socialPostService, type SocialAccount } from '../services/socialPostService';
+import { wordpressService, type WordPressStatus } from '../services/wordpressService';
 import type { AppUser } from '../utils/userSession';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import RichTextEditor from '../components/RichTextEditor';
@@ -623,6 +624,7 @@ function PostEditor({
     scheduleAuditAt: '',
   });
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [wordpressStatus, setWordpressStatus] = useState<WordPressStatus | null>(null);
   const [selectedSocialAccounts, setSelectedSocialAccounts] = useState<string[]>([]);
   const [socialTemplate, setSocialTemplate] = useState('');
   const [socialPublishType, setSocialPublishType] = useState<'immediate' | 'scheduled' | 'delayed'>('immediate');
@@ -662,6 +664,11 @@ function PostEditor({
     socialPostService
       .listAccounts()
       .then(setSocialAccounts)
+      .catch(() => {}); // Ignore errors for now
+
+    wordpressService
+      .getStatus()
+      .then((status) => setWordpressStatus(status))
       .catch(() => {}); // Ignore errors for now
   }, []);
 
@@ -903,74 +910,102 @@ function PostEditor({
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold text-slate-600 mb-3">Social Media Automation</div>
-                {socialAccounts.length === 0 ? (
+                {socialAccounts.length === 0 && !wordpressStatus?.connected ? (
                   <div className="text-xs text-slate-500">No social accounts connected. Connect accounts in your integrations settings.</div>
                 ) : (
                   <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {socialAccounts.map((account) => (
-                          <label key={account.id} className="flex items-center gap-2 text-xs">
-                            <input
-                              type="checkbox"
-                              checked={selectedSocialAccounts.includes(account.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedSocialAccounts(prev => [...prev, account.id]);
-                                } else {
-                                  setSelectedSocialAccounts(prev => prev.filter(id => id !== account.id));
-                                }
-                              }}
-                              className="rounded border-slate-300"
-                            />
-                            <div className="flex items-center gap-2">
-                              {account.profile_image && (
-                                <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />
-                              )}
-                              <span className="capitalize">{account.platform}</span>
-                              <span className="text-slate-500">•</span>
-                              <span>{account.account_name}</span>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
-                      <textarea
-                        value={socialTemplate}
-                        onChange={(e) => setSocialTemplate(e.target.value)}
-                        placeholder="Custom message for social posts..."
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
-                        rows={2}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
-                        <select
-                          value={socialPublishType}
-                          onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                    {wordpressStatus?.connected ? (
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold capitalize">Wordpress</span>
+                          <span className="text-slate-500">•</span>
+                          <span>{wordpressStatus.siteUrl}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="text-red-500 hover:text-red-700 font-semibold"
+                          onClick={() => alert('Disconnection logic to be implemented')}
                         >
-                          <option value="immediate">Immediate</option>
-                          <option value="scheduled">Scheduled</option>
-                          <option value="delayed">Delayed</option>
-                        </select>
+                          Disconnect
+                        </button>
                       </div>
-                      {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
+                    ) : (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                        onClick={() => alert('Navigation to integration settings to be implemented')}
+                      >
+                        Connect WordPress
+                      </button>
+                    )}
+                    {socialAccounts.length > 0 && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {socialAccounts.map((account) => (
+                            <label key={account.id} className="flex items-center gap-2 text-xs">
+                              <input
+                                type="checkbox"
+                                checked={selectedSocialAccounts.includes(account.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedSocialAccounts((prev) => [...prev, account.id]);
+                                  } else {
+                                    setSelectedSocialAccounts((prev) => prev.filter((id) => id !== account.id));
+                                  }
+                                }}
+                                className="rounded border-slate-300"
+                              />
+                              <div className="flex items-center gap-2">
+                                {account.profile_image && <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />}
+                                <span className="capitalize">{account.platform}</span>
+                                <span className="text-slate-500">•</span>
+                                <span>{account.account_name}</span>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {(wordpressStatus?.connected || socialAccounts.length > 0) && (
+                      <>
                         <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
-                          <input
-                            type="datetime-local"
-                            value={socialScheduledAt}
-                            onChange={(e) => setSocialScheduledAt(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
+                          <textarea
+                            value={socialTemplate}
+                            onChange={(e) => setSocialTemplate(e.target.value)}
+                            placeholder="Custom message for social posts..."
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
+                            rows={2}
                           />
                         </div>
-                      )}
-                    </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
+                            <select
+                              value={socialPublishType}
+                              onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                            >
+                              <option value="immediate">Immediate</option>
+                              <option value="scheduled">Scheduled</option>
+                              <option value="delayed">Delayed</option>
+                            </select>
+                          </div>
+                          {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
+                              <input
+                                type="datetime-local"
+                                value={socialScheduledAt}
+                                onChange={(e) => setSocialScheduledAt(e.target.value)}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
