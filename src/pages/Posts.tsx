@@ -909,106 +909,125 @@ function PostEditor({
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold text-slate-600 mb-3">Social Media Automation</div>
-                {socialAccounts.length === 0 && !wordpressStatus?.connected ? (
-                  <div className="text-xs text-slate-500">No social accounts connected. Connect accounts in your integrations settings.</div>
-                ) : (
-                  <div className="space-y-3">
-                    {wordpressStatus?.connected ? (
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold capitalize">Wordpress</span>
-                          <span className="text-slate-500">•</span>
-                          <span>{wordpressStatus.siteUrl}</span>
-                        </div>
-                        <button
-                          type="button"
-                          className="text-red-500 hover:text-red-700 font-semibold"
-                          onClick={() => alert('Disconnection logic to be implemented')}
-                        >
-                          Disconnect
-                        </button>
-                      </div>
-                    ) : (
-                      <button
+    <div className="text-xs font-semibold text-slate-600 mb-3">Social Media Automation</div>
+    <div className="space-y-4">
+        
+        <div>
+            <div className="text-sm font-bold text-slate-800 mb-2">Wordpress</div>
+            {wordpressStatus?.connected ? (
+                <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold capitalize">Wordpress</span>
+                        <span className="text-slate-500">•</span>
+                        <span>{wordpressStatus.siteUrl}</span>
+                    </div>
+                    <button
                         type="button"
-                        className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                        onClick={() => alert('Navigation to integration settings to be implemented')}
-                      >
-                        Connect WordPress
-                      </button>
-                    )}
-                    {socialAccounts.length > 0 && (
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
-                        <div className="space-y-2 max-h-32 overflow-y-auto">
-                          {socialAccounts.map((account) => (
+                        className="text-red-500 hover:text-red-700 font-semibold"
+                        onClick={() => alert('Disconnection logic to be implemented')}
+                    >
+                        Disconnect
+                    </button>
+                </div>
+            ) : (
+                <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                    onClick={() => alert('Navigation to integration settings to be implemented')}
+                >
+                    Connect WordPress
+                </button>
+            )}
+        </div>
+
+        
+        <div>
+            <div className="text-sm font-bold text-slate-800 mb-2">Social Platforms</div>
+            {socialAccounts.length > 0 ? (
+                <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {socialAccounts.map((account) => (
                             <label key={account.id} className="flex items-center gap-2 text-xs">
-                              <input
-                                type="checkbox"
-                                checked={selectedSocialAccounts.includes(account.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedSocialAccounts((prev) => [...prev, account.id]);
-                                  } else {
-                                    setSelectedSocialAccounts((prev) => prev.filter((id) => id !== account.id));
-                                  }
-                                }}
-                                className="rounded border-slate-300"
-                              />
-                              <div className="flex items-center gap-2">
-                                {account.profile_image && <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />}
-                                <span className="capitalize">{account.platform}</span>
-                                <span className="text-slate-500">•</span>
-                                <span>{account.account_name}</span>
-                              </div>
+                                <input
+                                    type="checkbox"
+                                    checked={selectedSocialAccounts.includes(account.id)}
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            setSelectedSocialAccounts((prev) => [...prev, account.id]);
+                                        } else {
+                                            setSelectedSocialAccounts((prev) => prev.filter((id) => id !== account.id));
+                                        }
+                                    }}
+                                    className="rounded border-slate-300"
+                                />
+                                <div className="flex items-center gap-2">
+                                    {account.profile_image && <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />}
+                                    <span className="capitalize">{account.platform}</span>
+                                    <span className="text-slate-500">•</span>
+                                    <span>{account.account_name}</span>
+                                </div>
                             </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {(wordpressStatus?.connected || socialAccounts.length > 0) && (
-                      <>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                 <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                    onClick={() => alert('Navigation to integration settings to be implemented')}
+                >
+                    Connect Social Platform Account
+                </button>
+            )}
+        </div>
+
+        
+        {(wordpressStatus?.connected || socialAccounts.length > 0) && (
+            <div className="pt-4 border-t border-slate-200">
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
+                <textarea
+                    value={socialTemplate}
+                    onChange={(e) => setSocialTemplate(e.target.value)}
+                    placeholder="Custom message for social posts..."
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
+                    rows={2}
+                />
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
+                        <select
+                            value={socialPublishType}
+                            onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                        >
+                            <option value="immediate">Immediate</option>
+                            <option value="scheduled">Scheduled</option>
+                            <option value="delayed">Delayed</option>
+                        </select>
+                    </div>
+                    {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
                         <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
-                          <textarea
-                            value={socialTemplate}
-                            onChange={(e) => setSocialTemplate(e.target.value)}
-                            placeholder="Custom message for social posts..."
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
-                            rows={2}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
-                            <select
-                              value={socialPublishType}
-                              onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
-                            >
-                              <option value="immediate">Immediate</option>
-                              <option value="scheduled">Scheduled</option>
-                              <option value="delayed">Delayed</option>
-                            </select>
-                          </div>
-                          {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
-                            <div>
-                              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
-                              <input
+                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
+                            <input
                                 type="datetime-local"
                                 value={socialScheduledAt}
                                 onChange={(e) => setSocialScheduledAt(e.target.value)}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
-                              />
-                            </div>
-                          )}
+                            />
                         </div>
-                      </>
                     )}
-                  </div>
-                )}
-              </div>
+                </div>
+            </div>
+        )}
+
+         {socialAccounts.length === 0 && !wordpressStatus?.connected && (
+            <div className="text-xs text-slate-500 text-center py-4">
+                No social accounts or WordPress site connected. Please connect one to get started.
+            </div>
+        )}
+    </div>
+</div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold text-slate-600">Scheduled Actions</div>
