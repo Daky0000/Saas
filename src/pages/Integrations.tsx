@@ -88,6 +88,23 @@ const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   disabled: { bg: 'bg-amber-50', text: 'text-amber-700' },
 };
 
+const INTEGRATION_BRAND: Record<string, { label: string; bg: string; text: string }> = {
+  wordpress: { label: 'W', bg: 'bg-indigo-500', text: 'text-white' },
+  facebook: { label: 'f', bg: 'bg-blue-600', text: 'text-white' },
+  instagram: { label: 'IG', bg: 'bg-pink-500', text: 'text-white' },
+  linkedin: { label: 'in', bg: 'bg-sky-600', text: 'text-white' },
+  twitter: { label: 'X', bg: 'bg-slate-900', text: 'text-white' },
+  pinterest: { label: 'P', bg: 'bg-red-500', text: 'text-white' },
+  mailchimp: { label: 'MC', bg: 'bg-amber-400', text: 'text-slate-900' },
+};
+
+const getBrandStyle = (slug: string) =>
+  INTEGRATION_BRAND[slug] || {
+    label: String(slug || '?').slice(0, 2).toUpperCase(),
+    bg: 'bg-slate-200',
+    text: 'text-slate-700',
+  };
+
 const formatDate = (value?: string | null) => {
   if (!value) return '';
   const dt = new Date(value);
@@ -95,11 +112,21 @@ const formatDate = (value?: string | null) => {
   return dt.toLocaleDateString();
 };
 
+const PRIMARY_ACTION =
+  'inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60';
+const SECONDARY_ACTION =
+  'inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60';
+
 function Card({
   title,
   description,
   statusLabel,
   statusTone,
+  icon,
+  iconBg,
+  iconText,
+  meta,
+  isActive,
   disabledReason,
   children,
 }: {
@@ -107,23 +134,44 @@ function Card({
   description: string;
   statusLabel: string;
   statusTone: keyof typeof PLATFORM_BADGE;
+  icon: string;
+  iconBg: string;
+  iconText: string;
+  meta?: string | null;
+  isActive: boolean;
   disabledReason?: string | null;
   children: React.ReactNode;
 }) {
   const badge = PLATFORM_BADGE[statusTone];
   return (
-    <div className="rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="text-base font-black text-slate-950">{title}</div>
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.text}`}>{statusLabel}</span>
+    <div className="group rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${iconBg} ${iconText} text-base font-black shadow-sm`}>
+            {icon}
           </div>
-          <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
-          {disabledReason ? <p className="mt-2 text-xs text-amber-700">{disabledReason}</p> : null}
+          <div className="min-w-0">
+            <div className="text-base font-black text-slate-950">{title}</div>
+            {meta ? <div className="mt-1 text-xs text-slate-500">{meta}</div> : null}
+          </div>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.text}`}>{statusLabel}</span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-500">{description}</p>
+      {disabledReason ? <p className="mt-3 text-xs text-amber-700">{disabledReason}</p> : null}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">{children}</div>
+        <div
+          aria-hidden="true"
+          className={`relative h-6 w-11 rounded-full p-0.5 transition ${
+            isActive ? 'bg-indigo-500' : 'bg-slate-200'
+          }`}
+        >
+          <div
+            className={`h-5 w-5 rounded-full bg-white shadow transition ${isActive ? 'translate-x-5' : 'translate-x-0'}`}
+          />
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">{children}</div>
     </div>
   );
 }
@@ -180,6 +228,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const cms = useMemo(() => items.filter((i) => i.type === 'cms'), [items]);
   const social = useMemo(() => items.filter((i) => i.type === 'social'), [items]);
   const marketing = useMemo(() => items.filter((i) => i.type === 'marketing'), [items]);
+  const connectedCount = useMemo(() => items.filter((i) => i.connected).length, [items]);
+  const totalCount = items.length;
 
   const startOAuth = async (slug: string) => {
     setBusy(slug);
@@ -288,9 +338,15 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
+    const brand = getBrandStyle(slug);
     const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest'].includes(slug);
     const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
     const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || '';
+    const connectedMeta = item.connected
+      ? [connectedLabel ? `Connected as ${connectedLabel}` : 'Connected', connectedAt ? formatDate(connectedAt) : '']
+          .filter(Boolean)
+          .join(' • ')
+      : null;
 
     const disabledReason = !item.adminEnabled
       ? 'Disabled by admin.'
@@ -307,11 +363,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
         description="Connect your WordPress site using Application Passwords. Publish, update, import posts and sync categories/tags."
         statusLabel={item.connected ? 'Connected' : 'Disconnected'}
         statusTone={item.connected ? 'connected' : 'disconnected'}
+        icon={brand.label}
+        iconBg={brand.bg}
+        iconText={brand.text}
+        meta={connectedMeta}
+        isActive={item.connected}
       >
         <button
           type="button"
           onClick={() => setModal({ type: 'details', slug })}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          className={SECONDARY_ACTION}
         >
           <Info size={16} /> Steps
         </button>
@@ -319,7 +380,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             <button
               type="button"
               onClick={() => setModal({ type: 'wordpress' })}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+              className={PRIMARY_ACTION}
             >
               <Plug size={16} /> Connect
             </button>
@@ -329,14 +390,14 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 type="button"
                 onClick={disconnectWordPress}
                 disabled={busy === 'wordpress'}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className={SECONDARY_ACTION}
               >
                 {busy === 'wordpress' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
               <button
                 type="button"
                 onClick={() => setModal({ type: 'wordpress' })}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                className={SECONDARY_ACTION}
               >
                 <Settings2 size={16} /> Settings
               </button>
@@ -353,11 +414,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
           description="Connect Mailchimp using an API key + server prefix (e.g. us19)."
           statusLabel={item.connected ? 'Connected' : 'Disconnected'}
           statusTone={item.connected ? 'connected' : 'disconnected'}
+          icon={brand.label}
+          iconBg={brand.bg}
+          iconText={brand.text}
+          meta={connectedMeta}
+          isActive={item.connected}
         >
           <button
             type="button"
             onClick={() => setModal({ type: 'details', slug })}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className={SECONDARY_ACTION}
           >
             <Info size={16} /> Steps
           </button>
@@ -365,7 +431,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             <button
               type="button"
               onClick={() => setModal({ type: 'mailchimp' })}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+              className={PRIMARY_ACTION}
             >
               <Plug size={16} /> Connect
             </button>
@@ -386,7 +452,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 }
               }}
               disabled={busy === 'mailchimp'}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              className={SECONDARY_ACTION}
             >
               {busy === 'mailchimp' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
             </button>
@@ -399,6 +465,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
       disabledReason ? 'disabled' : item.connected ? 'connected' : 'disconnected';
 
     const connectLabel = item.connected ? 'Reconnect' : 'Connect';
+    const isActive = statusTone === 'connected';
 
     return (
       <Card
@@ -419,11 +486,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
         statusLabel={disabledReason ? 'Admin disabled' : item.connected ? 'Connected' : 'Disconnected'}
         statusTone={statusTone}
         disabledReason={disabledReason}
+        icon={brand.label}
+        iconBg={brand.bg}
+        iconText={brand.text}
+        meta={connectedMeta}
+        isActive={isActive}
       >
         <button
           type="button"
           onClick={() => setModal({ type: 'details', slug })}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          className={SECONDARY_ACTION}
         >
           <Info size={16} /> Steps
         </button>
@@ -433,7 +505,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
               type="button"
               onClick={() => void openInstagramTargets()}
               disabled={!items.find((i) => i.slug === 'facebook')?.connected}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+              className={PRIMARY_ACTION}
               title={!items.find((i) => i.slug === 'facebook')?.connected ? 'Connect Facebook first' : ''}
             >
               <Plug size={16} /> Connect
@@ -443,7 +515,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 type="button"
                 onClick={() => void disconnectOAuth('instagram')}
                 disabled={busy === 'instagram'}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className={SECONDARY_ACTION}
               >
                 {busy === 'instagram' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
@@ -455,7 +527,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
               type="button"
               onClick={() => void startOAuth(slug)}
               disabled={!canConnect || busy === slug}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+              className={PRIMARY_ACTION}
             >
               {busy === slug ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} {connectLabel}
             </button>
@@ -465,7 +537,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 type="button"
                 onClick={() => void disconnectOAuth(slug)}
                 disabled={busy === slug}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className={SECONDARY_ACTION}
               >
                 {busy === slug ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
@@ -478,7 +550,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             type="button"
             onClick={() => void openFacebookPages()}
             disabled={!item.connected}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className={SECONDARY_ACTION}
             title={!item.connected ? 'Connect Facebook first' : ''}
           >
             <Settings2 size={16} /> Manage
@@ -490,44 +562,60 @@ export default function Integrations({ onNavigateSettings }: Props) {
             type="button"
             onClick={() => void openPinterestBoards()}
             disabled={!item.connected}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className={SECONDARY_ACTION}
             title={!item.connected ? 'Connect Pinterest first' : ''}
           >
             <Settings2 size={16} /> Manage
           </button>
         ) : null}
 
-        {item.connected ? (
-          <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            {connectedLabel ? <div className="font-semibold">Connected as {connectedLabel}</div> : null}
-            {connectedAt ? <div>Connected {formatDate(connectedAt)}</div> : null}
-          </div>
-        ) : null}
       </Card>
     );
   };
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-[24px] border border-slate-200 bg-white px-6 py-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Integrations</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Connect external services using official APIs and OAuth. Admins control developer credentials; you connect your accounts.
+    <div className="space-y-8">
+      <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Integrations & workflows</div>
+            <h2 className="mt-2 text-3xl font-black tracking-[-0.03em] text-slate-950">Integrations & workflows</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Supercharge your workflow and connect the tools you and your team use every day. Admins configure the apps; you connect the accounts.
             </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                CMS ({cms.length})
+              </span>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                Social ({social.length})
+              </span>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                Marketing ({marketing.length})
+              </span>
+            </div>
           </div>
-          {onNavigateSettings ? (
-            <button
-              type="button"
-              onClick={onNavigateSettings}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <ExternalLink size={16} /> Admin settings
-            </button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-center">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Connected</div>
+              <div className="text-2xl font-black text-slate-900">{connectedCount}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Total</div>
+              <div className="text-2xl font-black text-slate-900">{totalCount}</div>
+            </div>
+            {onNavigateSettings ? (
+              <button
+                type="button"
+                onClick={onNavigateSettings}
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <ExternalLink size={16} /> Admin settings
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
+      </section>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
@@ -557,19 +645,34 @@ export default function Integrations({ onNavigateSettings }: Props) {
               </ol>
             </div>
           ) : null}
-          <section className="space-y-3">
-            <div className="text-sm font-black text-slate-900">CMS Platforms</div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cms.map(renderActions)}</div>
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-black text-slate-900">CMS Platforms</div>
+                <div className="text-xs text-slate-500">{cms.length} apps available</div>
+              </div>
+            </div>
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{cms.map(renderActions)}</div>
           </section>
 
-          <section className="space-y-3">
-            <div className="text-sm font-black text-slate-900">Social Media Platforms</div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{social.map(renderActions)}</div>
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-black text-slate-900">Social Media Platforms</div>
+                <div className="text-xs text-slate-500">{social.length} channels supported</div>
+              </div>
+            </div>
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{social.map(renderActions)}</div>
           </section>
 
-          <section className="space-y-3">
-            <div className="text-sm font-black text-slate-900">Marketing Platforms</div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-black text-slate-900">Marketing Platforms</div>
+                <div className="text-xs text-slate-500">{marketing.length} tools ready</div>
+              </div>
+            </div>
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
               {marketing.length ? marketing.map(renderActions) : <div className="text-sm text-slate-400">No marketing integrations enabled.</div>}
             </div>
           </section>
