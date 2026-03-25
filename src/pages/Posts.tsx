@@ -1002,11 +1002,22 @@ function PostEditor({
     return normalizeText(fallback).slice(0, 500);
   }, [socialTemplate, title, excerpt, content]);
 
+  const navigateToIntegrations = useCallback(() => {
+    window.history.pushState({}, '', '/integrations');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, []);
+
+  const primaryActionStatus: 'published' | 'scheduled' = status === 'scheduled' ? 'scheduled' : 'published';
+  const primaryActionLabel = primaryActionStatus === 'scheduled' ? 'Schedule' : 'Publish';
+
   const save = async (nextStatus?: 'draft' | 'published' | 'scheduled') => {
     setSaving(true);
     setError(null);
     try {
       const finalStatus = nextStatus ?? status;
+      if (finalStatus === 'scheduled' && !scheduledAt) {
+        throw new Error('Choose a schedule date/time before scheduling this post.');
+      }
       const payload: BlogPostPayload = {
         title,
         slug,
@@ -1065,12 +1076,12 @@ function PostEditor({
           </button>
           <button
             type="button"
-            onClick={() => void save('published')}
+            onClick={() => void save(primaryActionStatus)}
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            Publish
+            {primaryActionLabel}
           </button>
         </div>
       </div>
@@ -1128,7 +1139,7 @@ function PostEditor({
                 <button
                     type="button"
                     className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                    onClick={() => alert('Navigation to integration settings to be implemented')}
+                    onClick={navigateToIntegrations}
                 >
                     Connect WordPress
                 </button>
@@ -1170,7 +1181,7 @@ function PostEditor({
                  <button
                     type="button"
                     className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                    onClick={() => alert('Navigation to integration settings to be implemented')}
+                    onClick={navigateToIntegrations}
                 >
                     Connect Social Platform Account
                 </button>

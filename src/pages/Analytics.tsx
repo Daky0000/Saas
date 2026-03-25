@@ -194,7 +194,10 @@ export default function Analytics() {
   const hasData =
     !!dashboard &&
     (dashboard.kpis.publishedPosts > 0 ||
-      dashboard.platformBreakdown.some((entry) => entry.published > 0 || entry.failed > 0) ||
+      dashboard.kpis.futureScheduledCount > 0 ||
+      dashboard.platformBreakdown.some(
+        (entry) => entry.published > 0 || entry.failed > 0 || entry.scheduled > 0 || entry.accounts > 0
+      ) ||
       dashboard.topPosts.length > 0);
 
   return (
