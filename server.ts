@@ -6476,12 +6476,13 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
 
     const visiblePlatforms = await getVisibleUserPlatformSlugs();
 
+    let settingId = randomUUID();
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const existing = await client.query('SELECT id FROM social_post_settings WHERE post_id=$1', [String(postId)]);
-      const settingId = existing.rows[0]?.id ? String(existing.rows[0].id) : randomUUID();
+      settingId = existing.rows[0]?.id ? String(existing.rows[0].id) : settingId;
 
       if (existing.rows.length) {
         await client.query(
@@ -6524,13 +6525,15 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
       }
 
       await client.query('COMMIT');
-      return res.json({ success: true, id: settingId });
     } catch (e) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw e;
     } finally {
       client.release();
     }
+
+    await syncSocialAutomationForPost(auth.userId, String(postId));
+    return res.json({ success: true, id: settingId });
   } catch (err) {
     console.error('v1 save social settings error:', err);
     return res.status(500).json({ success: false, error: 'Failed to save social settings' });
@@ -7673,6 +7676,17 @@ app.patch('/api/blog/posts/batch/platforms', async (req: Request, res: Response)
     client.release();
   }
 
+  const publishedRows = await pool!.query(
+    `SELECT id
+     FROM blog_posts
+     WHERE id = ANY($1) AND user_id=$2 AND status='published'`,
+    [ids, user.userId]
+  );
+
+  for (const row of publishedRows.rows as Array<{ id: string }>) {
+    await syncSocialAutomationForPost(user.userId, String(row.id));
+  }
+
   await recordAuditLog(user.userId, 'batch_platforms', ids, { accountIds: accounts });
   return res.json({ success: true, updated: ids.length });
 });
@@ -8641,6 +8655,56 @@ async function resolveSocialAccountIdForLog(userId: string, platform: string, de
     [userId, platform, accountType, accountId]
   );
   return rows.length ? String(rows[0].id) : null;
+}
+
+async function cancelPendingSocialAutomationForPost(userId: string, postId: string, reason: string) {
+  if (!pool) return;
+
+  await pool
+    .query(
+      `UPDATE social_automation_tasks
+       SET status='cancelled', last_error=$3, updated_at=NOW()
+       WHERE user_id=$1 AND post_id=$2 AND status IN ('scheduled','pending')`,
+      [userId, postId, reason]
+    )
+    .catch(() => undefined);
+
+  await pool
+    .query(
+      `UPDATE publishing_logs
+       SET status='cancelled', error_message=$3
+       WHERE user_id=$1 AND post_id=$2 AND status IN ('scheduled','pending')`,
+      [userId, postId, reason]
+    )
+    .catch(() => undefined);
+}
+
+async function syncSocialAutomationForPost(userId: string, postId: string) {
+  if (!pool) return;
+
+  const postRows = await pool.query(
+    `SELECT p.*,
+      ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
+     FROM blog_posts p
+     WHERE p.id=$1 AND p.user_id=$2
+     LIMIT 1`,
+    [postId, userId]
+  );
+
+  if (!postRows.rows.length) return;
+
+  const post = postRows.rows[0] as any;
+  const isPublished = String(post.status || '').toLowerCase() === 'published';
+
+  await cancelPendingSocialAutomationForPost(
+    userId,
+    postId,
+    isPublished ? 'Replaced by updated social settings' : 'Social automation disabled for this post'
+  );
+
+  if (!isPublished) return;
+
+  await queueSocialAutomationForPublishedPost(userId, post);
 }
 
 async function insertSocialPostLog(params: {
