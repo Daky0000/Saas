@@ -1034,18 +1034,14 @@ function PostEditor({
         focus_keyword: focusKeywords.join(', '),
       };
       const saved = postId ? await blogService.updatePost(postId, payload) : await blogService.createPost(payload);
-      
-      // Save social settings if we have a postId (after creation)
-      const finalPostId = saved.id;
-      if (selectedSocialAccounts.length > 0 || socialTemplate || socialPublishType !== 'immediate' || socialScheduledAt) {
-        await socialPostService.saveSettings(finalPostId, {
-          template: socialTemplate,
-          publish_type: socialPublishType,
-          scheduled_at: socialPublishType !== 'immediate' ? socialScheduledAt : null,
-          accounts: selectedSocialAccounts,
-        });
-      }
-      
+
+      await socialPostService.saveSettings(saved.id, {
+        template: socialTemplate,
+        publish_type: socialPublishType,
+        scheduled_at: socialPublishType !== 'immediate' ? socialScheduledAt : null,
+        accounts: selectedSocialAccounts,
+      });
+
       onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save');
