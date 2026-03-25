@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "Facebook Automation": {
+      "source": "composiohq/awesome-claude-skills",
+      "sourceType": "github",
+      "computedHash": "bcaf3b8bf94ca523d2df9361f0b227262c881e4c7397af051cfa42efa7bf86c8"
+    }
+  }
+}

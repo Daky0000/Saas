@@ -1,9 +1,67 @@
-node_modules
-dist/
-openai.chatgpt-26.304.20706-win32-arm64.vsix
-.agent/
-.agents/
-.claude/
-tmp_skills/
-skills-lock.json
+# Sync .project/sourceTexts/ folder (source text files)
+
+# Don't sync user-specific SQLite databases
+.project/*.sqlite
+
+# Don't sync SQLite auxiliary files
+.project/*.sqlite-wal
+.project/*.sqlite-shm
+
+# Don't sync user-specific files
+.project/complete_drafts.txt
+.project/localProjectSettings.json
+.project/localProjectSwap.json
+copilot-messages.log
+
+# Archive formats
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.gz
+*.bz2
+*.xz
+
+# Windows executables and installers
+*.exe
+*.msi
+*.bat
+*.cmd
+*.com
+*.scr
+*.dll
+
+# macOS executables and disk images
+*.dmg
+*.pkg
+*.vsix
+
+# Disk images and virtual machine files
+*.iso
+*.img
+*.vhd
+*.vmdk
+
+# System files
+.DS_Store
+.project/attachments/files/**
+
+# Temporary and disabled folders
 tmp_skills_disabled/
+tmp_skills/
+Old design/
+
+# Temporary development files
+tmp_find_bom.py
+tmp_preview_server.cjs
+tmp_preview_server.js
+
+# Dependencies and local logs
+node_modules/
+*.log
+
+# API keys and tokens (should not be committed)
+tiktok*.txt

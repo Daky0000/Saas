@@ -84,17 +84,16 @@ export const wordpressService = {
     return { success: true, message: data.message };
   },
 
-  async getStatus(): Promise<{ success: boolean; connected?: boolean; siteUrl?: string; connectionType?: 'make_webhook' | 'wordpress_api'; error?: string }> {
+  async getStatus(): Promise<WordPressStatus> {
     const res = await fetch(`${API_BASE_URL}/api/wordpress/status`, {
       headers: authHeaders(),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({} as any));
     if (!res.ok) {
-      return { success: false, error: data.error || 'Failed to get status' };
+      throw new Error(data.error || 'Failed to get status');
     }
     return {
-      success: true,
-      connected: data.connected,
+      connected: Boolean(data.connected),
       siteUrl: data.siteUrl,
       connectionType: data.connectionType,
     };

@@ -13,7 +13,6 @@ import {
   X,
   Clock,
   Save,
-  Sparkles,
   CheckCircle2,
   XCircle,
   MoreHorizontal,
@@ -24,6 +23,13 @@ import { wordpressService, type WordPressStatus } from '../services/wordpressSer
 import type { AppUser } from '../utils/userSession';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import RichTextEditor from '../components/RichTextEditor';
+import { PlatformPreviewTabs } from '../components/posts/PlatformPreviewTabs';
+import BulkActionsToolbar from '../components/posts/batch/BulkActionsToolbar';
+import RescheduleModal from '../components/posts/batch/RescheduleModal';
+import TagModal from '../components/posts/batch/TagModal';
+import DeleteConfirmModal from '../components/posts/batch/DeleteConfirmModal';
+import PlatformsModal from '../components/posts/batch/PlatformsModal';
+import { useBatchActions } from '../hooks/useBatchActions';
 
 type PostsView = 'posts' | 'editor' | 'categories' | 'tags';
 
@@ -31,6 +37,8 @@ const STATUS_BADGE: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
   published: 'bg-emerald-100 text-emerald-700',
   scheduled: 'bg-blue-100 text-blue-700',
+  archived: 'bg-amber-100 text-amber-700',
+  deleted: 'bg-rose-100 text-rose-700',
 };
 
 function fmtDate(iso: string | null | undefined) {
@@ -67,63 +75,6 @@ const countParagraphs = (value: string) => {
   if (fromHtml > 0) return fromHtml;
   const text = normalizeText(value);
   return text ? text.split(/\n{2,}/).filter(Boolean).length : 0;
-};
-
-const extractKeywords = (value: string, limit = 5) => {
-  const stopwords = new Set([
-    'the',
-    'and',
-    'for',
-    'with',
-    'this',
-    'that',
-    'from',
-    'your',
-    'you',
-    'are',
-    'was',
-    'were',
-    'have',
-    'has',
-    'had',
-    'into',
-    'about',
-    'over',
-    'under',
-    'more',
-    'less',
-    'than',
-    'then',
-    'also',
-    'just',
-    'they',
-    'their',
-    'them',
-    'our',
-    'out',
-    'can',
-    'will',
-    'not',
-    'but',
-    'how',
-    'what',
-    'why',
-    'when',
-    'where',
-    'who',
-    'which',
-  ]);
-  const words = normalizeText(value)
-    .toLowerCase()
-    .split(/\s+/)
-    .map((word) => word.replace(/[^a-z0-9-]/g, ''))
-    .filter((word) => word.length > 3 && !stopwords.has(word));
-  const counts = new Map<string, number>();
-  words.forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([word]) => word)
-    .slice(0, limit);
 };
 
 type SeoCheck = {
@@ -420,18 +371,43 @@ function TagsTab({ tags, onChange }: { tags: BlogTag[]; onChange: () => void }) 
   );
 }
 
-function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () => void }) {
+function PostsList({
+  onEdit,
+  onNew,
+  tags,
+  onTagsRefresh,
+}: {
+  onEdit: (id: string) => void;
+  onNew: () => void;
+  tags: BlogTag[];
+  onTagsRefresh: () => void;
+}) {
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'published' | 'scheduled'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'published' | 'scheduled' | 'archived'>('all');
   const [dropdownOpen, setDropdownOpen] = useState<string | null>(null);
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [showTagModal, setShowTagModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showPlatformsModal, setShowPlatformsModal] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+
+  const { recordUndo, undo, canUndo } = useBatchActions();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await blogService.listPosts({ status: statusFilter, search });
       setPosts(data);
+      setSelectedPostIds((prev) => {
+        if (prev.size === 0) return prev;
+        const keep = new Set(data.map((post) => post.id));
+        return new Set([...prev].filter((id) => keep.has(id)));
+      });
     } finally {
       setLoading(false);
     }
@@ -449,8 +425,14 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this post?')) return;
-    await blogService.deletePost(id);
+    await blogService.batchDelete([id]);
     setPosts((p) => p.filter((post) => post.id !== id));
+    setSelectedPostIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   const handleDuplicate = async (id: string) => {
@@ -481,8 +463,181 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
     }
   };
 
+  const selectedPosts = useMemo(() => posts.filter((post) => selectedPostIds.has(post.id)), [posts, selectedPostIds]);
+
+  const toggleSelectPost = (id: string) => {
+    setSelectedPostIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedPostIds.size === posts.length) {
+      setSelectedPostIds(new Set());
+      return;
+    }
+    setSelectedPostIds(new Set(posts.map((post) => post.id)));
+  };
+
+  const handleClearSelection = () => setSelectedPostIds(new Set());
+
+  const handleRescheduleSubmit = async (date: string, time: string) => {
+    const scheduledAt = new Date(`${date}T${time}`);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      alert('Invalid date/time');
+      return;
+    }
+    setProcessing(true);
+    try {
+      const previousState = JSON.parse(JSON.stringify(selectedPosts)) as BlogPost[];
+      recordUndo('reschedule', Array.from(selectedPostIds), previousState);
+      const result = await blogService.batchReschedule(Array.from(selectedPostIds), scheduledAt.toISOString());
+      setMessage(`Rescheduled ${result.updated} posts.`);
+      setShowRescheduleModal(false);
+      await load();
+      handleClearSelection();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to reschedule posts');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleTagSubmit = async (tagIds: string[]) => {
+    setProcessing(true);
+    try {
+      const previousState = JSON.parse(JSON.stringify(selectedPosts)) as BlogPost[];
+      recordUndo('tag', Array.from(selectedPostIds), previousState);
+      const result = await blogService.batchTag(Array.from(selectedPostIds), tagIds);
+      setMessage(`Tagged ${result.updated} posts.`);
+      setShowTagModal(false);
+      await load();
+      handleClearSelection();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to tag posts');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleArchive = async () => {
+    if (selectedPostIds.size === 0) return;
+    setProcessing(true);
+    try {
+      const previousState = JSON.parse(JSON.stringify(selectedPosts)) as BlogPost[];
+      recordUndo('archive', Array.from(selectedPostIds), previousState);
+      const result = await blogService.batchArchive(Array.from(selectedPostIds));
+      setMessage(`Archived ${result.updated} posts.`);
+      await load();
+      handleClearSelection();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to archive posts');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (selectedPostIds.size === 0) return;
+    setProcessing(true);
+    try {
+      const previousState = JSON.parse(JSON.stringify(selectedPosts)) as BlogPost[];
+      recordUndo('delete', Array.from(selectedPostIds), previousState);
+      const result = await blogService.batchDelete(Array.from(selectedPostIds));
+      setMessage(`Deleted ${result.updated} posts.`);
+      setShowDeleteModal(false);
+      await load();
+      handleClearSelection();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to delete posts');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleDuplicateBatch = async () => {
+    if (selectedPostIds.size === 0) return;
+    setProcessing(true);
+    try {
+      const result = await blogService.batchDuplicate(Array.from(selectedPostIds));
+      setMessage(`Duplicated ${result.created} posts.`);
+      await load();
+      handleClearSelection();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to duplicate posts');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (selectedPostIds.size === 0) return;
+    setProcessing(true);
+    try {
+      const csv = await blogService.batchExport(Array.from(selectedPostIds));
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `posts-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setMessage('Exported CSV.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to export posts');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const ensureSocialAccounts = async () => {
+    if (socialAccounts.length > 0) return;
+    try {
+      const accounts = await socialPostService.listAccounts();
+      setSocialAccounts(accounts);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to load social accounts');
+    }
+  };
+
+  const handlePlatformsSubmit = async (accountIds: string[]) => {
+    if (selectedPostIds.size === 0) return;
+    setProcessing(true);
+    try {
+      await blogService.batchUpdatePlatforms(Array.from(selectedPostIds), accountIds);
+      setMessage(`Updated platforms for ${selectedPostIds.size} posts.`);
+      setShowPlatformsModal(false);
+      handleClearSelection();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to update platforms');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleUndo = async () => {
+    setProcessing(true);
+    try {
+      await undo();
+      await load();
+      setMessage('Undo complete.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to undo action');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   return (
-    <div className="space-y-5">
+    <div className={`space-y-5 ${selectedPostIds.size > 0 ? 'pb-28' : ''}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -503,6 +658,7 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
           <option value="draft">Draft</option>
           <option value="published">Published</option>
           <option value="scheduled">Scheduled</option>
+          <option value="archived">Archived</option>
         </select>
         <button
           type="button"
@@ -514,7 +670,14 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        <div className="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-3 border-b border-slate-100 text-xs font-bold text-slate-500">
+        <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center px-4 py-3 border-b border-slate-100 text-xs font-bold text-slate-500">
+          <input
+            type="checkbox"
+            checked={posts.length > 0 && selectedPostIds.size === posts.length}
+            onChange={handleSelectAll}
+            aria-label="Select all posts"
+            className="h-4 w-4 rounded border-slate-300"
+          />
           <span>Title</span>
           <span className="text-right">Actions</span>
         </div>
@@ -528,62 +691,144 @@ function PostsList({ onEdit, onNew }: { onEdit: (id: string) => void; onNew: () 
             <div className="px-4 py-10 text-center text-sm text-slate-500">No posts found.</div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {posts.map((post) => (
-                <div key={post.id} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-slate-900">{post.title || '(Untitled)'}</div>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_BADGE[post.status] ?? 'bg-slate-100 text-slate-600'}`}>
-                        {post.status}
-                      </span>
-                      <span className="text-xs text-slate-400">Updated {fmtDate(post.updated_at)}</span>
+              {posts.map((post) => {
+                const isSelected = selectedPostIds.has(post.id);
+                return (
+                  <div
+                    key={post.id}
+                    className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-3 hover:bg-slate-50 ${isSelected ? 'bg-slate-50' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelectPost(post.id)}
+                      className="h-4 w-4 rounded border-slate-300"
+                      data-testid="post-checkbox"
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-slate-900">{post.title || '(Untitled)'}</div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_BADGE[post.status] ?? 'bg-slate-100 text-slate-600'}`}>
+                          {post.status}
+                        </span>
+                        <span className="text-xs text-slate-400">Updated {fmtDate(post.updated_at)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 relative">
+                      <button type="button" onClick={() => onEdit(post.id)} title="Edit" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                        <Pencil size={14} />
+                      </button>
+                      <button type="button" onClick={() => void handleDuplicate(post.id)} title="Duplicate" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                        <Copy size={14} />
+                      </button>
+                      <button type="button" onClick={() => void handleDelete(post.id)} title="Delete" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600">
+                        <Trash2 size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDropdownOpen(dropdownOpen === post.id ? null : post.id)}
+                        title="More actions"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
+                      {dropdownOpen === post.id && (
+                        <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                          <button
+                            type="button"
+                            onClick={() => void handleReschedule(post.id)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            <Clock size={14} />
+                            Reschedule Post
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleRepublish(post.id)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            <CheckCircle2 size={14} />
+                            Republish
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 relative">
-                    <button type="button" onClick={() => onEdit(post.id)} title="Edit" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-                      <Pencil size={14} />
-                    </button>
-                    <button type="button" onClick={() => void handleDuplicate(post.id)} title="Duplicate" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-                      <Copy size={14} />
-                    </button>
-                    <button type="button" onClick={() => void handleDelete(post.id)} title="Delete" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600">
-                      <Trash2 size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDropdownOpen(dropdownOpen === post.id ? null : post.id)}
-                      title="More actions"
-                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                    >
-                      <MoreHorizontal size={14} />
-                    </button>
-                    {dropdownOpen === post.id && (
-                      <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                        <button
-                          type="button"
-                          onClick={() => void handleReschedule(post.id)}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                          <Clock size={14} />
-                          Reschedule Post
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleRepublish(post.id)}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                          <CheckCircle2 size={14} />
-                          Republish
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       </div>
+
+      {selectedPostIds.size > 0 && (
+        <div data-testid="batch-toolbar">
+          <BulkActionsToolbar
+            selectedCount={selectedPostIds.size}
+            totalCount={posts.length}
+            onSelectAll={handleSelectAll}
+            onClearSelection={handleClearSelection}
+            onReschedule={() => setShowRescheduleModal(true)}
+            onTag={() => setShowTagModal(true)}
+            onPlatforms={() => {
+              setShowPlatformsModal(true);
+              void ensureSocialAccounts();
+            }}
+            onArchive={handleArchive}
+            onDelete={() => setShowDeleteModal(true)}
+            onDuplicate={handleDuplicateBatch}
+            onExport={handleExport}
+            onUndo={handleUndo}
+            canUndo={canUndo}
+            isLoading={processing}
+            message={message}
+          />
+        </div>
+      )}
+
+      {showRescheduleModal && (
+        <RescheduleModal
+          count={selectedPostIds.size}
+          onSubmit={handleRescheduleSubmit}
+          onClose={() => setShowRescheduleModal(false)}
+        />
+      )}
+
+      {showTagModal && (
+        <TagModal
+          count={selectedPostIds.size}
+          tags={tags}
+          onCreateTag={async (name) => {
+            try {
+              const created = await blogService.createTag(name);
+              await onTagsRefresh();
+              return created;
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : 'Failed to create tag');
+              return null;
+            }
+          }}
+          onSubmit={handleTagSubmit}
+          onClose={() => setShowTagModal(false)}
+        />
+      )}
+
+      {showDeleteModal && (
+        <DeleteConfirmModal
+          count={selectedPostIds.size}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setShowDeleteModal(false)}
+        />
+      )}
+
+      {showPlatformsModal && (
+        <PlatformsModal
+          count={selectedPostIds.size}
+          accounts={socialAccounts}
+          onSubmit={handlePlatformsSubmit}
+          onClose={() => setShowPlatformsModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -608,7 +853,7 @@ function PostEditor({
   const [excerpt, setExcerpt] = useState('');
   const [featuredImage, setFeaturedImage] = useState('');
   const [featuredImageName, setFeaturedImageName] = useState<string | null>(null);
-  const [status, setStatus] = useState<'draft' | 'published' | 'scheduled'>('draft');
+  const [status, setStatus] = useState<'draft' | 'published' | 'scheduled' | 'archived'>('draft');
   const [scheduledAt, setScheduledAt] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
@@ -618,11 +863,6 @@ function PostEditor({
   const [focusKeywordInput, setFocusKeywordInput] = useState('');
   const [sidebarTab, setSidebarTab] = useState<'post' | 'seo'>('post');
   const [createTab, setCreateTab] = useState<'editor' | 'automation'>('editor');
-  const [automationSettings, setAutomationSettings] = useState({
-    autoSeoScan: true,
-    autoInternalLinks: false,
-    scheduleAuditAt: '',
-  });
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
   const [wordpressStatus, setWordpressStatus] = useState<WordPressStatus | null>(null);
   const [selectedSocialAccounts, setSelectedSocialAccounts] = useState<string[]>([]);
@@ -646,7 +886,7 @@ function PostEditor({
         setExcerpt(post.excerpt || '');
         setFeaturedImage(post.featured_image || '');
         setFeaturedImageName(null);
-        setStatus(post.status);
+        setStatus(post.status === 'deleted' ? 'draft' : post.status);
         setScheduledAt(post.scheduled_at ? post.scheduled_at.slice(0, 16) : '');
         setCategoryId(post.category_id ?? '');
         setSelectedTagIds(post.tag_ids ?? []);
@@ -721,10 +961,6 @@ function PostEditor({
     setFeaturedImageName(null);
   };
 
-  const updateAutomationSettings = (patch: Partial<typeof automationSettings>) => {
-    setAutomationSettings((prev) => ({ ...prev, ...patch }));
-  };
-
   const seo = useMemo(
     () =>
       buildSeoAnalysis({
@@ -738,9 +974,33 @@ function PostEditor({
     [title, slug, content, seoTitle, seoDescription, focusKeywords]
   );
 
-  const suggestedSeoTitle = title.trim() ? title.trim().slice(0, 60) : '';
-  const suggestedSeoDescription = seo.contentText ? seo.contentText.slice(0, 155) : '';
-  const suggestedKeywords = extractKeywords(`${title} ${seo.contentText}`, 3);
+  const selectedPlatforms = useMemo(() => {
+    const selectedIds = new Set(selectedSocialAccounts);
+    const normalizePlatform = (platform: string) => {
+      const value = platform.toLowerCase();
+      if (value.includes('instagram')) return 'instagram';
+      if (value.includes('twitter') || value === 'x') return 'twitter';
+      if (value.includes('linkedin')) return 'linkedin';
+      if (value.includes('facebook')) return 'facebook';
+      if (value.includes('tiktok')) return 'tiktok';
+      return '';
+    };
+
+    const platforms = socialAccounts
+      .filter((account) => selectedIds.has(account.id))
+      .map((account) => normalizePlatform(account.platform))
+      .filter(Boolean);
+
+    return Array.from(new Set(platforms));
+  }, [selectedSocialAccounts, socialAccounts]);
+
+  const previewCaption = useMemo(() => {
+    const template = socialTemplate.trim();
+    if (template) return template;
+    if (title.trim()) return title.trim();
+    const fallback = excerpt.trim() ? excerpt : content;
+    return normalizeText(fallback).slice(0, 500);
+  }, [socialTemplate, title, excerpt, content]);
 
   const save = async (nextStatus?: 'draft' | 'published' | 'scheduled') => {
     setSaving(true);
@@ -760,7 +1020,6 @@ function PostEditor({
         meta_title: seoTitle,
         meta_description: seoDescription,
         focus_keyword: focusKeywords.join(', '),
-        social_automation: automationSettings,
       };
       const saved = postId ? await blogService.updatePost(postId, payload) : await blogService.createPost(payload);
       
@@ -842,215 +1101,143 @@ function PostEditor({
       </div>
 
       {createTab === 'automation' ? (
-        <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_360px]">
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white">
-                  <Sparkles size={18} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-slate-900">Automation</div>
-                  <div className="text-xs text-slate-500">AI-assisted suggestions and scheduled actions.</div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                  <div className="text-xs font-semibold text-slate-600">SEO Title Suggestion</div>
-                  <div className="text-sm text-slate-700">{suggestedSeoTitle || 'Add a post title to get a suggestion.'}</div>
-                  <button
-                    type="button"
-                    onClick={() => suggestedSeoTitle && setSeoTitle(suggestedSeoTitle)}
-                    disabled={!suggestedSeoTitle}
-                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    Use suggestion
-                  </button>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                  <div className="text-xs font-semibold text-slate-600">SEO Description Suggestion</div>
-                  <div className="text-sm text-slate-700">{suggestedSeoDescription || 'Write some content to generate a meta description.'}</div>
-                  <button
-                    type="button"
-                    onClick={() => suggestedSeoDescription && setSeoDescription(suggestedSeoDescription)}
-                    disabled={!suggestedSeoDescription}
-                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    Use suggestion
-                  </button>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                  <div className="text-xs font-semibold text-slate-600">Focus Keyword Suggestions</div>
-                  <div className="flex flex-wrap gap-2">
-                    {suggestedKeywords.length === 0 ? (
-                      <span className="text-xs text-slate-500">Add content to see keyword ideas.</span>
-                    ) : (
-                      suggestedKeywords.map((kw) => (
-                        <button
-                          key={kw}
-                          type="button"
-                          onClick={() => addFocusKeywords(kw)}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          {kw}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                  <div className="text-xs font-semibold text-slate-600">Content Improvements</div>
-                  <div className="text-sm text-slate-700">Focus on shortening long sentences and adding headings or lists for better readability.</div>
-                </div>
-              </div>
-
+        <div className="mt-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold text-slate-600 mb-3">Social Media Automation</div>
-                {socialAccounts.length === 0 && !wordpressStatus?.connected ? (
-                  <div className="text-xs text-slate-500">No social accounts connected. Connect accounts in your integrations settings.</div>
-                ) : (
-                  <div className="space-y-3">
-                    {wordpressStatus?.connected ? (
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold capitalize">Wordpress</span>
-                          <span className="text-slate-500">•</span>
-                          <span>{wordpressStatus.siteUrl}</span>
-                        </div>
-                        <button
-                          type="button"
-                          className="text-red-500 hover:text-red-700 font-semibold"
-                          onClick={() => alert('Disconnection logic to be implemented')}
-                        >
-                          Disconnect
-                        </button>
-                      </div>
-                    ) : (
-                      <button
+    <div className="text-xs font-semibold text-slate-600 mb-3">Social Media Automation</div>
+    <div className="space-y-4">
+        
+        <div>
+            <div className="text-sm font-bold text-slate-800 mb-2">Wordpress</div>
+            {wordpressStatus?.connected ? (
+                <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold capitalize">Wordpress</span>
+                        <span className="text-slate-500">•</span>
+                        <span>{wordpressStatus.siteUrl}</span>
+                    </div>
+                    <button
                         type="button"
-                        className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                        onClick={() => alert('Navigation to integration settings to be implemented')}
-                      >
-                        Connect WordPress
-                      </button>
-                    )}
-                    {socialAccounts.length > 0 && (
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
-                        <div className="space-y-2 max-h-32 overflow-y-auto">
-                          {socialAccounts.map((account) => (
+                        className="text-red-500 hover:text-red-700 font-semibold"
+                        onClick={() => alert('Disconnection logic to be implemented')}
+                    >
+                        Disconnect
+                    </button>
+                </div>
+            ) : (
+                <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                    onClick={() => alert('Navigation to integration settings to be implemented')}
+                >
+                    Connect WordPress
+                </button>
+            )}
+        </div>
+
+        
+        <div>
+            <div className="text-sm font-bold text-slate-800 mb-2">Social Platforms</div>
+            {socialAccounts.length > 0 ? (
+                <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-2">Select accounts to auto-publish to:</label>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {socialAccounts.map((account) => (
                             <label key={account.id} className="flex items-center gap-2 text-xs">
-                              <input
-                                type="checkbox"
-                                checked={selectedSocialAccounts.includes(account.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedSocialAccounts((prev) => [...prev, account.id]);
-                                  } else {
-                                    setSelectedSocialAccounts((prev) => prev.filter((id) => id !== account.id));
-                                  }
-                                }}
-                                className="rounded border-slate-300"
-                              />
-                              <div className="flex items-center gap-2">
-                                {account.profile_image && <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />}
-                                <span className="capitalize">{account.platform}</span>
-                                <span className="text-slate-500">•</span>
-                                <span>{account.account_name}</span>
-                              </div>
+                                <input
+                                    type="checkbox"
+                                    checked={selectedSocialAccounts.includes(account.id)}
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            setSelectedSocialAccounts((prev) => [...prev, account.id]);
+                                        } else {
+                                            setSelectedSocialAccounts((prev) => prev.filter((id) => id !== account.id));
+                                        }
+                                    }}
+                                    className="rounded border-slate-300"
+                                />
+                                <div className="flex items-center gap-2">
+                                    {account.profile_image && <img src={account.profile_image} alt="" className="w-4 h-4 rounded-full" />}
+                                    <span className="capitalize">{account.platform}</span>
+                                    <span className="text-slate-500">•</span>
+                                    <span>{account.account_name}</span>
+                                </div>
                             </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {(wordpressStatus?.connected || socialAccounts.length > 0) && (
-                      <>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                 <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                    onClick={() => alert('Navigation to integration settings to be implemented')}
+                >
+                    Connect Social Platform Account
+                </button>
+            )}
+        </div>
+
+        
+        {(wordpressStatus?.connected || socialAccounts.length > 0) && (
+            <div className="pt-4 border-t border-slate-200">
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
+                <textarea
+                    value={socialTemplate}
+                    onChange={(e) => setSocialTemplate(e.target.value)}
+                    placeholder="Custom message for social posts..."
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
+                    rows={2}
+                />
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
+                        <select
+                            value={socialPublishType}
+                            onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
+                        >
+                            <option value="immediate">Immediate</option>
+                            <option value="scheduled">Scheduled</option>
+                            <option value="delayed">Delayed</option>
+                        </select>
+                    </div>
+                    {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
                         <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1.5">Social post template (optional)</label>
-                          <textarea
-                            value={socialTemplate}
-                            onChange={(e) => setSocialTemplate(e.target.value)}
-                            placeholder="Custom message for social posts..."
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400 resize-none"
-                            rows={2}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Publish type</label>
-                            <select
-                              value={socialPublishType}
-                              onChange={(e) => setSocialPublishType(e.target.value as 'immediate' | 'scheduled' | 'delayed')}
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
-                            >
-                              <option value="immediate">Immediate</option>
-                              <option value="scheduled">Scheduled</option>
-                              <option value="delayed">Delayed</option>
-                            </select>
-                          </div>
-                          {(socialPublishType === 'scheduled' || socialPublishType === 'delayed') && (
-                            <div>
-                              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
-                              <input
+                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule time</label>
+                            <input
                                 type="datetime-local"
                                 value={socialScheduledAt}
                                 onChange={(e) => setSocialScheduledAt(e.target.value)}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
-                              />
-                            </div>
-                          )}
+                            />
                         </div>
-                      </>
                     )}
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold text-slate-600">Scheduled Actions</div>
-                <div className="mt-3 space-y-2 text-xs text-slate-600">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={automationSettings.autoSeoScan}
-                      onChange={(e) => updateAutomationSettings({ autoSeoScan: e.target.checked })}
-                    />
-                    Run SEO scan on every save
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={automationSettings.autoInternalLinks}
-                      onChange={(e) => updateAutomationSettings({ autoInternalLinks: e.target.checked })}
-                    />
-                    Suggest internal links before publish
-                  </label>
                 </div>
-                <div className="mt-3">
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule audit</label>
-                  <input
-                    type="datetime-local"
-                    value={automationSettings.scheduleAuditAt}
-                    onChange={(e) => updateAutomationSettings({ scheduleAuditAt: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-slate-400"
-                  />
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                    <div className="text-xs font-semibold text-slate-600 mb-2">Multi-Platform Preview</div>
+                    <PlatformPreviewTabs
+                        caption={previewCaption}
+                        selectedPlatforms={selectedPlatforms}
+                        mediaUrls={featuredImage ? [featuredImage] : []}
+                        onCaptionChange={setSocialTemplate}
+                    />
+                    {!socialTemplate.trim() && previewCaption && (
+                        <div className="mt-2 text-[11px] text-slate-500">
+                            Using your post title or excerpt for the preview. Add a social template to customize it.
+                        </div>
+                    )}
                 </div>
-              </div>
             </div>
-          </div>
+        )}
 
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center">
-              <div className="text-sm font-bold text-slate-900">Current SEO Score</div>
-              <div className="mt-4 flex items-center justify-center">
-                <SeoScoreBadge score={seo.score} />
-              </div>
-              <p className="mt-3 text-xs text-slate-500">Switch back to Create Post to adjust SEO fields.</p>
+         {socialAccounts.length === 0 && !wordpressStatus?.connected && (
+            <div className="text-xs text-slate-500 text-center py-4">
+                No social accounts or WordPress site connected. Please connect one to get started.
             </div>
+        )}
+    </div>
+</div>
+
           </div>
         </div>
       ) : (
@@ -1167,6 +1354,7 @@ function PostEditor({
                       <option value="draft">Draft</option>
                       <option value="published">Published</option>
                       <option value="scheduled">Scheduled</option>
+                      <option value="archived">Archived</option>
                     </select>
                   </div>
 
@@ -1415,7 +1603,14 @@ export default function Posts({ currentUser }: { currentUser: AppUser | null }) 
         </div>
       )}
 
-      {view === 'posts' && <PostsList onEdit={(id) => openEditor(id)} onNew={() => openEditor(null)} />}
+      {view === 'posts' && (
+        <PostsList
+          onEdit={(id) => openEditor(id)}
+          onNew={() => openEditor(null)}
+          tags={tags}
+          onTagsRefresh={() => void loadMeta()}
+        />
+      )}
       {view === 'categories' && <CategoriesTab categories={categories} onChange={() => void loadMeta()} />}
       {view === 'tags' && <TagsTab tags={tags} onChange={() => void loadMeta()} />}
 

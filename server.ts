@@ -26,6 +26,7 @@ import type { PostObject } from './backend/platforms/types.ts';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { registerBlogAnalyticsRoutes } from './src/server/blogAnalyticsRoutes.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,6 +60,210 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
 const TWITTER_MONTHLY_WRITE_LIMIT = Number(process.env.TWITTER_MONTHLY_WRITE_LIMIT || process.env.X_MONTHLY_WRITE_LIMIT || 0);
 const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = Number(process.env.SOCIAL_TOKEN_SAFETY_MARGIN_DAYS || 10);
+
+const CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000;
+const calendarCache = new Map<string, { expiresAt: number; value: any }>();
+const LINK_METADATA_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const LINK_METADATA_TIMEOUT_MS = 5_000;
+const LINK_METADATA_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 100 };
+
+type LinkMetadataRecord = {
+  url: string;
+  title: string;
+  description: string;
+  image: string | null;
+  fetchedAt: string;
+  expiresAt: string;
+};
+
+const linkMetadataCache = new Map<string, { expiresAt: number; value: LinkMetadataRecord }>();
+const linkMetadataRate = new Map<string, { windowStart: number; count: number }>();
+
+function getCalendarCache(key: string) {
+  const entry = calendarCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    calendarCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCalendarCache(key: string, value: any) {
+  calendarCache.set(key, { value, expiresAt: Date.now() + CALENDAR_CACHE_TTL_MS });
+}
+
+function clearCalendarCacheForUser(userId: string) {
+  const prefix = `calendar:${userId}:`;
+  for (const key of calendarCache.keys()) {
+    if (key.startsWith(prefix)) calendarCache.delete(key);
+  }
+}
+
+function getLinkMetadataCache(url: string) {
+  const entry = linkMetadataCache.get(url);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    linkMetadataCache.delete(url);
+    return null;
+  }
+  return entry.value;
+}
+
+function setLinkMetadataCache(url: string, value: LinkMetadataRecord) {
+  linkMetadataCache.set(url, { value, expiresAt: Date.now() + LINK_METADATA_TTL_MS });
+}
+
+function getClientIp(req: Request) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0]?.trim();
+  return forwarded || req.ip || 'unknown';
+}
+
+function checkLinkMetadataRateLimit(ip: string) {
+  const now = Date.now();
+  const current = linkMetadataRate.get(ip);
+  if (!current || now - current.windowStart > LINK_METADATA_RATE_LIMIT.windowMs) {
+    linkMetadataRate.set(ip, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (current.count >= LINK_METADATA_RATE_LIMIT.max) {
+    return false;
+  }
+  current.count += 1;
+  return true;
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function extractMetaContent(html: string, attr: 'property' | 'name', value: string) {
+  const tagRegex = new RegExp(`<meta[^>]+${attr}=["']${value}["'][^>]*>`, 'i');
+  const tagMatch = html.match(tagRegex);
+  if (!tagMatch) return '';
+  const tag = tagMatch[0];
+  const contentMatch = tag.match(/content=["']([^"']+)["']/i);
+  return contentMatch ? decodeHtmlEntities(contentMatch[1]) : '';
+}
+
+function extractTitle(html: string) {
+  const match = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+  return match ? decodeHtmlEntities(match[1]).trim() : '';
+}
+
+function resolveMetaUrl(base: string, value: string) {
+  if (!value) return '';
+  try {
+    return new URL(value, base).toString();
+  } catch {
+    return value;
+  }
+}
+
+async function loadLinkMetadataFromDb(url: string): Promise<LinkMetadataRecord | null> {
+  if (!hasDatabase()) return null;
+  try {
+    const { rows } = await pool!.query(
+      'SELECT url, title, description, image, fetched_at, expires_at FROM link_metadata WHERE url=$1 AND expires_at > NOW() LIMIT 1',
+      [url]
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    return {
+      url: row.url,
+      title: row.title || 'Link',
+      description: row.description || '',
+      image: row.image || null,
+      fetchedAt: new Date(row.fetched_at).toISOString(),
+      expiresAt: new Date(row.expires_at).toISOString(),
+    };
+  } catch (err) {
+    console.warn('Failed to read link metadata cache:', err);
+    return null;
+  }
+}
+
+async function saveLinkMetadataToDb(data: LinkMetadataRecord) {
+  if (!hasDatabase()) return;
+  try {
+    await pool!.query(
+      `INSERT INTO link_metadata (id, url, title, description, image, fetched_at, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (url)
+       DO UPDATE SET title=EXCLUDED.title, description=EXCLUDED.description, image=EXCLUDED.image,
+       fetched_at=EXCLUDED.fetched_at, expires_at=EXCLUDED.expires_at`,
+      [randomUUID(), data.url, data.title, data.description, data.image, data.fetchedAt, data.expiresAt]
+    );
+  } catch (err) {
+    console.warn('Failed to save link metadata cache:', err);
+  }
+}
+
+async function fetchLinkMetadata(url: string): Promise<LinkMetadataRecord | null> {
+  const cached = getLinkMetadataCache(url);
+  if (cached) return cached;
+
+  const dbRecord = await loadLinkMetadataFromDb(url);
+  if (dbRecord) {
+    setLinkMetadataCache(url, dbRecord);
+    return dbRecord;
+  }
+
+  try {
+    const response = await axios.get(url, {
+      timeout: LINK_METADATA_TIMEOUT_MS,
+      headers: { 'User-Agent': 'ContentflowBot/1.0' },
+    });
+    if (typeof response.data !== 'string') return null;
+    const html = response.data as string;
+
+    const ogTitle = extractMetaContent(html, 'property', 'og:title');
+    const ogDescription = extractMetaContent(html, 'property', 'og:description');
+    const ogImage = extractMetaContent(html, 'property', 'og:image');
+    const twitterDescription =
+      extractMetaContent(html, 'name', 'twitter:description') || extractMetaContent(html, 'property', 'twitter:description');
+    const twitterImage =
+      extractMetaContent(html, 'name', 'twitter:image') || extractMetaContent(html, 'property', 'twitter:image');
+    const title = ogTitle || extractTitle(html) || 'Link';
+    const description =
+      ogDescription || extractMetaContent(html, 'name', 'description') || twitterDescription;
+    const image = resolveMetaUrl(url, ogImage || twitterImage);
+
+    const now = new Date();
+    const record: LinkMetadataRecord = {
+      url,
+      title: title.slice(0, 80),
+      description: description.slice(0, 160),
+      image: image || null,
+      fetchedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + LINK_METADATA_TTL_MS).toISOString(),
+    };
+
+    setLinkMetadataCache(url, record);
+    await saveLinkMetadataToDb(record);
+    return record;
+  } catch (err) {
+    console.warn(`Failed to fetch link metadata for ${url}:`, err);
+    return null;
+  }
+}
+
+async function recordAuditLog(userId: string, action: string, postIds: string[], changes: Record<string, any> = {}) {
+  if (!hasDatabase()) return;
+  try {
+    await pool!.query(
+      'INSERT INTO audit_logs (id, user_id, action, post_ids, changes) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb)',
+      [randomUUID(), userId, action, JSON.stringify(postIds), JSON.stringify(changes)]
+    );
+  } catch (err) {
+    console.warn('Failed to record audit log:', err);
+  }
+}
 const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
@@ -561,6 +766,29 @@ async function ensureDatabase() {
   `);
 
   await pool.query(`ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS social_automation JSONB DEFAULT '{}'::jsonb;`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS link_metadata (
+      id TEXT PRIMARY KEY,
+      url TEXT UNIQUE NOT NULL,
+      title TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      image TEXT,
+      fetched_at TIMESTAMPTZ DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS link_metadata_url_idx ON link_metadata (url);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS link_metadata_expires_idx ON link_metadata (expires_at);`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      post_ids JSONB DEFAULT '[]'::jsonb,
+      changes JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS blog_post_tags (
       post_id TEXT NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
@@ -5728,6 +5956,94 @@ app.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => 
   }
 });
 
+// GET /api/v1/social/facebook/targets — list Pages + Groups (best-effort)
+app.get('/api/v1/social/facebook/targets', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
+
+    const graphBase = 'https://graph.facebook.com/v19.0';
+    const requiredPermissions = ['pages_show_list', 'pages_manage_posts'];
+    let missingPermissions: string[] = [];
+    const warnings: string[] = [];
+
+    try {
+      const permsResp = await axios.get(
+        `${graphBase}/me/permissions?access_token=${encodeURIComponent(accessToken)}`,
+        { validateStatus: () => true, timeout: 15000 }
+      );
+      if (permsResp.status < 400) {
+        const perms = Array.isArray((permsResp.data as any)?.data) ? (permsResp.data as any).data : [];
+        const granted = new Set(
+          perms
+            .filter((p: any) => String(p?.status || '').toLowerCase() === 'granted')
+            .map((p: any) => String(p?.permission || '').toLowerCase())
+            .filter(Boolean)
+        );
+        missingPermissions = requiredPermissions.filter((perm) => !granted.has(perm));
+      }
+    } catch {
+      missingPermissions = [];
+    }
+
+    const pagesResp = await axios.get(
+      `${graphBase}/me/accounts?fields=id,name,tasks,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+      { validateStatus: () => true, timeout: 15000 }
+    );
+    const pagesData: any = pagesResp.data || {};
+    if (pagesResp.status >= 400) {
+      const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const pages = Array.isArray(pagesData?.data)
+      ? pagesData.data
+          .map((p: any) => {
+            const tasks = Array.isArray(p?.tasks) ? p.tasks.map((t: any) => String(t)) : [];
+            const canPublish = tasks.includes('CREATE_CONTENT') || tasks.includes('MANAGE');
+            return {
+              id: String(p?.id || '').trim(),
+              name: String(p?.name || '').trim(),
+              picture: p?.picture?.data?.url ? String(p.picture.data.url) : null,
+              tasks,
+              can_publish: canPublish,
+            };
+          })
+          .filter((p: any) => p.id)
+      : [];
+
+    let groups: Array<{ id: string; name: string }> = [];
+    try {
+      const groupsResp = await axios.get(
+        `${graphBase}/me/groups?fields=id,name&limit=200&access_token=${encodeURIComponent(accessToken)}`,
+        { validateStatus: () => true, timeout: 15000 }
+      );
+      const groupsData: any = groupsResp.data || {};
+      if (groupsResp.status >= 400) {
+        const msg = groupsData?.error?.message || `Facebook groups lookup failed (${groupsResp.status})`;
+        warnings.push(msg);
+      } else {
+        groups = Array.isArray(groupsData?.data)
+          ? groupsData.data
+              .map((g: any) => ({ id: String(g?.id || '').trim(), name: String(g?.name || '').trim() }))
+              .filter((g: any) => g.id)
+          : [];
+      }
+    } catch {
+      warnings.push('Facebook groups lookup failed');
+    }
+
+    return res.json({ success: true, pages, groups, missingPermissions, warnings });
+  } catch (err) {
+    console.error('v1 facebook targets error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
+  }
+});
+
 // POST /api/v1/social/accounts — save an account target (page/profile/etc)
 app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
   try {
@@ -6555,6 +6871,35 @@ app.get('/tiktokGuHuKYUdxb13mmRk5PkdrDFlLEBosnIF.txt', (req: Request, res: Respo
   res.send('tiktok-developers-site-verification=GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF');
 });
 
+// Link metadata preview (no auth, rate-limited by IP)
+app.get('/api/link-metadata', async (req: Request, res: Response) => {
+  const url = String((req.query as any)?.url || '').trim();
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return res.status(400).json({ error: 'Invalid URL protocol' });
+  }
+
+  const ip = getClientIp(req);
+  if (!checkLinkMetadataRateLimit(ip)) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+
+  const metadata = await fetchLinkMetadata(url);
+  if (!metadata) {
+    return res.status(404).json({ error: 'Unable to fetch link metadata', url });
+  }
+
+  return res.json(metadata);
+});
+
 // ── Blog Post Management ───────────────────────────────────────────────────────
 
 function slugify(text: string): string {
@@ -6567,6 +6912,12 @@ app.use('/api/blog', (req: Request, res: Response, next) => {
     return res.status(503).json({ success: false, error: 'Database not configured' });
   }
   return next();
+});
+
+registerBlogAnalyticsRoutes({
+  app,
+  getPool: () => pool,
+  requireAuth,
 });
 
 // GET /api/blog/categories
@@ -6661,11 +7012,17 @@ app.get('/api/blog/posts', async (req: Request, res: Response) => {
   if (!user) return;
   const { status, search } = req.query as { status?: string; search?: string };
   let q = `SELECT p.*, c.name AS category_name,
+    ARRAY(SELECT t.id FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_ids,
     ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
     FROM blog_posts p LEFT JOIN blog_categories c ON c.id=p.category_id
     WHERE p.user_id=$1`;
   const params: (string | number)[] = [user.userId];
-  if (status && status !== 'all') { params.push(status); q += ` AND p.status=$${params.length}`; }
+  if (status && status !== 'all') {
+    params.push(status);
+    q += ` AND p.status=$${params.length}`;
+  } else {
+    q += ` AND p.status NOT IN ('archived','deleted')`;
+  }
   if (search) { params.push(`%${search}%`); q += ` AND p.title ILIKE $${params.length}`; }
   q += ' ORDER BY p.updated_at DESC';
   const { rows } = await pool!.query(q, params);
@@ -6803,6 +7160,314 @@ app.delete('/api/blog/posts/:id', async (req: Request, res: Response) => {
   return res.json({ success: true });
 });
 
+// PATCH /api/blog/posts/batch/reschedule
+app.patch('/api/blog/posts/batch/reschedule', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { postIds = [], scheduled_at } = req.body as { postIds?: string[]; scheduled_at?: string };
+  const ids = Array.isArray(postIds) ? postIds.map((id) => String(id)).filter(Boolean) : [];
+  if (!ids.length || !scheduled_at) return res.status(400).json({ success: false, error: 'Invalid payload' });
+
+  const scheduledAt = new Date(String(scheduled_at));
+  if (Number.isNaN(scheduledAt.getTime())) {
+    return res.status(400).json({ success: false, error: 'Invalid scheduled_at' });
+  }
+
+  const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
+
+  const result = await pool!.query(
+    `UPDATE blog_posts SET scheduled_at=$1, status='scheduled', updated_at=NOW() WHERE id = ANY($2) AND user_id=$3`,
+    [scheduledAt.toISOString(), ids, user.userId]
+  );
+
+  await recordAuditLog(user.userId, 'batch_reschedule', ids, { scheduled_at: scheduledAt.toISOString() });
+  return res.json({ success: true, updated: result.rowCount });
+});
+
+// PATCH /api/blog/posts/batch/tag
+app.patch('/api/blog/posts/batch/tag', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { postIds = [], tagIds = [] } = req.body as { postIds?: string[]; tagIds?: string[] };
+  const ids = Array.isArray(postIds) ? postIds.map((id) => String(id)).filter(Boolean) : [];
+  const tags = Array.isArray(tagIds) ? tagIds.map((id) => String(id)).filter(Boolean) : [];
+  if (!ids.length || !tags.length) return res.status(400).json({ success: false, error: 'Invalid payload' });
+
+  const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
+
+  const tagRows = await pool!.query('SELECT id FROM blog_tags WHERE id = ANY($1) AND user_id=$2', [tags, user.userId]);
+  if (tagRows.rows.length !== tags.length) {
+    return res.status(403).json({ success: false, error: 'Some tags are not available for this user' });
+  }
+
+  await pool!.query(
+    `INSERT INTO blog_post_tags (post_id, tag_id)
+     SELECT p, t FROM UNNEST($1::text[]) AS p CROSS JOIN UNNEST($2::text[]) AS t
+     ON CONFLICT DO NOTHING`,
+    [ids, tags]
+  );
+
+  const result = await pool!.query('UPDATE blog_posts SET updated_at=NOW() WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  await recordAuditLog(user.userId, 'batch_tag', ids, { tag_ids: tags });
+  return res.json({ success: true, updated: result.rowCount });
+});
+
+// PATCH /api/blog/posts/batch/archive
+app.patch('/api/blog/posts/batch/archive', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { postIds = [] } = req.body as { postIds?: string[] };
+  const ids = Array.isArray(postIds) ? postIds.map((id) => String(id)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ success: false, error: 'Invalid postIds' });
+
+  const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
+
+  const result = await pool!.query(
+    `UPDATE blog_posts SET status='archived', updated_at=NOW() WHERE id = ANY($1) AND user_id=$2`,
+    [ids, user.userId]
+  );
+  await recordAuditLog(user.userId, 'batch_archive', ids, {});
+  return res.json({ success: true, updated: result.rowCount });
+});
+
+// PATCH /api/blog/posts/batch/delete
+app.patch('/api/blog/posts/batch/delete', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { postIds = [] } = req.body as { postIds?: string[] };
+  const ids = Array.isArray(postIds) ? postIds.map((id) => String(id)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ success: false, error: 'Invalid postIds' });
+
+  const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
+
+  const result = await pool!.query(
+    `UPDATE blog_posts SET status='deleted', updated_at=NOW() WHERE id = ANY($1) AND user_id=$2`,
+    [ids, user.userId]
+  );
+  await recordAuditLog(user.userId, 'batch_delete', ids, {});
+  return res.json({ success: true, updated: result.rowCount });
+});
+
+// POST /api/blog/posts/batch/duplicate
+app.post('/api/blog/posts/batch/duplicate', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { postIds = [] } = req.body as { postIds?: string[] };
+  const ids = Array.isArray(postIds) ? postIds.map((id) => String(id)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ success: false, error: 'Invalid postIds' });
+
+  const { rows } = await pool!.query('SELECT * FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (!rows.length) return res.status(404).json({ success: false, error: 'No posts found' });
+
+  let created = 0;
+  for (const src of rows) {
+    const newId = randomUUID();
+    const { rows: newRows } = await pool!.query(
+      `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
+        meta_title,meta_description,focus_keyword,social_title,social_description,social_image)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [
+        newId,
+        user.userId,
+        `${src.title} (Copy)`,
+        `${src.slug}-copy`,
+        src.content,
+        src.excerpt,
+        src.featured_image,
+        src.category_id,
+        src.meta_title,
+        src.meta_description,
+        src.focus_keyword,
+        src.social_title,
+        src.social_description,
+        src.social_image,
+      ]
+    );
+    const tagRows = await pool!.query('SELECT tag_id FROM blog_post_tags WHERE post_id=$1', [src.id]);
+    if (tagRows.rows.length) {
+      await Promise.all(
+        tagRows.rows.map((r: { tag_id: string }) =>
+          pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2)', [newId, r.tag_id])
+        )
+      );
+    }
+    if (newRows.length) created += 1;
+  }
+
+  await recordAuditLog(user.userId, 'batch_duplicate', ids, { created });
+  return res.json({ success: true, created });
+});
+
+// PATCH /api/blog/posts/batch/platforms
+app.patch('/api/blog/posts/batch/platforms', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { postIds = [], accountIds = [] } = req.body as { postIds?: string[]; accountIds?: string[] };
+  const ids = Array.isArray(postIds) ? postIds.map((id) => String(id)).filter(Boolean) : [];
+  const accounts = Array.isArray(accountIds) ? accountIds.map((id) => String(id)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ success: false, error: 'Invalid postIds' });
+
+  const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
+
+  const configRows = await pool!.query(`SELECT platform FROM platform_configs WHERE enabled = true`);
+  const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+
+  if (accounts.length > 0) {
+    const accountRows = await pool!.query(
+      `SELECT id, platform FROM social_accounts WHERE id = ANY($1) AND user_id = $2`,
+      [accounts, user.userId]
+    );
+    const validAccounts = accountRows.rows.filter((acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase()));
+    if (validAccounts.length !== accounts.length) {
+      return res.status(400).json({ success: false, error: 'Some selected accounts are from disabled platforms' });
+    }
+  }
+
+  const client = await pool!.connect();
+  try {
+    await client.query('BEGIN');
+    const settingsRows = await client.query(
+      'SELECT id, post_id FROM social_post_settings WHERE post_id = ANY($1)',
+      [ids]
+    );
+    const map = new Map<string, string>();
+    settingsRows.rows.forEach((row: any) => map.set(String(row.post_id), String(row.id)));
+
+    for (const postId of ids) {
+      let settingId = map.get(postId);
+      if (!settingId) {
+        settingId = randomUUID();
+        await client.query(
+          `INSERT INTO social_post_settings (id, post_id, template, publish_type, scheduled_at)
+           VALUES ($1,$2,'','immediate',NULL)`,
+          [settingId, postId]
+        );
+      }
+
+      await client.query('DELETE FROM social_post_targets WHERE social_post_id=$1', [settingId]);
+      for (const accountId of accounts) {
+        await client.query(
+          `INSERT INTO social_post_targets (id, social_post_id, social_account_id, enabled)
+           VALUES ($1,$2,$3,true)`,
+          [randomUUID(), settingId, accountId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.error('batch platform update error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update platforms' });
+  } finally {
+    client.release();
+  }
+
+  await recordAuditLog(user.userId, 'batch_platforms', ids, { accountIds: accounts });
+  return res.json({ success: true, updated: ids.length });
+});
+
+// GET /api/blog/posts/batch/export
+app.get('/api/blog/posts/batch/export', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const postIds = req.query.postIds;
+  const ids = Array.isArray(postIds)
+    ? postIds.map((id) => String(id)).filter(Boolean)
+    : typeof postIds === 'string'
+      ? [String(postIds)]
+      : [];
+  if (!ids.length) return res.status(400).json({ success: false, error: 'Invalid postIds' });
+
+  const { rows } = await pool!.query(
+    `SELECT p.*, ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
+     FROM blog_posts p WHERE p.id = ANY($1) AND p.user_id=$2`,
+    [ids, user.userId]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: 'Posts not found' });
+
+  const header = ['Title', 'Status', 'Scheduled At', 'Published At', 'Updated At', 'Tags'];
+  const csv = [
+    header.join(','),
+    ...rows.map((row: any) => {
+      const tags = Array.isArray(row.tag_names) ? row.tag_names.join(';') : '';
+      return [
+        `"${String(row.title || '').replace(/"/g, '""')}"`,
+        row.status || '',
+        row.scheduled_at ? new Date(row.scheduled_at).toISOString() : '',
+        row.published_at ? new Date(row.published_at).toISOString() : '',
+        row.updated_at ? new Date(row.updated_at).toISOString() : '',
+        `"${String(tags).replace(/"/g, '""')}"`,
+      ].join(',');
+    }),
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=posts.csv');
+  return res.send(csv);
+});
+
+// POST /api/blog/posts/batch/restore
+app.post('/api/blog/posts/batch/restore', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { previousState = [] } = req.body as { previousState?: any[] };
+  if (!Array.isArray(previousState) || previousState.length === 0) {
+    return res.status(400).json({ success: false, error: 'Invalid previousState' });
+  }
+  const ids = previousState.map((p) => String(p.id)).filter(Boolean);
+  const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
+  if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
+
+  for (const state of previousState) {
+    const postId = String(state.id);
+    await pool!.query(
+      `UPDATE blog_posts SET title=$1, slug=$2, content=$3, excerpt=$4, featured_image=$5, status=$6, category_id=$7,
+        meta_title=$8, meta_description=$9, focus_keyword=$10, social_title=$11, social_description=$12, social_image=$13,
+        social_automation=$14, scheduled_at=$15, published_at=$16, updated_at=NOW()
+       WHERE id=$17 AND user_id=$18`,
+      [
+        state.title || '',
+        state.slug || '',
+        state.content || '',
+        state.excerpt || '',
+        state.featured_image || '',
+        state.status || 'draft',
+        state.category_id || null,
+        state.meta_title || '',
+        state.meta_description || '',
+        state.focus_keyword || '',
+        state.social_title || '',
+        state.social_description || '',
+        state.social_image || '',
+        JSON.stringify(state.social_automation || {}),
+        state.scheduled_at || null,
+        state.published_at || null,
+        postId,
+        user.userId,
+      ]
+    );
+
+    const tagIds = Array.isArray(state.tag_ids) ? state.tag_ids.map((id: string) => String(id)) : [];
+    await pool!.query('DELETE FROM blog_post_tags WHERE post_id=$1', [postId]);
+    if (tagIds.length) {
+      await pool!.query(
+        `INSERT INTO blog_post_tags (post_id, tag_id)
+         SELECT $1, t FROM UNNEST($2::text[]) AS t`,
+        [postId, tagIds]
+      );
+    }
+  }
+
+  await recordAuditLog(user.userId, 'batch_restore', ids, {});
+  return res.json({ success: true, restored: ids.length });
+});
+
 // POST /api/blog/posts/:id/duplicate
 app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
@@ -6816,18 +7481,250 @@ app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) =>
     `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
       meta_title,meta_description,focus_keyword,social_title,social_description,social_image)
      VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-    [newId, user.userId, `${src.title} (Copy)`, `${src.slug}-copy`, src.content, src.excerpt,
-     src.featured_image, src.category_id, src.meta_title, src.meta_description,
-     src.focus_keyword, src.social_title, src.social_description, src.social_image]
+    [
+      newId,
+      user.userId,
+      `${src.title} (Copy)`,
+      `${src.slug}-copy`,
+      src.content,
+      src.excerpt,
+      src.featured_image,
+      src.category_id,
+      src.meta_title,
+      src.meta_description,
+      src.focus_keyword,
+      src.social_title,
+      src.social_description,
+      src.social_image,
+    ]
   );
-  // Copy tags
   const tagRows = await pool!.query('SELECT tag_id FROM blog_post_tags WHERE post_id=$1', [id]);
   if (tagRows.rows.length) {
-    await Promise.all(tagRows.rows.map((r: { tag_id: string }) =>
-      pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2)', [newId, r.tag_id])
-    ));
+    await Promise.all(
+      tagRows.rows.map((r: { tag_id: string }) =>
+        pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2)', [newId, r.tag_id])
+      )
+    );
   }
   return res.json({ success: true, post: newRows[0] });
+});
+
+// ── Schedule Calendar (v1) ──────────────────────────────────────────────────
+
+app.get('/api/v1/calendar', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const year = Number.parseInt(String(req.query.year || ''), 10);
+  const month = Number.parseInt(String(req.query.month || ''), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return res.status(400).json({ success: false, error: 'Invalid year or month' });
+  }
+
+  if (!hasDatabase()) {
+    return res.json({ success: true, year, month, posts_by_date: {}, total_posts: 0 });
+  }
+
+  const cacheKey = `calendar:${user.userId}:${year}:${month}`;
+  const cached = getCalendarCache(cacheKey);
+  if (cached) return res.json({ success: true, ...cached });
+
+  try {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const { rows } = await pool!.query(
+      `SELECT id, title, status, scheduled_at, created_at, updated_at
+       FROM blog_posts
+       WHERE user_id=$1
+         AND scheduled_at IS NOT NULL
+         AND status IN ('scheduled','published')
+         AND scheduled_at BETWEEN $2 AND $3
+       ORDER BY scheduled_at ASC`,
+      [user.userId, start.toISOString(), end.toISOString()]
+    );
+
+    const postsByDate: Record<string, any[]> = {};
+    rows.forEach((post) => {
+      const scheduledAt = post.scheduled_at ? new Date(post.scheduled_at) : null;
+      if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) return;
+      const dateKey = scheduledAt.toISOString().slice(0, 10);
+      if (!postsByDate[dateKey]) postsByDate[dateKey] = [];
+      postsByDate[dateKey].push(post);
+    });
+
+    const payload = { year, month, posts_by_date: postsByDate, total_posts: rows.length };
+    setCalendarCache(cacheKey, payload);
+    return res.json({ success: true, ...payload });
+  } catch (err) {
+    console.error('calendar fetch error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load calendar' });
+  }
+});
+
+app.get('/api/v1/posts', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const rawStatus = String(req.query.status || 'draft').toLowerCase();
+  const allowed = new Set(['draft', 'scheduled', 'published']);
+  if (!allowed.has(rawStatus)) {
+    return res.status(400).json({ success: false, error: 'Invalid status' });
+  }
+  if (!hasDatabase()) return res.json({ success: true, posts: [] });
+  try {
+    let q = `SELECT id, title, status, scheduled_at, created_at, updated_at FROM blog_posts WHERE user_id=$1 AND status=$2`;
+    const params: (string | number)[] = [user.userId, rawStatus];
+    if (rawStatus === 'draft') q += ' AND scheduled_at IS NULL';
+    q += ' ORDER BY created_at DESC';
+    const { rows } = await pool!.query(q, params);
+    return res.json({ success: true, posts: rows });
+  } catch (err) {
+    console.error('posts list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load posts' });
+  }
+});
+
+app.post('/api/v1/posts', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  const { title, content = '', scheduled_at, status } = req.body as {
+    title?: string;
+    content?: string;
+    scheduled_at?: string | null;
+    status?: string;
+  };
+  if (!title || !title.trim()) {
+    return res.status(400).json({ success: false, error: 'Title is required' });
+  }
+
+  let scheduledAt: string | null = null;
+  if (scheduled_at) {
+    const dt = new Date(scheduled_at);
+    if (Number.isNaN(dt.getTime())) {
+      return res.status(400).json({ success: false, error: 'Invalid scheduled_at value' });
+    }
+    if (dt.getTime() < Date.now()) {
+      return res.status(400).json({ success: false, error: 'Cannot schedule to a past date' });
+    }
+    scheduledAt = dt.toISOString();
+  }
+
+  const normalizedStatus = ['draft', 'scheduled', 'published'].includes(String(status || ''))
+    ? String(status).toLowerCase()
+    : scheduledAt
+      ? 'scheduled'
+      : 'draft';
+  const publishedAt = normalizedStatus === 'published' ? new Date().toISOString() : null;
+  const id = randomUUID();
+  const slug = slugify(title) || id;
+
+  try {
+    const { rows } = await pool!.query(
+      `INSERT INTO blog_posts (id, user_id, title, slug, content, status, scheduled_at, published_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [id, user.userId, title.trim(), slug, content || '', normalizedStatus, scheduledAt, publishedAt]
+    );
+    clearCalendarCacheForUser(user.userId);
+    return res.status(201).json({ success: true, post: rows[0] });
+  } catch (err) {
+    console.error('post create error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create post' });
+  }
+});
+
+app.put('/api/v1/posts/:id', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  const { id } = req.params;
+  const { title, content, scheduled_at, status } = req.body as {
+    title?: string;
+    content?: string;
+    scheduled_at?: string | null;
+    status?: string;
+  };
+  try {
+    const existing = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+    if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    const current = existing.rows[0];
+
+    let scheduledAtValue: string | null | undefined = undefined;
+    if (scheduled_at !== undefined) {
+      if (scheduled_at === null || scheduled_at === '') {
+        scheduledAtValue = null;
+      } else {
+        const dt = new Date(scheduled_at);
+        if (Number.isNaN(dt.getTime())) {
+          return res.status(400).json({ success: false, error: 'Invalid scheduled_at value' });
+        }
+        if (dt.getTime() < Date.now()) {
+          return res.status(400).json({ success: false, error: 'Cannot schedule to a past date' });
+        }
+        scheduledAtValue = dt.toISOString();
+      }
+    }
+
+    let nextStatus = status ? String(status).toLowerCase() : String(current.status || '').toLowerCase();
+    if (scheduledAtValue !== undefined && !status) {
+      nextStatus = scheduledAtValue ? 'scheduled' : 'draft';
+    }
+    if (!['draft', 'scheduled', 'published'].includes(nextStatus)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    const updates: string[] = [];
+    const params: (string | number | null)[] = [];
+    if (title !== undefined) {
+      updates.push(`title = $${params.length + 1}`);
+      params.push(title.trim());
+    }
+    if (content !== undefined) {
+      updates.push(`content = $${params.length + 1}`);
+      params.push(content ?? '');
+    }
+    if (scheduledAtValue !== undefined) {
+      updates.push(`scheduled_at = $${params.length + 1}`);
+      params.push(scheduledAtValue);
+    }
+    updates.push(`status = $${params.length + 1}`);
+    params.push(nextStatus);
+
+    let publishedAtValue: string | null = current.published_at;
+    if (nextStatus === 'published' && !current.published_at) {
+      publishedAtValue = new Date().toISOString();
+    }
+    updates.push(`published_at = $${params.length + 1}`);
+    params.push(publishedAtValue);
+
+    updates.push('updated_at = NOW()');
+    params.push(id, user.userId);
+
+    const { rows } = await pool!.query(
+      `UPDATE blog_posts SET ${updates.join(', ')} WHERE id=$${params.length - 1} AND user_id=$${params.length} RETURNING *`,
+      params
+    );
+    clearCalendarCacheForUser(user.userId);
+    return res.json({ success: true, post: rows[0] });
+  } catch (err) {
+    console.error('post update error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update post' });
+  }
+});
+
+app.delete('/api/v1/posts/:id', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  const { id } = req.params;
+  try {
+    const existing = await pool!.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+    if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    await pool!.query('DELETE FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+    clearCalendarCacheForUser(user.userId);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('post delete error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete post' });
+  }
 });
 
 // ── Distribution / Automation ────────────────────────────────────────────────
