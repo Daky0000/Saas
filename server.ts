@@ -2887,8 +2887,8 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   await dbQuery(
     `
     INSERT INTO social_accounts
-      (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, handle, followers, connected, connected_at, expires_at, token_expires_at, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data)
-    VALUES ($1, $2, $3, $4, 'profile', $5, $6, $7, $8, $9, true, NOW(), $10, $11, $12, $13, $14, $15, $16)
+      (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, handle, followers, connected, connected_at, expires_at, token_expires_at, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data, needs_reapproval)
+    VALUES ($1, $2, $3, $4, 'profile', $5, $6, $7, $8, $9, true, NOW(), $10, $11, $12, $13, $14, $15, $16, false)
     ON CONFLICT (user_id, platform) WHERE account_type = 'profile' DO UPDATE
       SET platform_id = EXCLUDED.platform_id,
           account_id = EXCLUDED.account_id,
@@ -2904,6 +2904,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
           refresh_token = EXCLUDED.refresh_token,
           access_token_encrypted = EXCLUDED.access_token_encrypted,
           refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+          needs_reapproval = false,
           token_data = EXCLUDED.token_data;
   `,
     [
@@ -2946,12 +2947,17 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   });
 }
 
+async function getEnabledPlatformSlugs(): Promise<string[]> {
+  if (!pool) return [];
+  const result = await dbQuery(`SELECT platform FROM platform_configs WHERE enabled = true`);
+  return result.rows.map((row: any) => String(row.platform || '').toLowerCase()).filter(Boolean);
+}
+
 async function getUserConnectedAccounts(userId: string): Promise<any[]> {
   if (!pool) return [];
   
   // Get list of admin-enabled platforms
-  const configResult = await dbQuery(`SELECT platform FROM platform_configs WHERE enabled = true`);
-  const enabledPlatforms = configResult.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+  const enabledPlatforms = await getEnabledPlatformSlugs();
   
   // If no platforms explicitly enabled, allow all (default behavior)
   // If platforms are explicitly configured, only show those
@@ -6194,14 +6200,15 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
     if (!auth) return;
     if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
-      // Ensure WordPress is represented as a social account so it can be selected in the post automation flow.
-      await ensureWordPressSocialAccount(auth.userId);
+    // Ensure WordPress is represented as a social account so it can be selected in the post automation flow.
+    await ensureWordPressSocialAccount(auth.userId);
+    const enabledPlatforms = await getEnabledPlatformSlugs();
 
     // If no platforms explicitly enabled, allow all (default behavior)
     // If platforms are explicitly configured, only show those
     let query = `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
        FROM social_accounts
-       WHERE user_id=$1`;
+       WHERE user_id=$1 AND connected=true`;
     const params: any[] = [auth.userId];
     
     if (enabledPlatforms.length > 0) {
@@ -6310,9 +6317,8 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
     const postRows = await pool.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
 
-    // Get list of admin-enabled platforms
-    const configRows = await pool.query(`SELECT platform FROM platform_configs WHERE enabled = true`);
-    const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+    // Get list of admin-enabled platforms. If none are explicitly enabled, allow all connected accounts.
+    const enabledPlatforms = await getEnabledPlatformSlugs();
 
     const client = await pool.connect();
     try {
@@ -6343,9 +6349,10 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
           `SELECT id, platform FROM social_accounts WHERE id = ANY($1) AND user_id = $2`,
           [ids, auth.userId]
         );
-        const validAccounts = accountRows.rows.filter(
-          (acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase())
-        );
+        const validAccounts =
+          enabledPlatforms.length > 0
+            ? accountRows.rows.filter((acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase()))
+            : accountRows.rows;
         
         if (validAccounts.length !== ids.length) {
           throw new Error('Some selected accounts are from disabled platforms');
@@ -7314,15 +7321,17 @@ app.patch('/api/blog/posts/batch/platforms', async (req: Request, res: Response)
   const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
   if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
 
-  const configRows = await pool!.query(`SELECT platform FROM platform_configs WHERE enabled = true`);
-  const enabledPlatforms = configRows.rows.map((r: any) => String(r.platform || '').toLowerCase()).filter(Boolean);
+  const enabledPlatforms = await getEnabledPlatformSlugs();
 
   if (accounts.length > 0) {
     const accountRows = await pool!.query(
       `SELECT id, platform FROM social_accounts WHERE id = ANY($1) AND user_id = $2`,
       [accounts, user.userId]
     );
-    const validAccounts = accountRows.rows.filter((acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase()));
+    const validAccounts =
+      enabledPlatforms.length > 0
+        ? accountRows.rows.filter((acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase()))
+        : accountRows.rows;
     if (validAccounts.length !== accounts.length) {
       return res.status(400).json({ success: false, error: 'Some selected accounts are from disabled platforms' });
     }
@@ -8081,9 +8090,12 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   const rawExpiry = match.token_expires_at || match.expires_at;
   const expiresAtMs = rawExpiry ? new Date(rawExpiry).getTime() : NaN;
   const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const isExpiring = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
+  const supportsTokenRefresh = platformId === 'twitter' || platformId === 'linkedin';
+  const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
+  const shouldRefreshSoon =
+    supportsTokenRefresh && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
 
-  if (!isExpiring) {
+  if (!Number.isFinite(expiresAtMs) || (!supportsTokenRefresh && !isExpired) || (supportsTokenRefresh && !shouldRefreshSoon)) {
     return {
       platform: match.platform,
       access_token: accessToken,
@@ -8095,7 +8107,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     };
   }
 
-  if (platformId !== 'twitter' && platformId !== 'linkedin') {
+  if (!supportsTokenRefresh) {
     await markSocialAccountNeedsReapproval({
       platformId,
       userId,
