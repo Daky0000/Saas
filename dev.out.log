@@ -1,0 +1,5 @@
+
+> contentflow@0.0.1 dev
+> node scripts/use-source-index.mjs && vite
+
+Prepared source index files for Vite.

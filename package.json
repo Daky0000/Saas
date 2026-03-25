@@ -4,7 +4,8 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/use-source-index.mjs && vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:frontend": "node scripts/use-source-index.mjs && vite",
     "dev:api": "ts-node server.ts",
     "start": "tsx server.ts",
     "prebuild": "node scripts/clean-temp.mjs",

@@ -53,7 +53,7 @@ export interface BlogPost {
   content: string;
   excerpt: string;
   featured_image: string;
-  status: 'draft' | 'published' | 'scheduled';
+  status: 'draft' | 'published' | 'scheduled' | 'archived' | 'deleted';
   category_id: string | null;
   category_name?: string;
   tag_ids?: string[];
@@ -77,7 +77,7 @@ export interface BlogPostPayload {
   content?: string;
   excerpt?: string;
   featured_image?: string;
-  status?: 'draft' | 'published' | 'scheduled';
+  status?: 'draft' | 'published' | 'scheduled' | 'archived' | 'deleted';
   category_id?: string | null;
   meta_title?: string;
   meta_description?: string;
@@ -217,5 +217,81 @@ export const blogService = {
     const data = await parseApiResponse<{ success?: boolean; post?: BlogPost; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to duplicate post');
     return data.post!;
+  },
+
+  async batchReschedule(postIds: string[], scheduledAt: string) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/reschedule`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ postIds, scheduled_at: scheduledAt }),
+    });
+    return parseApiResponse<{ updated: number }>(res);
+  },
+
+  async batchTag(postIds: string[], tagIds: string[]) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/tag`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ postIds, tagIds }),
+    });
+    return parseApiResponse<{ updated: number }>(res);
+  },
+
+  async batchArchive(postIds: string[]) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/archive`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ postIds }),
+    });
+    return parseApiResponse<{ updated: number }>(res);
+  },
+
+  async batchDelete(postIds: string[]) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/delete`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ postIds }),
+    });
+    return parseApiResponse<{ updated: number }>(res);
+  },
+
+  async batchDuplicate(postIds: string[]) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/duplicate`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ postIds }),
+    });
+    return parseApiResponse<{ created: number }>(res);
+  },
+
+  async batchExport(postIds: string[]): Promise<string> {
+    const qs = new URLSearchParams();
+    postIds.forEach((id) => qs.append('postIds', id));
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/export?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || 'Export failed');
+    }
+    return res.text();
+  },
+
+  async batchUpdatePlatforms(postIds: string[], accountIds: string[]) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/platforms`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ postIds, accountIds }),
+    });
+    return parseApiResponse<{ updated: number }>(res);
+  },
+
+  async batchRestore(previousState: BlogPost[]) {
+    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/restore`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ previousState }),
+    });
+    return parseApiResponse<{ restored: number }>(res);
   },
 };
