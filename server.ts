@@ -19,7 +19,7 @@ import {
 } from 'crypto';
 // import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.js';
 // import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
-// import { LinkedInPlatform } from './backend/platforms/linkedin.js';
+import { LinkedInPlatform } from './backend/platforms/linkedin.ts';
 // import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
 import type { PostObject } from './backend/platforms/types.ts';
 // import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
@@ -292,7 +292,7 @@ const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
 const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
 // const facebookPagesPlatform = new FacebookPagesPlatform();
 // const instagramBusinessPlatform = new InstagramBusinessPlatform();
-// const linkedInPlatform = new LinkedInPlatform();
+const linkedInPlatform = new LinkedInPlatform();
 // const twitterXPlatform = new TwitterXPlatform();
 
 let socialAutomationQueue: Queue | null = null;
@@ -2719,7 +2719,35 @@ async function exchangeLinkedInCode(code: string) {
   if (response.status >= 400) {
     throw new Error(`LinkedIn token exchange failed (${response.status})`);
   }
-  return response.data;
+  const tokenData: any = response.data || {};
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (meResp.status < 400) {
+        const meData: any = meResp.data || {};
+        const linkedInId = String(meData?.id || '').trim();
+        const localizedFirst = String(meData?.localizedFirstName || '').trim();
+        const localizedLast = String(meData?.localizedLastName || '').trim();
+        const fullName = [localizedFirst, localizedLast].filter(Boolean).join(' ').trim();
+        if (linkedInId) {
+          tokenData.user_id = linkedInId;
+          tokenData.id = linkedInId;
+          tokenData.sub = linkedInId;
+        }
+        if (fullName) {
+          tokenData.name = fullName;
+        }
+      }
+    } catch {
+      // best-effort enrichment; token can still be stored without profile data
+    }
+  }
+  return tokenData;
 }
 
 async function exchangeFacebookCode(code: string, redirectUriOverride?: string) {
@@ -2953,14 +2981,78 @@ async function getEnabledPlatformSlugs(): Promise<string[]> {
   return result.rows.map((row: any) => String(row.platform || '').toLowerCase()).filter(Boolean);
 }
 
+async function getVisibleUserPlatformSlugs(): Promise<string[]> {
+  if (!pool) return ['wordpress', 'mailchimp'];
+
+  const result = await dbQuery(`SELECT platform, config, enabled FROM platform_configs`);
+  const visible = new Set<string>(['wordpress', 'mailchimp']);
+
+  for (const row of result.rows as any[]) {
+    const slug = String(row.platform || '').toLowerCase();
+    if (!slug) continue;
+    const cfg = row.config || {};
+    const meta = OAUTH_AUTH_URLS[slug];
+    if (!meta) {
+      if (Boolean(row.enabled) || Object.keys(cfg).length > 0) {
+        visible.add(slug);
+      }
+      continue;
+    }
+
+    const clientId = String(cfg?.[meta.idField] || '').trim();
+    const secretRequired = slug === 'facebook' || slug === 'twitter' || slug === 'linkedin' || slug === 'tiktok' || slug === 'threads' || slug === 'pinterest';
+    const secretValue = String(cfg?.clientSecret || cfg?.appSecret || '').trim();
+    const configured = Boolean(clientId && (!secretRequired || secretValue));
+    if ((Boolean(row.enabled) || configured) && configured) {
+      visible.add(slug);
+    }
+  }
+
+  return Array.from(visible);
+}
+
+function formatSocialAccountLabel(
+  platform: string,
+  accountType?: string | null,
+  accountName?: string | null,
+  accountId?: string | null,
+) {
+  const platformId = normalizePlatformId(platform);
+  const type = String(accountType || '').trim().toLowerCase();
+  const name = String(accountName || '').trim();
+  const id = String(accountId || '').trim();
+
+  if (platformId === 'facebook') {
+    if (type === 'group') return name ? `Group: ${name}` : (id ? `Group: ${id}` : null);
+    if (type === 'page') return name ? `Page: ${name}` : (id ? `Page: ${id}` : null);
+    return 'Profile';
+  }
+
+  if (platformId === 'linkedin') {
+    if (type === 'page') return name ? `Page: ${name}` : (id ? `Page: ${id}` : 'LinkedIn Page');
+    return name ? `Profile: ${name}` : 'Profile';
+  }
+
+  if (platformId === 'pinterest') {
+    return name ? `Board: ${name}` : (id ? `Board: ${id}` : 'Board');
+  }
+
+  if (platformId === 'wordpress') {
+    return name ? `Site: ${name}` : 'WordPress';
+  }
+
+  if (type === 'profile' || !type) {
+    return name ? `Profile: ${name}` : 'Profile';
+  }
+
+  return name ? `${type}: ${name}` : (id ? `${type}: ${id}` : type || null);
+}
+
 async function getUserConnectedAccounts(userId: string): Promise<any[]> {
   if (!pool) return [];
-  
-  // Get list of admin-enabled platforms
-  const enabledPlatforms = await getEnabledPlatformSlugs();
-  
-  // If no platforms explicitly enabled, allow all (default behavior)
-  // If platforms are explicitly configured, only show those
+
+  const visiblePlatforms = await getVisibleUserPlatformSlugs();
+
   let query = `
     SELECT
       id,
@@ -2975,12 +3067,12 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
     FROM social_accounts
     WHERE user_id = $1`;
   const params: any[] = [userId];
-  
-  if (enabledPlatforms.length > 0) {
+
+  if (visiblePlatforms.length > 0) {
     query += ` AND LOWER(platform) = ANY($2)`;
-    params.push(enabledPlatforms);
+    params.push(visiblePlatforms);
   }
-  
+
   query += ` ORDER BY platform;`;
   
   const result = await dbQuery(query, params);
@@ -5098,7 +5190,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'public_profile,pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
   // LinkedIn scopes are space-separated
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile w_member_social r_emailaddress', idField: 'clientId' },
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile r_emailaddress w_member_social rw_organization_admin w_organization_social', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
@@ -5646,7 +5738,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
     if (!pool) {
       for (const slug of SUPPORTED_SLUGS) {
         const configRow = inMemoryPlatformConfigs.get(slug);
-        integrations.push({
+        const item = {
           slug,
           name: slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1),
           type: slug === 'wordpress' ? 'cms' : slug === 'mailchimp' ? 'marketing' : 'social',
@@ -5657,7 +5749,11 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
               : Boolean(configRow?.config && Object.keys(configRow.config || {}).length > 0),
           connected: false,
           connection: null,
-        });
+        };
+        const isAlwaysVisible = slug === 'wordpress' || slug === 'mailchimp';
+        if (isAlwaysVisible || (item.adminEnabled && item.configured)) {
+          integrations.push(item);
+        }
       }
       return res.json({ success: true, integrations });
     }
@@ -5757,7 +5853,10 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
               : null
             : getPrimaryAccount(slug);
 
-      integrations.push({ slug, name, type, adminEnabled, configured, connected, connection });
+      const isAlwaysVisible = slug === 'wordpress' || slug === 'mailchimp';
+      if (isAlwaysVisible || (adminEnabled && configured)) {
+        integrations.push({ slug, name, type, adminEnabled, configured, connected, connection });
+      }
     }
 
     return res.json({ success: true, integrations });
@@ -6118,20 +6217,37 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
     }
 
     const id = randomUUID();
-    // Update existing account if it exists; otherwise insert a new record.
-    const existingUpdate = await pool.query(
-      `UPDATE social_accounts
-       SET account_name = $5,
-           platform_id = $3,
-           profile_image = COALESCE($7, profile_image),
-           token_expires_at = COALESCE($8, token_expires_at),
-           access_token = COALESCE($9, access_token),
-           access_token_encrypted = COALESCE($10, access_token_encrypted),
-           connected = true,
-           connected_at = NOW()
-       WHERE user_id = $1 AND platform = $2 AND account_type = $4 AND account_id = $6`,
-      [auth.userId, platformSlug, platformDbId, accountType, accountName, accountId, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
-    );
+    let existingUpdate;
+    if (accountType === 'profile') {
+      existingUpdate = await pool.query(
+        `UPDATE social_accounts
+         SET account_name = $5,
+             account_id = $6,
+             platform_id = $3,
+             profile_image = COALESCE($7, profile_image),
+             token_expires_at = COALESCE($8, token_expires_at),
+             access_token = COALESCE($9, access_token),
+             access_token_encrypted = COALESCE($10, access_token_encrypted),
+             connected = true,
+             connected_at = NOW()
+         WHERE user_id = $1 AND platform = $2 AND account_type = $4`,
+        [auth.userId, platformSlug, platformDbId, accountType, accountName, accountId, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
+      );
+    } else {
+      existingUpdate = await pool.query(
+        `UPDATE social_accounts
+         SET account_name = $5,
+             platform_id = $3,
+             profile_image = COALESCE($7, profile_image),
+             token_expires_at = COALESCE($8, token_expires_at),
+             access_token = COALESCE($9, access_token),
+             access_token_encrypted = COALESCE($10, access_token_encrypted),
+             connected = true,
+             connected_at = NOW()
+         WHERE user_id = $1 AND platform = $2 AND account_type = $4 AND account_id = $6`,
+        [auth.userId, platformSlug, platformDbId, accountType, accountName, accountId, profileImage, tokenExpiresAtToStore, accessTokenToStore, accessTokenEncryptedToStore]
+      );
+    }
     if (existingUpdate.rowCount === 0) {
       await pool.query(
         `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, token_expires_at, access_token, access_token_encrypted, connected, connected_at, created_at)
@@ -6143,8 +6259,11 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
     const row = await pool.query(
       `SELECT id, platform, account_type, account_id, account_name, profile_image, created_at
        FROM social_accounts
-       WHERE user_id=$1 AND platform=$2 AND account_type=$3 AND account_id=$4`,
-      [auth.userId, platformSlug, accountType, accountId]
+       WHERE user_id=$1 AND platform=$2 AND account_type=$3
+         ${accountType === 'profile' ? '' : 'AND account_id=$4'}`,
+      accountType === 'profile'
+        ? [auth.userId, platformSlug, accountType]
+        : [auth.userId, platformSlug, accountType, accountId]
     );
 
     const saved = row.rows[0];
@@ -6202,18 +6321,16 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
 
     // Ensure WordPress is represented as a social account so it can be selected in the post automation flow.
     await ensureWordPressSocialAccount(auth.userId);
-    const enabledPlatforms = await getEnabledPlatformSlugs();
+    const visiblePlatforms = await getVisibleUserPlatformSlugs();
 
-    // If no platforms explicitly enabled, allow all (default behavior)
-    // If platforms are explicitly configured, only show those
     let query = `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
        FROM social_accounts
        WHERE user_id=$1 AND connected=true`;
     const params: any[] = [auth.userId];
     
-    if (enabledPlatforms.length > 0) {
+    if (visiblePlatforms.length > 0) {
       query += ` AND LOWER(platform) = ANY($2)`;
-      params.push(enabledPlatforms);
+      params.push(visiblePlatforms);
     }
     
     query += ` ORDER BY created_at DESC`;
@@ -6251,42 +6368,82 @@ app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Respon
     if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
     const { postId } = req.params;
-    const platform = normalizePlatformId(String((req.body as any)?.platform || 'facebook'));
-    if (platform !== 'facebook') {
-      return res.status(400).json({ success: false, error: 'Only Facebook reposting is supported right now' });
-    }
-
     const postRows = await pool.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
 
-    const destination = safeJsonObject((req.body as any)?.destination) || {};
-    const destTypeRaw = String(destination?.type || 'page').trim().toLowerCase();
-    const destType = destTypeRaw === 'profile' ? 'profile' : destTypeRaw === 'group' ? 'group' : 'page';
-    const destId = String(destination?.id || '').trim();
-    const destName = String(destination?.name || '').trim();
+    const visiblePlatforms = await getVisibleUserPlatformSlugs();
+    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads']);
+    const selectedRows = await pool.query(
+      `SELECT a.platform, a.account_type, a.account_id, a.account_name, s.template
+       FROM social_post_settings s
+       JOIN social_post_targets t ON t.social_post_id = s.id AND t.enabled = true
+       JOIN social_accounts a ON a.id = t.social_account_id
+       WHERE s.post_id = $1 AND a.connected = true`,
+      [String(postId)]
+    );
 
-    if (destType === 'group' && !destId) {
-      return res.status(400).json({ success: false, error: 'Facebook group destination id is required' });
+    const template = String(selectedRows.rows[0]?.template || '').trim();
+    const sourceRows =
+      selectedRows.rows.length > 0
+        ? selectedRows.rows
+        : (
+            await pool.query(
+              `SELECT platform, account_type, account_id, account_name
+               FROM social_accounts
+               WHERE user_id=$1 AND connected=true`,
+              [auth.userId]
+            )
+          ).rows;
+
+    const queuedKeys = new Set<string>();
+    const skipped = new Set<string>();
+    let queued = 0;
+
+    for (const row of sourceRows as any[]) {
+      const platform = normalizePlatformId(String(row.platform || ''));
+      if (!platform) continue;
+      if (visiblePlatforms.length > 0 && !visiblePlatforms.includes(platform)) {
+        skipped.add(platform);
+        continue;
+      }
+      if (!publishablePlatforms.has(platform)) {
+        skipped.add(platform);
+        continue;
+      }
+
+      const accountType = String(row.account_type || 'profile').trim().toLowerCase() || 'profile';
+      const accountId = String(row.account_id || '').trim();
+      const accountName = String(row.account_name || '').trim();
+      const dedupeKey = `${platform}:${accountType}:${accountId}`;
+      if (queuedKeys.has(dedupeKey)) continue;
+      queuedKeys.add(dedupeKey);
+
+      await enqueueSocialAutomationTask({
+        userId: auth.userId,
+        postId: String(postId),
+        platform,
+        runAt: new Date(),
+        payload: {
+          destination: { type: accountType, id: accountId, name: accountName },
+          template,
+        },
+        accountLabel: formatSocialAccountLabel(platform, accountType, accountName, accountId),
+      });
+      queued += 1;
     }
 
-    const template = String((req.body as any)?.template || '').trim();
-    const accountLabel =
-      destType === 'profile'
-        ? 'Profile'
-        : destType === 'group'
-          ? (destName ? `Group: ${destName}` : (destId ? `Group: ${destId}` : null))
-          : (destName ? `Page: ${destName}` : (destId ? `Page: ${destId}` : null));
+    if (queued === 0) {
+      const skippedList = Array.from(skipped);
+      return res.status(400).json({
+        success: false,
+        error: skippedList.length
+          ? `No publish-ready connected platforms were found for this post. Skipped: ${skippedList.join(', ')}.`
+          : 'No publish-ready connected platforms were found for this post.',
+        skipped: skippedList,
+      });
+    }
 
-    await enqueueSocialAutomationTask({
-      userId: auth.userId,
-      postId: String(postId),
-      platform: 'facebook',
-      runAt: new Date(),
-      payload: { destination: { type: destType, id: destId, name: destName }, template },
-      accountLabel,
-    });
-
-    return res.json({ success: true, queued: 1 });
+    return res.json({ success: true, queued, skipped: Array.from(skipped) });
   } catch (err) {
     console.error('v1 social repost error:', err);
     return res.status(500).json({ success: false, error: 'Failed to queue repost' });
@@ -6317,8 +6474,7 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
     const postRows = await pool.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
 
-    // Get list of admin-enabled platforms. If none are explicitly enabled, allow all connected accounts.
-    const enabledPlatforms = await getEnabledPlatformSlugs();
+    const visiblePlatforms = await getVisibleUserPlatformSlugs();
 
     const client = await pool.connect();
     try {
@@ -6343,19 +6499,19 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
       await client.query('DELETE FROM social_post_targets WHERE social_post_id=$1', [settingId]);
       const ids = Array.isArray(accounts) ? accounts.map((x) => String(x)).filter(Boolean) : [];
       
-      // Validate that all accounts belong to admin-enabled platforms
+      // Validate that all accounts belong to integrations visible to this user
       if (ids.length > 0) {
         const accountRows = await client.query(
           `SELECT id, platform FROM social_accounts WHERE id = ANY($1) AND user_id = $2`,
           [ids, auth.userId]
         );
         const validAccounts =
-          enabledPlatforms.length > 0
-            ? accountRows.rows.filter((acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase()))
+          visiblePlatforms.length > 0
+            ? accountRows.rows.filter((acc: any) => visiblePlatforms.includes(String(acc.platform || '').toLowerCase()))
             : accountRows.rows;
         
         if (validAccounts.length !== ids.length) {
-          throw new Error('Some selected accounts are from disabled platforms');
+          throw new Error('Some selected accounts are from integrations that are not available in this workspace');
         }
 
         for (const accountId of ids) {
@@ -6878,6 +7034,139 @@ app.get('/tiktokGuHuKYUdxb13mmRk5PkdrDFlLEBosnIF.txt', (req: Request, res: Respo
   res.send('tiktok-developers-site-verification=GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF');
 });
 
+// GET /api/linkedin/targets — list the connected profile and administrable LinkedIn Pages
+app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const visiblePlatforms = await getVisibleUserPlatformSlugs();
+    if (visiblePlatforms.length > 0 && !visiblePlatforms.includes('linkedin')) {
+      return res.status(404).json({ success: false, error: 'LinkedIn is not enabled for this workspace' });
+    }
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'linkedin');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
+    }
+
+    const savedRows = await pool.query(
+      `SELECT account_type, account_id
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='linkedin' AND connected=true`,
+      [auth.userId]
+    );
+    const savedKeys = new Set(
+      savedRows.rows.map((row: any) => `${String(row.account_type || '').toLowerCase()}:${String(row.account_id || '').trim()}`)
+    );
+
+    let personId =
+      String(conn?.account_id || '').trim() ||
+      String(conn?.token_data?.sub || conn?.token_data?.user_id || conn?.token_data?.id || '').trim();
+    let profileName = String(conn?.account_name || conn?.token_data?.name || '').trim();
+
+    if (!personId || !profileName) {
+      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      const meData: any = meResp.data || {};
+      if (meResp.status >= 400) {
+        const message = meData?.message || `LinkedIn profile lookup failed (${meResp.status})`;
+        return res.status(400).json({ success: false, error: message });
+      }
+      personId = String(meData?.id || '').trim() || personId;
+      profileName =
+        [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || profileName;
+    }
+
+    if (!personId) {
+      return res.status(400).json({ success: false, error: 'Unable to resolve your LinkedIn profile id' });
+    }
+
+    const targets: Array<{ id: string; name: string; accountType: 'profile' | 'page'; saved: boolean }> = [
+      {
+        id: personId,
+        name: profileName || 'Personal profile',
+        accountType: 'profile',
+        saved: savedKeys.has(`profile:${personId}`),
+      },
+    ];
+
+    let warning: string | null = null;
+    const aclResp = await axios.get(
+      'https://api.linkedin.com/v2/organizationAcls',
+      {
+        params: {
+          q: 'roleAssignee',
+          roleAssignee: `urn:li:person:${personId}`,
+          state: 'APPROVED',
+        },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+    const aclData: any = aclResp.data || {};
+    if (aclResp.status === 403) {
+      warning = 'Reconnect LinkedIn to grant company page permissions before selecting a page.';
+    } else if (aclResp.status >= 400) {
+      warning = aclData?.message || `LinkedIn pages lookup failed (${aclResp.status})`;
+    } else {
+      const organizationIds = Array.from(
+        new Set(
+          (Array.isArray(aclData?.elements) ? aclData.elements : [])
+            .map((row: any) => String(row?.organization || '').trim())
+            .filter(Boolean)
+            .map((urn: string) => {
+              const match = urn.match(/organization:(\d+)/i);
+              return match?.[1] || '';
+            })
+            .filter(Boolean)
+        )
+      );
+
+      for (const organizationId of organizationIds) {
+        const orgResp = await axios.get(`https://api.linkedin.com/rest/organizations/${encodeURIComponent(organizationId)}`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'X-Restli-Protocol-Version': '2.0.0',
+            'LinkedIn-Version': '202511',
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const orgData: any = orgResp.data || {};
+        if (orgResp.status >= 400) {
+          warning = warning || orgData?.message || `LinkedIn organization lookup failed (${orgResp.status})`;
+          continue;
+        }
+        const localizedName = String(orgData?.localizedName || orgData?.name || '').trim();
+        targets.push({
+          id: organizationId,
+          name: localizedName || `LinkedIn Page ${organizationId}`,
+          accountType: 'page',
+          saved: savedKeys.has(`page:${organizationId}`),
+        });
+      }
+    }
+
+    return res.json({ success: true, targets, warning });
+  } catch (error) {
+    console.error('LinkedIn targets error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch LinkedIn targets' });
+  }
+});
+
 // Link metadata preview (no auth, rate-limited by IP)
 app.get('/api/link-metadata', async (req: Request, res: Response) => {
   const url = String((req.query as any)?.url || '').trim();
@@ -7095,6 +7384,7 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
       ).catch(() => undefined);
     }
   }
+  clearCalendarCacheForUser(user.userId);
   return res.json({ success: true, post: rows[0] });
 });
 
@@ -7155,6 +7445,7 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
       ).catch(() => undefined);
     }
   }
+  clearCalendarCacheForUser(user.userId);
   return res.json({ success: true, post: rows[0] });
 });
 
@@ -7164,6 +7455,7 @@ app.delete('/api/blog/posts/:id', async (req: Request, res: Response) => {
   if (!user) return;
   const { id } = req.params;
   await pool!.query('DELETE FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+  clearCalendarCacheForUser(user.userId);
   return res.json({ success: true });
 });
 
@@ -7183,11 +7475,12 @@ app.patch('/api/blog/posts/batch/reschedule', async (req: Request, res: Response
   const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
   if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
 
-  const result = await pool!.query(
-    `UPDATE blog_posts SET scheduled_at=$1, status='scheduled', updated_at=NOW() WHERE id = ANY($2) AND user_id=$3`,
-    [scheduledAt.toISOString(), ids, user.userId]
-  );
+    const result = await pool!.query(
+      `UPDATE blog_posts SET scheduled_at=$1, status='scheduled', updated_at=NOW() WHERE id = ANY($2) AND user_id=$3`,
+      [scheduledAt.toISOString(), ids, user.userId]
+    );
 
+  clearCalendarCacheForUser(user.userId);
   await recordAuditLog(user.userId, 'batch_reschedule', ids, { scheduled_at: scheduledAt.toISOString() });
   return res.json({ success: true, updated: result.rowCount });
 });
@@ -7236,6 +7529,7 @@ app.patch('/api/blog/posts/batch/archive', async (req: Request, res: Response) =
     `UPDATE blog_posts SET status='archived', updated_at=NOW() WHERE id = ANY($1) AND user_id=$2`,
     [ids, user.userId]
   );
+  clearCalendarCacheForUser(user.userId);
   await recordAuditLog(user.userId, 'batch_archive', ids, {});
   return res.json({ success: true, updated: result.rowCount });
 });
@@ -7255,6 +7549,7 @@ app.patch('/api/blog/posts/batch/delete', async (req: Request, res: Response) =>
     `UPDATE blog_posts SET status='deleted', updated_at=NOW() WHERE id = ANY($1) AND user_id=$2`,
     [ids, user.userId]
   );
+  clearCalendarCacheForUser(user.userId);
   await recordAuditLog(user.userId, 'batch_delete', ids, {});
   return res.json({ success: true, updated: result.rowCount });
 });
@@ -7305,6 +7600,7 @@ app.post('/api/blog/posts/batch/duplicate', async (req: Request, res: Response) 
     if (newRows.length) created += 1;
   }
 
+  clearCalendarCacheForUser(user.userId);
   await recordAuditLog(user.userId, 'batch_duplicate', ids, { created });
   return res.json({ success: true, created });
 });
@@ -7321,7 +7617,7 @@ app.patch('/api/blog/posts/batch/platforms', async (req: Request, res: Response)
   const owned = await pool!.query('SELECT id FROM blog_posts WHERE id = ANY($1) AND user_id=$2', [ids, user.userId]);
   if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
 
-  const enabledPlatforms = await getEnabledPlatformSlugs();
+  const visiblePlatforms = await getVisibleUserPlatformSlugs();
 
   if (accounts.length > 0) {
     const accountRows = await pool!.query(
@@ -7329,11 +7625,11 @@ app.patch('/api/blog/posts/batch/platforms', async (req: Request, res: Response)
       [accounts, user.userId]
     );
     const validAccounts =
-      enabledPlatforms.length > 0
-        ? accountRows.rows.filter((acc: any) => enabledPlatforms.includes(String(acc.platform || '').toLowerCase()))
+      visiblePlatforms.length > 0
+        ? accountRows.rows.filter((acc: any) => visiblePlatforms.includes(String(acc.platform || '').toLowerCase()))
         : accountRows.rows;
     if (validAccounts.length !== accounts.length) {
-      return res.status(400).json({ success: false, error: 'Some selected accounts are from disabled platforms' });
+      return res.status(400).json({ success: false, error: 'Some selected accounts are from integrations that are not available in this workspace' });
     }
   }
 
@@ -7473,6 +7769,7 @@ app.post('/api/blog/posts/batch/restore', async (req: Request, res: Response) =>
     }
   }
 
+  clearCalendarCacheForUser(user.userId);
   await recordAuditLog(user.userId, 'batch_restore', ids, {});
   return res.json({ success: true, restored: ids.length });
 });
@@ -7515,6 +7812,7 @@ app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) =>
       )
     );
   }
+  clearCalendarCacheForUser(user.userId);
   return res.json({ success: true, post: newRows[0] });
 });
 
@@ -7541,21 +7839,21 @@ app.get('/api/v1/calendar', async (req: Request, res: Response) => {
     const start = new Date(Date.UTC(year, month - 1, 1));
     const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
     const { rows } = await pool!.query(
-      `SELECT id, title, status, scheduled_at, created_at, updated_at
+      `SELECT id, title, status, scheduled_at, published_at, created_at, updated_at,
+              COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) AS calendar_at
        FROM blog_posts
        WHERE user_id=$1
-         AND scheduled_at IS NOT NULL
-         AND status IN ('scheduled','published')
-         AND scheduled_at BETWEEN $2 AND $3
-       ORDER BY scheduled_at ASC`,
+         AND status IN ('draft','scheduled','published')
+         AND COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) BETWEEN $2 AND $3
+       ORDER BY calendar_at ASC, updated_at DESC`,
       [user.userId, start.toISOString(), end.toISOString()]
     );
 
     const postsByDate: Record<string, any[]> = {};
     rows.forEach((post) => {
-      const scheduledAt = post.scheduled_at ? new Date(post.scheduled_at) : null;
-      if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) return;
-      const dateKey = scheduledAt.toISOString().slice(0, 10);
+      const calendarAt = post.calendar_at ? new Date(post.calendar_at) : null;
+      if (!calendarAt || Number.isNaN(calendarAt.getTime())) return;
+      const dateKey = calendarAt.toISOString().slice(0, 10);
       if (!postsByDate[dateKey]) postsByDate[dateKey] = [];
       postsByDate[dateKey].push(post);
     });
@@ -8335,8 +8633,7 @@ async function enqueueBullMqJob(taskId: string, runAtIso: string) {
 async function resolveSocialAccountIdForLog(userId: string, platform: string, destination: any) {
   if (!pool) return null;
   const dest = destination || {};
-  const destType = String(dest.type || '').toLowerCase();
-  const accountType = destType === 'profile' ? 'profile' : destType === 'page' ? 'page' : null;
+  const accountType = String(dest.type || '').trim().toLowerCase();
   const accountId = String(dest.id || '').trim();
   if (!accountType || !accountId) return null;
   const { rows } = await pool.query(
@@ -8430,7 +8727,7 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
 
     const result = await publishToplatform(userId, postRows.rows[0], platform, {
       template,
-      facebookDestination: destination,
+      destination,
     });
 
     if (result.status === 'failed' && result.retryable && attemptNumber < maxAttempts) {
@@ -8610,9 +8907,9 @@ async function queueSocialAutomationForPublishedPost(userId: string, post: Recor
         runAt = dt;
       }
 
-      const destType = String(row.account_type || 'page').toLowerCase() === 'profile' ? 'profile' : 'page';
+      const destType = String(row.account_type || 'profile').toLowerCase() || 'profile';
       const destination = { type: destType, id: String(row.account_id || ''), name: String(row.account_name || '') };
-      const accountLabel = destType === 'profile' ? 'Profile' : (destination.name ? `Page: ${destination.name}` : `Page: ${destination.id}`);
+      const accountLabel = formatSocialAccountLabel(String(row.account_platform || 'facebook'), destType, destination.name, destination.id);
 
       await enqueueSocialAutomationTask({
         userId,
@@ -8641,12 +8938,12 @@ async function queueSocialAutomationForPublishedPost(userId: string, post: Recor
     runAt = dt;
   }
 
-  const accountLabel =
-    s.facebook.destination.type === 'group'
-      ? (s.facebook.destination.name ? `Group: ${s.facebook.destination.name}` : (s.facebook.destination.id ? `Group: ${s.facebook.destination.id}` : null))
-      : s.facebook.destination.type === 'page'
-        ? (s.facebook.destination.name ? `Page: ${s.facebook.destination.name}` : (s.facebook.destination.id ? `Page: ${s.facebook.destination.id}` : null))
-        : 'Profile';
+  const accountLabel = formatSocialAccountLabel(
+    'facebook',
+    s.facebook.destination.type,
+    s.facebook.destination.name,
+    s.facebook.destination.id,
+  );
 
   await enqueueSocialAutomationTask({
     userId,
@@ -8800,7 +9097,7 @@ async function publishToplatform(
   userId: string,
   post: Record<string, any>,
   platform: string,
-  options?: { template?: string; facebookDestination?: any }
+  options?: { template?: string; destination?: any }
 ): Promise<{ status: string; platformPostId?: string; error?: string; retryable?: boolean }> {
   try {
     const platformId = normalizePlatformId(platform);
@@ -8943,8 +9240,12 @@ async function publishToplatform(
         return { status: 'failed', error: 'Pinterest publishing requires a public image URL. Set a featured image first.' };
       }
 
-      let boardId: string | null = null;
-      if (pool) {
+      const destination = options?.destination && typeof options.destination === 'object'
+        ? (options.destination as any)
+        : undefined;
+
+      let boardId = destination?.type === 'board' ? String(destination.id || '').trim() || null : null;
+      if (!boardId && pool) {
         const boardRows = await pool.query(
           `SELECT account_id
            FROM social_accounts
@@ -8987,40 +9288,60 @@ async function publishToplatform(
     }
 
     if (platformId === 'linkedin') {
+      const destination = options?.destination && typeof options.destination === 'object'
+        ? (options.destination as any)
+        : undefined;
       const linkedinPost: PostObject = {
         type: 'UGC_POST',
         content: { text },
+        destination: destination ? {
+          type: destination.type,
+          id: destination.id,
+          name: destination.name,
+        } : undefined,
+        media: featuredImage && /^https?:\/\//i.test(featuredImage)
+          ? [{ url: featuredImage, type: 'image' }]
+          : undefined,
       };
 
-      // const validation = linkedInPlatform.validate(linkedinPost);
-      // if (!validation.ok) {
-      //   return { status: 'failed', error: validation.error };
-      // }
+      const validation = linkedInPlatform.validate(linkedinPost);
+      if (!validation.ok) {
+        return { status: 'failed', error: validation.error };
+      }
 
       await acquirePlatformSlot('linkedin');
-      return { status: 'failed', error: 'LinkedIn publishing temporarily disabled' };
-      
-      // const result = await linkedInPlatform.post(linkedinPost, {
-      //   accessToken: access_token,
-      //   accountId: conn.account_id,
-      //   accountName: conn.account_name,
-      //   tokenData: token_data,
-      //   helpers: {
-      //     resolveAuthorUrn: async (ctx: any) => resolveLinkedInAuthorUrn({ userId, accessToken: ctx.accessToken }),
-      //   },
-      // });
+      const result = await linkedInPlatform.post(linkedinPost, {
+        accessToken: access_token,
+        accountId: conn.account_id,
+        accountName: conn.account_name,
+        tokenData: token_data,
+        helpers: {
+          resolveAuthorUrn: async (ctx: any) => {
+            if (destination?.type === 'page') {
+              const organizationId = String(destination.id || '').trim();
+              if (!organizationId) return null;
+              return `urn:li:organization:${organizationId}`;
+            }
+            return resolveLinkedInAuthorUrn({ userId, accessToken: ctx.accessToken });
+          },
+        },
+      });
 
-      // if (result.status === 'published') {
-      //   await logIntegrationEvent({
-      //     userId,
-      //     integrationSlug: 'linkedin',
-      //     eventType: 'post_published',
-      //     status: 'success',
-      //     response: { platformPostId: result.platformPostId || null },
-      //   });
-      // }
+      if (result.status === 'published') {
+        await logIntegrationEvent({
+          userId,
+          integrationSlug: 'linkedin',
+          eventType: 'post_published',
+          status: 'success',
+          response: {
+            platformPostId: result.platformPostId || null,
+            destinationType: destination?.type || 'profile',
+            destinationId: destination?.id || null,
+          },
+        });
+      }
 
-      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
     }
 
     if (platformId === 'twitter') {
@@ -9063,8 +9384,8 @@ async function publishToplatform(
     }
 
     if (platformId === 'facebook') {
-      const destination = options?.facebookDestination && typeof options.facebookDestination === 'object'
-        ? (options.facebookDestination as any)
+      const destination = options?.destination && typeof options.destination === 'object'
+        ? (options.destination as any)
         : undefined;
 
       if (destination?.type && destination.type !== 'page') {
@@ -9193,6 +9514,7 @@ app.get('/api/distribution/connected', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
+    const visiblePlatforms = await getVisibleUserPlatformSlugs();
 
     const platforms: { id: string; name: string }[] = [];
 
@@ -9211,6 +9533,7 @@ app.get('/api/distribution/connected', async (req: Request, res: Response) => {
     for (const row of socialRows.rows) {
       const id = normalizePlatformId(row.platform);
       if (!id || !SOCIAL_NAMES[id] || seen.has(id)) continue;
+      if (visiblePlatforms.length > 0 && !visiblePlatforms.includes(id)) continue;
       seen.add(id);
       platforms.push({ id, name: SOCIAL_NAMES[id] });
     }

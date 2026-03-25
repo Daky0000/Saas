@@ -18,6 +18,9 @@ export type IntegrationCatalogItem = {
   connection: Record<string, any> | null;
 };
 
+const isVisibleIntegration = (item: IntegrationCatalogItem) =>
+  item.slug === 'wordpress' || item.slug === 'mailchimp' || (item.adminEnabled && item.configured);
+
 const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationType }> = [
   { slug: 'wordpress', name: 'WordPress', type: 'cms' },
   { slug: 'facebook', name: 'Facebook', type: 'social' },
@@ -68,8 +71,9 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
     const wpConnected = Boolean(wpData?.connected);
 
     const integrations: IntegrationCatalogItem[] = FALLBACK_CATALOG.map((item) => {
-      const adminEnabled = enabledSet.size ? enabledSet.has(item.slug) || item.slug === 'wordpress' || item.slug === 'mailchimp' : true;
-      const configured = item.slug === 'wordpress' || item.slug === 'mailchimp' ? true : adminEnabled;
+      const isUserManaged = item.slug === 'wordpress' || item.slug === 'mailchimp';
+      const adminEnabled = isUserManaged ? true : enabledSet.has(item.slug);
+      const configured = isUserManaged ? true : enabledSet.has(item.slug);
       const connected =
         item.slug === 'wordpress'
           ? wpConnected
@@ -81,7 +85,7 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
           ? { siteUrl: wpData?.siteUrl || null, connectedAt: null }
           : null;
       return { ...item, adminEnabled, configured, connected, connection };
-    });
+    }).filter(isVisibleIntegration);
 
     return { success: true, integrations };
   } catch (error) {
@@ -114,7 +118,8 @@ export const integrationService = {
     }
     const data = await res.json().catch(() => ({} as any));
     if (!res.ok) return { success: false, error: data.error || 'Failed to load integrations' };
-    return { success: true, integrations: data.integrations || [] };
+    const integrations = Array.isArray(data.integrations) ? data.integrations.filter(isVisibleIntegration) : [];
+    return { success: true, integrations };
   },
 
   async disconnectOAuth(platform: string): Promise<{ success: boolean; error?: string }> {
@@ -239,6 +244,18 @@ export const integrationService = {
     const data = await res.json().catch(() => ({} as any));
     if (!res.ok) return { success: false, error: data.error || 'Failed to load boards' };
     return { success: true, boards: data.boards || [] };
+  },
+
+  async listLinkedInTargets(): Promise<{
+    success: boolean;
+    targets?: Array<{ id: string; name: string; accountType: 'profile' | 'page'; saved?: boolean }>;
+    warning?: string | null;
+    error?: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/api/linkedin/targets`, { headers: authHeaders() });
+    const data = await res.json().catch(() => ({} as any));
+    if (!res.ok) return { success: false, error: data.error || 'Failed to load LinkedIn targets' };
+    return { success: true, targets: data.targets || [], warning: data.warning || null };
   },
 
   async saveSocialTarget(payload: { platform: string; account_type: string; account_id: string; account_name: string }): Promise<{ success: boolean; error?: string }> {

@@ -35,6 +35,8 @@ export type CalendarPost = {
   id: string;
   title: string;
   scheduled_at: string | null;
+  published_at?: string | null;
+  calendar_at?: string | null;
   status: CalendarPostStatus | string;
   created_at?: string;
   updated_at?: string;

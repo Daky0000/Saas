@@ -453,13 +453,14 @@ function PostsList({
   };
 
   const handleRepublish = async (id: string) => {
-    if (!confirm('Republish this post to connected social accounts?')) return;
+    if (!confirm('Repost this post to your connected platforms?')) return;
     try {
-      // For now, we'll just show a message since republish endpoint needs implementation
-      alert(`Republish functionality for post ${id} will be implemented soon`);
+      const result = await blogService.repostToConnectedPlatforms(id);
+      const skipped = result.skipped?.length ? ` Skipped: ${result.skipped.join(', ')}.` : '';
+      setMessage(`Queued repost to ${result.queued} connected platform${result.queued === 1 ? '' : 's'}.${skipped}`);
       setDropdownOpen(null);
     } catch (error) {
-      alert('Failed to republish post');
+      setMessage(error instanceof Error ? error.message : 'Failed to repost to connected platforms');
     }
   };
 
@@ -748,7 +749,7 @@ function PostsList({
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                           >
                             <CheckCircle2 size={14} />
-                            Republish
+                            Repost to connected platforms
                           </button>
                         </div>
                       )}

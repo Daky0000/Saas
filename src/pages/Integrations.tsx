@@ -13,6 +13,7 @@ type ModalState =
   | { type: 'facebook-type' }
   | { type: 'facebook-select'; accountType: 'page' | 'group' }
   | { type: 'instagram' }
+  | { type: 'linkedin' }
   | { type: 'pinterest' }
   | { type: 'mailchimp' }
   | { type: 'details'; slug: string };
@@ -53,10 +54,10 @@ const INTEGRATION_META: Record<string, IntegrationMeta> = {
   linkedin: {
     slug: 'linkedin',
     name: 'LinkedIn',
-    overview: 'Publish posts and track analytics via LinkedIn OAuth.',
+    overview: 'Publish to your personal profile or an administrated LinkedIn Page with the same OAuth connection.',
     steps: ['Connect LinkedIn via OAuth.', 'Confirm the account in Integrations.', 'Publish from Posts → Distribution.'],
-    requirements: ['LinkedIn app with Products enabled.'],
-    adminSteps: ['Set Client ID/Secret and Redirect URL.', 'Enable LinkedIn for users.'],
+    requirements: ['LinkedIn app with member and organization posting scopes enabled.'],
+    adminSteps: ['Set Client ID/Secret and Redirect URL.', 'Enable LinkedIn for users.', 'Approve the organization posting scopes for the app.'],
   },
   twitter: {
     slug: 'twitter',
@@ -207,6 +208,11 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [igTargets, setIgTargets] = useState<Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>>([]);
   const [igLoading, setIgLoading] = useState(false);
 
+  // LinkedIn targets
+  const [linkedInTargets, setLinkedInTargets] = useState<Array<{ id: string; name: string; accountType: 'profile' | 'page'; saved?: boolean }>>([]);
+  const [linkedInLoading, setLinkedInLoading] = useState(false);
+  const [linkedInWarning, setLinkedInWarning] = useState<string | null>(null);
+
   // Pinterest boards
   const [pinBoards, setPinBoards] = useState<Array<{ id: string; name: string }>>([]);
   const [pinLoading, setPinLoading] = useState(false);
@@ -338,6 +344,24 @@ export default function Integrations({ onNavigateSettings }: Props) {
       setIgTargets([]);
     } finally {
       setIgLoading(false);
+    }
+  };
+
+  const openLinkedInTargets = async () => {
+    setModal({ type: 'linkedin' });
+    setLinkedInLoading(true);
+    setLinkedInWarning(null);
+    try {
+      const res = await integrationService.listLinkedInTargets();
+      if (!res.success) throw new Error(res.error || 'Failed to load LinkedIn targets');
+      setLinkedInTargets(res.targets || []);
+      setLinkedInWarning(res.warning || null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to load LinkedIn targets');
+      setLinkedInTargets([]);
+      setLinkedInWarning(null);
+    } finally {
+      setLinkedInLoading(false);
     }
   };
 
@@ -568,7 +592,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             : slug === 'instagram'
               ? 'Publish images via Instagram Graph API (Business/Creator account linked to a Facebook Page).'
               : slug === 'linkedin'
-                ? 'Publish posts and retrieve analytics via LinkedIn.'
+                ? 'Publish posts to your profile or LinkedIn Pages you administer.'
                 : slug === 'twitter'
                   ? 'Publish tweets with X API v2 (supports token refresh).'
                   : slug === 'pinterest'
@@ -656,6 +680,18 @@ export default function Integrations({ onNavigateSettings }: Props) {
             disabled={!item.connected}
             className={SECONDARY_ACTION}
             title={!item.connected ? 'Connect Pinterest first' : ''}
+          >
+            <Settings2 size={16} /> Manage
+          </button>
+        ) : null}
+
+        {slug === 'linkedin' ? (
+          <button
+            type="button"
+            onClick={() => void openLinkedInTargets()}
+            disabled={!item.connected}
+            className={SECONDARY_ACTION}
+            title={!item.connected ? 'Connect LinkedIn first' : ''}
           >
             <Settings2 size={16} /> Manage
           </button>
@@ -792,6 +828,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         : 'Select Facebook Pages'
                     : modal.type === 'instagram'
                       ? 'Instagram (Business accounts)'
+                      : modal.type === 'linkedin'
+                        ? 'LinkedIn targets'
                       : modal.type === 'pinterest'
                         ? 'Pinterest boards'
                         : modal.type === 'mailchimp'
@@ -1126,6 +1164,68 @@ export default function Integrations({ onNavigateSettings }: Props) {
                           </button>
                         ))}
                     </div>
+                  )}
+                </div>
+              ) : null}
+
+              {modal.type === 'linkedin' ? (
+                <div className="space-y-3">
+                  {linkedInLoading ? (
+                    <div className="flex items-center justify-center py-10">
+                      <Loader2 size={22} className="animate-spin text-slate-400" />
+                    </div>
+                  ) : (
+                    <>
+                      {linkedInWarning ? (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+                          {linkedInWarning}
+                        </div>
+                      ) : null}
+
+                      {linkedInTargets.length === 0 ? (
+                        <div className="text-sm text-slate-500">
+                          No LinkedIn targets were found. Reconnect LinkedIn if you recently gained Page access.
+                        </div>
+                      ) : (
+                        <div className="grid gap-2">
+                          {linkedInTargets.map((target) => (
+                            <button
+                              key={`${target.accountType}:${target.id}`}
+                              type="button"
+                              onClick={async () => {
+                                setBusy(`li-${target.accountType}-${target.id}`);
+                                try {
+                                  const res = await integrationService.saveSocialTarget({
+                                    platform: 'linkedin',
+                                    account_type: target.accountType,
+                                    account_id: target.id,
+                                    account_name: target.name,
+                                  });
+                                  if (!res.success) throw new Error(res.error || 'Failed to save LinkedIn target');
+                                  await load();
+                                  await openLinkedInTargets();
+                                } catch (e) {
+                                  alert(e instanceof Error ? e.message : 'Failed to save LinkedIn target');
+                                } finally {
+                                  setBusy(null);
+                                }
+                              }}
+                              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left hover:bg-slate-50"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-slate-900">{target.name}</div>
+                                <div className="text-xs text-slate-500">
+                                  {target.accountType === 'page' ? 'LinkedIn Page' : 'Personal profile'}
+                                </div>
+                              </div>
+                              <span className="text-xs font-semibold text-slate-600">
+                                {target.saved ? 'Saved' : 'Save'}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               ) : null}

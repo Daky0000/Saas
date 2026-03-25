@@ -37,17 +37,20 @@ const formatTime = (iso: string | null) => {
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
 };
 
+const getCalendarTimestamp = (post: CalendarPost) =>
+  post.calendar_at || post.scheduled_at || post.published_at || post.created_at || null;
+
 const getStatusBadge = (status: string) => {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'published') return 'bg-emerald-100 text-emerald-700';
-  if (normalized === 'scheduled') return 'bg-amber-100 text-amber-700';
-  return 'bg-slate-100 text-slate-700';
+  if (normalized === 'scheduled') return 'bg-blue-100 text-blue-700';
+  return 'bg-slate-100 text-slate-600';
 };
 
 const getCardBorder = (status: string) => {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'published') return 'border-emerald-400 bg-emerald-50';
-  if (normalized === 'scheduled') return 'border-amber-400 bg-amber-50';
+  if (normalized === 'scheduled') return 'border-blue-400 bg-blue-50';
   return 'border-slate-300 bg-white';
 };
 
@@ -226,7 +229,8 @@ export default function ScheduleCalendar() {
   const handleDrop = async (dateKey: string) => {
     if (!draggedPost) return;
     const [yearStr, monthStr, dayStr] = dateKey.split('-');
-    const base = draggedPost.scheduled_at ? new Date(draggedPost.scheduled_at) : null;
+    const baseIso = getCalendarTimestamp(draggedPost);
+    const base = baseIso ? new Date(baseIso) : null;
     const hours = base ? base.getHours() : 9;
     const minutes = base ? base.getMinutes() : 0;
     const newDate = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr), hours, minutes);
@@ -395,7 +399,7 @@ export default function ScheduleCalendar() {
               filteredDrafts.map((post) => (
                 <div key={post.id} className="relative rounded-xl border border-slate-200 bg-white p-3">
                   <div className="text-xs font-semibold text-slate-500">
-                    {post.created_at ? formatTime(post.created_at) : 'Draft'}
+                    {formatTime(getCalendarTimestamp(post)) || 'Draft'}
                   </div>
                   <div className="mt-1 text-sm font-semibold text-slate-900 truncate">{post.title}</div>
                   <div className="mt-2 flex items-center gap-2">
@@ -483,7 +487,7 @@ function PostCard({
     >
       <div className="flex items-center justify-between gap-2">
         <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-          {formatTime(post.scheduled_at) || 'Draft'}
+          {formatTime(getCalendarTimestamp(post)) || 'Draft'}
         </span>
         <button
           type="button"
@@ -546,7 +550,7 @@ function ViewMoreModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-10">
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
-          <div className="text-sm font-bold text-slate-900">Scheduled for {dateKey}</div>
+          <div className="text-sm font-bold text-slate-900">Posts on {dateKey}</div>
           <button
             type="button"
             onClick={onClose}
@@ -559,7 +563,7 @@ function ViewMoreModal({
           {posts.map((post) => (
             <div key={post.id} className="rounded-xl border border-slate-200 bg-white p-3">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold text-slate-500">{formatTime(post.scheduled_at)}</div>
+                <div className="text-xs font-semibold text-slate-500">{formatTime(getCalendarTimestamp(post))}</div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
