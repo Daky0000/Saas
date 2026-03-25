@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../utils/apiBase';
+import { extractApiErrorMessage, fetchApiJson } from '../utils/apiRequest';
 
 const authHeaders = (): Record<string, string> => {
   if (typeof window === 'undefined') return {};
@@ -49,14 +49,14 @@ const normalizePlatform = (value: string) => {
 const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: IntegrationCatalogItem[]; error?: string }> => {
   try {
     const [enabledRes, accountsRes, wpRes] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/integrations/enabled`, { headers: authHeaders() }),
-      fetch(`${API_BASE_URL}/api/accounts`, { headers: authHeaders() }),
-      fetch(`${API_BASE_URL}/api/wordpress/status`, { headers: authHeaders() }),
+      fetchApiJson<{ enabled?: string[] }>('/api/integrations/enabled', { headers: authHeaders() }, 'Failed to load enabled integrations'),
+      fetchApiJson<{ data?: any[] }>('/api/accounts', { headers: authHeaders() }, 'Failed to load connected accounts'),
+      fetchApiJson<{ connected?: boolean; siteUrl?: string | null }>('/api/wordpress/status', { headers: authHeaders() }, 'Failed to load WordPress status'),
     ]);
 
-    const enabledData = await enabledRes.json().catch(() => ({} as any));
-    const accountsData = await accountsRes.json().catch(() => ({} as any));
-    const wpData = await wpRes.json().catch(() => ({} as any));
+    const enabledData = enabledRes.payload || {};
+    const accountsData = accountsRes.payload || {};
+    const wpData = wpRes.payload || {};
 
     const enabled = Array.isArray(enabledData.enabled) ? enabledData.enabled.map(normalizePlatform) : [];
     const enabledSet = new Set(enabled.filter(Boolean));
@@ -112,23 +112,31 @@ function randomString(length = 48) {
 
 export const integrationService = {
   async getCatalog(): Promise<{ success: boolean; integrations?: IntegrationCatalogItem[]; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/integrations/catalog`, { headers: authHeaders() });
-    if (res.status === 404) {
+    const response = await fetchApiJson<{ integrations?: IntegrationCatalogItem[] }>(
+      '/api/integrations/catalog',
+      { headers: authHeaders() },
+      'Failed to load integrations'
+    );
+    if (response.status === 404) {
       return fallbackCatalog();
     }
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to load integrations' };
-    const integrations = Array.isArray(data.integrations) ? data.integrations.filter(isVisibleIntegration) : [];
+    if (!response.ok) {
+      return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load integrations') };
+    }
+    const integrations = Array.isArray(response.payload?.integrations) ? response.payload.integrations.filter(isVisibleIntegration) : [];
     return { success: true, integrations };
   },
 
   async disconnectOAuth(platform: string): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/accounts/${encodeURIComponent(platform)}`, {
-      method: 'DELETE',
-      headers: authHeaders(),
-    });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to disconnect' };
+    const response = await fetchApiJson(
+      `/api/accounts/${encodeURIComponent(platform)}`,
+      {
+        method: 'DELETE',
+        headers: authHeaders(),
+      },
+      'Failed to disconnect the account'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to disconnect') };
     return { success: true };
   },
 
@@ -144,27 +152,36 @@ export const integrationService = {
       codeChallenge = await sha256Base64Url(codeVerifier);
     }
 
-    const stateRes = await fetch(`${API_BASE_URL}/api/oauth/state`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ state, platform: normalized, returnTo, codeVerifier }),
-    });
-    const stateData = await stateRes.json().catch(() => ({} as any));
-    if (!stateRes.ok) return { success: false, error: stateData.error || 'Failed to start OAuth' };
-
-    const url = new URL(`${API_BASE_URL}/api/oauth/${encodeURIComponent(normalized)}/authorize-url`);
-    url.searchParams.set('state', state);
-    if (normalized === 'twitter' && codeChallenge) {
-      url.searchParams.set('code_challenge', codeChallenge);
-      url.searchParams.set('code_challenge_method', 'S256');
+    const stateResponse = await fetchApiJson<{ error?: string }>(
+      '/api/oauth/state',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ state, platform: normalized, returnTo, codeVerifier }),
+      },
+      'Failed to start OAuth'
+    );
+    if (!stateResponse.ok) {
+      return { success: false, error: extractApiErrorMessage(stateResponse.payload, stateResponse.text, 'Failed to start OAuth') };
     }
 
-    const authRes = await fetch(url.toString(), { headers: authHeaders() });
-    const authData = await authRes.json().catch(() => ({} as any));
-    if (!authRes.ok) return { success: false, error: authData.error || 'Failed to build authorization URL' };
-    if (!authData.url) return { success: false, error: 'Authorization URL missing' };
+    const params = new URLSearchParams({ state });
+    if (normalized === 'twitter' && codeChallenge) {
+      params.set('code_challenge', codeChallenge);
+      params.set('code_challenge_method', 'S256');
+    }
 
-    window.location.href = authData.url;
+    const authResponse = await fetchApiJson<{ url?: string; error?: string }>(
+      `/api/oauth/${encodeURIComponent(normalized)}/authorize-url?${params.toString()}`,
+      { headers: authHeaders() },
+      'Failed to build authorization URL'
+    );
+    if (!authResponse.ok) {
+      return { success: false, error: extractApiErrorMessage(authResponse.payload, authResponse.text, 'Failed to build authorization URL') };
+    }
+    if (!authResponse.payload?.url) return { success: false, error: 'Authorization URL missing' };
+
+    window.location.href = authResponse.payload.url;
     return { success: true };
   },
 
@@ -174,18 +191,24 @@ export const integrationService = {
     missingPermissions?: string[];
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/pages`, { headers: authHeaders() });
-    if (res.status === 404) {
-      const legacyRes = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
-      const legacyData = await legacyRes.json().catch(() => ({} as any));
-      if (!legacyRes.ok) {
-        return { success: false, error: legacyData.error || `Failed to load pages (${legacyRes.status})` };
+    const response = await fetchApiJson<{ pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>; missingPermissions?: string[] }>(
+      '/api/v1/social/facebook/pages',
+      { headers: authHeaders() },
+      'Failed to load Facebook pages'
+    );
+    if (response.status === 404) {
+      const legacyResponse = await fetchApiJson<{ pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>; missingPermissions?: string[] }>(
+        '/api/facebook/targets',
+        { headers: authHeaders() },
+        'Failed to load Facebook pages'
+      );
+      if (!legacyResponse.ok) {
+        return { success: false, error: extractApiErrorMessage(legacyResponse.payload, legacyResponse.text, `Failed to load pages (${legacyResponse.status})`) };
       }
-      return { success: true, pages: legacyData.pages || [], missingPermissions: legacyData.missingPermissions || [] };
+      return { success: true, pages: legacyResponse.payload?.pages || [], missingPermissions: legacyResponse.payload?.missingPermissions || [] };
     }
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || `Failed to load pages (${res.status})` };
-    return { success: true, pages: data.pages || [], missingPermissions: data.missingPermissions || [] };
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, `Failed to load pages (${response.status})`) };
+    return { success: true, pages: response.payload?.pages || [], missingPermissions: response.payload?.missingPermissions || [] };
   },
 
   async listFacebookTargets(): Promise<{
@@ -196,54 +219,72 @@ export const integrationService = {
     warnings?: string[];
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/targets`, { headers: authHeaders() });
-    if (res.status === 404) {
-      const legacyRes = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
-      const legacyData = await legacyRes.json().catch(() => ({} as any));
-      if (!legacyRes.ok) {
-        return { success: false, error: legacyData.error || `Failed to load targets (${legacyRes.status})` };
+    const response = await fetchApiJson<{
+      pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+      groups?: Array<{ id: string; name: string }>;
+      missingPermissions?: string[];
+      warnings?: string[];
+      warning?: string;
+    }>('/api/v1/social/facebook/targets', { headers: authHeaders() }, 'Failed to load Facebook targets');
+    if (response.status === 404) {
+      const legacyResponse = await fetchApiJson<{
+        pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+        groups?: Array<{ id: string; name: string }>;
+        warnings?: string[] | string;
+        warning?: string;
+      }>('/api/facebook/targets', { headers: authHeaders() }, 'Failed to load Facebook targets');
+      if (!legacyResponse.ok) {
+        return { success: false, error: extractApiErrorMessage(legacyResponse.payload, legacyResponse.text, `Failed to load targets (${legacyResponse.status})`) };
       }
       return {
         success: true,
-        pages: legacyData.pages || [],
-        groups: legacyData.groups || [],
-        warnings: legacyData.warnings ? [legacyData.warnings].flat() : legacyData.warning ? [legacyData.warning] : [],
+        pages: legacyResponse.payload?.pages || [],
+        groups: legacyResponse.payload?.groups || [],
+        warnings: legacyResponse.payload?.warnings ? [legacyResponse.payload.warnings].flat() : legacyResponse.payload?.warning ? [legacyResponse.payload.warning] : [],
       };
     }
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || `Failed to load targets (${res.status})` };
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, `Failed to load targets (${response.status})`) };
     return {
       success: true,
-      pages: data.pages || [],
-      groups: data.groups || [],
-      missingPermissions: data.missingPermissions || [],
-      warnings: data.warnings || [],
+      pages: response.payload?.pages || [],
+      groups: response.payload?.groups || [],
+      missingPermissions: response.payload?.missingPermissions || [],
+      warnings: response.payload?.warnings || [],
     };
   },
 
   async listInstagramTargets(): Promise<{ success: boolean; targets?: Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/instagram/targets`, { headers: authHeaders() });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to load Instagram targets' };
-    return { success: true, targets: data.targets || [] };
+    const response = await fetchApiJson<{ targets?: Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }> }>(
+      '/api/instagram/targets',
+      { headers: authHeaders() },
+      'Failed to load Instagram targets'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load Instagram targets') };
+    return { success: true, targets: response.payload?.targets || [] };
   },
 
   async connectInstagram(pageId: string, instagramId: string, instagramUsername?: string | null): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/instagram/connect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ pageId, instagramId, instagramUsername }),
-    });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to connect Instagram' };
+    const response = await fetchApiJson(
+      '/api/instagram/connect',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ pageId, instagramId, instagramUsername }),
+      },
+      'Failed to connect Instagram'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to connect Instagram') };
     return { success: true };
   },
 
   async listPinterestBoards(): Promise<{ success: boolean; boards?: Array<{ id: string; name: string }>; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/pinterest/boards`, { headers: authHeaders() });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to load boards' };
-    return { success: true, boards: data.boards || [] };
+    const response = await fetchApiJson<{ boards?: Array<{ id: string; name: string }> }>(
+      '/api/pinterest/boards',
+      { headers: authHeaders() },
+      'Failed to load Pinterest boards'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load boards') };
+    return { success: true, boards: response.payload?.boards || [] };
   },
 
   async listLinkedInTargets(): Promise<{
@@ -252,41 +293,52 @@ export const integrationService = {
     warning?: string | null;
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/api/linkedin/targets`, { headers: authHeaders() });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to load LinkedIn targets' };
-    return { success: true, targets: data.targets || [], warning: data.warning || null };
+    const response = await fetchApiJson<{
+      targets?: Array<{ id: string; name: string; accountType: 'profile' | 'page'; saved?: boolean }>;
+      warning?: string | null;
+    }>('/api/linkedin/targets', { headers: authHeaders() }, 'Failed to load LinkedIn targets');
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load LinkedIn targets') };
+    return { success: true, targets: response.payload?.targets || [], warning: response.payload?.warning || null };
   },
 
   async saveSocialTarget(payload: { platform: string; account_type: string; account_id: string; account_name: string }): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to save target' };
+    const response = await fetchApiJson(
+      '/api/v1/social/accounts',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(payload),
+      },
+      'Failed to save the connected account'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to save target') };
     return { success: true };
   },
 
   async connectMailchimp(payload: { apiKey: string; serverPrefix: string }): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/integrations/mailchimp/connect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to connect Mailchimp' };
+    const response = await fetchApiJson(
+      '/api/integrations/mailchimp/connect',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(payload),
+      },
+      'Failed to connect Mailchimp'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to connect Mailchimp') };
     return { success: true };
   },
 
   async disconnectMailchimp(): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/integrations/mailchimp/disconnect`, {
-      method: 'DELETE',
-      headers: authHeaders(),
-    });
-    const data = await res.json().catch(() => ({} as any));
-    if (!res.ok) return { success: false, error: data.error || 'Failed to disconnect Mailchimp' };
+    const response = await fetchApiJson(
+      '/api/integrations/mailchimp/disconnect',
+      {
+        method: 'DELETE',
+        headers: authHeaders(),
+      },
+      'Failed to disconnect Mailchimp'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to disconnect Mailchimp') };
     return { success: true };
   },
 };
