@@ -183,6 +183,39 @@ export const integrationService = {
     return { success: true, pages: data.pages || [], missingPermissions: data.missingPermissions || [] };
   },
 
+  async listFacebookTargets(): Promise<{
+    success: boolean;
+    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+    groups?: Array<{ id: string; name: string }>;
+    missingPermissions?: string[];
+    warnings?: string[];
+    error?: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/social/facebook/targets`, { headers: authHeaders() });
+    if (res.status === 404) {
+      const legacyRes = await fetch(`${API_BASE_URL}/api/facebook/targets`, { headers: authHeaders() });
+      const legacyData = await legacyRes.json().catch(() => ({} as any));
+      if (!legacyRes.ok) {
+        return { success: false, error: legacyData.error || `Failed to load targets (${legacyRes.status})` };
+      }
+      return {
+        success: true,
+        pages: legacyData.pages || [],
+        groups: legacyData.groups || [],
+        warnings: legacyData.warnings ? [legacyData.warnings].flat() : legacyData.warning ? [legacyData.warning] : [],
+      };
+    }
+    const data = await res.json().catch(() => ({} as any));
+    if (!res.ok) return { success: false, error: data.error || `Failed to load targets (${res.status})` };
+    return {
+      success: true,
+      pages: data.pages || [],
+      groups: data.groups || [],
+      missingPermissions: data.missingPermissions || [],
+      warnings: data.warnings || [],
+    };
+  },
+
   async listInstagramTargets(): Promise<{ success: boolean; targets?: Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>; error?: string }> {
     const res = await fetch(`${API_BASE_URL}/api/instagram/targets`, { headers: authHeaders() });
     const data = await res.json().catch(() => ({} as any));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle, ExternalLink, Info, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
 import { wordpressService } from '../services/wordpressService';
@@ -10,7 +10,8 @@ type Props = {
 type ModalState =
   | { type: 'none' }
   | { type: 'wordpress' }
-  | { type: 'facebook-pages' }
+  | { type: 'facebook-type' }
+  | { type: 'facebook-select'; accountType: 'page' | 'group' }
   | { type: 'instagram' }
   | { type: 'pinterest' }
   | { type: 'mailchimp' }
@@ -88,6 +89,23 @@ const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   disabled: { bg: 'bg-amber-50', text: 'text-amber-700' },
 };
 
+const INTEGRATION_BRAND: Record<string, { label: string; bg: string; text: string }> = {
+  wordpress: { label: 'W', bg: 'bg-indigo-500', text: 'text-white' },
+  facebook: { label: 'f', bg: 'bg-blue-600', text: 'text-white' },
+  instagram: { label: 'IG', bg: 'bg-pink-500', text: 'text-white' },
+  linkedin: { label: 'in', bg: 'bg-sky-600', text: 'text-white' },
+  twitter: { label: 'X', bg: 'bg-slate-900', text: 'text-white' },
+  pinterest: { label: 'P', bg: 'bg-red-500', text: 'text-white' },
+  mailchimp: { label: 'MC', bg: 'bg-amber-400', text: 'text-slate-900' },
+};
+
+const getBrandStyle = (slug: string) =>
+  INTEGRATION_BRAND[slug] || {
+    label: String(slug || '?').slice(0, 2).toUpperCase(),
+    bg: 'bg-slate-200',
+    text: 'text-slate-700',
+  };
+
 const formatDate = (value?: string | null) => {
   if (!value) return '';
   const dt = new Date(value);
@@ -95,11 +113,21 @@ const formatDate = (value?: string | null) => {
   return dt.toLocaleDateString();
 };
 
+const PRIMARY_ACTION =
+  'inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60';
+const SECONDARY_ACTION =
+  'inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60';
+
 function Card({
   title,
   description,
   statusLabel,
   statusTone,
+  icon,
+  iconBg,
+  iconText,
+  meta,
+  isActive,
   disabledReason,
   children,
 }: {
@@ -107,23 +135,44 @@ function Card({
   description: string;
   statusLabel: string;
   statusTone: keyof typeof PLATFORM_BADGE;
+  icon: string;
+  iconBg: string;
+  iconText: string;
+  meta?: string | null;
+  isActive: boolean;
   disabledReason?: string | null;
   children: React.ReactNode;
 }) {
   const badge = PLATFORM_BADGE[statusTone];
   return (
-    <div className="rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="text-base font-black text-slate-950">{title}</div>
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.text}`}>{statusLabel}</span>
+    <div className="group rounded-[24px] border-2 border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${iconBg} ${iconText} text-base font-black shadow-sm`}>
+            {icon}
           </div>
-          <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
-          {disabledReason ? <p className="mt-2 text-xs text-amber-700">{disabledReason}</p> : null}
+          <div className="min-w-0">
+            <div className="text-base font-black text-slate-950">{title}</div>
+            {meta ? <div className="mt-1 text-xs text-slate-500">{meta}</div> : null}
+          </div>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.text}`}>{statusLabel}</span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-500">{description}</p>
+      {disabledReason ? <p className="mt-3 text-xs text-amber-700">{disabledReason}</p> : null}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">{children}</div>
+        <div
+          aria-hidden="true"
+          className={`relative h-6 w-11 rounded-full p-0.5 transition ${
+            isActive ? 'bg-indigo-500' : 'bg-slate-200'
+          }`}
+        >
+          <div
+            className={`h-5 w-5 rounded-full bg-white shadow transition ${isActive ? 'translate-x-5' : 'translate-x-0'}`}
+          />
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">{children}</div>
     </div>
   );
 }
@@ -134,6 +183,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const [modal, setModal] = useState<ModalState>({ type: 'none' });
+  const [activeTab, setActiveTab] = useState<'cms' | 'social' | 'marketing'>('cms');
+  const [tabInitialized, setTabInitialized] = useState(false);
 
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -144,8 +195,13 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   // Facebook pages
   const [fbPages, setFbPages] = useState<Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>>([]);
+  const [fbGroups, setFbGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [fbLoading, setFbLoading] = useState(false);
   const [fbMissingPermissions, setFbMissingPermissions] = useState<string[]>([]);
+  const [fbWarnings, setFbWarnings] = useState<string[]>([]);
+  const [fbTargetType, setFbTargetType] = useState<'page' | 'group'>('page');
+  const [fbSelectedTargets, setFbSelectedTargets] = useState<string[]>([]);
+  const fbReturnHandled = useRef(false);
 
   // Instagram targets
   const [igTargets, setIgTargets] = useState<Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>>([]);
@@ -180,11 +236,33 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const cms = useMemo(() => items.filter((i) => i.type === 'cms'), [items]);
   const social = useMemo(() => items.filter((i) => i.type === 'social'), [items]);
   const marketing = useMemo(() => items.filter((i) => i.type === 'marketing'), [items]);
+  const connectedCount = useMemo(() => items.filter((i) => i.connected).length, [items]);
+  const totalCount = items.length;
+  const facebookConnected = useMemo(
+    () => items.some((item) => item.slug === 'facebook' && item.connected),
+    [items]
+  );
 
-  const startOAuth = async (slug: string) => {
+  const tabs = useMemo(
+    () => [
+      { id: 'cms' as const, label: 'CMS', count: cms.length, title: 'CMS Platforms', subtitle: `${cms.length} apps available`, empty: 'No CMS integrations enabled.' },
+      { id: 'social' as const, label: 'Social', count: social.length, title: 'Social Media Platforms', subtitle: `${social.length} channels supported`, empty: 'No social integrations enabled.' },
+      { id: 'marketing' as const, label: 'Marketing', count: marketing.length, title: 'Marketing Platforms', subtitle: `${marketing.length} tools ready`, empty: 'No marketing integrations enabled.' },
+    ],
+    [cms.length, social.length, marketing.length],
+  );
+
+  useEffect(() => {
+    if (tabInitialized || loading) return;
+    const firstAvailable = cms.length ? 'cms' : social.length ? 'social' : marketing.length ? 'marketing' : 'cms';
+    setActiveTab(firstAvailable);
+    setTabInitialized(true);
+  }, [cms.length, social.length, marketing.length, loading, tabInitialized]);
+
+  const startOAuth = async (slug: string, returnTo = '/integrations') => {
     setBusy(slug);
     try {
-      const res = await integrationService.startOAuth(slug, '/integrations');
+      const res = await integrationService.startOAuth(slug, returnTo);
       if (!res.success) throw new Error(res.error || 'OAuth failed');
     } catch (e) {
       alert(e instanceof Error ? e.message : 'OAuth failed');
@@ -206,22 +284,47 @@ export default function Integrations({ onNavigateSettings }: Props) {
     }
   };
 
-  const openFacebookPages = async () => {
-    setModal({ type: 'facebook-pages' });
+  const openFacebookType = () => {
+    setFbTargetType('page');
+    setFbSelectedTargets([]);
+    setModal({ type: 'facebook-type' });
+  };
+
+  const openFacebookSelect = useCallback(async (accountType: 'page' | 'group') => {
+    setFbTargetType(accountType);
+    setFbSelectedTargets([]);
+    setModal({ type: 'facebook-select', accountType });
     setFbLoading(true);
     try {
-      const res = await integrationService.listFacebookPages();
-      if (!res.success) throw new Error(res.error || 'Failed to load pages');
+      const res = await integrationService.listFacebookTargets();
+      if (!res.success) throw new Error(res.error || 'Failed to load Facebook targets');
       setFbPages(res.pages || []);
+      setFbGroups(res.groups || []);
       setFbMissingPermissions(res.missingPermissions || []);
+      setFbWarnings(res.warnings || []);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to load pages');
+      alert(e instanceof Error ? e.message : 'Failed to load Facebook targets');
       setFbPages([]);
+      setFbGroups([]);
       setFbMissingPermissions([]);
+      setFbWarnings([]);
     } finally {
       setFbLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!facebookConnected || fbReturnHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const fbType = params.get('fbType');
+    if (fbType !== 'page' && fbType !== 'group') return;
+    fbReturnHandled.current = true;
+    void openFacebookSelect(fbType);
+    params.delete('fbType');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [facebookConnected, openFacebookSelect]);
 
   const openInstagramTargets = async () => {
     setModal({ type: 'instagram' });
@@ -250,6 +353,45 @@ export default function Integrations({ onNavigateSettings }: Props) {
       setPinBoards([]);
     } finally {
       setPinLoading(false);
+    }
+  };
+
+  const toggleFacebookSelection = (id: string, disabled?: boolean) => {
+    if (disabled) return;
+    setFbSelectedTargets((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
+
+  const toggleFacebookSelectAll = (ids: string[]) => {
+    const allSelected = ids.every((id) => fbSelectedTargets.includes(id));
+    setFbSelectedTargets(allSelected ? [] : ids);
+  };
+
+  const saveFacebookTargets = async (accountType: 'page' | 'group') => {
+    const targets = accountType === 'group' ? fbGroups : fbPages;
+    const pageTargets = targets as Array<{ id: string; name: string; can_publish?: boolean }>;
+    const selectable = accountType === 'page' ? pageTargets.filter((t) => t.can_publish !== false) : targets;
+    const selected = selectable.filter((t) => fbSelectedTargets.includes(t.id));
+    if (!selected.length) {
+      alert('Select at least one account to connect.');
+      return;
+    }
+    setBusy('facebook-targets');
+    try {
+      for (const target of selected) {
+        const res = await integrationService.saveSocialTarget({
+          platform: 'facebook',
+          account_type: accountType,
+          account_id: target.id,
+          account_name: target.name,
+        });
+        if (!res.success) throw new Error(res.error || 'Failed to save target');
+      }
+      await load();
+      setModal({ type: 'none' });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to save targets');
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -288,9 +430,15 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
+    const brand = getBrandStyle(slug);
     const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest'].includes(slug);
     const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
     const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || '';
+    const connectedMeta = item.connected
+      ? [connectedLabel ? `Connected as ${connectedLabel}` : 'Connected', connectedAt ? formatDate(connectedAt) : '']
+          .filter(Boolean)
+          .join(' • ')
+      : null;
 
     const disabledReason = !item.adminEnabled
       ? 'Disabled by admin.'
@@ -307,11 +455,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
         description="Connect your WordPress site using Application Passwords. Publish, update, import posts and sync categories/tags."
         statusLabel={item.connected ? 'Connected' : 'Disconnected'}
         statusTone={item.connected ? 'connected' : 'disconnected'}
+        icon={brand.label}
+        iconBg={brand.bg}
+        iconText={brand.text}
+        meta={connectedMeta}
+        isActive={item.connected}
       >
         <button
           type="button"
           onClick={() => setModal({ type: 'details', slug })}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          className={SECONDARY_ACTION}
         >
           <Info size={16} /> Steps
         </button>
@@ -319,7 +472,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             <button
               type="button"
               onClick={() => setModal({ type: 'wordpress' })}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+              className={PRIMARY_ACTION}
             >
               <Plug size={16} /> Connect
             </button>
@@ -329,14 +482,14 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 type="button"
                 onClick={disconnectWordPress}
                 disabled={busy === 'wordpress'}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className={SECONDARY_ACTION}
               >
                 {busy === 'wordpress' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
               <button
                 type="button"
                 onClick={() => setModal({ type: 'wordpress' })}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                className={SECONDARY_ACTION}
               >
                 <Settings2 size={16} /> Settings
               </button>
@@ -353,11 +506,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
           description="Connect Mailchimp using an API key + server prefix (e.g. us19)."
           statusLabel={item.connected ? 'Connected' : 'Disconnected'}
           statusTone={item.connected ? 'connected' : 'disconnected'}
+          icon={brand.label}
+          iconBg={brand.bg}
+          iconText={brand.text}
+          meta={connectedMeta}
+          isActive={item.connected}
         >
           <button
             type="button"
             onClick={() => setModal({ type: 'details', slug })}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className={SECONDARY_ACTION}
           >
             <Info size={16} /> Steps
           </button>
@@ -365,7 +523,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             <button
               type="button"
               onClick={() => setModal({ type: 'mailchimp' })}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+              className={PRIMARY_ACTION}
             >
               <Plug size={16} /> Connect
             </button>
@@ -386,7 +544,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 }
               }}
               disabled={busy === 'mailchimp'}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              className={SECONDARY_ACTION}
             >
               {busy === 'mailchimp' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
             </button>
@@ -399,6 +557,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
       disabledReason ? 'disabled' : item.connected ? 'connected' : 'disconnected';
 
     const connectLabel = item.connected ? 'Reconnect' : 'Connect';
+    const isActive = statusTone === 'connected';
 
     return (
       <Card
@@ -419,11 +578,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
         statusLabel={disabledReason ? 'Admin disabled' : item.connected ? 'Connected' : 'Disconnected'}
         statusTone={statusTone}
         disabledReason={disabledReason}
+        icon={brand.label}
+        iconBg={brand.bg}
+        iconText={brand.text}
+        meta={connectedMeta}
+        isActive={isActive}
       >
         <button
           type="button"
           onClick={() => setModal({ type: 'details', slug })}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          className={SECONDARY_ACTION}
         >
           <Info size={16} /> Steps
         </button>
@@ -433,7 +597,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
               type="button"
               onClick={() => void openInstagramTargets()}
               disabled={!items.find((i) => i.slug === 'facebook')?.connected}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+              className={PRIMARY_ACTION}
               title={!items.find((i) => i.slug === 'facebook')?.connected ? 'Connect Facebook first' : ''}
             >
               <Plug size={16} /> Connect
@@ -443,7 +607,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 type="button"
                 onClick={() => void disconnectOAuth('instagram')}
                 disabled={busy === 'instagram'}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className={SECONDARY_ACTION}
               >
                 {busy === 'instagram' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
@@ -453,9 +617,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
           <>
             <button
               type="button"
-              onClick={() => void startOAuth(slug)}
+              onClick={() => (slug === 'facebook' ? openFacebookType() : void startOAuth(slug))}
               disabled={!canConnect || busy === slug}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+              className={PRIMARY_ACTION}
             >
               {busy === slug ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} {connectLabel}
             </button>
@@ -465,7 +629,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 type="button"
                 onClick={() => void disconnectOAuth(slug)}
                 disabled={busy === slug}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className={SECONDARY_ACTION}
               >
                 {busy === slug ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
@@ -476,9 +640,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
         {slug === 'facebook' ? (
           <button
             type="button"
-            onClick={() => void openFacebookPages()}
+            onClick={() => openFacebookType()}
             disabled={!item.connected}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className={SECONDARY_ACTION}
             title={!item.connected ? 'Connect Facebook first' : ''}
           >
             <Settings2 size={16} /> Manage
@@ -490,44 +654,72 @@ export default function Integrations({ onNavigateSettings }: Props) {
             type="button"
             onClick={() => void openPinterestBoards()}
             disabled={!item.connected}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className={SECONDARY_ACTION}
             title={!item.connected ? 'Connect Pinterest first' : ''}
           >
             <Settings2 size={16} /> Manage
           </button>
         ) : null}
 
-        {item.connected ? (
-          <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            {connectedLabel ? <div className="font-semibold">Connected as {connectedLabel}</div> : null}
-            {connectedAt ? <div>Connected {formatDate(connectedAt)}</div> : null}
-          </div>
-        ) : null}
       </Card>
     );
   };
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-[24px] border border-slate-200 bg-white px-6 py-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Integrations</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Connect external services using official APIs and OAuth. Admins control developer credentials; you connect your accounts.
+    <div className="space-y-8">
+      <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Integrations & workflows</div>
+            <h2 className="mt-2 text-3xl font-black tracking-[-0.03em] text-slate-950">Integrations & workflows</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Supercharge your workflow and connect the tools you and your team use every day. Admins configure the apps; you connect the accounts.
             </p>
+            <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Integration categories">
+              {tabs.map((tab) => {
+                const isActive = tab.id === activeTab;
+                return (
+                  <button
+                    key={tab.id}
+                    id={`integrations-tab-${tab.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    aria-controls={`integrations-panel-${tab.id}`}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                      isActive
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {tab.label} ({tab.count})
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {onNavigateSettings ? (
-            <button
-              type="button"
-              onClick={onNavigateSettings}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <ExternalLink size={16} /> Admin settings
-            </button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-center">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Connected</div>
+              <div className="text-2xl font-black text-slate-900">{connectedCount}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Total</div>
+              <div className="text-2xl font-black text-slate-900">{totalCount}</div>
+            </div>
+            {onNavigateSettings ? (
+              <button
+                type="button"
+                onClick={onNavigateSettings}
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <ExternalLink size={16} /> Admin settings
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
+      </section>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
@@ -547,32 +739,30 @@ export default function Integrations({ onNavigateSettings }: Props) {
         </div>
       ) : (
         <>
-          {items.every((i) => !i.connected) ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="text-sm font-black text-slate-900">Get started in 3 steps</div>
-              <ol className="mt-3 list-decimal pl-5 text-sm text-slate-600">
-                <li>Ask an admin to configure and enable the integration.</li>
-                <li>Connect your account here in Integrations.</li>
-                <li>Publish from Posts → Distribution.</li>
-              </ol>
-            </div>
-          ) : null}
-          <section className="space-y-3">
-            <div className="text-sm font-black text-slate-900">CMS Platforms</div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cms.map(renderActions)}</div>
-          </section>
-
-          <section className="space-y-3">
-            <div className="text-sm font-black text-slate-900">Social Media Platforms</div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{social.map(renderActions)}</div>
-          </section>
-
-          <section className="space-y-3">
-            <div className="text-sm font-black text-slate-900">Marketing Platforms</div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {marketing.length ? marketing.map(renderActions) : <div className="text-sm text-slate-400">No marketing integrations enabled.</div>}
-            </div>
-          </section>
+          {(() => {
+            const activeConfig = tabs.find((tab) => tab.id === activeTab) || tabs[0];
+            const activeItems = activeTab === 'cms' ? cms : activeTab === 'social' ? social : marketing;
+            return (
+              <section
+                className="space-y-4"
+                role="tabpanel"
+                id={`integrations-panel-${activeConfig.id}`}
+                aria-labelledby={`integrations-tab-${activeConfig.id}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-black text-slate-900">{activeConfig.title}</div>
+                    <div className="text-xs text-slate-500">{activeConfig.subtitle}</div>
+                  </div>
+                </div>
+                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                  {activeItems.length
+                    ? activeItems.map(renderActions)
+                    : <div className="text-sm text-slate-400">{activeConfig.empty}</div>}
+                </div>
+              </section>
+            );
+          })()}
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
@@ -594,8 +784,12 @@ export default function Integrations({ onNavigateSettings }: Props) {
               <div className="text-sm font-black text-slate-900">
                 {modal.type === 'wordpress'
                   ? 'WordPress settings'
-                  : modal.type === 'facebook-pages'
-                    ? 'Facebook Pages'
+                  : modal.type === 'facebook-type'
+                    ? 'Select Facebook account type'
+                    : modal.type === 'facebook-select'
+                      ? modal.accountType === 'group'
+                        ? 'Select Facebook Groups'
+                        : 'Select Facebook Pages'
                     : modal.type === 'instagram'
                       ? 'Instagram (Business accounts)'
                       : modal.type === 'pinterest'
@@ -707,79 +901,182 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 </div>
               ) : null}
 
-              {modal.type === 'facebook-pages' ? (
+              {modal.type === 'facebook-type' ? (
+                <div className="space-y-4">
+                  <div className="text-sm text-slate-600">
+                    Choose what you want to connect. Pages support direct publishing, Groups are available for reminders.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFbTargetType('page')}
+                    className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition ${
+                      fbTargetType === 'page' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">P</div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">Page</div>
+                        <div className="text-xs text-slate-500">
+                          Best for brands and businesses. Direct publishing is supported.
+                        </div>
+                      </div>
+                    </div>
+                    <div className={`h-5 w-5 rounded-full border ${fbTargetType === 'page' ? 'border-blue-500' : 'border-slate-300'}`}>
+                      <div className={`h-full w-full rounded-full ${fbTargetType === 'page' ? 'bg-blue-500' : 'bg-transparent'}`} />
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFbTargetType('group')}
+                    className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition ${
+                      fbTargetType === 'group' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">G</div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">Group</div>
+                        <div className="text-xs text-slate-500">
+                          Use Groups for reminders or discussion posts. Availability depends on Meta permissions.
+                        </div>
+                      </div>
+                    </div>
+                    <div className={`h-5 w-5 rounded-full border ${fbTargetType === 'group' ? 'border-blue-500' : 'border-slate-300'}`}>
+                      <div className={`h-full w-full rounded-full ${fbTargetType === 'group' ? 'bg-blue-500' : 'bg-transparent'}`} />
+                    </div>
+                  </button>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModal({ type: 'none' })}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        facebookConnected
+                          ? void openFacebookSelect(fbTargetType)
+                          : void startOAuth('facebook', `/integrations?fbType=${fbTargetType}`)
+                      }
+                      className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {modal.type === 'facebook-select' ? (
                 <div className="space-y-3">
                   {fbLoading ? (
                     <div className="flex items-center justify-center py-10">
                       <Loader2 size={22} className="animate-spin text-slate-400" />
                     </div>
-                  ) : fbPages.length === 0 ? (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      <div className="font-semibold text-slate-700">No Pages found</div>
-                      <div className="mt-1 text-xs text-slate-500">Try the steps below, then reconnect Facebook.</div>
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-600">
-                        <li>Make sure you are logged into the Facebook account that manages the Page.</li>
-                        <li>Create a Facebook Page if you do not have one yet.</li>
-                        <li>Reconnect and accept the `pages_show_list` permission prompt.</li>
-                        <li>If you are not an app admin/tester, ask your workspace admin to add you or request App Review for `pages_show_list`.</li>
-                      </ul>
-                      {fbMissingPermissions.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                          Missing Facebook permissions: {fbMissingPermissions.join(', ')}. Reconnect and approve them.
-                        </div>
-                      ) : null}
-                    </div>
                   ) : (
-                    <div className="grid gap-2">
+                    <>
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <span>{fbSelectedTargets.length} selected</span>
+                        {(() => {
+                          const targets = modal.accountType === 'group' ? fbGroups : fbPages;
+                          const pageTargets = targets as Array<{ id: string; name: string; can_publish?: boolean }>;
+                          const selectable = modal.accountType === 'page' ? pageTargets.filter((t) => t.can_publish !== false) : targets;
+                          const selectableIds = selectable.map((t) => t.id);
+                          const allSelected = selectableIds.length > 0 && selectableIds.every((id) => fbSelectedTargets.includes(id));
+                          return (
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={allSelected}
+                                onChange={() => toggleFacebookSelectAll(selectableIds)}
+                              />
+                              Select All
+                            </label>
+                          );
+                        })()}
+                      </div>
+
                       {fbMissingPermissions.length > 0 ? (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-                          Missing Facebook permissions: {fbMissingPermissions.join(', ')}. Reconnect Facebook and approve these permissions to publish.
+                          Missing Facebook permissions: {fbMissingPermissions.join(', ')}. Reconnect Facebook and approve these permissions.
                         </div>
                       ) : null}
-                      {fbPages.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          disabled={p.can_publish === false}
-                          onClick={async () => {
-                            if (p.can_publish === false) return;
-                            setBusy(`fb-page-${p.id}`);
-                            try {
-                              const res = await integrationService.saveSocialTarget({
-                                platform: 'facebook',
-                                account_type: 'page',
-                                account_id: p.id,
-                                account_name: p.name,
-                              });
-                              if (!res.success) throw new Error(res.error || 'Failed to save Page');
-                              alert('Page saved. Automated posting will use this Page token when selected.');
-                              await load();
-                              setModal({ type: 'none' });
-                            } catch (e) {
-                              alert(e instanceof Error ? e.message : 'Failed to save Page');
-                            } finally {
-                              setBusy(null);
-                            }
-                          }}
-                          className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left ${
-                            p.can_publish === false
-                              ? 'border-amber-200 bg-amber-50 text-amber-800'
-                              : 'border-slate-200 bg-white hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{p.name}</div>
-                            <div className="text-xs text-slate-500">{p.id}</div>
-                            {p.can_publish === false ? (
-                              <div className="mt-1 text-xs text-amber-700">No publish access. Ask for Editor/Admin role.</div>
-                            ) : null}
+
+                      {fbWarnings.length > 0 ? (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+                          {fbWarnings.join(' ')}
+                        </div>
+                      ) : null}
+
+                      {(() => {
+                        const targets = modal.accountType === 'group' ? fbGroups : fbPages;
+                        if (targets.length === 0) {
+                          return (
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                              No {modal.accountType === 'group' ? 'Groups' : 'Pages'} found. Try reconnecting Facebook.
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="grid gap-2">
+                            {targets.map((target) => {
+                              const disabled =
+                                modal.accountType === 'page' &&
+                                (target as { can_publish?: boolean }).can_publish === false;
+                              const selected = fbSelectedTargets.includes(target.id);
+                              return (
+                                <button
+                                  key={target.id}
+                                  type="button"
+                                  onClick={() => toggleFacebookSelection(target.id, disabled)}
+                                  className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left ${
+                                    disabled
+                                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-600">
+                                      {target.name?.[0]?.toUpperCase() || 'F'}
+                                    </div>
+                                    <div>
+                                      <div className="text-sm font-semibold text-slate-900">{target.name}</div>
+                                      <div className="text-xs text-slate-500">
+                                        {modal.accountType === 'group' ? 'Group' : 'Page'}
+                                      </div>
+                                      {disabled ? (
+                                        <div className="mt-1 text-xs text-amber-700">No publish access. Ask for Editor/Admin role.</div>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <input type="checkbox" checked={selected} readOnly />
+                                </button>
+                              );
+                            })}
                           </div>
-                          <span className={`text-xs font-semibold ${p.can_publish === false ? 'text-amber-700' : 'text-slate-600'}`}>
-                            {p.can_publish === false ? 'No Access' : 'Save'}
-                          </span>
+                        );
+                      })()}
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setModal({ type: 'facebook-type' })}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Back
                         </button>
-                      ))}
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => void saveFacebookTargets(modal.accountType)}
+                          disabled={busy === 'facebook-targets' || fbSelectedTargets.length === 0}
+                          className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                        >
+                          {busy === 'facebook-targets' ? 'Saving…' : 'Finish Connection'}
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               ) : null}
