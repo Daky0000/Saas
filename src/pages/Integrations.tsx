@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle, ExternalLink, Info, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
+import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
 
 type Props = {
@@ -182,6 +183,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<IntegrationCatalogItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [redirectError, setRedirectError] = useState<string | null>(null);
 
   const [modal, setModal] = useState<ModalState>({ type: 'none' });
   const [activeTab, setActiveTab] = useState<'cms' | 'social' | 'marketing'>('cms');
@@ -238,6 +240,25 @@ export default function Integrations({ onNavigateSettings }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const rawError = params.get('error');
+    if (!rawError) return;
+
+    setRedirectError(
+      sanitizeApiErrorText(
+        rawError,
+        'The integration callback returned the app shell instead of API data. Please try connecting again.'
+      )
+    );
+
+    params.delete('error');
+    params.delete('success');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, []);
 
   const cms = useMemo(() => items.filter((i) => i.type === 'cms'), [items]);
   const social = useMemo(() => items.filter((i) => i.type === 'social'), [items]);
@@ -761,13 +782,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
         <div className="flex items-center justify-center py-16">
           <Loader2 size={28} className="animate-spin text-slate-400" />
         </div>
-      ) : error ? (
+      ) : (error || redirectError) ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
           <div className="font-semibold">We couldn't load integrations.</div>
-          <div className="mt-1">{error}</div>
+          <div className="mt-1">{error || redirectError}</div>
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => {
+              setRedirectError(null);
+              void load();
+            }}
             className="mt-3 inline-flex items-center gap-2 rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
           >
             Retry
