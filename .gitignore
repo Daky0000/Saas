@@ -47,3 +47,16 @@ copilot-messages.log
 # System files
 .DS_Store
 .project/attachments/files/**
+
+# Temporary and disabled folders
+tmp_skills_disabled/
+tmp_skills/
+Old design/
+
+# Temporary development files
+tmp_find_bom.py
+tmp_preview_server.cjs
+tmp_preview_server.js
+
+# API keys and tokens (should not be committed)
+tiktok*.txt
