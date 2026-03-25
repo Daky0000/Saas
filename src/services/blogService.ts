@@ -219,6 +219,14 @@ export const blogService = {
     return data.post!;
   },
 
+  async repostToConnectedPlatforms(id: string): Promise<{ queued: number; skipped?: string[] }> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/posts/${id}/social-repost`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    return parseApiResponse<{ success?: boolean; queued: number; skipped?: string[]; error?: string }>(res);
+  },
+
   async batchReschedule(postIds: string[], scheduledAt: string) {
     const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/reschedule`, {
       method: 'PATCH',

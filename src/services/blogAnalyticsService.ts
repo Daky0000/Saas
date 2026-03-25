@@ -1,5 +1,7 @@
 import { API_BASE_URL } from '../utils/apiBase';
 
+const ANALYTICS_FALLBACK_API_BASE_URL = 'https://contentflow-api-production.up.railway.app';
+
 function getToken() {
   return localStorage.getItem('auth_token') || '';
 }
@@ -23,6 +25,43 @@ async function parseApiResponse<T>(res: Response): Promise<T> {
     throw new Error('Invalid server response');
   }
   return (parsed ?? {}) as T;
+}
+
+function getAnalyticsApiCandidates() {
+  const candidates = [API_BASE_URL];
+  if (typeof window !== 'undefined') {
+    candidates.push(window.location.origin.replace(/\/$/, ''));
+  }
+  candidates.push(ANALYTICS_FALLBACK_API_BASE_URL);
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+async function fetchAnalyticsResponse(path: string, _expected: 'json' | 'file') {
+  const candidates = getAnalyticsApiCandidates();
+  let lastNetworkError: Error | null = null;
+
+  for (const [index, base] of candidates.entries()) {
+    const isLast = index === candidates.length - 1;
+    try {
+      const res = await fetch(`${base}${path}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+      const looksLikeHtml = contentType.includes('text/html');
+      if (res.ok && !(looksLikeHtml && !isLast)) {
+        return res;
+      }
+      if (!isLast && (res.status === 404 || res.status >= 500 || looksLikeHtml)) {
+        continue;
+      }
+      return res;
+    } catch (error) {
+      lastNetworkError = error instanceof Error ? error : new Error('Analytics API is unreachable right now.');
+      if (isLast) throw lastNetworkError;
+    }
+  }
+
+  throw lastNetworkError || new Error('Analytics API is unreachable right now.');
 }
 
 export type AnalyticsRangePreset = '7d' | '30d' | '90d' | 'custom';
@@ -123,9 +162,7 @@ export const blogAnalyticsService = {
     if (query.start) params.set('start', query.start);
     if (query.end) params.set('end', query.end);
 
-    const res = await fetch(`${API_BASE_URL}/api/blog/analytics/dashboard?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
+    const res = await fetchAnalyticsResponse(`/api/blog/analytics/dashboard?${params.toString()}`, 'json');
     const payload = await parseApiResponse<{ success?: boolean; data?: BlogAnalyticsDashboard }>(res);
     if (!payload.data) {
       throw new Error('Analytics dashboard was empty');
@@ -139,9 +176,7 @@ export const blogAnalyticsService = {
     if (query.start) params.set('start', query.start);
     if (query.end) params.set('end', query.end);
 
-    const res = await fetch(`${API_BASE_URL}/api/blog/analytics/export?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
+    const res = await fetchAnalyticsResponse(`/api/blog/analytics/export?${params.toString()}`, 'file');
     if (!res.ok) {
       const text = await res.text();
       throw new Error(text || 'Export failed');
