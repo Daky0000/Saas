@@ -6925,7 +6925,7 @@ app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Respon
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
 
     const visiblePlatforms = await getVisibleUserPlatformSlugs();
-    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads']);
+    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads', 'twitter']);
     const selectedRows = await pool.query(
       `SELECT a.platform, a.account_type, a.account_id, a.account_name, s.template
        FROM social_post_settings s
@@ -9831,13 +9831,14 @@ async function refreshTwitterAccessToken(refreshToken: string) {
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
   });
-  if (clientSecret) data.set('client_secret', clientSecret);
-
-  const resp = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), {
+  const axiosCfg: any = {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
     timeout: 15000,
-  });
+  };
+  if (clientSecret) axiosCfg.auth = { username: clientId, password: clientSecret };
+
+  const resp = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), axiosCfg);
   if (resp.status >= 400) throw new Error(`Twitter token refresh failed (${resp.status})`);
   return resp.data;
 }
@@ -10988,6 +10989,14 @@ async function publishToplatform(
           status: 'success',
           response: { platformPostId: result.platformPostId || null },
         });
+      } else {
+        await logIntegrationEvent({
+          userId,
+          integrationSlug: 'twitter',
+          eventType: 'post_publish_failed',
+          status: 'error',
+          response: { error: result.error || 'Twitter publish failed' },
+        });
       }
 
       return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
@@ -11500,7 +11509,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
