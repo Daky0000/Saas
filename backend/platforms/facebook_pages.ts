@@ -104,6 +104,40 @@ export class FacebookPagesPlatform implements SocialPlatform {
 
         // Image post
         if ((mime.startsWith('image/') || item?.type === 'image') && item?.url) {
+          // Base64 data URL — upload binary directly via multipart source field
+          if (item.url.startsWith('data:')) {
+            const match = item.url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
+            if (!match) {
+              return { status: 'failed', error: 'Invalid base64 image data URL.' };
+            }
+            const [, imageMime, base64Data] = match;
+            const imageBuffer = Buffer.from(base64Data, 'base64');
+            const ext = imageMime.split('/')[1]?.split('+')[0] || 'jpg';
+            const FormData = (await import('form-data')).default;
+            const form = new FormData();
+            form.append('source', imageBuffer, { filename: `image.${ext}`, contentType: imageMime });
+            form.append('caption', text);
+            form.append('published', 'true');
+            form.append('access_token', page.pageToken);
+            const binaryResp = await axios.post(
+              `${graphBase}/${encodeURIComponent(page.pageId)}/photos`,
+              form,
+              { headers: form.getHeaders(), validateStatus: () => true, timeout: 30000 }
+            );
+            const binaryData: any = binaryResp.data || {};
+            if (binaryResp.status >= 400) {
+              return {
+                status: 'failed',
+                error: binaryData?.error?.message || `Facebook API error ${binaryResp.status}`,
+                code: binaryData?.error?.code ? String(binaryData.error.code) : undefined,
+                retryable: isRetryableStatus(binaryResp.status),
+                raw: binaryData,
+              };
+            }
+            return { status: 'published', platformPostId: String(binaryData?.id || ''), raw: binaryData };
+          }
+
+          // Public HTTPS URL — use url param
           const body = new URLSearchParams({
             url: item.url,
             caption: text,

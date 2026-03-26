@@ -7316,6 +7316,40 @@ app.get('/api/media', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/media/:id/image — serve the raw image as binary (used by external platforms like Facebook)
+app.get('/api/media/:id/image', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).send('Database not configured');
+  try {
+    const { rows } = await pool!.query(
+      'SELECT url, file_type, file_name FROM media_images WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).send('Not found');
+    const row = rows[0] as { url: string; file_type: string; file_name: string };
+    const dataUrl = String(row.url || '');
+    if (!dataUrl) return res.status(404).send('Image data missing');
+
+    // data URL format: "data:<mime>;base64,<data>"
+    const commaIdx = dataUrl.indexOf(',');
+    if (commaIdx === -1 || !dataUrl.startsWith('data:')) {
+      // Already a plain HTTP URL — redirect to it
+      return res.redirect(dataUrl);
+    }
+    const mimeMatch = dataUrl.slice(5, commaIdx).replace(';base64', '');
+    const mime = mimeMatch || row.file_type || 'image/jpeg';
+    const base64Data = dataUrl.slice(commaIdx + 1);
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(buffer);
+  } catch (err) {
+    console.error('media serve error:', err);
+    return res.status(500).send('Failed to serve image');
+  }
+});
+
 // Update image metadata (rename / tags / alt text / caption / description)
 app.put('/api/media/:id', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
@@ -9660,6 +9694,8 @@ async function publishToplatform(
     const featuredImage = (() => {
       if (!rawFeaturedImage) return '';
       if (/^https?:\/\//i.test(rawFeaturedImage)) return rawFeaturedImage;
+      // Base64 data URL — pass through as-is (handled by platform publishers)
+      if (rawFeaturedImage.startsWith('data:')) return rawFeaturedImage;
       // Relative URL — prepend the server's public base URL
       const serverBase = String(
         process.env.BACKEND_PUBLIC_URL ||
@@ -9917,7 +9953,7 @@ async function publishToplatform(
         return { status: 'failed', error: 'Facebook Pages only. Groups and profiles are not supported.', retryable: false };
       }
 
-      const media = featuredImage && /^https?:\/\//i.test(featuredImage)
+      const media = featuredImage && (/^https?:\/\//i.test(featuredImage) || featuredImage.startsWith('data:'))
         ? [{ url: featuredImage, type: 'image' as const }]
         : undefined;
 
