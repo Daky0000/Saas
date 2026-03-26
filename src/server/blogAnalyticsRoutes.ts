@@ -890,4 +890,26 @@ export function registerBlogAnalyticsRoutes({ app, getPool, requireAuth }: Route
       return sendApiError(res, 500, 'Failed to export analytics.', 'ANALYTICS_EXPORT_ERROR');
     }
   });
+
+  app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
+    const user = await Promise.resolve(requireAuth(req, res));
+    if (!user) return;
+
+    const pool = getPool();
+    if (!pool) {
+      return sendApiError(res, 503, 'Database not configured', 'DATABASE_UNAVAILABLE');
+    }
+
+    // Re-compute the dashboard for the default 30-day range to warm the data
+    try {
+      const range = buildBlogAnalyticsRange({ preset: '30d' });
+      if (!('error' in range)) {
+        await buildBlogAnalyticsDashboard(pool, user.userId, range);
+      }
+      return res.json({ success: true, message: 'Analytics refreshed.' });
+    } catch (error) {
+      console.error('blog analytics refresh error:', error);
+      return sendApiError(res, 500, 'Failed to refresh analytics.', 'ANALYTICS_REFRESH_ERROR');
+    }
+  });
 }
