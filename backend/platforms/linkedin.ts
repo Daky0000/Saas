@@ -18,8 +18,6 @@ type LinkedInHelpers = {
 const LINKEDIN_MAX_TEXT = 3000;
 const LINKEDIN_MAX_TITLE = 200;
 const LINKEDIN_API = 'https://api.linkedin.com';
-// Current stable Marketing API version
-const LINKEDIN_VERSION = '202501';
 
 const isRetryableStatus = (status?: number) =>
   status === 429 || (typeof status === 'number' && status >= 500);
@@ -100,7 +98,18 @@ export class LinkedInPlatform implements SocialPlatform {
     const helpers = (ctx.helpers || {}) as LinkedInHelpers;
     if (helpers.resolveAuthorUrn) return helpers.resolveAuthorUrn(ctx);
 
-    // 2. Fetch from /v2/me (works with r_liteprofile scope)
+    // 2. Try OpenID Connect userinfo (works with openid/profile scopes)
+    const userinfoResp = await axios.get(`${LINKEDIN_API}/v2/userinfo`, {
+      headers: { Authorization: `Bearer ${ctx.accessToken}` },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    if (userinfoResp.status < 400) {
+      const sub = String((userinfoResp.data as any)?.sub || '').trim();
+      if (sub) return `urn:li:person:${sub}`;
+    }
+
+    // 3. Fall back to /v2/me (legacy r_liteprofile scope)
     const meResp = await axios.get(`${LINKEDIN_API}/v2/me`, {
       headers: { Authorization: `Bearer ${ctx.accessToken}` },
       validateStatus: () => true,
@@ -111,7 +120,7 @@ export class LinkedInPlatform implements SocialPlatform {
     return id ? `urn:li:person:${id}` : null;
   }
 
-  // ── Text / link post ────────────────────────────────────────────────────────
+  // ── Text / link post ─────────────────────────────────────────────────────────
 
   private async _postText(
     authorUrn: string,
@@ -143,20 +152,28 @@ export class LinkedInPlatform implements SocialPlatform {
     return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
   }
 
-  // ── Image upload (new LinkedIn Images API) ──────────────────────────────────
+  // ── Image upload (UGC Assets API — compatible with /v2/ugcPosts) ─────────────
+  // Uses POST /v2/assets?action=registerUpload which returns urn:li:digitalmediaAsset:...
+  // This is the correct approach for the "Share on LinkedIn" product.
 
-  private async _initializeImageUpload(
+  private async _registerAssetUpload(
     ownerUrn: string,
+    recipe: 'feedshare-image' | 'feedshare-video',
     ctx: PlatformContext,
-  ): Promise<{ uploadUrl: string; imageUrn: string } | null> {
+  ): Promise<{ uploadUrl: string; assetUrn: string } | null> {
     const resp = await axios.post(
-      `${LINKEDIN_API}/rest/images?action=initializeUpload`,
-      { initializeUploadRequest: { owner: ownerUrn } },
+      `${LINKEDIN_API}/v2/assets?action=registerUpload`,
+      {
+        registerUploadRequest: {
+          recipes: [`urn:li:digitalmediaRecipe:${recipe}`],
+          owner: ownerUrn,
+          serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }],
+        },
+      },
       {
         headers: {
           Authorization: `Bearer ${ctx.accessToken}`,
           'Content-Type': 'application/json',
-          'LinkedIn-Version': LINKEDIN_VERSION,
           'X-Restli-Protocol-Version': '2.0.0',
         },
         validateStatus: () => true,
@@ -164,13 +181,15 @@ export class LinkedInPlatform implements SocialPlatform {
       },
     );
     const data: any = resp.data || {};
-    const uploadUrl = String(data?.value?.uploadUrl || '').trim();
-    const imageUrn = String(data?.value?.image || '').trim();
-    if (!uploadUrl || !imageUrn) return null;
-    return { uploadUrl, imageUrn };
+    const uploadUrl = String(
+      data?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl || ''
+    ).trim();
+    const assetUrn = String(data?.value?.asset || '').trim();
+    if (!uploadUrl || !assetUrn) return null;
+    return { uploadUrl, assetUrn };
   }
 
-  private async _uploadImageBuffer(
+  private async _uploadAssetBuffer(
     uploadUrl: string,
     buffer: Buffer,
     mimeType: string,
@@ -180,17 +199,16 @@ export class LinkedInPlatform implements SocialPlatform {
       headers: {
         Authorization: `Bearer ${ctx.accessToken}`,
         'Content-Type': mimeType,
-        'LinkedIn-Version': LINKEDIN_VERSION,
       },
       validateStatus: () => true,
-      timeout: 30000,
+      timeout: 60000,
       maxBodyLength: Infinity,
     });
     return resp.status < 400;
   }
 
   private async _postImage(authorUrn: string, item: any, text: string, ctx: PlatformContext): Promise<PlatformPostResult> {
-    const init = await this._initializeImageUpload(authorUrn, ctx);
+    const init = await this._registerAssetUpload(authorUrn, 'feedshare-image', ctx);
     if (!init) return { status: 'failed', error: 'LinkedIn image upload initialization failed.' };
 
     let buffer: Buffer;
@@ -201,7 +219,7 @@ export class LinkedInPlatform implements SocialPlatform {
       return { status: 'failed', error: `Could not load image for LinkedIn: ${err instanceof Error ? err.message : 'fetch error'}` };
     }
 
-    const uploaded = await this._uploadImageBuffer(init.uploadUrl, buffer, mimeType, ctx);
+    const uploaded = await this._uploadAssetBuffer(init.uploadUrl, buffer, mimeType, ctx);
     if (!uploaded) return { status: 'failed', error: 'LinkedIn image binary upload failed.' };
 
     const body = {
@@ -211,7 +229,7 @@ export class LinkedInPlatform implements SocialPlatform {
         'com.linkedin.ugc.ShareContent': {
           shareCommentary: { text },
           shareMediaCategory: 'IMAGE',
-          media: [{ status: 'READY', media: init.imageUrn }],
+          media: [{ status: 'READY', media: init.assetUrn }],
         },
       },
       visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
@@ -229,19 +247,19 @@ export class LinkedInPlatform implements SocialPlatform {
   }
 
   private async _postMultiImage(authorUrn: string, media: any[], text: string, ctx: PlatformContext): Promise<PlatformPostResult> {
-    const imageUrns: string[] = [];
+    const assetUrns: string[] = [];
     for (const item of media) {
-      const init = await this._initializeImageUpload(authorUrn, ctx);
+      const init = await this._registerAssetUpload(authorUrn, 'feedshare-image', ctx);
       if (!init) continue;
       try {
         const { buffer, mimeType } = await fetchImageBuffer(item.url);
-        const ok = await this._uploadImageBuffer(init.uploadUrl, buffer, mimeType, ctx);
-        if (ok) imageUrns.push(init.imageUrn);
+        const ok = await this._uploadAssetBuffer(init.uploadUrl, buffer, mimeType, ctx);
+        if (ok) assetUrns.push(init.assetUrn);
       } catch {
         // skip failed images; publish with whatever succeeded
       }
     }
-    if (!imageUrns.length) return { status: 'failed', error: 'No LinkedIn images uploaded successfully.' };
+    if (!assetUrns.length) return { status: 'failed', error: 'No LinkedIn images uploaded successfully.' };
 
     const body = {
       author: authorUrn,
@@ -250,7 +268,7 @@ export class LinkedInPlatform implements SocialPlatform {
         'com.linkedin.ugc.ShareContent': {
           shareCommentary: { text },
           shareMediaCategory: 'IMAGE',
-          media: imageUrns.map(urn => ({ status: 'READY', media: urn })),
+          media: assetUrns.map(urn => ({ status: 'READY', media: urn })),
         },
       },
       visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
@@ -267,7 +285,8 @@ export class LinkedInPlatform implements SocialPlatform {
     return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
   }
 
-  // ── Video upload (new LinkedIn Videos API) ─────────────────────────────────
+  // ── Video upload (UGC Assets API — compatible with /v2/ugcPosts) ─────────────
+  // Uses POST /v2/assets?action=registerUpload with feedshare-video recipe.
 
   private async _postVideo(authorUrn: string, item: any, text: string, ctx: PlatformContext): Promise<PlatformPostResult> {
     let videoBuffer: Buffer;
@@ -278,81 +297,12 @@ export class LinkedInPlatform implements SocialPlatform {
       return { status: 'failed', error: `Could not load video for LinkedIn: ${err instanceof Error ? err.message : 'fetch error'}` };
     }
 
-    // Initialize upload via new Videos API
-    const initResp = await axios.post(
-      `${LINKEDIN_API}/rest/videos?action=initializeUpload`,
-      {
-        initializeUploadRequest: {
-          owner: authorUrn,
-          fileSizeBytes: videoBuffer.length,
-          uploadCaptions: false,
-          uploadThumbnail: false,
-        },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${ctx.accessToken}`,
-          'Content-Type': 'application/json',
-          'LinkedIn-Version': LINKEDIN_VERSION,
-          'X-Restli-Protocol-Version': '2.0.0',
-        },
-        validateStatus: () => true,
-        timeout: 15000,
-      },
-    );
-    const initData: any = initResp.data || {};
-    if (initResp.status >= 400 || !initData?.value?.uploadInstructions?.length) {
-      return {
-        status: 'failed',
-        error: initData?.message || `LinkedIn video upload init failed (${initResp.status})`,
-        retryable: isRetryableStatus(initResp.status),
-      };
-    }
-    const videoUrn = String(initData.value.video || '').trim();
-    const uploadToken = String(initData.value.uploadToken || '').trim();
-    const instructions: Array<{ uploadUrl: string; firstByte: number; lastByte: number }> =
-      initData.value.uploadInstructions || [];
+    const init = await this._registerAssetUpload(authorUrn, 'feedshare-video', ctx);
+    if (!init) return { status: 'failed', error: 'LinkedIn video upload initialization failed.' };
 
-    // Upload each chunk (single-chunk for most files; multi-chunk for large files)
-    for (const instruction of instructions) {
-      const chunk = videoBuffer.slice(instruction.firstByte, instruction.lastByte + 1);
-      const uploadResp = await axios.put(instruction.uploadUrl, chunk, {
-        headers: {
-          Authorization: `Bearer ${ctx.accessToken}`,
-          'Content-Type': 'application/octet-stream',
-          'LinkedIn-Version': LINKEDIN_VERSION,
-        },
-        validateStatus: () => true,
-        timeout: 120000,
-        maxBodyLength: Infinity,
-      });
-      if (uploadResp.status >= 400) {
-        return { status: 'failed', error: `LinkedIn video chunk upload failed (${uploadResp.status})` };
-      }
-    }
+    const uploaded = await this._uploadAssetBuffer(init.uploadUrl, videoBuffer, 'video/mp4', ctx);
+    if (!uploaded) return { status: 'failed', error: 'LinkedIn video binary upload failed.' };
 
-    // Finalize upload
-    if (uploadToken) {
-      const finalResp = await axios.post(
-        `${LINKEDIN_API}/rest/videos?action=finalizeUpload`,
-        { finalizeUploadRequest: { video: videoUrn, uploadToken } },
-        {
-          headers: {
-            Authorization: `Bearer ${ctx.accessToken}`,
-            'Content-Type': 'application/json',
-            'LinkedIn-Version': LINKEDIN_VERSION,
-            'X-Restli-Protocol-Version': '2.0.0',
-          },
-          validateStatus: () => true,
-          timeout: 15000,
-        },
-      );
-      if (finalResp.status >= 400) {
-        return { status: 'failed', error: `LinkedIn video finalize failed (${finalResp.status})` };
-      }
-    }
-
-    // Post with video URN
     const body = {
       author: authorUrn,
       lifecycleState: 'PUBLISHED',
@@ -360,7 +310,7 @@ export class LinkedInPlatform implements SocialPlatform {
         'com.linkedin.ugc.ShareContent': {
           shareCommentary: { text },
           shareMediaCategory: 'VIDEO',
-          media: [{ status: 'READY', media: videoUrn }],
+          media: [{ status: 'READY', media: init.assetUrn }],
         },
       },
       visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
@@ -377,7 +327,7 @@ export class LinkedInPlatform implements SocialPlatform {
     return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
   }
 
-  // ── Analytics ──────────────────────────────────────────────────────────────
+  // ── Analytics ───────────────────────────────────────────────────────────────
 
   async getPostAnalytics(postId: string, ctx: PlatformContext): Promise<AnalyticsResult> {
     try {
@@ -410,7 +360,7 @@ export class LinkedInPlatform implements SocialPlatform {
     }
   }
 
-  // ── Token refresh ──────────────────────────────────────────────────────────
+  // ── Token refresh ───────────────────────────────────────────────────────────
 
   async refreshToken(ctx: PlatformContext): Promise<TokenRefreshResult> {
     try {
@@ -446,7 +396,7 @@ export class LinkedInPlatform implements SocialPlatform {
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────────────────
 
   private _ugcHeaders(accessToken: string): Record<string, string> {
     return {
