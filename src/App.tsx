@@ -133,15 +133,19 @@ function App() {
 
 
   useEffect(() => {
+    // Use localStorage (not sessionStorage) so the flag survives cross-origin
+    // OAuth redirects (LinkedIn/Facebook/etc.). sessionStorage is cleared by some
+    // browsers (Safari, Firefox strict mode) after navigating to an external domain
+    // and back, causing auth_token to be wiped before OAuthCallback can read it.
     const resetFlag = 'force_auth_reset_v7';
-    if (sessionStorage.getItem(resetFlag) === '1') {
+    if (localStorage.getItem(resetFlag) === '1') {
       return;
     }
 
     localStorage.removeItem('auth_session');
     localStorage.removeItem('auth_token');
     clearStoredUser();
-    sessionStorage.setItem(resetFlag, '1');
+    localStorage.setItem(resetFlag, '1');
   }, []);
 
   const getPageFromPath = useCallback((pathname: string): PageType | null => {
