@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Bold, Italic, List, ListOrdered, Quote, Code, Image as ImageIcon, Heading1, Heading2, Heading3, Undo2, Redo2 } from 'lucide-react';
+import { mediaService } from '../services/mediaService';
+import { compressImage } from '../utils/imageCompression';
 
 interface RichTextEditorProps {
   value: string;
@@ -47,12 +49,28 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const url = event.target?.result as string;
-          editor.chain().focus().setImage({ src: url }).run();
-        };
-        reader.readAsDataURL(file);
+        try {
+          const compressed = await compressImage(file);
+          const uploaded = await mediaService.upload({
+            url: compressed.url,
+            thumbnail_url: compressed.thumbnail_url,
+            file_name: `post-inline-${Date.now()}-${file.name}`,
+            original_name: file.name,
+            file_size: compressed.file_size,
+            file_type: compressed.file_type,
+            width: compressed.width,
+            height: compressed.height,
+            force: true,
+          });
+          editor.chain().focus().setImage({ src: uploaded.url }).run();
+        } catch (error) {
+          const duplicate = error as Error & { isDuplicate?: boolean; existingImage?: { url?: string } };
+          if (duplicate?.isDuplicate && duplicate.existingImage?.url) {
+            editor.chain().focus().setImage({ src: duplicate.existingImage.url }).run();
+            return;
+          }
+          console.error('Inline image upload failed:', error);
+        }
       }
     };
     input.click();

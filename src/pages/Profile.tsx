@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { AppUser, normalizeUser } from '../utils/userSession';
 import { blogService, type BlogPost } from '../services/blogService';
+import { mediaService } from '../services/mediaService';
+import { compressImage } from '../utils/imageCompression';
 
 type ProfileProps = {
   currentUser: AppUser | null;
@@ -70,19 +72,12 @@ function toProfileForm(user: AppUser | null): ProfileForm {
   };
 }
 
-const readImageFile = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.readAsDataURL(file);
-  });
-
 function Profile({ currentUser, onUserUpdated }: ProfileProps) {
   const [form, setForm] = useState<ProfileForm>(() => toProfileForm(currentUser));
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [uploadingField, setUploadingField] = useState<'avatar' | 'cover' | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const [recentPosts, setRecentPosts] = useState<BlogPost[]>([]);
@@ -124,10 +119,31 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
     if (!file) return;
 
     try {
-      const result = await readImageFile(file);
-      handleChange(field, result);
+      setUploadingField(field);
+      const compressed = await compressImage(file);
+      const uploadedName = `${field}-${Date.now()}-${file.name}`;
+      const saved = await mediaService.upload({
+        url: compressed.url,
+        thumbnail_url: compressed.thumbnail_url,
+        file_name: uploadedName,
+        original_name: file.name,
+        file_size: compressed.file_size,
+        file_type: compressed.file_type,
+        width: compressed.width,
+        height: compressed.height,
+        force: true,
+      });
+      handleChange(field, saved.url);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to process image');
+      const duplicate = error as Error & { isDuplicate?: boolean; existingImage?: { url?: string } };
+      if (duplicate?.isDuplicate && duplicate.existingImage?.url) {
+        handleChange(field, duplicate.existingImage.url);
+      } else {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to upload image');
+      }
+    } finally {
+      setUploadingField(null);
+      event.target.value = '';
     }
   };
 
@@ -242,7 +258,7 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
                 className="absolute right-5 top-5 inline-flex items-center gap-2 rounded-2xl bg-white/90 px-4 py-2 text-sm font-semibold text-slate-800 backdrop-blur"
               >
                 <ImageIcon size={16} />
-                Change cover
+                {uploadingField === 'cover' ? 'Uploading…' : 'Change cover'}
               </button>
             </div>
 
@@ -302,11 +318,11 @@ function Profile({ currentUser, onUserUpdated }: ProfileProps) {
                     onClick={() => avatarInputRef.current?.click()}
                     className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700"
                   >
-                    Edit photo
+                    {uploadingField === 'avatar' ? 'Uploading…' : 'Edit photo'}
                   </button>
                   <button
                     type="submit"
-                    disabled={isSaving}
+                    disabled={isSaving || uploadingField !== null}
                     className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                   >
                     <Save size={16} />
