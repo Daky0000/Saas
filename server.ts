@@ -9676,10 +9676,17 @@ async function publishToplatform(
     };
     const maxLen = maxLenByPlatform[platformId] || 3000;
     const customTemplate = String(options?.template || '').trim();
-    const fallbackCaption = String(post.excerpt || '').trim() || String(post.title || '').trim();
+    const title = String(post.title || '').trim();
+    // Truncate excerpt to a concise social-friendly length; avoid dumping the full post body
+    const rawExcerpt = String(post.excerpt || '').trim();
+    const socialExcerpt = rawExcerpt.length > 280
+      ? rawExcerpt.slice(0, 277) + '…'
+      : rawExcerpt;
+    // Don't duplicate: only include excerpt if it differs from the title
+    const fallbackCaption = socialExcerpt && socialExcerpt !== title ? socialExcerpt : '';
     const fallbackHashtags = toHashtags((post as any).tag_names);
     const fallbackTextParts = [
-      String(post.title || '').trim(),
+      title,
       fallbackCaption,
       fallbackHashtags,
       postUrl,
