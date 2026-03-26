@@ -98,26 +98,26 @@ export class LinkedInPlatform implements SocialPlatform {
     const helpers = (ctx.helpers || {}) as LinkedInHelpers;
     if (helpers.resolveAuthorUrn) return helpers.resolveAuthorUrn(ctx);
 
-    // 2. Try OpenID Connect userinfo (works with openid/profile scopes)
-    const userinfoResp = await axios.get(`${LINKEDIN_API}/v2/userinfo`, {
-      headers: { Authorization: `Bearer ${ctx.accessToken}` },
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (userinfoResp.status < 400) {
-      const sub = String((userinfoResp.data as any)?.sub || '').trim();
-      if (sub) return `urn:li:person:${sub}`;
-    }
-
-    // 3. Fall back to /v2/me (legacy r_liteprofile scope)
+    // 2. Primary: /v2/me (r_liteprofile — standard "Share on LinkedIn" scope)
     const meResp = await axios.get(`${LINKEDIN_API}/v2/me`, {
       headers: { Authorization: `Bearer ${ctx.accessToken}` },
       validateStatus: () => true,
       timeout: 15000,
     });
-    if (meResp.status >= 400) return null;
-    const id = String((meResp.data as any)?.id || '').trim();
-    return id ? `urn:li:person:${id}` : null;
+    if (meResp.status < 400) {
+      const id = String((meResp.data as any)?.id || '').trim();
+      if (id) return `urn:li:person:${id}`;
+    }
+
+    // 3. Fallback: /v2/userinfo (OpenID Connect, for apps with openid/profile scopes)
+    const userinfoResp = await axios.get(`${LINKEDIN_API}/v2/userinfo`, {
+      headers: { Authorization: `Bearer ${ctx.accessToken}` },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    if (userinfoResp.status >= 400) return null;
+    const sub = String((userinfoResp.data as any)?.sub || '').trim();
+    return sub ? `urn:li:person:${sub}` : null;
   }
 
   // ── Text / link post ─────────────────────────────────────────────────────────
