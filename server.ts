@@ -7709,10 +7709,10 @@ app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
       }
     );
     const aclData: any = aclResp.data || {};
-    if (aclResp.status === 403) {
-      warning = 'Reconnect LinkedIn to grant company page permissions before selecting a page.';
-    } else if (aclResp.status >= 400) {
-      warning = aclData?.message || `LinkedIn pages lookup failed (${aclResp.status})`;
+    if (aclResp.status >= 400) {
+      // Any error (403 = no org scope, 400 = invalid params for scope) means the token
+      // doesn't have organization permissions. Silently skip — standard "Share on LinkedIn"
+      // apps don't include org scopes, so this is expected and not an error to surface.
     } else {
       const organizationIds = Array.from(
         new Set(
