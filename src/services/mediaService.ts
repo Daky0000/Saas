@@ -84,7 +84,9 @@ export const mediaService = {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     const data = await res.json();
-    return (data.images as MediaImage[]) ?? [];
+    // Ensure we only return user-owned images (filter out any admin images that might be included)
+    const images = (data.images as MediaImage[]) ?? [];
+    return images.filter(img => !img.user_id || img.category !== 'admin');
   },
 
   async update(
