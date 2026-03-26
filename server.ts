@@ -9655,7 +9655,20 @@ async function publishToplatform(
     const platformName = PLATFORM_NAMES[platformId] || platformId;
 
     const postUrl = buildPostUrl(post);
-    const featuredImage = String(post.social_image || post.featured_image || '').trim();
+    const rawFeaturedImage = String(post.social_image || post.featured_image || '').trim();
+    // Resolve relative image paths to absolute so external platforms (Facebook, etc.) can fetch them
+    const featuredImage = (() => {
+      if (!rawFeaturedImage) return '';
+      if (/^https?:\/\//i.test(rawFeaturedImage)) return rawFeaturedImage;
+      // Relative URL — prepend the server's public base URL
+      const serverBase = String(
+        process.env.BACKEND_PUBLIC_URL ||
+        process.env.PUBLIC_API_URL ||
+        process.env.VITE_API_BASE_URL ||
+        'https://contentflow-api-production.up.railway.app'
+      ).replace(/\/$/, '');
+      return `${serverBase}${rawFeaturedImage.startsWith('/') ? '' : '/'}${rawFeaturedImage}`;
+    })();
 
     let author = '';
     try {
@@ -9918,16 +9931,6 @@ async function publishToplatform(
         } : undefined,
         media,
       };
-
-      // const validation = facebookPagesPlatform.validate(facebookPost);
-      // if (!validation.ok) {
-      //   return { status: 'failed', error: validation.error };
-      // }
-
-      // const validation = facebookPagesPlatform.validate(facebookPost);
-      // if (!validation.ok) {
-      //   return { status: 'failed', error: validation.error };
-      // }
 
       await acquirePlatformSlot('facebook');
       const result = await facebookPagesPlatform.post(facebookPost, {
