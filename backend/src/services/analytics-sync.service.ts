@@ -18,10 +18,13 @@ export class AnalyticsSyncService {
           30,
           true
         );
-        await AnalyticsService.aggregateDailyMetrics(
-          integration.id,
-          new Date()
-        );
+        await logIntegrationEvent({
+          userId,
+          integrationId: integration.integrationId,
+          userIntegrationId: integration.id,
+          eventType: "analytics_sync",
+          status: "success",
+        });
       } catch (error: any) {
         await logIntegrationEvent({
           userId,

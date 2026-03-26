@@ -129,7 +129,9 @@ export const startScheduler = () => {
     }
   });
 
-  cron.schedule("0 2 * * *", async () => {
+  // Sync analytics every 6 hours instead of once daily at 2AM,
+  // so data is never more than 6 hours stale.
+  cron.schedule("0 */6 * * *", async () => {
     try {
       const agencies = await prisma.agency.findMany({ include: { users: true } });
       for (const agency of agencies) {

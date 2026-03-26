@@ -43,6 +43,7 @@ export default function Analytics() {
   const [dashboard, setDashboard] = useState<BlogAnalyticsDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [customStart, setCustomStart] = useState('');
@@ -178,6 +179,21 @@ export default function Analytics() {
     setQuery((current) => ({ ...current }));
   };
 
+  const handleSyncAnalytics = async () => {
+    setSyncing(true);
+    setError(null);
+    try {
+      await blogAnalyticsService.syncAnalytics();
+      // Reload data after sync completes
+      setRefreshing(true);
+      setQuery((current) => ({ ...current }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleExport = async () => {
     setExporting(true);
     try {
@@ -224,6 +240,17 @@ export default function Analytics() {
               </option>
             ))}
           </select>
+
+          <button
+            type="button"
+            onClick={handleSyncAnalytics}
+            disabled={syncing || loading}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title="Pull fresh metrics from connected platforms"
+          >
+            {syncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+            Sync
+          </button>
 
           <button
             type="button"
@@ -277,6 +304,12 @@ export default function Analytics() {
             </button>
           </div>
         </div>
+      )}
+
+      {dashboard?.lastSyncedAt && (
+        <p className="text-xs text-slate-400">
+          Analytics last synced: {new Date(dashboard.lastSyncedAt).toLocaleString()}
+        </p>
       )}
 
       {error && (
