@@ -5456,7 +5456,9 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // Do NOT add openid/profile/email (OpenID Connect) or org scopes — those require separate LinkedIn
   // product approvals and will cause unauthorized_scope_error on standard apps.
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'w_member_social r_liteprofile r_emailaddress', idField: 'clientId' },
-  twitter:   { authUrl: 'https://x.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read media.write offline.access', idField: 'clientId' },
+  // media.write is NOT a standard OAuth 2.0 scope — requesting it causes Twitter to reject the auth URL entirely.
+  // tweet.write is sufficient for posting tweets and uploading media via the v1.1 media upload endpoint.
+  twitter:   { authUrl: 'https://x.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
