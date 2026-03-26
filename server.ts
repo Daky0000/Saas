@@ -703,6 +703,11 @@ async function ensureDatabase() {
     );
   `);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'user'`);
+  // Fix: non-admin users could previously self-assign category='admin' via upload body.
+  // Reset all non-admin-owned rows that were incorrectly marked as 'admin' shared assets.
+  await pool.query(
+    `UPDATE media_images SET category='user' WHERE category='admin' AND user_id NOT IN (SELECT id FROM users WHERE role='admin')`
+  ).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS alt_text TEXT DEFAULT ''`).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS caption TEXT DEFAULT ''`).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => undefined);
@@ -7383,7 +7388,9 @@ app.post('/api/media/upload', async (req: Request, res: Response) => {
       }
     }
     const id = randomUUID();
-    const imgCategory = category === 'admin' ? 'admin' : 'user';
+    // Always store as 'user' on upload. Admins promote to 'admin' category separately
+    // via PATCH /api/admin/media/:id/category (which enforces admin auth).
+    const imgCategory = 'user';
     const { rows } = await pool!.query(
       `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in, category)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'{}','[]',$11) RETURNING *`,
