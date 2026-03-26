@@ -2886,25 +2886,42 @@ async function exchangeLinkedInCode(code: string, req?: Request) {
     timeout: 15000,
   });
   if (response.status >= 400) {
-    throw new Error(`LinkedIn token exchange failed (${response.status})`);
+    const errBody: any = response.data || {};
+    const detail = errBody?.error_description || errBody?.error || '';
+    throw new Error(`LinkedIn token exchange failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
   const tokenData: any = response.data || {};
   const accessToken = String(tokenData?.access_token || '').trim();
   if (accessToken) {
     try {
-      // Use /v2/me (works with r_liteprofile scope)
-      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+      // Try OpenID Connect /v2/userinfo first (works with openid/profile scopes),
+      // then fall back to /v2/me (legacy r_liteprofile scope)
+      let linkedInId = '';
+      let fullName = '';
+      const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
         validateStatus: () => true,
         timeout: 15000,
       });
-      if (meResp.status < 400) {
-        const meData: any = meResp.data || {};
-        const linkedInId = String(meData?.id || '').trim();
-        const fullName = [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()].filter(Boolean).join(' ').trim();
-        if (linkedInId) { tokenData.user_id = linkedInId; tokenData.id = linkedInId; tokenData.sub = linkedInId; }
-        if (fullName) tokenData.name = fullName;
+      if (userinfoResp.status < 400) {
+        const ud: any = userinfoResp.data || {};
+        linkedInId = String(ud?.sub || '').trim();
+        fullName = String(ud?.name || '').trim() || [String(ud?.given_name || ''), String(ud?.family_name || '')].filter(Boolean).join(' ').trim();
       }
+      if (!linkedInId) {
+        const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (meResp.status < 400) {
+          const meData: any = meResp.data || {};
+          linkedInId = String(meData?.id || '').trim();
+          fullName = fullName || [String(meData?.localizedFirstName || ''), String(meData?.localizedLastName || '')].filter(Boolean).join(' ').trim();
+        }
+      }
+      if (linkedInId) { tokenData.user_id = linkedInId; tokenData.id = linkedInId; tokenData.sub = linkedInId; }
+      if (fullName) tokenData.name = fullName;
     } catch {
       // best-effort enrichment; token can still be stored without profile data
     }
@@ -5351,8 +5368,9 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_metadata,read_insights', idField: 'appId' },
-  // LinkedIn scopes are space-separated
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile r_emailaddress w_member_social r_organization_social w_organization_social rw_organization_admin', idField: 'clientId' },
+  // LinkedIn scopes are space-separated. openid/profile/email are the modern OpenID Connect scopes
+  // (r_liteprofile/r_emailaddress are deprecated for new apps). Org scopes require LinkedIn Partner Program approval.
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'openid profile email w_member_social r_organization_social w_organization_social rw_organization_admin', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
@@ -7625,22 +7643,35 @@ app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
     let profileName = String(conn?.account_name || conn?.token_data?.name || '').trim();
 
     if (!personId || !profileName) {
-      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+      // Try OpenID Connect /v2/userinfo first (openid/profile scopes), then /v2/me (legacy)
+      const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
         validateStatus: () => true,
         timeout: 15000,
       });
-      const meData: any = meResp.data || {};
-      if (meResp.status >= 400) {
-        const message = meData?.message || `LinkedIn profile lookup failed (${meResp.status})`;
-        return res.status(400).json({ success: false, error: message });
+      if (userinfoResp.status < 400) {
+        const ud: any = userinfoResp.data || {};
+        personId = personId || String(ud?.sub || '').trim();
+        profileName = profileName || String(ud?.name || '').trim() || [String(ud?.given_name || ''), String(ud?.family_name || '')].filter(Boolean).join(' ').trim();
       }
-      personId = String(meData?.id || '').trim() || personId;
-      profileName =
-        [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()]
-          .filter(Boolean)
-          .join(' ')
-          .trim() || profileName;
+      if (!personId) {
+        const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const meData: any = meResp.data || {};
+        if (meResp.status >= 400) {
+          const message = meData?.message || `LinkedIn profile lookup failed (${meResp.status})`;
+          return res.status(400).json({ success: false, error: message });
+        }
+        personId = String(meData?.id || '').trim() || personId;
+        profileName = profileName ||
+          [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+      }
     }
 
     if (!personId) {
@@ -8896,14 +8927,26 @@ async function markSocialAccountNeedsReapproval(params: {
 
 async function resolveLinkedInAuthorUrn(params: { userId: string; accessToken: string }) {
   if (!pool) return null;
-  const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+  let meId = '';
+  // Try OpenID Connect userinfo first, fall back to /v2/me
+  const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
     headers: { Authorization: `Bearer ${params.accessToken}` },
     validateStatus: () => true,
     timeout: 15000,
   });
-  if (meResp.status >= 400) return null;
-  const meData: any = meResp.data || {};
-  const meId = String(meData?.id || '').trim();
+  if (userinfoResp.status < 400) {
+    meId = String((userinfoResp.data as any)?.sub || '').trim();
+  }
+  if (!meId) {
+    const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+      headers: { Authorization: `Bearer ${params.accessToken}` },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    if (meResp.status >= 400) return null;
+    const meData: any = meResp.data || {};
+    meId = String(meData?.id || '').trim();
+  }
   if (!meId) return null;
 
   try {
