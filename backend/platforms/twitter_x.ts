@@ -1,4 +1,5 @@
 import axios from 'axios';
+import FormData from 'form-data';
 import type {
   AnalyticsResult,
   PlatformContext,
@@ -89,7 +90,7 @@ export class TwitterXPlatform implements SocialPlatform {
       const mediaId: string = String((initResp.data as any)?.media_id_string || '');
       if (!mediaId) return null;
 
-      // APPEND — upload in 5 MB chunks
+      // APPEND — upload in 5 MB chunks using Node.js form-data
       const chunkSize = 5 * 1024 * 1024;
       let segmentIndex = 0;
       for (let offset = 0; offset < totalBytes; offset += chunkSize) {
@@ -98,13 +99,9 @@ export class TwitterXPlatform implements SocialPlatform {
         appendForm.append('command', 'APPEND');
         appendForm.append('media_id', mediaId);
         appendForm.append('segment_index', String(segmentIndex));
-        appendForm.append(
-          'media',
-          new Blob([chunk], { type: mimeType }),
-          `chunk_${segmentIndex}`
-        );
+        appendForm.append('media', chunk, { filename: `chunk_${segmentIndex}`, contentType: mimeType });
         const appendResp = await axios.post(MEDIA_UPLOAD_URL, appendForm, {
-          headers: authHeader,
+          headers: { ...authHeader, ...appendForm.getHeaders() },
           validateStatus: () => true,
           timeout: 60000,
         });
