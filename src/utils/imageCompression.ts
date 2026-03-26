@@ -19,6 +19,28 @@ function dataUrlSize(dataUrl: string): number {
 }
 
 export async function compressImage(file: File): Promise<CompressedImage> {
+  // SVGs cannot be reliably drawn onto a canvas (no intrinsic dimensions,
+  // cross-origin taint rules). Store them as-is as a base64 data URL.
+  if (file.type === 'image/svg+xml') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read SVG file'));
+      reader.onload = (ev) => {
+        const url = ev.target?.result as string;
+        if (!url) return reject(new Error('SVG read returned empty'));
+        resolve({
+          url,
+          thumbnail_url: url,
+          width: 0,
+          height: 0,
+          file_type: 'image/svg+xml',
+          file_size: dataUrlSize(url),
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read file'));
@@ -28,6 +50,7 @@ export async function compressImage(file: File): Promise<CompressedImage> {
       img.onerror = () => reject(new Error('Invalid image'));
       img.onload = () => {
         const { naturalWidth: w, naturalHeight: h } = img;
+        if (!w || !h) return reject(new Error('Image has zero dimensions'));
 
         // Compute scaled dimensions
         let sw = w, sh = h;
