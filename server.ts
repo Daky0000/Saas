@@ -3219,6 +3219,18 @@ async function getEnabledPlatformSlugs(): Promise<string[]> {
   return result.rows.map((row: any) => String(row.platform || '').toLowerCase()).filter(Boolean);
 }
 
+function isOAuthClientSecretRequired(platform: string): boolean {
+  const slug = String(platform || '').trim().toLowerCase();
+  return (
+    slug === 'instagram' ||
+    slug === 'facebook' ||
+    slug === 'threads' ||
+    slug === 'linkedin' ||
+    slug === 'tiktok' ||
+    slug === 'pinterest'
+  );
+}
+
 async function getVisibleUserPlatformSlugs(): Promise<string[]> {
   if (!pool) return ['wordpress', 'mailchimp'];
 
@@ -3238,7 +3250,7 @@ async function getVisibleUserPlatformSlugs(): Promise<string[]> {
     }
 
     const clientId = String(cfg?.[meta.idField] || '').trim();
-    const secretRequired = slug === 'facebook' || slug === 'twitter' || slug === 'linkedin' || slug === 'tiktok' || slug === 'threads' || slug === 'pinterest';
+    const secretRequired = isOAuthClientSecretRequired(slug);
     const secretValue = String(cfg?.clientSecret || cfg?.appSecret || '').trim();
     const configured = Boolean(clientId && (!secretRequired || secretValue));
     if ((Boolean(row.enabled) || configured) && configured) {
@@ -5181,7 +5193,7 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     if (meta) {
       const clientId = String((normalizedConfig as any)[meta.idField] || '').trim();
       const redirectUri = String((normalizedConfig as any).redirectUri || '').trim();
-      const secretRequired = platform === 'facebook' || platform === 'twitter' || platform === 'linkedin' || platform === 'tiktok' || platform === 'threads' || platform === 'pinterest';
+      const secretRequired = isOAuthClientSecretRequired(platform);
       const secretValue = String((normalizedConfig as any).clientSecret || (normalizedConfig as any).appSecret || '').trim();
       const isFullyConfigured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
       // If credentials are now valid, auto-enable regardless of request
@@ -5458,7 +5470,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'w_member_social r_liteprofile r_emailaddress', idField: 'clientId' },
   // media.write is NOT a standard OAuth 2.0 scope — requesting it causes Twitter to reject the auth URL entirely.
   // tweet.write is sufficient for posting tweets and uploading media via the v1.1 media upload endpoint.
-  twitter:   { authUrl: 'https://x.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
+  twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
@@ -5553,14 +5565,7 @@ app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) =
 
     const cfg = await getPlatformConfig(platform);
     const clientId = cfg[meta.idField];
-    const secretRequired =
-      platform === 'instagram' ||
-      platform === 'facebook' ||
-      platform === 'threads' ||
-      platform === 'twitter' ||
-      platform === 'linkedin' ||
-      platform === 'tiktok' ||
-      platform === 'pinterest';
+    const secretRequired = isOAuthClientSecretRequired(platform);
     const secretValue =
       platform === 'instagram' || platform === 'facebook' || platform === 'threads'
         ? cfg.appSecret
@@ -6099,7 +6104,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
         if (meta) {
           const clientId = String((cfg as any)[meta.idField] || '').trim();
           const redirectUri = resolveOAuthRedirectUri(slug, String((cfg as any).redirectUri || ''), req);
-          const secretRequired = slug === 'facebook' || slug === 'twitter' || slug === 'linkedin' || slug === 'tiktok' || slug === 'threads' || slug === 'pinterest';
+          const secretRequired = isOAuthClientSecretRequired(slug);
           const secretValue = String((cfg as any).clientSecret || (cfg as any).appSecret || '').trim();
           configured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
         }
@@ -11494,7 +11499,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
