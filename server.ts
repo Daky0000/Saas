@@ -7404,7 +7404,8 @@ app.get('/api/media', async (req: Request, res: Response) => {
   const { search, tag } = req.query as { search?: string; tag?: string };
   try {
     const params: unknown[] = [user.userId];
-    let query = 'SELECT * FROM media_images WHERE user_id = $1';
+    // Include admin-shared media assets so users can access platform-provided library content too.
+    let query = "SELECT * FROM media_images WHERE (user_id = $1 OR category = 'admin')";
     if (search) { query += ` AND (file_name ILIKE $${params.length + 1} OR original_name ILIKE $${params.length + 1})`; params.push(`%${search}%`); }
     if (tag) { query += ` AND $${params.length + 1} = ANY(tags)`; params.push(tag); }
     query += ' ORDER BY upload_date DESC';
