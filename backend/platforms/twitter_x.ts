@@ -10,6 +10,7 @@ import type {
 } from './types.js';
 
 const TWITTER_MAX_TEXT = 280;
+const MEDIA_UPLOAD_URL = 'https://upload.twitter.com/1.1/media/upload.json';
 
 type TwitterHelpers = {
   getGlobalWriteCount?: () => number;
@@ -48,6 +49,104 @@ export class TwitterXPlatform implements SocialPlatform {
     return { ok: true };
   }
 
+  // Upload a single media item using the chunked INIT/APPEND/FINALIZE flow
+  private async _uploadMedia(
+    mediaUrl: string,
+    mimeType: string,
+    accessToken: string
+  ): Promise<string | null> {
+    try {
+      // Fetch the media as a buffer
+      const fetchResp = await axios.get(mediaUrl, {
+        responseType: 'arraybuffer',
+        timeout: 60000,
+        validateStatus: () => true,
+      });
+      if (fetchResp.status >= 400) return null;
+      const buffer = Buffer.from(fetchResp.data as ArrayBuffer);
+      const totalBytes = buffer.byteLength;
+
+      // Determine media_category based on mime type
+      const isVideo = mimeType.startsWith('video/');
+      const isGif = mimeType === 'image/gif';
+      const mediaCategory = isVideo ? 'tweet_video' : isGif ? 'tweet_gif' : 'tweet_image';
+
+      const authHeader = { Authorization: `Bearer ${accessToken}` };
+
+      // INIT
+      const initForm = new URLSearchParams({
+        command: 'INIT',
+        total_bytes: String(totalBytes),
+        media_type: mimeType,
+        media_category: mediaCategory,
+      });
+      const initResp = await axios.post(MEDIA_UPLOAD_URL, initForm.toString(), {
+        headers: { ...authHeader, 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (initResp.status >= 400) return null;
+      const mediaId: string = String((initResp.data as any)?.media_id_string || '');
+      if (!mediaId) return null;
+
+      // APPEND — upload in 5 MB chunks
+      const chunkSize = 5 * 1024 * 1024;
+      let segmentIndex = 0;
+      for (let offset = 0; offset < totalBytes; offset += chunkSize) {
+        const chunk = buffer.slice(offset, offset + chunkSize);
+        const appendForm = new FormData();
+        appendForm.append('command', 'APPEND');
+        appendForm.append('media_id', mediaId);
+        appendForm.append('segment_index', String(segmentIndex));
+        appendForm.append(
+          'media',
+          new Blob([chunk], { type: mimeType }),
+          `chunk_${segmentIndex}`
+        );
+        const appendResp = await axios.post(MEDIA_UPLOAD_URL, appendForm, {
+          headers: authHeader,
+          validateStatus: () => true,
+          timeout: 60000,
+        });
+        if (appendResp.status >= 400) return null;
+        segmentIndex++;
+      }
+
+      // FINALIZE
+      const finalizeForm = new URLSearchParams({ command: 'FINALIZE', media_id: mediaId });
+      const finalizeResp = await axios.post(MEDIA_UPLOAD_URL, finalizeForm.toString(), {
+        headers: { ...authHeader, 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (finalizeResp.status >= 400) return null;
+
+      // Poll STATUS if processing is needed (video/gif)
+      const finalData: any = finalizeResp.data || {};
+      if (finalData?.processing_info?.state === 'pending' || finalData?.processing_info?.state === 'in_progress') {
+        let checkAfterSecs = finalData.processing_info.check_after_secs ?? 2;
+        for (let attempts = 0; attempts < 20; attempts++) {
+          await new Promise((r) => setTimeout(r, checkAfterSecs * 1000));
+          const statusResp = await axios.get(MEDIA_UPLOAD_URL, {
+            params: { command: 'STATUS', media_id: mediaId },
+            headers: authHeader,
+            validateStatus: () => true,
+            timeout: 15000,
+          });
+          const statusData: any = statusResp.data || {};
+          const state = statusData?.processing_info?.state;
+          if (state === 'succeeded') break;
+          if (state === 'failed') return null;
+          checkAfterSecs = statusData?.processing_info?.check_after_secs ?? 3;
+        }
+      }
+
+      return mediaId;
+    } catch {
+      return null;
+    }
+  }
+
   async post(post: PostObject, ctx: PlatformContext): Promise<PlatformPostResult> {
     try {
       const helpers = (ctx.helpers || {}) as TwitterHelpers;
@@ -67,6 +166,22 @@ export class TwitterXPlatform implements SocialPlatform {
 
       const text = String(post?.content?.text || '').trim().slice(0, TWITTER_MAX_TEXT);
       const body: Record<string, any> = { text };
+
+      // Upload media if present (max 4 images or 1 video)
+      const mediaItems = Array.isArray(post.media) ? post.media.slice(0, 4) : [];
+      if (mediaItems.length > 0) {
+        const mediaIds: string[] = [];
+        for (const item of mediaItems) {
+          const url = (item as any)?.url || (item as any)?.src || '';
+          const mime = (item as any)?.mimeType || (item as any)?.mime_type || (item as any)?.type || 'image/jpeg';
+          if (!url) continue;
+          const mediaId = await this._uploadMedia(url, mime, ctx.accessToken);
+          if (mediaId) mediaIds.push(mediaId);
+        }
+        if (mediaIds.length > 0) {
+          body.media = { media_ids: mediaIds };
+        }
+      }
 
       const resp = await axios.post(
         'https://api.twitter.com/2/tweets',

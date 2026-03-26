@@ -2819,7 +2819,7 @@ async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?
     case 'instagram':
       return exchangeInstagramCode(code);
     case 'twitter':
-      return exchangeTwitterCode(code, codeVerifier);
+      return exchangeTwitterCode(code, codeVerifier, req);
     case 'linkedin':
       return exchangeLinkedInCode(code, req);
     case 'facebook':
@@ -2876,30 +2876,58 @@ async function exchangeInstagramCode(code: string) {
   return response.data;
 }
 
-async function exchangeTwitterCode(code: string, codeVerifier?: string) {
+async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Request) {
   const cfg = await getPlatformConfig('twitter');
   const clientId = cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '';
   const clientSecret = cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '';
-  const redirectUri = resolveOAuthRedirectUri('twitter', cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI);
+  const redirectUri = resolveOAuthRedirectUri('twitter', cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI, req);
 
   const data = new URLSearchParams({
     client_id: clientId,
-    ...(clientSecret ? { client_secret: clientSecret } : {}),
     code,
     grant_type: 'authorization_code',
     redirect_uri: redirectUri,
     code_verifier: (codeVerifier || cfg.codeVerifier || '').trim() || 'challenge',
   });
 
-  const response = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), {
+  // Twitter requires Basic auth (clientId:clientSecret) when a client secret is configured
+  const axiosCfg: any = {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
     timeout: 15000,
-  });
+  };
+  if (clientSecret) axiosCfg.auth = { username: clientId, password: clientSecret };
+
+  const response = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), axiosCfg);
   if (response.status >= 400) {
-    throw new Error(`Twitter token exchange failed (${response.status})`);
+    const errBody: any = response.data || {};
+    const detail = errBody?.error_description || errBody?.error || '';
+    throw new Error(`Twitter token exchange failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
-  return response.data;
+  const tokenData: any = response.data || {};
+
+  // Enrich with profile info so user_id and name are stored
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://api.twitter.com/2/users/me', {
+        params: { 'user.fields': 'id,name,username,profile_image_url' },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      if (meResp.status < 400) {
+        const u: any = meResp.data?.data || {};
+        if (u.id) { tokenData.user_id = u.id; tokenData.id = u.id; tokenData.sub = u.id; }
+        if (u.name) tokenData.name = u.name;
+        if (u.username) tokenData.username = u.username;
+        if (u.profile_image_url) tokenData.avatar_url = u.profile_image_url;
+      }
+    } catch {
+      // best-effort; token stored even without profile data
+    }
+  }
+  return tokenData;
 }
 
 async function exchangeLinkedInCode(code: string, req?: Request) {
@@ -5428,7 +5456,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // Do NOT add openid/profile/email (OpenID Connect) or org scopes — those require separate LinkedIn
   // product approvals and will cause unauthorized_scope_error on standard apps.
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'w_member_social r_liteprofile r_emailaddress', idField: 'clientId' },
-  twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
+  twitter:   { authUrl: 'https://x.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read media.write offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
