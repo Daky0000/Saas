@@ -7933,6 +7933,10 @@ app.get('/api/media', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.json({ success: true, images: [] });
   const { search, tag } = req.query as { search?: string; tag?: string };
   try {
+    await syncAllPersistedMediaForUser(user.userId).catch((error) => {
+      console.error('Media list sync error:', error);
+    });
+
     const params: unknown[] = [user.userId];
     // Strict user isolation — only return the requesting user's own images.
     // Admin-shared library assets are served separately via GET /api/media/admin-assets.
@@ -8054,6 +8058,12 @@ app.get('/api/admin/media', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.json({ success: true, images: [] });
   const { search, userId } = req.query as { search?: string; userId?: string };
   try {
+    if (userId) {
+      await syncAllPersistedMediaForUser(userId).catch((error) => {
+        console.error('Admin media list sync error:', error);
+      });
+    }
+
     const params: unknown[] = [];
     const where: string[] = [];
     if (userId) { where.push(`m.user_id = $${params.length + 1}`); params.push(userId); }
@@ -11454,7 +11464,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
