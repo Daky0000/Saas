@@ -7619,7 +7619,265 @@ app.patch('/api/admin/media/:id/category', async (req: Request, res: Response) =
   }
 });
 
-// TikTok domain verification
+// User: Audit images - shows all images and identifies missing registrations
+app.get('/api/media/audit', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.json({ success: true, audit: { media_images: 0, featured_images: 0, unregistered: [] } });
+  try {
+    // 1. Count images in media_images (should only show user's images)
+    const mediaCount = await pool!.query(
+      'SELECT COUNT(*) as count FROM media_images WHERE user_id = $1 AND category = $2',
+      [user.userId, 'user']
+    );
+    
+    // 2. Find all featured images in blog posts for this user
+    const featuredImages = await pool!.query(
+      'SELECT id, featured_image FROM blog_posts WHERE user_id = $1 AND featured_image IS NOT NULL AND featured_image != $2',
+      [user.userId, '']
+    );
+
+    // 3. Check which featured images are NOT in media_images table
+    const unregistered: any[] = [];
+    for (const post of featuredImages.rows) {
+      if (!post.featured_image) continue;
+      const found = await pool!.query(
+        'SELECT id FROM media_images WHERE url = $1 AND user_id = $2',
+        [post.featured_image, user.userId]
+      );
+      if (!found.rows.length) {
+        unregistered.push({
+          post_id: post.id,
+          featured_image: post.featured_image,
+          in_media_images: false
+        });
+      }
+    }
+
+    // 4. Get user avatar/cover if they exist
+    const userProfile = await pool!.query(
+      'SELECT avatar_url, cover_url FROM users WHERE id = $1',
+      [user.userId]
+    );
+    const profileImages: any[] = [];
+    if (userProfile.rows[0]?.avatar_url) {
+      profileImages.push({ type: 'avatar', url: userProfile.rows[0].avatar_url });
+    }
+    if (userProfile.rows[0]?.cover_url) {
+      profileImages.push({ type: 'cover', url: userProfile.rows[0].cover_url });
+    }
+
+    return res.json({
+      success: true,
+      audit: {
+        media_images_count: mediaCount.rows[0].count,
+        featured_images_count: featuredImages.rows.length,
+        unregistered_featured: unregistered,
+        profile_images: profileImages,
+        summary: `Total media: ${mediaCount.rows[0].count}, Featured posts: ${featuredImages.rows.length}, Unregistered featured: ${unregistered.length}`
+      }
+    });
+  } catch (err) {
+    console.error('media audit error:', err);
+    return res.status(500).json({ success: false, error: 'Audit failed' });
+  }
+});
+
+// User: Sync all images - registers missing featured images to media_images table
+app.post('/api/media/sync-all-images', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!hasDatabase()) return res.json({ success: true, synced: 0 });
+  try {
+    let synced = 0;
+
+    // Find all featured images for this user that aren't in media_images
+    const featuredImages = await pool!.query(
+      'SELECT id, featured_image FROM blog_posts WHERE user_id = $1 AND featured_image IS NOT NULL AND featured_image != $2',
+      [user.userId, '']
+    );
+
+    for (const post of featuredImages.rows) {
+      if (!post.featured_image) continue;
+      
+      // Check if already registered
+      const exists = await pool!.query(
+        'SELECT id FROM media_images WHERE url = $1 AND user_id = $2',
+        [post.featured_image, user.userId]
+      );
+      
+      if (!exists.rows.length) {
+        // Register the featured image
+        const id = randomUUID();
+        const fileName = `featured-post-${post.id.slice(0, 8)}.jpg`;
+        await pool!.query(
+          `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, url, thumbnail_url, tags, used_in, category)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"featured"}', '[]', $9)
+           ON CONFLICT (id) DO NOTHING`,
+          [id, user.userId, fileName, fileName, 0, 'image/jpeg', post.featured_image, post.featured_image, 'user']
+        );
+        synced++;
+        console.log(`[media-sync] Registered featured image from post ${post.id} for user ${user.userId}`);
+      }
+    }
+
+    return res.json({ success: true, synced, message: `Synced ${synced} featured images to media library` });
+  } catch (err) {
+    console.error('media sync error:', err);
+    return res.status(500).json({ success: false, error: 'Sync failed' });
+  }
+});
+
+// Admin: Verify media database integrity and clean up
+app.post('/api/admin/media/verify-integrity', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, issues: [] });
+  try {
+    const issues: any[] = [];
+
+    // Check 1: Find admin images that belong to regular users
+    const adminOwnedByUsers = await pool!.query(
+      `SELECT m.id, m.user_id, u.role FROM media_images m
+       JOIN users u ON m.user_id = u.id
+       WHERE m.category = 'admin' AND u.role != 'admin'`
+    );
+    if (adminOwnedByUsers.rows.length) {
+      issues.push({
+        type: 'category_mismatch',
+        count: adminOwnedByUsers.rows.length,
+        description: 'Found admin-category images owned by non-admin users',
+        ids: adminOwnedByUsers.rows.map((r: any) => r.id)
+      });
+    }
+
+    // Check 2: Find users with images where user_id doesn't match
+    const orphanedImages = await pool!.query(
+      `SELECT m.id, m.user_id FROM media_images m
+       WHERE m.user_id NOT IN (SELECT id FROM users)`
+    );
+    if (orphanedImages.rows.length) {
+      issues.push({
+        type: 'orphaned_images',
+        count: orphanedImages.rows.length,
+        description: 'Found images with non-existent user_id',
+        ids: orphanedImages.rows.map((r: any) => r.id)
+      });
+    }
+
+    // Check 3: Count images per user
+    const userImageStats = await pool!.query(
+      `SELECT u.id, u.username, COUNT(m.id) as image_count
+       FROM users u LEFT JOIN media_images m ON u.id = m.user_id AND m.category = 'user'
+       WHERE u.deleted_at IS NULL
+       GROUP BY u.id, u.username
+       HAVING COUNT(m.id) > 0
+       ORDER BY COUNT(m.id) DESC`
+    );
+
+    // Check 4: Find featured images not registered in media_images
+    const unregisteredFeatured = await pool!.query(
+      `SELECT DISTINCT bp.user_id, COUNT(*) as unregistered_count
+       FROM blog_posts bp
+       WHERE bp.featured_image IS NOT NULL AND bp.featured_image != ''
+       AND NOT EXISTS (
+         SELECT 1 FROM media_images m
+         WHERE m.url = bp.featured_image AND m.user_id = bp.user_id
+       )
+       GROUP BY bp.user_id`
+    );
+    if (unregisteredFeatured.rows.length) {
+      issues.push({
+        type: 'unregistered_featured_images',
+        count: unregisteredFeatured.rows.length,
+        description: 'Found featured images not registered in media_images',
+        details: unregisteredFeatured.rows
+      });
+    }
+
+    return res.json({
+      success: true,
+      integrity_check: {
+        timestamp: new Date().toISOString(),
+        total_users_with_images: userImageStats.rows.length,
+        user_image_stats: userImageStats.rows,
+        issues: issues.length > 0 ? issues : null,
+        summary: issues.length === 0 
+          ? 'No integrity issues found' 
+          : `Found ${issues.length} integrity issue(s)`
+      }
+    });
+  } catch (err) {
+    console.error('media integrity check error:', err);
+    return res.status(500).json({ success: false, error: 'Verification failed' });
+  }
+});
+
+// Admin: Auto-fix media database issues
+app.post('/api/admin/media/fix-integrity', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, fixed: 0 });
+  try {
+    let fixed = 0;
+
+    // Fix 1: Change admin-category images to user-category if owned by non-admins
+    const fixCategoryResult = await pool!.query(
+      `UPDATE media_images SET category = 'user'
+       WHERE category = 'admin' AND user_id NOT IN (SELECT id FROM users WHERE role = 'admin')
+       RETURNING id`
+    );
+    fixed += fixCategoryResult.rows.length;
+    if (fixCategoryResult.rows.length > 0) {
+      console.log(`[media-fix] Fixed category for ${fixCategoryResult.rows.length} images`);
+    }
+
+    // Fix 2: Delete orphaned images
+    const deleteOrphanResult = await pool!.query(
+      `DELETE FROM media_images WHERE user_id NOT IN (SELECT id FROM users) RETURNING id`
+    );
+    fixed += deleteOrphanResult.rows.length;
+    if (deleteOrphanResult.rows.length > 0) {
+      console.log(`[media-fix] Deleted ${deleteOrphanResult.rows.length} orphaned images`);
+    }
+
+    // Fix 3: Register unregistered featured images for all users
+    const featuredToRegister = await pool!.query(
+      `SELECT DISTINCT bp.user_id, bp.featured_image, bp.id
+       FROM blog_posts bp
+       WHERE bp.featured_image IS NOT NULL AND bp.featured_image != ''
+       AND NOT EXISTS (
+         SELECT 1 FROM media_images m
+         WHERE m.url = bp.featured_image AND m.user_id = bp.user_id
+       )`
+    );
+
+    for (const row of featuredToRegister.rows) {
+      const id = randomUUID();
+      const fileName = `featured-post-${row.id.slice(0, 8)}.jpg`;
+      await pool!.query(
+        `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, url, thumbnail_url, tags, used_in, category)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"featured"}', '[]', $9)
+         ON CONFLICT (id) DO NOTHING`,
+        [id, row.user_id, fileName, fileName, 0, 'image/jpeg', row.featured_image, row.featured_image, 'user']
+      );
+      fixed++;
+    }
+    if (featuredToRegister.rows.length > 0) {
+      console.log(`[media-fix] Registered ${featuredToRegister.rows.length} featured images`);
+    }
+
+    return res.json({ 
+      success: true, 
+      fixed,
+      message: `Fixed ${fixed} media integrity issues`
+    });
+  } catch (err) {
+    console.error('media fix integrity error:', err);
+    return res.status(500).json({ success: false, error: 'Fix failed' });
+  }
+});
+
 app.get('/tiktokGuHuKYUdxb13mmRk5PkdrDFlLEBosnIF.txt', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain');
   res.send('tiktok-developers-site-verification=GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF');

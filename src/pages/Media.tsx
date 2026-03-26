@@ -60,6 +60,24 @@ export default function Media() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Sync any featured images from posts that aren't yet in media library
+  useEffect(() => {
+    const syncImages = async () => {
+      try {
+        const response = await fetch('/api/media/sync-all-images', { method: 'POST' });
+        const data = await response.json();
+        if (data.synced && data.synced > 0) {
+          // Reload media list after sync
+          void load();
+        }
+      } catch (err) {
+        // Silent sync, don't interrupt user experience
+        console.debug('Image sync check completed');
+      }
+    };
+    void syncImages();
+  }, [load]);
+
   const allTags = Array.from(new Set(images.flatMap((i) => i.tags ?? []))).slice(0, 30);
 
   const flash = (msg: string) => { setSuccess(msg); setTimeout(() => setSuccess(''), 3000); };
