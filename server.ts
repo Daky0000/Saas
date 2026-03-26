@@ -5368,9 +5368,10 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_metadata,read_insights', idField: 'appId' },
-  // LinkedIn scopes are space-separated. openid/profile/email are the modern OpenID Connect scopes
-  // (r_liteprofile/r_emailaddress are deprecated for new apps). Org scopes require LinkedIn Partner Program approval.
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'openid profile email w_member_social r_organization_social w_organization_social rw_organization_admin', idField: 'clientId' },
+  // LinkedIn scopes are space-separated. openid/profile/email are modern OpenID Connect scopes.
+  // r_organization_social/w_organization_social/rw_organization_admin require LinkedIn Partner Program
+  // approval and must NOT be requested unless the app is approved for them.
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'openid profile email w_member_social', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
