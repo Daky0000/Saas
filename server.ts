@@ -2892,32 +2892,18 @@ async function exchangeLinkedInCode(code: string) {
   const accessToken = String(tokenData?.access_token || '').trim();
   if (accessToken) {
     try {
-      // Prefer OpenID Connect userinfo (returns sub reliably with openid scope)
-      const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
+      // Use /v2/me (works with r_liteprofile scope)
+      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
         headers: { Authorization: `Bearer ${accessToken}` },
         validateStatus: () => true,
         timeout: 15000,
       });
-      if (userinfoResp.status < 400) {
-        const ui: any = userinfoResp.data || {};
-        const sub = String(ui?.sub || '').trim();
-        const name = String(ui?.name || '').trim();
-        if (sub) { tokenData.sub = sub; tokenData.user_id = sub; tokenData.id = sub; }
-        if (name) tokenData.name = name;
-      } else {
-        // Fallback: legacy /v2/me
-        const meResp = await axios.get('https://api.linkedin.com/v2/me', {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          validateStatus: () => true,
-          timeout: 15000,
-        });
-        if (meResp.status < 400) {
-          const meData: any = meResp.data || {};
-          const linkedInId = String(meData?.id || '').trim();
-          const fullName = [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()].filter(Boolean).join(' ').trim();
-          if (linkedInId) { tokenData.user_id = linkedInId; tokenData.id = linkedInId; tokenData.sub = linkedInId; }
-          if (fullName) tokenData.name = fullName;
-        }
+      if (meResp.status < 400) {
+        const meData: any = meResp.data || {};
+        const linkedInId = String(meData?.id || '').trim();
+        const fullName = [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()].filter(Boolean).join(' ').trim();
+        if (linkedInId) { tokenData.user_id = linkedInId; tokenData.id = linkedInId; tokenData.sub = linkedInId; }
+        if (fullName) tokenData.name = fullName;
       }
     } catch {
       // best-effort enrichment; token can still be stored without profile data
@@ -5366,7 +5352,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_metadata,read_insights', idField: 'appId' },
   // LinkedIn scopes are space-separated
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'openid profile email w_member_social r_organization_social w_organization_social rw_organization_admin', idField: 'clientId' },
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile r_emailaddress w_member_social r_organization_social w_organization_social rw_organization_admin', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },

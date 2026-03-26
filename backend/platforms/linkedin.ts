@@ -100,18 +100,7 @@ export class LinkedInPlatform implements SocialPlatform {
     const helpers = (ctx.helpers || {}) as LinkedInHelpers;
     if (helpers.resolveAuthorUrn) return helpers.resolveAuthorUrn(ctx);
 
-    // 2. OpenID Connect userinfo (reliable `sub` field, requires openid scope)
-    const userinfoResp = await axios.get(`${LINKEDIN_API}/v2/userinfo`, {
-      headers: { Authorization: `Bearer ${ctx.accessToken}` },
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (userinfoResp.status < 400) {
-      const sub = String((userinfoResp.data as any)?.sub || '').trim();
-      if (sub) return `urn:li:person:${sub}`;
-    }
-
-    // 3. Legacy /v2/me fallback
+    // 2. Fetch from /v2/me (works with r_liteprofile scope)
     const meResp = await axios.get(`${LINKEDIN_API}/v2/me`, {
       headers: { Authorization: `Bearer ${ctx.accessToken}` },
       validateStatus: () => true,
