@@ -525,7 +525,7 @@ router.get(
       const previousStart = new Date(rangeStart.getTime() - previousRangeMs);
       const previousEnd = new Date(rangeStart.getTime() - 1);
 
-      const [currentPosts, previousPosts, platformMetrics, prevPlatformMetrics, futurePosts] =
+      const [currentPosts, previousPosts, platformMetrics, prevPlatformMetrics, futurePosts, lastSyncRecord] =
         await Promise.all([
           prisma.post.findMany({
             where: {
@@ -567,6 +567,11 @@ router.get(
               status: PostStatus.SCHEDULED,
               scheduledAt: { gt: new Date() },
             },
+          }),
+          prisma.platformDailyMetrics.findFirst({
+            where: { agencyId: req.agencyId! },
+            orderBy: { updatedAt: "desc" },
+            select: { updatedAt: true },
           }),
         ]);
 
@@ -946,6 +951,7 @@ router.get(
             label: rangeLabel,
             days: daysCount,
           },
+          lastSyncedAt: lastSyncRecord?.updatedAt?.toISOString() ?? null,
           metricsAvailability: { performance: hasPerformanceData },
           summaryNote: hasPerformanceData
             ? null

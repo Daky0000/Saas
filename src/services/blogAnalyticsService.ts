@@ -67,6 +67,7 @@ async function fetchAnalyticsResponse(path: string, _expected: 'json' | 'file') 
 export type AnalyticsRangePreset = '7d' | '30d' | '90d' | 'custom';
 
 export type BlogAnalyticsDashboard = {
+  lastSyncedAt: string | null;
   range: {
     preset: AnalyticsRangePreset;
     start: string;
@@ -168,6 +169,14 @@ export const blogAnalyticsService = {
       throw new Error('Analytics dashboard was empty');
     }
     return payload.data;
+  },
+
+  async syncAnalytics(): Promise<void> {
+    const res = await fetchAnalyticsResponse('/api/analytics/refresh', 'json');
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || 'Sync failed');
+    }
   },
 
   async exportDashboard(query: DashboardQuery): Promise<Blob> {
