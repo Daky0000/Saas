@@ -2317,7 +2317,7 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'State does not match platform' });
     }
 
-    const tokenData = await exchangeOAuthCode(platformId, String(code), stateRow.code_verifier || undefined);
+    const tokenData = await exchangeOAuthCode(platformId, String(code), stateRow.code_verifier || undefined, req);
     await storeUserConnection(auth.userId, platformDisplayName(platformId), tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [String(state)]).catch(() => undefined);
 
@@ -2783,14 +2783,14 @@ async function getOAuthStateRow(state: string): Promise<{ user_id: string; platf
   return result.rows[0] ?? null;
 }
 
-async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?: string) {
+async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?: string, req?: Request) {
   switch ((platformId || '').trim().toLowerCase()) {
     case 'instagram':
       return exchangeInstagramCode(code);
     case 'twitter':
       return exchangeTwitterCode(code, codeVerifier);
     case 'linkedin':
-      return exchangeLinkedInCode(code);
+      return exchangeLinkedInCode(code, req);
     case 'facebook':
       return exchangeFacebookCode(code);
     case 'pinterest':
@@ -2871,12 +2871,12 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string) {
   return response.data;
 }
 
-async function exchangeLinkedInCode(code: string) {
+async function exchangeLinkedInCode(code: string, req?: Request) {
   const cfg = await getPlatformConfig('linkedin');
   const data = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: resolveOAuthRedirectUri('linkedin', cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI),
+    redirect_uri: resolveOAuthRedirectUri('linkedin', cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI, req),
     client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '',
     client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '',
   });
@@ -7077,7 +7077,7 @@ app.get('/auth/:platform/callback', async (req: Request, res: Response) => {
     if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
     if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return res.redirect(fallbackErr('State/platform mismatch'));
 
-    const tokenData = await exchangeOAuthCode(platformId, code, stateRow.code_verifier || undefined);
+    const tokenData = await exchangeOAuthCode(platformId, code, stateRow.code_verifier || undefined, req);
     await storeUserConnection(stateRow.user_id, platformDisplayName(platformId), tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
 
