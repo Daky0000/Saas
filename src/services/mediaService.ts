@@ -41,6 +41,7 @@ export interface MediaUploadPayload {
   width?: number;
   height?: number;
   category?: string;
+  force?: boolean;
 }
 
 export interface AdminMediaStats {
@@ -62,8 +63,17 @@ export const mediaService = {
       headers: authHeaders(),
       body: JSON.stringify(payload),
     });
-    const data = await handleResponse<{ success: boolean; image: MediaImage }>(res);
-    return data.image;
+    const data = await res.json();
+    if (res.status === 409 && data.error === 'duplicate') {
+      const err = Object.assign(new Error('duplicate'), {
+        isDuplicate: true as const,
+        existingImage: data.existingImage as MediaImage,
+        suggestedName: data.suggestedName as string,
+      });
+      throw err;
+    }
+    if (!data.success) throw new Error(data.error || 'Upload failed');
+    return data.image as MediaImage;
   },
 
   async list(params?: { search?: string; tag?: string }): Promise<MediaImage[]> {

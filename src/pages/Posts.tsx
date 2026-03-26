@@ -20,6 +20,8 @@ import {
 import { blogService, type BlogCategory, type BlogPost, type BlogPostPayload, type BlogTag } from '../services/blogService';
 import { socialPostService, type SocialAccount } from '../services/socialPostService';
 import { wordpressService, type WordPressStatus } from '../services/wordpressService';
+import { mediaService } from '../services/mediaService';
+import { compressImage } from '../utils/imageCompression';
 import type { AppUser } from '../utils/userSession';
 import SeoScoreBadge from '../components/SeoScoreBadge';
 import RichTextEditor from '../components/RichTextEditor';
@@ -854,6 +856,8 @@ function PostEditor({
   const [excerpt, setExcerpt] = useState('');
   const [featuredImage, setFeaturedImage] = useState('');
   const [featuredImageName, setFeaturedImageName] = useState<string | null>(null);
+  const [featuredImageUploading, setFeaturedImageUploading] = useState(false);
+  const [featuredImageDup, setFeaturedImageDup] = useState<{ file: File; suggestedName: string } | null>(null);
   const [status, setStatus] = useState<'draft' | 'published' | 'scheduled' | 'archived'>('draft');
   const [scheduledAt, setScheduledAt] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
@@ -945,16 +949,46 @@ function PostEditor({
     setFocusKeywords((prev) => prev.filter((k) => k !== keyword));
   };
 
+  const uploadFeaturedImage = async (file: File, forceName?: string) => {
+    setFeaturedImageUploading(true);
+    try {
+      const compressed = await compressImage(file);
+      const nameToUse = forceName || file.name;
+      const saved = await mediaService.upload({
+        url: compressed.url,
+        thumbnail_url: compressed.thumbnail_url,
+        file_name: nameToUse,
+        original_name: file.name,
+        file_size: compressed.file_size,
+        file_type: compressed.file_type,
+        width: compressed.width,
+        height: compressed.height,
+        force: !!forceName,
+      });
+      setFeaturedImage(saved.url);
+      setFeaturedImageName(saved.file_name);
+      setFeaturedImageDup(null);
+    } catch (err: any) {
+      if (err?.isDuplicate) {
+        setFeaturedImageDup({ file, suggestedName: err.suggestedName });
+        return;
+      }
+      console.error('Featured image upload failed:', err);
+    } finally {
+      setFeaturedImageUploading(false);
+    }
+  };
+
   const handleFeaturedImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFeaturedImageName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setFeaturedImage(String(reader.result || ''));
-    };
-    reader.readAsDataURL(file);
     event.target.value = '';
+    void uploadFeaturedImage(file);
+  };
+
+  const handleFeaturedImageDupProceed = () => {
+    if (!featuredImageDup) return;
+    void uploadFeaturedImage(featuredImageDup.file, featuredImageDup.suggestedName);
   };
 
   const clearFeaturedImage = () => {
@@ -1326,9 +1360,9 @@ function PostEditor({
                       )}
                       {featuredImageName && <div className="text-xs text-slate-500">Uploaded: {featuredImageName}</div>}
                       <div className="flex flex-wrap items-center gap-2">
-                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
-                          Upload
-                          <input type="file" accept="image/*" className="hidden" onChange={handleFeaturedImageUpload} />
+                        <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold text-white ${featuredImageUploading ? 'bg-slate-400 pointer-events-none' : 'bg-slate-900 hover:bg-slate-800'}`}>
+                          {featuredImageUploading ? 'Uploading...' : 'Upload'}
+                          <input type="file" accept="image/*" className="hidden" onChange={handleFeaturedImageUpload} disabled={featuredImageUploading} />
                         </label>
                         {featuredImage && (
                           <button
@@ -1540,6 +1574,34 @@ function PostEditor({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {featuredImageDup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-base font-bold text-slate-900">Image already exists</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              An image named <span className="font-semibold">"{featuredImageDup.suggestedName.replace(/\(\d+\)/, '').trim()}"</span> already exists.
+              Saving as <span className="font-semibold">"{featuredImageDup.suggestedName}"</span> instead.
+            </p>
+            <div className="mt-4 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setFeaturedImageDup(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={handleFeaturedImageDupProceed}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                Proceed
+              </button>
             </div>
           </div>
         </div>

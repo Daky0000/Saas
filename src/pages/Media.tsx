@@ -33,6 +33,7 @@ export default function Media() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState('');
+  const [dupDialog, setDupDialog] = useState<{ file: File; suggestedName: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -150,7 +151,7 @@ export default function Media() {
   // Upload
   const clearTimer = () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
 
-  const processUpload = useCallback(async (file: File) => {
+  const processUpload = useCallback(async (file: File, forceName?: string) => {
     const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
     if (!allowed.includes(file.type)) { setUploadError('Unsupported type. Use PNG, JPG, WEBP, or SVG.'); return; }
     if (file.size > MAX_MB * 1024 * 1024) { setUploadError(`Image exceeds the maximum upload size of ${MAX_MB}MB.`); return; }
@@ -167,15 +168,17 @@ export default function Media() {
       const compressed = await compressImage(file);
       clearTimer();
       setUploadProgress(95);
+      const nameToUse = forceName || file.name;
       const saved = await mediaService.upload({
         url: compressed.url,
         thumbnail_url: compressed.thumbnail_url,
-        file_name: file.name,
-        original_name: file.name,
+        file_name: nameToUse,
+        original_name: nameToUse,
         file_size: compressed.file_size,
         file_type: compressed.file_type,
         width: compressed.width,
         height: compressed.height,
+        force: !!forceName,
       });
       setUploadProgress(100);
       setImages((prev) => [saved, ...prev]);
@@ -183,7 +186,14 @@ export default function Media() {
       setEditName(saved.file_name);
       setView('grid');
       flash('Image uploaded successfully');
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.isDuplicate) {
+        clearTimer();
+        setUploading(false);
+        setUploadProgress(0);
+        setDupDialog({ file, suggestedName: err.suggestedName });
+        return;
+      }
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       clearTimer();
@@ -191,6 +201,13 @@ export default function Media() {
       setUploadProgress(0);
     }
   }, []);
+
+  const handleDupProceed = useCallback(async () => {
+    if (!dupDialog) return;
+    const { file, suggestedName } = dupDialog;
+    setDupDialog(null);
+    await processUpload(file, suggestedName);
+  }, [dupDialog, processUpload]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -493,6 +510,34 @@ export default function Media() {
               </div>
             )
           )}
+        </div>
+      )}
+
+      {dupDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-base font-bold text-slate-900">Image already exists</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              An image named <span className="font-semibold">"{dupDialog.suggestedName.replace(/\(\d+\)/, '').trim()}"</span> already exists.
+              Saving as <span className="font-semibold">"{dupDialog.suggestedName}"</span> instead.
+            </p>
+            <div className="mt-4 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setDupDialog(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={handleDupProceed}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
