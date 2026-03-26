@@ -3,6 +3,7 @@ import { CheckCircle, ExternalLink, Info, Loader2, Plug, Settings2, Unplug } fro
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
 import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
+import { socialPostService } from '../services/socialPostService';
 
 type Props = {
   onNavigateSettings?: () => void;
@@ -214,6 +215,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [linkedInTargets, setLinkedInTargets] = useState<Array<{ id: string; name: string; accountType: 'profile' | 'page'; saved?: boolean }>>([]);
   const [linkedInLoading, setLinkedInLoading] = useState(false);
   const [linkedInWarning, setLinkedInWarning] = useState<string | null>(null);
+  const liReturnHandled = useRef(false);
 
   // Pinterest boards
   const [pinBoards, setPinBoards] = useState<Array<{ id: string; name: string }>>([]);
@@ -267,6 +269,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const totalCount = items.length;
   const facebookConnected = useMemo(
     () => items.some((item) => item.slug === 'facebook' && item.connected),
+    [items]
+  );
+  const linkedInConnected = useMemo(
+    () => items.some((item) => item.slug === 'linkedin' && item.connected),
     [items]
   );
 
@@ -353,22 +359,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
     window.history.replaceState({}, '', nextUrl);
   }, [facebookConnected, openFacebookSelect]);
 
-  const openInstagramTargets = async () => {
-    setModal({ type: 'instagram' });
-    setIgLoading(true);
-    try {
-      const res = await integrationService.listInstagramTargets();
-      if (!res.success) throw new Error(res.error || 'Failed to load Instagram targets');
-      setIgTargets(res.targets || []);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to load Instagram targets');
-      setIgTargets([]);
-    } finally {
-      setIgLoading(false);
-    }
-  };
-
-  const openLinkedInTargets = async () => {
+  const openLinkedInTargets = useCallback(async () => {
     setModal({ type: 'linkedin' });
     setLinkedInLoading(true);
     setLinkedInWarning(null);
@@ -383,6 +374,33 @@ export default function Integrations({ onNavigateSettings }: Props) {
       setLinkedInWarning(null);
     } finally {
       setLinkedInLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!linkedInConnected || liReturnHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('liConnected') !== '1') return;
+    liReturnHandled.current = true;
+    void openLinkedInTargets();
+    params.delete('liConnected');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [linkedInConnected, openLinkedInTargets]);
+
+  const openInstagramTargets = async () => {
+    setModal({ type: 'instagram' });
+    setIgLoading(true);
+    try {
+      const res = await integrationService.listInstagramTargets();
+      if (!res.success) throw new Error(res.error || 'Failed to load Instagram targets');
+      setIgTargets(res.targets || []);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to load Instagram targets');
+      setIgTargets([]);
+    } finally {
+      setIgLoading(false);
     }
   };
 
@@ -662,7 +680,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
           <>
             <button
               type="button"
-              onClick={() => (slug === 'facebook' ? openFacebookType() : void startOAuth(slug))}
+              onClick={() => (slug === 'facebook' ? openFacebookType() : void startOAuth(slug, slug === 'linkedin' ? '/integrations?liConnected=1' : '/integrations'))}
               disabled={!canConnect || busy === slug}
               className={PRIMARY_ACTION}
             >
@@ -1200,6 +1218,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
                     </div>
                   ) : (
                     <>
+                      <p className="text-xs text-slate-500">
+                        Choose where to post on LinkedIn. Save your personal profile, a LinkedIn Page you admin, or both — each appears as a separate account in post distribution.
+                      </p>
+
                       {linkedInWarning ? (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
                           {linkedInWarning}
@@ -1213,28 +1235,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       ) : (
                         <div className="grid gap-2">
                           {linkedInTargets.map((target) => (
-                            <button
+                            <div
                               key={`${target.accountType}:${target.id}`}
-                              type="button"
-                              onClick={async () => {
-                                setBusy(`li-${target.accountType}-${target.id}`);
-                                try {
-                                  const res = await integrationService.saveSocialTarget({
-                                    platform: 'linkedin',
-                                    account_type: target.accountType,
-                                    account_id: target.id,
-                                    account_name: target.name,
-                                  });
-                                  if (!res.success) throw new Error(res.error || 'Failed to save LinkedIn target');
-                                  await load();
-                                  await openLinkedInTargets();
-                                } catch (e) {
-                                  alert(e instanceof Error ? e.message : 'Failed to save LinkedIn target');
-                                } finally {
-                                  setBusy(null);
-                                }
-                              }}
-                              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left hover:bg-slate-50"
+                              className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${target.saved ? 'border-indigo-200 bg-indigo-50' : 'border-slate-200 bg-white'}`}
                             >
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-semibold text-slate-900">{target.name}</div>
@@ -1242,10 +1245,50 @@ export default function Integrations({ onNavigateSettings }: Props) {
                                   {target.accountType === 'page' ? 'LinkedIn Page' : 'Personal profile'}
                                 </div>
                               </div>
-                              <span className="text-xs font-semibold text-slate-600">
-                                {target.saved ? 'Saved' : 'Save'}
-                              </span>
-                            </button>
+                              <button
+                                type="button"
+                                disabled={busy === `li-${target.accountType}-${target.id}`}
+                                onClick={async () => {
+                                  setBusy(`li-${target.accountType}-${target.id}`);
+                                  try {
+                                    if (target.saved) {
+                                      const accts = await socialPostService.listAccounts();
+                                      const match = accts.find(
+                                        (a) => a.platform === 'linkedin' && a.account_type === target.accountType && a.account_id === target.id
+                                      );
+                                      if (match) await socialPostService.deleteAccount(match.id);
+                                    } else {
+                                      const res = await integrationService.saveSocialTarget({
+                                        platform: 'linkedin',
+                                        account_type: target.accountType,
+                                        account_id: target.id,
+                                        account_name: target.name,
+                                      });
+                                      if (!res.success) throw new Error(res.error || 'Failed to save LinkedIn target');
+                                    }
+                                    await load();
+                                    await openLinkedInTargets();
+                                  } catch (e) {
+                                    alert(e instanceof Error ? e.message : 'Failed to update LinkedIn target');
+                                  } finally {
+                                    setBusy(null);
+                                  }
+                                }}
+                                className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  target.saved
+                                    ? 'bg-indigo-100 text-indigo-700 hover:bg-red-100 hover:text-red-700'
+                                    : 'bg-slate-950 text-white hover:bg-slate-700'
+                                }`}
+                              >
+                                {busy === `li-${target.accountType}-${target.id}` ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : target.saved ? (
+                                  'Saved ✓'
+                                ) : (
+                                  'Save'
+                                )}
+                              </button>
+                            </div>
                           ))}
                         </div>
                       )}

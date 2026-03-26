@@ -71,6 +71,17 @@ export const socialPostService = {
     return data.accounts ?? [];
   },
 
+  async deleteAccount(id: string): Promise<void> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/social/accounts/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as any)?.error || 'Failed to remove account');
+    }
+  },
+
   async getSettings(postId: string): Promise<SocialPostSettings | null> {
     const res = await fetch(`${API_BASE_URL}/api/v1/posts/${postId}/social-settings`, {
       headers: { Authorization: `Bearer ${getToken()}` },
