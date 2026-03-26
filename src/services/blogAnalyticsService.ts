@@ -27,10 +27,25 @@ async function parseApiResponse<T>(res: Response): Promise<T> {
   return (parsed ?? {}) as T;
 }
 
+const FRONTEND_HOST_PATTERNS = [/\.github\.io$/i, /\.dakyworld\.com$/i];
+
+function isFrontendHost(origin: string) {
+  try {
+    const { hostname } = new URL(origin);
+    return FRONTEND_HOST_PATTERNS.some((p) => p.test(hostname));
+  } catch {
+    return false;
+  }
+}
+
 function getAnalyticsApiCandidates() {
   const candidates = [API_BASE_URL];
+  // Only include the current origin if it looks like a backend (not a SPA-only host)
   if (typeof window !== 'undefined') {
-    candidates.push(window.location.origin.replace(/\/$/, ''));
+    const origin = window.location.origin.replace(/\/$/, '');
+    if (!isFrontendHost(origin)) {
+      candidates.push(origin);
+    }
   }
   candidates.push(ANALYTICS_FALLBACK_API_BASE_URL);
   return Array.from(new Set(candidates.filter(Boolean)));
@@ -48,15 +63,20 @@ async function fetchAnalyticsResponse(path: string, _expected: 'json' | 'file') 
       });
       const contentType = String(res.headers.get('content-type') || '').toLowerCase();
       const looksLikeHtml = contentType.includes('text/html');
-      if (res.ok && !(looksLikeHtml && !isLast)) {
-        return res;
-      }
-      if (!isLast && (res.status === 404 || res.status >= 500 || looksLikeHtml)) {
+      // Never return an HTML response — it's always a SPA fallback, not real API data
+      if (looksLikeHtml) {
+        if (isLast) throw new Error('Analytics API is unreachable right now.');
         continue;
       }
+      if (res.ok) return res;
+      if (!isLast && (res.status === 404 || res.status >= 500)) continue;
       return res;
     } catch (error) {
-      lastNetworkError = error instanceof Error ? error : new Error('Analytics API is unreachable right now.');
+      if ((error as any)?.message === 'Analytics API is unreachable right now.') {
+        lastNetworkError = error as Error;
+      } else {
+        lastNetworkError = error instanceof Error ? error : new Error('Analytics API is unreachable right now.');
+      }
       if (isLast) throw lastNetworkError;
     }
   }
