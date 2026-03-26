@@ -36,6 +36,7 @@ export default function Media() {
   const [dupDialog, setDupDialog] = useState<{ file: File; suggestedName: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initialSyncDoneRef = useRef(false);
 
   // Debounce search
   useEffect(() => {
@@ -62,11 +63,12 @@ export default function Media() {
 
   // Sync any featured images from posts that aren't yet in media library
   useEffect(() => {
+    if (initialSyncDoneRef.current) return;
+    initialSyncDoneRef.current = true;
     const syncImages = async () => {
       try {
-        const response = await fetch('/api/media/sync-all-images', { method: 'POST' });
-        const data = await response.json();
-        if (data.synced && data.synced > 0) {
+        const data = await mediaService.syncAll();
+        if (data.synced > 0) {
           // Reload media list after sync
           void load();
         }

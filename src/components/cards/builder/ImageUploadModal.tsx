@@ -16,6 +16,7 @@ interface FileInfo {
   size: string;
   preview: string;
   dataUrl: string;
+  mediaUrl: string;
 }
 
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
@@ -54,22 +55,42 @@ export default function ImageUploadModal({ onConfirm, onClose }: ImageUploadModa
     }, 60);
     try {
       const compressed = await compressImage(file);
-      clearTimer();
-      setProgress(100);
-      setState('complete');
-      setFileInfo({ name: file.name, size: formatBytes(file.size), preview: compressed.thumbnail_url, dataUrl: compressed.url });
-      // Save to media library in background (best-effort)
-      void mediaService.upload({
+      const uploaded = await mediaService.upload({
         url: compressed.url,
         thumbnail_url: compressed.thumbnail_url,
-        file_name: file.name,
+        file_name: `design-asset-${Date.now()}-${file.name}`,
         original_name: file.name,
         file_size: compressed.file_size,
         file_type: compressed.file_type,
         width: compressed.width,
         height: compressed.height,
-      }).catch(() => undefined);
-    } catch {
+        force: true,
+      });
+      clearTimer();
+      setProgress(100);
+      setState('complete');
+      setFileInfo({
+        name: file.name,
+        size: formatBytes(file.size),
+        preview: compressed.thumbnail_url,
+        dataUrl: compressed.url,
+        mediaUrl: uploaded.url,
+      });
+    } catch (error) {
+      const duplicate = error as Error & { isDuplicate?: boolean; existingImage?: { url?: string } };
+      if (duplicate?.isDuplicate && duplicate.existingImage?.url) {
+        clearTimer();
+        setProgress(100);
+        setState('complete');
+        setFileInfo({
+          name: file.name,
+          size: formatBytes(file.size),
+          preview: '',
+          dataUrl: duplicate.existingImage.url,
+          mediaUrl: duplicate.existingImage.url,
+        });
+        return;
+      }
       clearTimer();
       setState('idle');
       setFileError('Failed to process image. Please try again.');
@@ -256,7 +277,7 @@ export default function ImageUploadModal({ onConfirm, onClose }: ImageUploadModa
             </button>
             <button
               type="button"
-              onClick={() => { if (fileInfo) onConfirm(fileInfo.dataUrl); }}
+              onClick={() => { if (fileInfo) onConfirm(fileInfo.mediaUrl || fileInfo.dataUrl); }}
               disabled={state !== 'complete'}
               className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-40"
             >

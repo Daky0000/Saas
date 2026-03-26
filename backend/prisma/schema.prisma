@@ -152,7 +152,25 @@ model media_images {
   alt_text      String?   @default("")
   caption       String?   @default("")
   description   String?   @default("")
+  media_image_links media_image_links[]
   users         users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model media_image_links {
+  id             String       @id
+  media_image_id String
+  user_id        String
+  source_table   String
+  source_id      String
+  source_field   String
+  created_at     DateTime?    @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime?    @default(now()) @db.Timestamptz(6)
+  media_images   media_images @relation(fields: [media_image_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users          users        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, media_image_id, source_table, source_id, source_field], map: "media_image_links_unique_idx")
+  @@index([user_id, source_table, source_id, source_field], map: "media_image_links_user_source_idx")
+  @@index([media_image_id], map: "media_image_links_media_idx")
 }
 
 model oauth_states {
@@ -410,6 +428,7 @@ model users {
   blog_tags                blog_tags[]
   integration_logs         integration_logs[]
   make_webhook_connections make_webhook_connections?
+  media_image_links        media_image_links[]
   media_images             media_images[]
   publishing_logs          publishing_logs[]
   social_accounts          social_accounts[]

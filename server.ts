@@ -711,6 +711,24 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS alt_text TEXT DEFAULT ''`).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS caption TEXT DEFAULT ''`).catch(() => undefined);
   await pool.query(`ALTER TABLE media_images ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_image_links (
+      id TEXT PRIMARY KEY,
+      media_image_id TEXT NOT NULL REFERENCES media_images(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source_table TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_field TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (user_id, media_image_id, source_table, source_id, source_field)
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS media_images_user_upload_idx ON media_images (user_id, upload_date DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS media_images_category_upload_idx ON media_images (category, upload_date DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS media_images_user_url_idx ON media_images (user_id, url)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS media_image_links_user_source_idx ON media_image_links (user_id, source_table, source_id, source_field)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS media_image_links_media_idx ON media_image_links (media_image_id)`).catch(() => undefined);
 
   // Seed integrations registry (best-effort; idempotent)
   await pool.query(
@@ -1975,6 +1993,14 @@ app.put('/api/auth/profile', async (req: Request, res: Response) => {
     if (!updated) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
+
+    await syncProfileMedia({
+      id: updated.id,
+      avatar_url: updated.avatar_url,
+      cover_url: updated.cover_url,
+    }).catch((error) => {
+      console.error('Profile media sync error:', error);
+    });
 
     return res.json({
       success: true,
@@ -4663,6 +4689,10 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
       };
       inMemoryCardTemplatesById.set(id, updated);
 
+      await syncCardTemplateMedia(admin.id, updated).catch((error) => {
+        console.error('Card template media sync error:', error);
+      });
+
       return res.json({
         success: true,
         template: {
@@ -4699,6 +4729,9 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
       }
 
       const template = result.rows[0];
+      await syncCardTemplateMedia(admin.id, template).catch((error) => {
+        console.error('Card template media sync error:', error);
+      });
       return res.json({
         success: true,
         template: {
@@ -4744,6 +4777,10 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
       };
       inMemoryCardTemplatesById.set(id, updated);
 
+      await syncCardTemplateMedia(admin.id, updated).catch((error) => {
+        console.error('Card template media sync error:', error);
+      });
+
       return res.json({
         success: true,
         template: {
@@ -4773,6 +4810,9 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
       }
 
       const template = result.rows[0];
+      await syncCardTemplateMedia(admin.id, template).catch((error) => {
+        console.error('Card template media sync error:', error);
+      });
       return res.json({
         success: true,
         template: {
@@ -4943,6 +4983,10 @@ app.post('/api/designs', async (req: Request, res: Response) => {
       inMemoryDesigns.set(id, design);
     }
 
+    await syncUserDesignMedia(auth.userId, design).catch((error) => {
+      console.error('Design media sync error:', error);
+    });
+
     return res.status(201).json({ success: true, design });
   } catch (error) {
     console.error('Create design error:', error);
@@ -4974,6 +5018,9 @@ app.put('/api/designs/:id', async (req: Request, res: Response) => {
       );
       if (result.rows.length === 0)
         return res.status(404).json({ success: false, error: 'Design not found' });
+      await syncUserDesignMedia(auth.userId, result.rows[0] as DbDesign).catch((error) => {
+        console.error('Design media sync error:', error);
+      });
       return res.json({ success: true, design: result.rows[0] });
     } else {
       const design = inMemoryDesigns.get(id);
@@ -4989,6 +5036,9 @@ app.put('/api/designs/:id', async (req: Request, res: Response) => {
         updated_at: now,
       };
       inMemoryDesigns.set(id, updated);
+      await syncUserDesignMedia(auth.userId, updated).catch((error) => {
+        console.error('Design media sync error:', error);
+      });
       return res.json({ success: true, design: updated });
     }
   } catch (error) {
@@ -7301,6 +7351,41 @@ function buildMediaServeUrl(id: string, fileName: string): string {
   return `${getMediaServerBase()}/media/${encodeURIComponent(id)}/${encodeURIComponent(fileName)}`;
 }
 
+type DbMediaImageRow = {
+  id: string;
+  user_id: string;
+  file_name: string;
+  original_name: string;
+  file_size: number;
+  file_type: string;
+  width: number | null;
+  height: number | null;
+  upload_date: string | null;
+  url: string;
+  thumbnail_url: string | null;
+  alt_text: string | null;
+  caption: string | null;
+  description: string | null;
+  tags: string[] | null;
+  used_in: unknown;
+  category: string | null;
+};
+
+type MediaSourceTable = 'users' | 'blog_posts' | 'user_designs' | 'card_templates';
+
+type EnsureMediaRecordOptions = {
+  userId: string;
+  sourceTable: MediaSourceTable;
+  sourceId: string;
+  sourceField: string;
+  url: string | null | undefined;
+  thumbnailUrl?: string | null;
+  fileName?: string;
+  fileType?: string;
+  tags?: string[];
+  category?: 'user' | 'admin';
+};
+
 function transformMediaRow(row: any): any {
   if (!row) return row;
   const rawUrl = String(row.url || '');
@@ -7311,6 +7396,440 @@ function transformMediaRow(row: any): any {
     url: rawUrl.startsWith('data:') ? serveUrl : rawUrl,
     thumbnail_url: rawThumb.startsWith('data:') ? serveUrl : rawThumb,
   };
+}
+
+function uniqueStrings(values: Iterable<string>): string[] {
+  return Array.from(new Set(Array.from(values).map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function parseTextArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) return uniqueStrings(raw.map((value) => String(value)));
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return uniqueStrings(parsed.map((value) => String(value)));
+    } catch {
+      return raw.trim() ? [raw.trim()] : [];
+    }
+  }
+  return [];
+}
+
+function parseUsedInList(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return uniqueStrings(raw.map((value) => (typeof value === 'string' ? value : JSON.stringify(value))));
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return uniqueStrings(parsed.map((value) => (typeof value === 'string' ? value : JSON.stringify(value))));
+      }
+    } catch {
+      return raw.trim() ? [raw.trim()] : [];
+    }
+  }
+  return [];
+}
+
+function isPersistableImageUrl(value: string): boolean {
+  const normalized = String(value || '').trim();
+  return (
+    normalized.startsWith('data:image/') ||
+    /^https?:\/\//i.test(normalized) ||
+    normalized.startsWith('/media/') ||
+    normalized.startsWith('/api/media/') ||
+    normalized.startsWith(`${getMediaServerBase()}/media/`)
+  );
+}
+
+function inferMimeTypeFromUrl(url: string, fallback = 'image/jpeg'): string {
+  const normalized = String(url || '').trim();
+  if (normalized.startsWith('data:image/')) {
+    const commaIdx = normalized.indexOf(',');
+    if (commaIdx > 5) {
+      return normalized.slice(5, commaIdx).replace(';base64', '') || fallback;
+    }
+  }
+
+  const lower = normalized.toLowerCase();
+  if (lower.includes('.png')) return 'image/png';
+  if (lower.includes('.webp')) return 'image/webp';
+  if (lower.includes('.svg')) return 'image/svg+xml';
+  if (lower.includes('.jpg') || lower.includes('.jpeg')) return 'image/jpeg';
+  return fallback;
+}
+
+function extFromMime(fileType: string): string {
+  switch (String(fileType || '').toLowerCase()) {
+    case 'image/png':
+      return '.png';
+    case 'image/webp':
+      return '.webp';
+    case 'image/svg+xml':
+      return '.svg';
+    default:
+      return '.jpg';
+  }
+}
+
+function guessFileNameFromUrl(url: string, fallbackBase: string, fallbackType = 'image/jpeg'): string {
+  const normalized = String(url || '').trim();
+  if (normalized.startsWith('data:image/')) {
+    return sanitizeFileName(`${fallbackBase}${extFromMime(inferMimeTypeFromUrl(normalized, fallbackType))}`);
+  }
+
+  try {
+    const parsed = new URL(normalized, getMediaServerBase());
+    const candidate = path.posix.basename(parsed.pathname || '');
+    if (candidate && candidate.includes('.')) return sanitizeFileName(candidate);
+  } catch {
+    // Ignore malformed URLs and fall back to a synthetic filename.
+  }
+
+  return sanitizeFileName(`${fallbackBase}${extFromMime(fallbackType)}`);
+}
+
+function extractImageUrlsFromHtml(html: string): string[] {
+  const matches = html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi);
+  const urls = Array.from(matches, (match) => String(match[1] || '').trim());
+  return uniqueStrings(urls.filter(isPersistableImageUrl));
+}
+
+function extractImageUrlsFromCanvasData(input: unknown): string[] {
+  const urls = new Set<string>();
+  const visit = (value: unknown, keyHint = '') => {
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      const key = keyHint.toLowerCase();
+      const likelyImageKey =
+        key === 'src' ||
+        key === 'url' ||
+        key === 'thumbnail_url' ||
+        key === 'backgroundimage' ||
+        key === 'imageurl' ||
+        key.includes('image') ||
+        key.includes('thumbnail') ||
+        key.includes('cover');
+      if ((likelyImageKey || normalized.startsWith('data:image/')) && isPersistableImageUrl(normalized)) {
+        urls.add(normalized);
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry, keyHint));
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      for (const [nextKey, nextValue] of Object.entries(value as Record<string, unknown>)) {
+        visit(nextValue, nextKey);
+      }
+    }
+  };
+
+  visit(input);
+  return Array.from(urls);
+}
+
+async function upsertMediaImageLink(
+  mediaImageId: string,
+  userId: string,
+  sourceTable: MediaSourceTable,
+  sourceId: string,
+  sourceField: string,
+) {
+  if (!hasDatabase()) return;
+  await pool!.query(
+    `INSERT INTO media_image_links (id, media_image_id, user_id, source_table, source_id, source_field, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+     ON CONFLICT (user_id, media_image_id, source_table, source_id, source_field)
+     DO UPDATE SET updated_at = NOW()`,
+    [randomUUID(), mediaImageId, userId, sourceTable, sourceId, sourceField],
+  );
+}
+
+async function pruneMediaLinksForSource(
+  userId: string,
+  sourceTable: MediaSourceTable,
+  sourceId: string,
+  sourceField: string,
+  mediaImageIds: string[],
+) {
+  if (!hasDatabase()) return;
+  const params: unknown[] = [userId, sourceTable, sourceId, sourceField];
+  let sql =
+    'DELETE FROM media_image_links WHERE user_id = $1 AND source_table = $2 AND source_id = $3 AND source_field = $4';
+  if (mediaImageIds.length) {
+    sql += ' AND NOT (media_image_id = ANY($5::text[]))';
+    params.push(mediaImageIds);
+  }
+  await pool!.query(sql, params);
+}
+
+async function ensureMediaRecordForSource(
+  options: EnsureMediaRecordOptions,
+): Promise<{ row: DbMediaImageRow; created: boolean } | null> {
+  if (!hasDatabase()) return null;
+
+  const normalizedUrl = String(options.url || '').trim();
+  if (!normalizedUrl || !isPersistableImageUrl(normalizedUrl)) return null;
+
+  const usageKey = `${options.sourceTable}:${options.sourceId}:${options.sourceField}`;
+  const normalizedTags = uniqueStrings(options.tags ?? []);
+  const nextCategory = options.category === 'admin' ? 'admin' : 'user';
+  const nextFileType = options.fileType || inferMimeTypeFromUrl(normalizedUrl);
+  const fallbackBase = `${options.sourceTable}-${options.sourceId}-${options.sourceField}`;
+  const nextFileName = sanitizeFileName(
+    options.fileName || guessFileNameFromUrl(normalizedUrl, fallbackBase, nextFileType),
+  );
+  const nextThumbnailUrl = String(options.thumbnailUrl || normalizedUrl).trim() || normalizedUrl;
+
+  const existingResult = await pool!.query<DbMediaImageRow>(
+    'SELECT * FROM media_images WHERE user_id = $1 AND url = $2 LIMIT 1',
+    [options.userId, normalizedUrl],
+  );
+
+  if (existingResult.rows.length) {
+    const existing = existingResult.rows[0];
+    const mergedTags = uniqueStrings([...(parseTextArray(existing.tags) ?? []), ...normalizedTags]);
+    const mergedUsedIn = uniqueStrings([...parseUsedInList(existing.used_in), usageKey]);
+    const category = existing.category === 'admin' || nextCategory === 'admin' ? 'admin' : 'user';
+    const thumbnailUrl = String(existing.thumbnail_url || nextThumbnailUrl || normalizedUrl);
+
+    const updatedResult = await pool!.query<DbMediaImageRow>(
+      `UPDATE media_images
+       SET tags = $3,
+           used_in = $4::jsonb,
+           thumbnail_url = $5,
+           category = $6
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [existing.id, options.userId, mergedTags, JSON.stringify(mergedUsedIn), thumbnailUrl, category],
+    );
+
+    const row = updatedResult.rows[0] || existing;
+    await upsertMediaImageLink(row.id, options.userId, options.sourceTable, options.sourceId, options.sourceField);
+    return { row, created: false };
+  }
+
+  const inserted = await pool!.query<DbMediaImageRow>(
+    `INSERT INTO media_images (
+       id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in, category
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, $9, $10::jsonb, $11
+     )
+     RETURNING *`,
+    [
+      randomUUID(),
+      options.userId,
+      nextFileName,
+      nextFileName,
+      0,
+      nextFileType,
+      normalizedUrl,
+      nextThumbnailUrl,
+      normalizedTags,
+      JSON.stringify([usageKey]),
+      nextCategory,
+    ],
+  );
+
+  const row = inserted.rows[0];
+  await upsertMediaImageLink(row.id, options.userId, options.sourceTable, options.sourceId, options.sourceField);
+  return { row, created: true };
+}
+
+async function syncProfileMedia(user: Pick<DbUserRow, 'id' | 'avatar_url' | 'cover_url'>): Promise<number> {
+  let created = 0;
+  const avatarResult = await ensureMediaRecordForSource({
+    userId: user.id,
+    sourceTable: 'users',
+    sourceId: user.id,
+    sourceField: 'avatar_url',
+    url: user.avatar_url,
+    fileName: `profile-avatar-${user.id}.jpg`,
+    tags: ['profile', 'avatar'],
+    category: 'user',
+  });
+  if (avatarResult?.created) created += 1;
+  await pruneMediaLinksForSource(user.id, 'users', user.id, 'avatar_url', avatarResult ? [avatarResult.row.id] : []);
+
+  const coverResult = await ensureMediaRecordForSource({
+    userId: user.id,
+    sourceTable: 'users',
+    sourceId: user.id,
+    sourceField: 'cover_url',
+    url: user.cover_url,
+    fileName: `profile-cover-${user.id}.jpg`,
+    tags: ['profile', 'cover'],
+    category: 'user',
+  });
+  if (coverResult?.created) created += 1;
+  await pruneMediaLinksForSource(user.id, 'users', user.id, 'cover_url', coverResult ? [coverResult.row.id] : []);
+
+  return created;
+}
+
+async function syncBlogPostMedia(
+  userId: string,
+  post: { id: string; title?: string | null; featured_image?: string | null; social_image?: string | null; content?: string | null },
+): Promise<number> {
+  let created = 0;
+
+  const featured = await ensureMediaRecordForSource({
+    userId,
+    sourceTable: 'blog_posts',
+    sourceId: post.id,
+    sourceField: 'featured_image',
+    url: post.featured_image,
+    fileName: `post-featured-${post.id}.jpg`,
+    tags: ['post', 'featured'],
+    category: 'user',
+  });
+  if (featured?.created) created += 1;
+  await pruneMediaLinksForSource(userId, 'blog_posts', post.id, 'featured_image', featured ? [featured.row.id] : []);
+
+  const social = await ensureMediaRecordForSource({
+    userId,
+    sourceTable: 'blog_posts',
+    sourceId: post.id,
+    sourceField: 'social_image',
+    url: post.social_image,
+    fileName: `post-social-${post.id}.jpg`,
+    tags: ['post', 'social'],
+    category: 'user',
+  });
+  if (social?.created) created += 1;
+  await pruneMediaLinksForSource(userId, 'blog_posts', post.id, 'social_image', social ? [social.row.id] : []);
+
+  const contentUrls = extractImageUrlsFromHtml(String(post.content || ''));
+  const contentMediaIds: string[] = [];
+  for (const [index, contentUrl] of contentUrls.entries()) {
+    const synced = await ensureMediaRecordForSource({
+      userId,
+      sourceTable: 'blog_posts',
+      sourceId: post.id,
+      sourceField: 'content',
+      url: contentUrl,
+      fileName: `post-inline-${post.id}-${index + 1}.jpg`,
+      tags: ['post', 'content'],
+      category: 'user',
+    });
+    if (synced) {
+      contentMediaIds.push(synced.row.id);
+      if (synced.created) created += 1;
+    }
+  }
+  await pruneMediaLinksForSource(userId, 'blog_posts', post.id, 'content', uniqueStrings(contentMediaIds));
+
+  return created;
+}
+
+async function syncUserDesignMedia(
+  userId: string,
+  design: { id: string; name?: string | null; thumbnail_url?: string | null; canvas_data?: unknown },
+): Promise<number> {
+  let created = 0;
+
+  const thumbnail = await ensureMediaRecordForSource({
+    userId,
+    sourceTable: 'user_designs',
+    sourceId: design.id,
+    sourceField: 'thumbnail_url',
+    url: design.thumbnail_url,
+    fileName: `${sanitizeFileName(design.name || 'design') || 'design'}-thumb.jpg`,
+    tags: ['design', 'thumbnail'],
+    category: 'user',
+  });
+  if (thumbnail?.created) created += 1;
+  await pruneMediaLinksForSource(userId, 'user_designs', design.id, 'thumbnail_url', thumbnail ? [thumbnail.row.id] : []);
+
+  const canvasMediaIds: string[] = [];
+  const canvasUrls = extractImageUrlsFromCanvasData(design.canvas_data);
+  for (const [index, canvasUrl] of canvasUrls.entries()) {
+    const synced = await ensureMediaRecordForSource({
+      userId,
+      sourceTable: 'user_designs',
+      sourceId: design.id,
+      sourceField: 'canvas_data',
+      url: canvasUrl,
+      fileName: `${sanitizeFileName(design.name || 'design') || 'design'}-asset-${index + 1}.jpg`,
+      tags: ['design', 'asset'],
+      category: 'user',
+    });
+    if (synced) {
+      canvasMediaIds.push(synced.row.id);
+      if (synced.created) created += 1;
+    }
+  }
+  await pruneMediaLinksForSource(userId, 'user_designs', design.id, 'canvas_data', uniqueStrings(canvasMediaIds));
+
+  return created;
+}
+
+async function syncCardTemplateMedia(
+  adminUserId: string,
+  template: { id: string; name?: string | null; cover_image_url?: string | null },
+): Promise<number> {
+  const cover = await ensureMediaRecordForSource({
+    userId: adminUserId,
+    sourceTable: 'card_templates',
+    sourceId: template.id,
+    sourceField: 'cover_image_url',
+    url: template.cover_image_url,
+    fileName: `${sanitizeFileName(template.name || 'card-template') || 'card-template'}-cover.jpg`,
+    tags: ['card-template', 'cover'],
+    category: 'admin',
+  });
+  await pruneMediaLinksForSource(
+    adminUserId,
+    'card_templates',
+    template.id,
+    'cover_image_url',
+    cover ? [cover.row.id] : [],
+  );
+  return cover?.created ? 1 : 0;
+}
+
+async function syncAllPersistedMediaForUser(userId: string): Promise<{ created: number; scanned: number }> {
+  if (!hasDatabase()) return { created: 0, scanned: 0 };
+
+  let created = 0;
+  let scanned = 0;
+
+  const userResult = await pool!.query<Pick<DbUserRow, 'id' | 'avatar_url' | 'cover_url'>>(
+    'SELECT id, avatar_url, cover_url FROM users WHERE id = $1 LIMIT 1',
+    [userId],
+  );
+  const userRow = userResult.rows[0];
+  if (userRow) {
+    scanned += [userRow.avatar_url, userRow.cover_url].filter(Boolean).length;
+    created += await syncProfileMedia(userRow);
+  }
+
+  const postsResult = await pool!.query<{ id: string; title: string | null; featured_image: string | null; social_image: string | null; content: string | null }>(
+    'SELECT id, title, featured_image, social_image, content FROM blog_posts WHERE user_id = $1',
+    [userId],
+  );
+  for (const post of postsResult.rows) {
+    scanned += [post.featured_image, post.social_image].filter(Boolean).length;
+    scanned += extractImageUrlsFromHtml(String(post.content || '')).length;
+    created += await syncBlogPostMedia(userId, post);
+  }
+
+  const designsResult = await pool!.query<DbDesign>(
+    'SELECT id, name, canvas_data, thumbnail_url, created_at, updated_at, user_id, canvas_width, canvas_height FROM user_designs WHERE user_id = $1',
+    [userId],
+  );
+  for (const design of designsResult.rows) {
+    scanned += design.thumbnail_url ? 1 : 0;
+    scanned += extractImageUrlsFromCanvasData(design.canvas_data).length;
+    created += await syncUserDesignMedia(userId, design);
+  }
+
+  return { created, scanned };
 }
 
 // GET /media/:id/:filename — public binary image serve (no auth, for external embeds & featured images)
@@ -7417,7 +7936,7 @@ app.get('/api/media', async (req: Request, res: Response) => {
     const params: unknown[] = [user.userId];
     // Strict user isolation — only return the requesting user's own images.
     // Admin-shared library assets are served separately via GET /api/media/admin-assets.
-    let query = 'SELECT * FROM media_images WHERE user_id = $1';
+    let query = `SELECT * FROM media_images WHERE user_id = $1 AND COALESCE(category, 'user') = 'user'`;
     if (search) { query += ` AND (file_name ILIKE $${params.length + 1} OR original_name ILIKE $${params.length + 1})`; params.push(`%${search}%`); }
     if (tag) { query += ` AND $${params.length + 1} = ANY(tags)`; params.push(tag); }
     query += ' ORDER BY upload_date DESC';
@@ -7689,39 +8208,13 @@ app.post('/api/media/sync-all-images', async (req: Request, res: Response) => {
   if (!user) return;
   if (!hasDatabase()) return res.json({ success: true, synced: 0 });
   try {
-    let synced = 0;
-
-    // Find all featured images for this user that aren't in media_images
-    const featuredImages = await pool!.query(
-      'SELECT id, featured_image FROM blog_posts WHERE user_id = $1 AND featured_image IS NOT NULL AND featured_image != $2',
-      [user.userId, '']
-    );
-
-    for (const post of featuredImages.rows) {
-      if (!post.featured_image) continue;
-      
-      // Check if already registered
-      const exists = await pool!.query(
-        'SELECT id FROM media_images WHERE url = $1 AND user_id = $2',
-        [post.featured_image, user.userId]
-      );
-      
-      if (!exists.rows.length) {
-        // Register the featured image
-        const id = randomUUID();
-        const fileName = `featured-post-${post.id.slice(0, 8)}.jpg`;
-        await pool!.query(
-          `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, url, thumbnail_url, tags, used_in, category)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"featured"}', '[]', $9)
-           ON CONFLICT (id) DO NOTHING`,
-          [id, user.userId, fileName, fileName, 0, 'image/jpeg', post.featured_image, post.featured_image, 'user']
-        );
-        synced++;
-        console.log(`[media-sync] Registered featured image from post ${post.id} for user ${user.userId}`);
-      }
-    }
-
-    return res.json({ success: true, synced, message: `Synced ${synced} featured images to media library` });
+    const sync = await syncAllPersistedMediaForUser(user.userId);
+    return res.json({
+      success: true,
+      synced: sync.created,
+      scanned: sync.scanned,
+      message: `Synced ${sync.created} missing image(s) from ${sync.scanned} persisted source reference(s)`,
+    });
   } catch (err) {
     console.error('media sync error:', err);
     return res.status(500).json({ success: false, error: 'Sync failed' });
@@ -7768,8 +8261,7 @@ app.post('/api/admin/media/verify-integrity', async (req: Request, res: Response
     // Check 3: Count images per user
     const userImageStats = await pool!.query(
       `SELECT u.id, u.username, COUNT(m.id) as image_count
-       FROM users u LEFT JOIN media_images m ON u.id = m.user_id AND m.category = 'user'
-       WHERE u.deleted_at IS NULL
+       FROM users u LEFT JOIN media_images m ON u.id = m.user_id AND COALESCE(m.category, 'user') = 'user'
        GROUP BY u.id, u.username
        HAVING COUNT(m.id) > 0
        ORDER BY COUNT(m.id) DESC`
@@ -7841,30 +8333,14 @@ app.post('/api/admin/media/fix-integrity', async (req: Request, res: Response) =
       console.log(`[media-fix] Deleted ${deleteOrphanResult.rows.length} orphaned images`);
     }
 
-    // Fix 3: Register unregistered featured images for all users
-    const featuredToRegister = await pool!.query(
-      `SELECT DISTINCT bp.user_id, bp.featured_image, bp.id
-       FROM blog_posts bp
-       WHERE bp.featured_image IS NOT NULL AND bp.featured_image != ''
-       AND NOT EXISTS (
-         SELECT 1 FROM media_images m
-         WHERE m.url = bp.featured_image AND m.user_id = bp.user_id
-       )`
-    );
-
-    for (const row of featuredToRegister.rows) {
-      const id = randomUUID();
-      const fileName = `featured-post-${row.id.slice(0, 8)}.jpg`;
-      await pool!.query(
-        `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, url, thumbnail_url, tags, used_in, category)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"featured"}', '[]', $9)
-         ON CONFLICT (id) DO NOTHING`,
-        [id, row.user_id, fileName, fileName, 0, 'image/jpeg', row.featured_image, row.featured_image, 'user']
-      );
-      fixed++;
+    // Fix 3: Re-scan persisted image sources for every user and register anything missing.
+    const usersResult = await pool!.query<{ id: string }>('SELECT id FROM users');
+    for (const row of usersResult.rows) {
+      const sync = await syncAllPersistedMediaForUser(row.id);
+      fixed += sync.created;
     }
-    if (featuredToRegister.rows.length > 0) {
-      console.log(`[media-fix] Registered ${featuredToRegister.rows.length} featured images`);
+    if (usersResult.rows.length > 0) {
+      console.log(`[media-fix] Re-scanned persisted media sources for ${usersResult.rows.length} user(s)`);
     }
 
     return res.json({ 
@@ -8357,6 +8833,10 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
     ));
   }
 
+  await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
+    console.error('Blog post media sync error:', error);
+  });
+
   if (status === 'published') {
     try {
       await queueSocialAutomationForPublishedPost(user.userId, rows[0]);
@@ -8417,6 +8897,10 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
       ));
     }
   }
+
+  await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
+    console.error('Blog post media sync error:', error);
+  });
 
   if (willPublish) {
     try {
@@ -10970,16 +11454,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
-
-
-
-
-
-
-
 
 
 

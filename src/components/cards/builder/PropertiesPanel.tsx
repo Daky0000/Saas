@@ -7,6 +7,8 @@ import {
   Plus, Minus, ArrowLeftRight, RefreshCw,
 } from 'lucide-react';
 import ColorPicker from './ColorPicker';
+import { mediaService } from '../../../services/mediaService';
+import { compressImage } from '../../../utils/imageCompression';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface GradientStop {
@@ -448,17 +450,35 @@ function ArtboardPanel({ bgColor, onSetBgSolid, onSetBgGradient, onSetBgImage, c
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvas]);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const url = ev.target?.result as string;
-      setBgImagePreview(url);
-      onSetBgImage(url);
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+    try {
+      const compressed = await compressImage(file);
+      const uploaded = await mediaService.upload({
+        url: compressed.url,
+        thumbnail_url: compressed.thumbnail_url,
+        file_name: `design-background-${Date.now()}-${file.name}`,
+        original_name: file.name,
+        file_size: compressed.file_size,
+        file_type: compressed.file_type,
+        width: compressed.width,
+        height: compressed.height,
+        force: true,
+      });
+      setBgImagePreview(uploaded.url);
+      onSetBgImage(uploaded.url);
+    } catch (error) {
+      const duplicate = error as Error & { isDuplicate?: boolean; existingImage?: { url?: string } };
+      if (duplicate?.isDuplicate && duplicate.existingImage?.url) {
+        setBgImagePreview(duplicate.existingImage.url);
+        onSetBgImage(duplicate.existingImage.url);
+      } else {
+        console.error('Background image upload failed:', error);
+      }
+    } finally {
+      e.target.value = '';
+    }
   }, [onSetBgImage]);
 
   const clearBgImage = useCallback(() => {

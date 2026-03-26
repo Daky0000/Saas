@@ -846,7 +846,7 @@ export default function AdminFabricBuilder({
                   reader.onload = (ev) => {
                     const src = ev.target?.result as string;
                     const img = new Image();
-                    img.onload = () => {
+                    img.onload = async () => {
                       const MAX_W = 1200, MAX_H = 800;
                       let { width: w, height: h } = img;
                       if (w > MAX_W || h > MAX_H) {
@@ -858,19 +858,29 @@ export default function AdminFabricBuilder({
                       cvs.width = w; cvs.height = h;
                       cvs.getContext('2d')!.drawImage(img, 0, 0, w, h);
                       const resized = cvs.toDataURL('image/jpeg', 0.88);
-                      setCustomPreviewImage(resized);
                       const approxBytes = Math.round((resized.length * 3) / 4);
-                      void mediaService.upload({
-                        url: resized,
-                        thumbnail_url: resized,
-                        file_name: file.name.replace(/\.[^.]+$/, '.jpg'),
-                        original_name: file.name,
-                        file_size: approxBytes,
-                        file_type: 'image/jpeg',
-                        width: w,
-                        height: h,
-                        category: 'admin',
-                      }).catch(() => undefined);
+                      try {
+                        const uploaded = await mediaService.upload({
+                          url: resized,
+                          thumbnail_url: resized,
+                          file_name: `admin-template-cover-${Date.now()}-${file.name.replace(/\.[^.]+$/, '.jpg')}`,
+                          original_name: file.name,
+                          file_size: approxBytes,
+                          file_type: 'image/jpeg',
+                          width: w,
+                          height: h,
+                          category: 'admin',
+                          force: true,
+                        });
+                        setCustomPreviewImage(uploaded.url);
+                      } catch (error) {
+                        const duplicate = error as Error & { isDuplicate?: boolean; existingImage?: { url?: string } };
+                        if (duplicate?.isDuplicate && duplicate.existingImage?.url) {
+                          setCustomPreviewImage(duplicate.existingImage.url);
+                        } else {
+                          setCustomPreviewImage(resized);
+                        }
+                      }
                     };
                     img.src = src;
                   };

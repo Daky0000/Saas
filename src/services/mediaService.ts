@@ -50,6 +50,12 @@ export interface AdminMediaStats {
   users_count: number;
 }
 
+export interface MediaSyncResult {
+  synced: number;
+  scanned?: number;
+  message?: string;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   const data = await res.json();
   if (!data.success) throw new Error(data.error || 'Request failed');
@@ -87,6 +93,19 @@ export const mediaService = {
     // Ensure we only return user-owned images (filter out any admin images that might be included)
     const images = (data.images as MediaImage[]) ?? [];
     return images.filter(img => !img.user_id || img.category !== 'admin');
+  },
+
+  async syncAll(): Promise<MediaSyncResult> {
+    const res = await fetch(`${API_BASE_URL}/api/media/sync-all-images`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await handleResponse<{ success: boolean; synced: number; scanned?: number; message?: string }>(res);
+    return {
+      synced: data.synced ?? 0,
+      scanned: data.scanned,
+      message: data.message,
+    };
   },
 
   async update(
