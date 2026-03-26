@@ -5639,11 +5639,19 @@ app.get('/api/auth/:provider/start', async (req: Request, res: Response) => {
   }
 });
 
-// GET /auth/:provider/callback — handle OAuth callback, issue JWT
-app.get('/auth/:provider/callback', async (req: Request, res: Response) => {
+// GET /auth/:provider/callback — handle social login (auth providers) and pass through integration callbacks to frontend SPA
+app.get('/auth/:provider/callback', async (req: Request, res: Response, next) => {
   const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
   try {
     const { provider } = req.params as { provider: string };
+    const providerKey = String(provider || '').trim().toLowerCase();
+
+    // Integration callbacks (e.g. LinkedIn/Twitter/Facebook/Instagram/Pinterest/Threads) are handled in the frontend route `/auth/:platform/callback`.
+    // Social login providers are only google/github/microsoft in SOCIAL_PROVIDER_CONFIG.
+    if (!SOCIAL_PROVIDER_CONFIG[providerKey]) {
+      return res.sendFile(path.join(__dirname, 'docs', 'index.html'));
+    }
+
     const { code, state, error: oauthError } = req.query as Record<string, string>;
     if (oauthError) return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(oauthError)}`);
 
