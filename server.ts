@@ -7262,14 +7262,65 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9.\-_]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
 }
 
+function getMediaServerBase(): string {
+  return String(
+    process.env.BACKEND_PUBLIC_URL ||
+    process.env.PUBLIC_API_URL ||
+    'https://contentflow-api-production.up.railway.app'
+  ).replace(/\/$/, '');
+}
+
+function buildMediaServeUrl(id: string, fileName: string): string {
+  return `${getMediaServerBase()}/media/${encodeURIComponent(id)}/${encodeURIComponent(fileName)}`;
+}
+
+function transformMediaRow(row: any): any {
+  if (!row) return row;
+  const rawUrl = String(row.url || '');
+  const rawThumb = String(row.thumbnail_url || '');
+  const serveUrl = buildMediaServeUrl(row.id, row.file_name);
+  return {
+    ...row,
+    url: rawUrl.startsWith('data:') ? serveUrl : rawUrl,
+    thumbnail_url: rawThumb.startsWith('data:') ? serveUrl : rawThumb,
+  };
+}
+
+// GET /media/:id/:filename — public binary image serve (no auth, for external embeds & featured images)
+app.get('/media/:id/:filename', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).send('Database not configured');
+  try {
+    const { rows } = await pool!.query(
+      'SELECT url, file_type, file_name FROM media_images WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).send('Not found');
+    const row = rows[0] as { url: string; file_type: string; file_name: string };
+    const dataUrl = String(row.url || '');
+    if (!dataUrl) return res.status(404).send('Image data missing');
+    if (!dataUrl.startsWith('data:')) return res.redirect(dataUrl);
+    const commaIdx = dataUrl.indexOf(',');
+    if (commaIdx === -1) return res.status(500).send('Invalid image format');
+    const mime = dataUrl.slice(5, commaIdx).replace(';base64', '') || row.file_type || 'image/jpeg';
+    const buffer = Buffer.from(dataUrl.slice(commaIdx + 1), 'base64');
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(buffer);
+  } catch (err) {
+    console.error('media serve error:', err);
+    return res.status(500).send('Failed to serve image');
+  }
+});
+
 // Upload image to media library
 app.post('/api/media/upload', async (req: Request, res: Response) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const { url, thumbnail_url, file_name, original_name, file_size, file_type, width, height, category } =
+  const { url, thumbnail_url, file_name, original_name, file_size, file_type, width, height, category, force } =
     req.body as {
       url: string; thumbnail_url?: string; file_name: string; original_name: string;
-      file_size: number; file_type: string; width?: number; height?: number; category?: string;
+      file_size: number; file_type: string; width?: number; height?: number; category?: string; force?: boolean;
     };
   if (!url || !file_name || !original_name || !file_type)
     return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -7281,15 +7332,42 @@ app.post('/api/media/upload', async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'Image exceeds the maximum upload size of 10MB.' });
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
   try {
-    const id = randomUUID();
     const safeName = sanitizeFileName(file_name);
+    // Duplicate check
+    if (!force) {
+      const dup = await pool!.query(
+        'SELECT id, file_name, file_size, upload_date FROM media_images WHERE user_id = $1 AND file_name = $2 LIMIT 1',
+        [user.userId, safeName]
+      );
+      if (dup.rows.length) {
+        // Find next available name: base(1).ext, base(2).ext, ...
+        const dotIdx = safeName.lastIndexOf('.');
+        const base = dotIdx !== -1 ? safeName.slice(0, dotIdx) : safeName;
+        const ext = dotIdx !== -1 ? safeName.slice(dotIdx) : '';
+        const existingNames = await pool!.query(
+          `SELECT file_name FROM media_images WHERE user_id = $1 AND file_name LIKE $2`,
+          [user.userId, `${base}(%${ext}`]
+        );
+        const existingSet = new Set(existingNames.rows.map((r: any) => r.file_name));
+        let n = 1;
+        while (existingSet.has(`${base}(${n})${ext}`)) n++;
+        const suggestedName = `${base}(${n})${ext}`;
+        return res.status(409).json({
+          success: false,
+          error: 'duplicate',
+          existingImage: transformMediaRow(dup.rows[0]),
+          suggestedName,
+        });
+      }
+    }
+    const id = randomUUID();
     const imgCategory = category === 'admin' ? 'admin' : 'user';
     const { rows } = await pool!.query(
       `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in, category)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'{}','[]',$11) RETURNING *`,
       [id, user.userId, safeName, original_name, file_size ?? 0, file_type, width ?? null, height ?? null, url, thumbnail_url ?? url, imgCategory]
     );
-    return res.json({ success: true, image: rows[0] });
+    return res.json({ success: true, image: transformMediaRow(rows[0]) });
   } catch (err) {
     console.error('media upload error:', err);
     return res.status(500).json({ success: false, error: 'Upload failed' });
@@ -7309,7 +7387,7 @@ app.get('/api/media', async (req: Request, res: Response) => {
     if (tag) { query += ` AND $${params.length + 1} = ANY(tags)`; params.push(tag); }
     query += ' ORDER BY upload_date DESC';
     const { rows } = await pool!.query(query, params);
-    return res.json({ success: true, images: rows });
+    return res.json({ success: true, images: rows.map(transformMediaRow) });
   } catch (err) {
     console.error('media list error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch images' });
@@ -7377,7 +7455,7 @@ app.put('/api/media/:id', async (req: Request, res: Response) => {
       params
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Image not found' });
-    return res.json({ success: true, image: rows[0] });
+    return res.json({ success: true, image: transformMediaRow(rows[0]) });
   } catch (err) {
     console.error('media update error:', err);
     return res.status(500).json({ success: false, error: 'Update failed' });
@@ -7433,7 +7511,7 @@ app.get('/api/admin/media', async (req: Request, res: Response) => {
        ${whereClause} ORDER BY m.upload_date DESC LIMIT 500`,
       params
     );
-    return res.json({ success: true, images: rows });
+    return res.json({ success: true, images: rows.map(transformMediaRow) });
   } catch (err) {
     console.error('admin media list error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch images' });
@@ -7481,7 +7559,7 @@ app.get('/api/media/admin-assets', async (req: Request, res: Response) => {
       `SELECT id, file_name, file_type, width, height, url, thumbnail_url, tags, upload_date
        FROM media_images WHERE category = 'admin' ORDER BY upload_date DESC LIMIT 200`
     );
-    return res.json({ success: true, images: rows });
+    return res.json({ success: true, images: rows.map(transformMediaRow) });
   } catch (err) {
     console.error('admin assets error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load admin assets' });
@@ -7499,7 +7577,7 @@ app.patch('/api/admin/media/:id/category', async (req: Request, res: Response) =
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'No database' });
   try {
     const { rows } = await pool!.query('UPDATE media_images SET category=$1 WHERE id=$2 RETURNING *', [category, id]);
-    return res.json({ success: true, image: rows[0] });
+    return res.json({ success: true, image: transformMediaRow(rows[0]) });
   } catch (err) {
     console.error('admin media category error:', err);
     return res.status(500).json({ success: false, error: 'Update failed' });
