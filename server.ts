@@ -7388,9 +7388,13 @@ app.post('/api/media/upload', async (req: Request, res: Response) => {
       }
     }
     const id = randomUUID();
-    // Always store as 'user' on upload. Admins promote to 'admin' category separately
-    // via PATCH /api/admin/media/:id/category (which enforces admin auth).
-    const imgCategory = 'user';
+    // Only admins may upload directly as category='admin' (shared library).
+    // For all other callers — including admins uploading personal images — default to 'user'.
+    let imgCategory = 'user';
+    if (category === 'admin' && hasDatabase()) {
+      const roleRow = await pool!.query('SELECT role FROM users WHERE id=$1', [user.userId]).catch(() => ({ rows: [] as any[] }));
+      if (roleRow.rows[0]?.role === 'admin') imgCategory = 'admin';
+    }
     const { rows } = await pool!.query(
       `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, width, height, url, thumbnail_url, tags, used_in, category)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'{}','[]',$11) RETURNING *`,
@@ -7411,8 +7415,9 @@ app.get('/api/media', async (req: Request, res: Response) => {
   const { search, tag } = req.query as { search?: string; tag?: string };
   try {
     const params: unknown[] = [user.userId];
-    // Include admin-shared media assets so users can access platform-provided library content too.
-    let query = "SELECT * FROM media_images WHERE (user_id = $1 OR category = 'admin')";
+    // Strict user isolation — only return the requesting user's own images.
+    // Admin-shared library assets are served separately via GET /api/media/admin-assets.
+    let query = 'SELECT * FROM media_images WHERE user_id = $1';
     if (search) { query += ` AND (file_name ILIKE $${params.length + 1} OR original_name ILIKE $${params.length + 1})`; params.push(`%${search}%`); }
     if (tag) { query += ` AND $${params.length + 1} = ANY(tags)`; params.push(tag); }
     query += ' ORDER BY upload_date DESC';
