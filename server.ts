@@ -20,7 +20,7 @@ import {
 import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.ts';
 // import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
 import { LinkedInPlatform } from './backend/platforms/linkedin.ts';
-// import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
+import { TwitterXPlatform } from './backend/platforms/twitter_x.ts';
 import type { PostObject } from './backend/platforms/types.ts';
 // import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
 import path from 'path';
@@ -293,7 +293,7 @@ const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
 const facebookPagesPlatform = new FacebookPagesPlatform();
 // const instagramBusinessPlatform = new InstagramBusinessPlatform();
 const linkedInPlatform = new LinkedInPlatform();
-// const twitterXPlatform = new TwitterXPlatform();
+const twitterXPlatform = new TwitterXPlatform();
 
 let socialAutomationQueue: Queue | null = null;
 let socialAutomationWorker: Worker | null = null;
@@ -10964,32 +10964,33 @@ async function publishToplatform(
       const twitterPost: PostObject = {
         type: 'TWEET',
         content: { text: text.slice(0, 280) },
+        ...(featuredImage ? { media: [{ url: featuredImage, type: 'image' }] } : {}),
       };
 
-      // const validation = twitterXPlatform.validate(twitterPost);
-      // if (!validation.ok) {
-      //   return { status: 'failed', error: validation.error };
-      // }
+      const validation = twitterXPlatform.validate(twitterPost);
+      if (!validation.ok) {
+        return { status: 'failed', error: validation.error };
+      }
 
       await acquirePlatformSlot('twitter');
-      // const result = await twitterXPlatform.post(twitterPost, {
-      //   accessToken: access_token,
-      //   accountId: conn.account_id,
-      //   accountName: conn.account_name,
-      //   tokenData: token_data,
-      // });
+      const result = await twitterXPlatform.post(twitterPost, {
+        accessToken: access_token,
+        accountId: conn.account_id,
+        accountName: conn.account_name,
+        tokenData: token_data,
+      });
 
-      // if (result.status === 'published') {
-      //   await logIntegrationEvent({
-      //     userId,
-      //     integrationSlug: 'twitter',
-      //     eventType: 'post_published',
-      //     status: 'success',
-      //     response: { platformPostId: result.platformPostId || null },
-      //   });
-      // }
+      if (result.status === 'published') {
+        await logIntegrationEvent({
+          userId,
+          integrationSlug: 'twitter',
+          eventType: 'post_published',
+          status: 'success',
+          response: { platformPostId: result.platformPostId || null },
+        });
+      }
 
-      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
+      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
     }
 
     if (platformId === 'facebook') {
