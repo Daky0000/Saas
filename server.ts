@@ -9683,7 +9683,7 @@ async function publishToplatform(
       fallbackCaption,
       fallbackHashtags,
       postUrl,
-      featuredImage ? featuredImage : '',
+      // Note: featuredImage is passed as media, NOT embedded in the caption text
     ].filter(Boolean);
 
     const text =
