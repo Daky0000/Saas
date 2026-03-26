@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle, ExternalLink, Info, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
+import { CheckCircle, ExternalLink, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
 import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
@@ -17,74 +17,7 @@ type ModalState =
   | { type: 'instagram' }
   | { type: 'linkedin' }
   | { type: 'pinterest' }
-  | { type: 'mailchimp' }
-  | { type: 'details'; slug: string };
-
-type IntegrationMeta = {
-  slug: string;
-  name: string;
-  overview: string;
-  steps: string[];
-  requirements?: string[];
-  adminSteps?: string[];
-};
-
-const INTEGRATION_META: Record<string, IntegrationMeta> = {
-  wordpress: {
-    slug: 'wordpress',
-    name: 'WordPress',
-    overview: 'Connect with Application Passwords to publish posts, sync categories, and manage content.',
-    steps: ['Create an Application Password in WordPress.', 'Enter your site URL, username, and app password.', 'Save & verify the connection.'],
-    requirements: ['WordPress 5.6+ with Application Passwords enabled.'],
-  },
-  facebook: {
-    slug: 'facebook',
-    name: 'Facebook',
-    overview: 'Connect Facebook to publish to your profile or Pages and enable automated posting.',
-    steps: ['Connect Facebook via OAuth.', 'Choose a Page to save a Page token (optional).', 'Select Facebook in Posts → Distribution.'],
-    requirements: ['Meta app with OAuth configured.', 'Pages permission for Page publishing.'],
-    adminSteps: ['Set App ID, App Secret, and Redirect URL in Admin settings.', 'Enable Facebook for users.'],
-  },
-  instagram: {
-    slug: 'instagram',
-    name: 'Instagram',
-    overview: 'Publish images through the Instagram Graph API (Business/Creator accounts).',
-    steps: ['Connect Facebook first.', 'Open Instagram → Connect and pick a Business account.', 'Publish from Posts → Distribution.'],
-    requirements: ['Instagram Business/Creator linked to a Facebook Page.'],
-    adminSteps: ['Reuse Facebook app credentials for Instagram Graph.', 'Enable Instagram for users.'],
-  },
-  linkedin: {
-    slug: 'linkedin',
-    name: 'LinkedIn',
-    overview: 'Publish to your personal profile or an administrated LinkedIn Page with the same OAuth connection.',
-    steps: ['Connect LinkedIn via OAuth.', 'Confirm the account in Integrations.', 'Publish from Posts → Distribution.'],
-    requirements: ['LinkedIn app with member and organization posting scopes enabled.'],
-    adminSteps: ['Set Client ID/Secret and Redirect URL.', 'Enable LinkedIn for users.', 'Approve the organization posting scopes for the app.'],
-  },
-  twitter: {
-    slug: 'twitter',
-    name: 'X (Twitter)',
-    overview: 'Publish tweets with OAuth 2.0 + PKCE using the X API v2.',
-    steps: ['Connect X via OAuth.', 'Confirm the account in Integrations.', 'Publish from Posts → Distribution.'],
-    requirements: ['X developer app with OAuth 2.0 enabled.'],
-    adminSteps: ['Set Client ID/Secret and Redirect URL.', 'Enable X for users.'],
-  },
-  pinterest: {
-    slug: 'pinterest',
-    name: 'Pinterest',
-    overview: 'Create Pins to selected boards using the Pinterest API.',
-    steps: ['Connect Pinterest via OAuth.', 'Open Manage and select a board.', 'Publish from Posts → Distribution.'],
-    requirements: ['Pinterest app with proper scopes.'],
-    adminSteps: ['Set App ID/Secret and Redirect URL.', 'Enable Pinterest for users.'],
-  },
-  mailchimp: {
-    slug: 'mailchimp',
-    name: 'Mailchimp',
-    overview: 'Connect via API key and server prefix to sync marketing data.',
-    steps: ['Generate an API key in Mailchimp.', 'Enter API key + server prefix (e.g., us19).', 'Save the connection.'],
-    requirements: ['Mailchimp account with API access.'],
-  },
-};
+  | { type: 'mailchimp' };
 
 const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   connected: { bg: 'bg-emerald-50', text: 'text-emerald-700' },
@@ -130,7 +63,6 @@ function Card({
   iconBg,
   iconText,
   meta,
-  isActive,
   disabledReason,
   children,
 }: {
@@ -142,7 +74,6 @@ function Card({
   iconBg: string;
   iconText: string;
   meta?: string | null;
-  isActive: boolean;
   disabledReason?: string | null;
   children: React.ReactNode;
 }) {
@@ -163,19 +94,7 @@ function Card({
       </div>
       <p className="mt-3 text-sm leading-6 text-slate-500">{description}</p>
       {disabledReason ? <p className="mt-3 text-xs text-amber-700">{disabledReason}</p> : null}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">{children}</div>
-        <div
-          aria-hidden="true"
-          className={`relative h-6 w-11 rounded-full p-0.5 transition ${
-            isActive ? 'bg-indigo-500' : 'bg-slate-200'
-          }`}
-        >
-          <div
-            className={`h-5 w-5 rounded-full bg-white shadow transition ${isActive ? 'translate-x-5' : 'translate-x-0'}`}
-          />
-        </div>
-      </div>
+      <div className="mt-4 flex flex-wrap gap-2">{children}</div>
     </div>
   );
 }
@@ -522,15 +441,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
         iconBg={brand.bg}
         iconText={brand.text}
         meta={connectedMeta}
-        isActive={item.connected}
       >
-        <button
-          type="button"
-          onClick={() => setModal({ type: 'details', slug })}
-          className={SECONDARY_ACTION}
-        >
-          <Info size={16} /> Steps
-        </button>
           {!item.connected ? (
             <button
               type="button"
@@ -554,7 +465,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 onClick={() => setModal({ type: 'wordpress' })}
                 className={SECONDARY_ACTION}
               >
-                <Settings2 size={16} /> Settings
+                <Settings2 size={16} /> Manage
               </button>
             </>
           )}
@@ -573,15 +484,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
           iconBg={brand.bg}
           iconText={brand.text}
           meta={connectedMeta}
-          isActive={item.connected}
         >
-          <button
-            type="button"
-            onClick={() => setModal({ type: 'details', slug })}
-            className={SECONDARY_ACTION}
-          >
-            <Info size={16} /> Steps
-          </button>
           {!item.connected ? (
             <button
               type="button"
@@ -591,26 +494,35 @@ export default function Integrations({ onNavigateSettings }: Props) {
               <Plug size={16} /> Connect
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={async () => {
-                if (!confirm('Disconnect Mailchimp?')) return;
-                setBusy('mailchimp');
-                try {
-                  const res = await integrationService.disconnectMailchimp();
-                  if (!res.success) throw new Error(res.error || 'Failed to disconnect');
-                  await load();
-                } catch (e) {
-                  alert(e instanceof Error ? e.message : 'Failed to disconnect');
-                } finally {
-                  setBusy(null);
-                }
-              }}
-              disabled={busy === 'mailchimp'}
-              className={SECONDARY_ACTION}
-            >
-              {busy === 'mailchimp' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setModal({ type: 'mailchimp' })}
+                className={SECONDARY_ACTION}
+              >
+                <Settings2 size={16} /> Manage
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!confirm('Disconnect Mailchimp?')) return;
+                  setBusy('mailchimp');
+                  try {
+                    const res = await integrationService.disconnectMailchimp();
+                    if (!res.success) throw new Error(res.error || 'Failed to disconnect');
+                    await load();
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : 'Failed to disconnect');
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+                disabled={busy === 'mailchimp'}
+                className={SECONDARY_ACTION}
+              >
+                {busy === 'mailchimp' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
+              </button>
+            </>
           )}
         </Card>
       );
@@ -620,7 +532,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
       disabledReason ? 'disabled' : item.connected ? 'connected' : 'disconnected';
 
     const connectLabel = item.connected ? 'Reconnect' : 'Connect';
-    const isActive = statusTone === 'connected';
 
     return (
       <Card
@@ -645,15 +556,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
         iconBg={brand.bg}
         iconText={brand.text}
         meta={connectedMeta}
-        isActive={isActive}
       >
-        <button
-          type="button"
-          onClick={() => setModal({ type: 'details', slug })}
-          className={SECONDARY_ACTION}
-        >
-          <Info size={16} /> Steps
-        </button>
         {slug === 'instagram' ? (
           <>
             <button
@@ -663,7 +566,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
               className={PRIMARY_ACTION}
               title={!items.find((i) => i.slug === 'facebook')?.connected ? 'Connect Facebook first' : ''}
             >
-              <Plug size={16} /> Connect
+              <Settings2 size={16} /> {item.connected ? 'Manage' : 'Connect'}
             </button>
             {item.connected ? (
               <button
@@ -873,10 +776,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       : modal.type === 'linkedin'
                         ? 'LinkedIn targets'
                       : modal.type === 'pinterest'
-                        ? 'Pinterest boards'
-                        : modal.type === 'mailchimp'
-                          ? 'Mailchimp'
-                          : INTEGRATION_META[modal.slug]?.name || 'Integration details'}
+                      ? 'Pinterest boards'
+                      : modal.type === 'mailchimp'
+                        ? 'Mailchimp'
+                        : 'Integration'}
               </div>
               <button
                 type="button"
@@ -888,45 +791,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
             </div>
 
             <div className="px-6 py-5">
-              {modal.type === 'details' ? (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                    {INTEGRATION_META[modal.slug]?.overview || 'Follow the steps below to connect this integration.'}
-                  </div>
-
-                  {INTEGRATION_META[modal.slug]?.requirements?.length ? (
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Requirements</div>
-                      <ul className="mt-2 list-disc pl-5 text-sm text-slate-600">
-                        {INTEGRATION_META[modal.slug].requirements!.map((req) => (
-                          <li key={req}>{req}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">User steps</div>
-                    <ol className="mt-2 list-decimal pl-5 text-sm text-slate-600">
-                      {(INTEGRATION_META[modal.slug]?.steps || ['Connect the integration.']).map((step) => (
-                        <li key={step}>{step}</li>
-                      ))}
-                    </ol>
-                  </div>
-
-                  {INTEGRATION_META[modal.slug]?.adminSteps?.length ? (
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Admin steps</div>
-                      <ol className="mt-2 list-decimal pl-5 text-sm text-slate-600">
-                        {INTEGRATION_META[modal.slug].adminSteps!.map((step) => (
-                          <li key={step}>{step}</li>
-                        ))}
-                      </ol>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
               {modal.type === 'wordpress' ? (
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
