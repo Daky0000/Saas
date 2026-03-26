@@ -116,6 +116,16 @@ const publishWithAdapter = async (
 
 postQueue.process(async (job) => {
   const postId = job.data.postId as string;
+  const retryIntegrationId = job.data.retryIntegrationId as string | undefined;
+
+  // If this is a retry job, reset the specific integration back to PENDING
+  if (retryIntegrationId) {
+    await prisma.postIntegration.update({
+      where: { id: retryIntegrationId },
+      data: { status: PostPlatformStatus.PENDING },
+    });
+  }
+
   const post = await prisma.post.findUnique({
     where: { id: postId },
     include: {
@@ -138,8 +148,6 @@ postQueue.process(async (job) => {
   }
 
   let anyAttempted = false;
-  let anyPermanentFailure = false;
-  let allPosted = true;
 
   for (const integration of post.platformIntegrations) {
     if (integration.status !== PostPlatformStatus.PENDING) continue;
@@ -190,7 +198,6 @@ postQueue.process(async (job) => {
         response: { platform, postId: response.platformPostId },
       });
     } else {
-      allPosted = false;
       const nextRetry = integration.retryCount + 1;
       const shouldRetry = nextRetry <= integration.maxRetries;
 
@@ -217,16 +224,28 @@ postQueue.process(async (job) => {
       if (shouldRetry) {
         const delay = getRetryDelayMs(nextRetry);
         await postQueue.add(
-          { postId },
+          { postId, retryIntegrationId: integration.id },
           { delay, jobId: `${postId}-retry-${integration.id}-${nextRetry}` }
         );
-      } else {
-        anyPermanentFailure = true;
       }
     }
   }
 
   if (!anyAttempted) return;
+
+  // Re-fetch final integration states to make an accurate determination
+  const finalIntegrations = await prisma.postIntegration.findMany({
+    where: { postId },
+  });
+  const allPosted = finalIntegrations.every(
+    (i) => i.status === PostPlatformStatus.POSTED
+  );
+  const hasPermanentFailure = finalIntegrations.some(
+    (i) => i.status === PostPlatformStatus.FAILED
+  );
+  const hasRetrying = finalIntegrations.some(
+    (i) => i.status === PostPlatformStatus.RETRY
+  );
 
   if (post.isRecurring || post.status === PostStatus.RECURRING) {
     await prisma.post.update({
@@ -242,10 +261,12 @@ postQueue.process(async (job) => {
       where: { id: post.id },
       data: { status: PostStatus.POSTED, postedAt: new Date() },
     });
-  } else if (anyPermanentFailure) {
+  } else if (hasPermanentFailure && !hasRetrying) {
+    // Only mark failed when all retries are exhausted
     await prisma.post.update({
       where: { id: post.id },
       data: { status: PostStatus.FAILED },
     });
   }
+  // If hasRetrying: leave status as-is; retry jobs will handle the remaining integrations
 });

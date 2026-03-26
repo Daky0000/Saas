@@ -29,6 +29,13 @@ export const handleScheduledPosts = async () => {
   for (const post of posts) {
     if (!post.platformIntegrations.length) continue;
 
+    // Skip posts where all integrations are already in progress or done;
+    // retry jobs handle RETRY integrations, so no need to re-queue here
+    const hasPendingIntegrations = post.platformIntegrations.some(
+      (i) => i.status === PostPlatformStatus.PENDING
+    );
+    if (!hasPendingIntegrations) continue;
+
     const jobId = await addPostToQueue(post.id, null);
 
     await prisma.post.update({
