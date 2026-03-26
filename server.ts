@@ -17,7 +17,7 @@ import {
   createHmac,
   timingSafeEqual,
 } from 'crypto';
-// import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.js';
+import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.ts';
 // import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
 import { LinkedInPlatform } from './backend/platforms/linkedin.ts';
 // import { TwitterXPlatform } from './backend/platforms/twitter_x.js';
@@ -290,7 +290,7 @@ let dbReady = false;
 const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
 const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
 const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
-// const facebookPagesPlatform = new FacebookPagesPlatform();
+const facebookPagesPlatform = new FacebookPagesPlatform();
 // const instagramBusinessPlatform = new InstagramBusinessPlatform();
 const linkedInPlatform = new LinkedInPlatform();
 // const twitterXPlatform = new TwitterXPlatform();
@@ -943,7 +943,7 @@ function verifyMetaWebhookSignature(req: Request, appSecret: string) {
   return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
 }
 
-// Meta Webhooks (Facebook/Instagram)
+// Meta Webhooks (Facebook/Instagram) — GET verifies the endpoint with Facebook
 app.get('/webhooks/meta', (req: Request, res: Response) => {
   const mode = String(req.query['hub.mode'] || '').trim();
   const token = String(req.query['hub.verify_token'] || '').trim();
@@ -956,29 +956,141 @@ app.get('/webhooks/meta', (req: Request, res: Response) => {
   return res.status(403).send('Forbidden');
 });
 
+// Also accept the alias used by the App Review subscription setup
+app.get('/api/v1/webhooks/facebook', (req: Request, res: Response) => {
+  const mode = String(req.query['hub.mode'] || '').trim();
+  const token = String(req.query['hub.verify_token'] || '').trim();
+  const challenge = String(req.query['hub.challenge'] || '').trim();
+  const verifyToken = String(process.env.META_WEBHOOK_VERIFY_TOKEN || process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN || '').trim();
+
+  if (mode === 'subscribe' && verifyToken && token === verifyToken) {
+    return res.status(200).send(challenge);
+  }
+  return res.status(403).send('Forbidden');
+});
+
 app.post('/webhooks/meta', async (req: Request, res: Response) => {
+  // Always respond 200 quickly so Facebook doesn't retry
+  res.status(200).json({ ok: true });
+
   try {
     const appSecret = String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '').trim();
-    if (!verifyMetaWebhookSignature(req, appSecret)) {
-      return res.status(401).send('Invalid signature');
+    if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
+      console.warn('Meta webhook: invalid signature — discarding');
+      return;
     }
 
     const payload = req.body || {};
+    const objectType = String(payload?.object || '').toLowerCase();
     const eventType = String(payload?.event?.type || payload?.type || '').toLowerCase();
     const eventUserId = String(payload?.event?.user_id || payload?.user_id || payload?.event?.userId || '').trim();
-    const eventPlatform = String(payload?.event?.platform || payload?.platform || payload?.object || '').toLowerCase();
+    const eventPlatform = objectType === 'instagram' ? 'instagram' : 'facebook';
 
-    const normalizedPlatform = eventPlatform === 'instagram' || eventPlatform === 'ig_user' ? 'instagram' : 'facebook';
+    // Handle deauth / permission revocation at top-level
     if (eventUserId && (eventType === 'permissions_revoked' || eventType === 'deauthorized' || eventType === 'user_deauthorized')) {
       await markSocialAccountNeedsReapproval({
-        platformId: normalizedPlatform,
+        platformId: eventPlatform,
         accountId: eventUserId,
         reason: eventType,
         disconnect: true,
       });
-      return res.status(200).json({ ok: true, handled: true });
+      return;
     }
 
+    // Process entry array (standard Graph API webhook format)
+    if (Array.isArray(payload?.entry)) {
+      for (const entry of payload.entry) {
+        const entryId = String(entry?.id || '').trim();
+        const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+        const messaging = Array.isArray(entry?.messaging) ? entry.messaging : [];
+
+        for (const change of changes) {
+          const field = String(change?.field || '').toLowerCase();
+          const value = change?.value || {};
+
+          // Deauth / permission revocation
+          const isDeauth = field === 'permissions' && (value?.verb === 'remove' || value?.verb === 'revoke' || value?.is_enabled === false);
+          if (isDeauth && entryId) {
+            await markSocialAccountNeedsReapproval({
+              platformId: eventPlatform,
+              accountId: entryId,
+              reason: 'permissions_revoked',
+              disconnect: true,
+            });
+            continue;
+          }
+
+          // Page feed events (new posts, comments, reactions on page posts)
+          if (field === 'feed' && pool) {
+            const verb = String(value?.verb || '').toLowerCase();
+            const itemType = String(value?.item || '').toLowerCase();
+            const postId = String(value?.post_id || value?.video_id || '').trim();
+            const commentId = String(value?.comment_id || '').trim();
+
+            if (postId) {
+              await logIntegrationEvent({
+                userId: null as any,
+                integrationSlug: 'facebook',
+                eventType: `page_feed_${itemType}_${verb}`,
+                status: 'success',
+                response: { pageId: entryId, postId, commentId: commentId || null, raw: value },
+              }).catch(() => undefined);
+            }
+          }
+
+          // Page mention events
+          if (field === 'mention' && pool) {
+            await logIntegrationEvent({
+              userId: null as any,
+              integrationSlug: 'facebook',
+              eventType: 'page_mention',
+              status: 'success',
+              response: { pageId: entryId, raw: value },
+            }).catch(() => undefined);
+          }
+
+          // Page rating / recommendation events
+          if (field === 'ratings' && pool) {
+            await logIntegrationEvent({
+              userId: null as any,
+              integrationSlug: 'facebook',
+              eventType: 'page_rating',
+              status: 'success',
+              response: { pageId: entryId, raw: value },
+            }).catch(() => undefined);
+          }
+        }
+
+        // Messaging (page inbox — future use)
+        for (const msg of messaging) {
+          if (msg?.message && pool) {
+            await logIntegrationEvent({
+              userId: null as any,
+              integrationSlug: 'facebook',
+              eventType: 'page_message',
+              status: 'success',
+              response: { pageId: entryId, senderId: String(msg?.sender?.id || ''), raw: msg },
+            }).catch(() => undefined);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Meta webhook processing error:', err);
+  }
+});
+
+// Mirror POST webhook to the v1 alias path as well
+app.post('/api/v1/webhooks/facebook', async (req: Request, res: Response) => {
+  res.status(200).json({ ok: true });
+  try {
+    const appSecret = String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '').trim();
+    if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
+      console.warn('Facebook v1 webhook: invalid signature — discarding');
+      return;
+    }
+    // Delegate processing — re-emit to the shared handler by forwarding the body
+    const payload = req.body || {};
     if (Array.isArray(payload?.entry)) {
       for (const entry of payload.entry) {
         const entryId = String(entry?.id || '').trim();
@@ -989,7 +1101,7 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
           const isDeauth = field === 'permissions' && (value?.verb === 'remove' || value?.verb === 'revoke' || value?.is_enabled === false);
           if (isDeauth && entryId) {
             await markSocialAccountNeedsReapproval({
-              platformId: normalizedPlatform,
+              platformId: 'facebook',
               accountId: entryId,
               reason: 'permissions_revoked',
               disconnect: true,
@@ -998,11 +1110,68 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
         }
       }
     }
-
-    return res.status(200).json({ ok: true });
   } catch (err) {
-    console.error('Meta webhook error:', err);
-    return res.status(500).json({ ok: false });
+    console.error('Facebook v1 webhook error:', err);
+  }
+});
+
+// POST /api/v1/social/facebook/webhook-subscribe — subscribe a Facebook Page to real-time webhooks
+app.post('/api/v1/social/facebook/webhook-subscribe', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const pageId = String(req.body?.page_id || '').trim();
+    if (!pageId) return res.status(400).json({ success: false, error: 'page_id is required' });
+
+    // Resolve page token
+    const pageResult = await pool.query(
+      `SELECT access_token, access_token_encrypted
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
+       LIMIT 1`,
+      [auth.userId, pageId]
+    );
+    const row: any = pageResult.rows[0] || {};
+    let pageToken = '';
+    if (row.access_token_encrypted) {
+      try { pageToken = decryptIntegrationSecret(String(row.access_token_encrypted)); } catch { /* ignore */ }
+    }
+    if (!pageToken) pageToken = String(row.access_token || '').trim();
+    if (!pageToken) return res.status(400).json({ success: false, error: 'Page token not available — save the page first' });
+
+    // Subscribe the page to webhook fields
+    const subscribeResp = await axios.post(
+      `https://graph.facebook.com/v19.0/${encodeURIComponent(pageId)}/subscribed_apps`,
+      new URLSearchParams({
+        subscribed_fields: 'feed,mention,ratings,messages',
+        access_token: pageToken,
+      }).toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+    const subData: any = subscribeResp.data || {};
+    if (subscribeResp.status >= 400) {
+      const msg = subData?.error?.message || `Facebook subscription failed (${subscribeResp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'facebook',
+      eventType: 'webhook_subscribe',
+      status: 'success',
+      response: { pageId, fields: 'feed,mention,ratings,messages' },
+    });
+
+    return res.json({ success: true, pageId, subscribed: subData?.success ?? true });
+  } catch (err) {
+    console.error('v1 facebook webhook-subscribe error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to subscribe page to webhooks' });
   }
 });
 
@@ -5188,7 +5357,7 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
-  facebook:  { authUrl: 'https://www.facebook.com/v18.0/dialog/oauth', scopes: 'public_profile,pages_manage_posts,pages_read_engagement,pages_show_list', idField: 'appId' },
+  facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_metadata,read_insights', idField: 'appId' },
   // LinkedIn scopes are space-separated
   linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile r_emailaddress w_member_social rw_organization_admin w_organization_social', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
@@ -5894,12 +6063,11 @@ app.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) =
     const scope = [
       'public_profile',
       'email',
-      // List pages the user manages
       'pages_show_list',
-      // Read engagement insights for pages
       'pages_read_engagement',
-      // Post as a page
       'pages_manage_posts',
+      'pages_manage_metadata',
+      'read_insights',
     ].join(',');
 
     const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
@@ -5945,6 +6113,8 @@ app.get('/api/v1/social/facebook/authorize-url', async (req: Request, res: Respo
       'pages_show_list',
       'pages_read_engagement',
       'pages_manage_posts',
+      'pages_manage_metadata',
+      'read_insights',
     ].join(',');
 
     const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
@@ -5983,6 +6153,36 @@ app.get('/api/v1/social/facebook/callback', async (req: Request, res: Response) 
 
     const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
     const tokenData = await exchangeFacebookCode(code, redirectUri);
+
+    // Exchange short-lived user token for a long-lived one (~60 days)
+    const shortToken = String(tokenData?.access_token || '').trim();
+    if (shortToken) {
+      try {
+        const cfg2 = await getPlatformConfig('facebook');
+        const appId = String(cfg2.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+        const appSecret = String(cfg2.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+        if (appId && appSecret) {
+          const llResp = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+            params: {
+              grant_type: 'fb_exchange_token',
+              client_id: appId,
+              client_secret: appSecret,
+              fb_exchange_token: shortToken,
+            },
+            validateStatus: () => true,
+            timeout: 15000,
+          });
+          const llData: any = llResp.data || {};
+          if (llResp.status < 400 && llData.access_token) {
+            tokenData.access_token = llData.access_token;
+            tokenData.expires_in = llData.expires_in || 60 * 24 * 3600;
+          }
+        }
+      } catch {
+        // best-effort; use short-lived token if exchange fails
+      }
+    }
+
     await storeUserConnection(stateRow.user_id, 'facebook', tokenData);
     await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
 
@@ -6146,6 +6346,247 @@ app.get('/api/v1/social/facebook/targets', async (req: Request, res: Response) =
   } catch (err) {
     console.error('v1 facebook targets error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
+  }
+});
+
+// GET /api/v1/social/facebook/page-insights — page-level metrics for a specific date range
+app.get('/api/v1/social/facebook/page-insights', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const pageId = String((req.query as any).page_id || '').trim();
+    const since = String((req.query as any).since || '').trim(); // YYYY-MM-DD
+    const until = String((req.query as any).until || '').trim(); // YYYY-MM-DD
+    const period = String((req.query as any).period || 'day').trim(); // day | week | days_28 | month
+
+    if (!pageId) return res.status(400).json({ success: false, error: 'page_id is required' });
+
+    // Get page token from stored social_accounts or fall back to user token
+    const pageResult = await pool.query(
+      `SELECT access_token, access_token_encrypted
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
+       LIMIT 1`,
+      [auth.userId, pageId]
+    );
+    const pageRow: any = pageResult.rows[0] || {};
+    let pageToken = '';
+    if (pageRow.access_token_encrypted) {
+      try { pageToken = decryptIntegrationSecret(String(pageRow.access_token_encrypted)); } catch { /* ignore */ }
+    }
+    if (!pageToken) pageToken = String(pageRow.access_token || '').trim();
+    if (!pageToken) {
+      const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+      pageToken = String(conn?.access_token || '').trim();
+    }
+    if (!pageToken) return res.status(400).json({ success: false, error: 'Facebook page token not available — reconnect the page' });
+
+    const graphBase = 'https://graph.facebook.com/v19.0';
+    const metrics = [
+      'page_impressions',
+      'page_impressions_unique',
+      'page_engaged_users',
+      'page_post_engagements',
+      'page_fan_adds',
+      'page_fan_removes',
+      'page_views_total',
+      'page_actions_post_reactions_total',
+    ].join(',');
+
+    const params: Record<string, string> = { metric: metrics, period, access_token: pageToken };
+    if (since) params.since = since;
+    if (until) params.until = until;
+
+    const insightsResp = await axios.get(`${graphBase}/${encodeURIComponent(pageId)}/insights`, {
+      params,
+      validateStatus: () => true,
+      timeout: 20000,
+    });
+    const insightsData: any = insightsResp.data || {};
+    if (insightsResp.status >= 400) {
+      const msg = insightsData?.error?.message || `Facebook Insights API error ${insightsResp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    // Also fetch page fans total (lifetime metric)
+    const fansResp = await axios.get(`${graphBase}/${encodeURIComponent(pageId)}/insights`, {
+      params: { metric: 'page_fans', period: 'lifetime', access_token: pageToken },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const fansData: any = fansResp.data || {};
+    const totalFans = fansData?.data?.[0]?.values?.[0]?.value ?? null;
+
+    return res.json({
+      success: true,
+      pageId,
+      period,
+      totalFans,
+      insights: insightsData.data || [],
+      paging: insightsData.paging || null,
+    });
+  } catch (err) {
+    console.error('v1 facebook page-insights error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch page insights' });
+  }
+});
+
+// GET /api/v1/social/facebook/post-insights — per-post metrics (reactions, reach, engagement)
+app.get('/api/v1/social/facebook/post-insights', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const postId = String((req.query as any).post_id || '').trim();
+    if (!postId) return res.status(400).json({ success: false, error: 'post_id is required' });
+
+    // Derive page ID from post_id (format: pageId_postId)
+    const pageId = postId.includes('_') ? postId.split('_')[0] : '';
+
+    // Resolve page token
+    let pageToken = '';
+    if (pageId && pool) {
+      const pr = await pool.query(
+        `SELECT access_token, access_token_encrypted
+         FROM social_accounts
+         WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
+         LIMIT 1`,
+        [auth.userId, pageId]
+      );
+      const row: any = pr.rows[0] || {};
+      if (row.access_token_encrypted) {
+        try { pageToken = decryptIntegrationSecret(String(row.access_token_encrypted)); } catch { /* ignore */ }
+      }
+      if (!pageToken) pageToken = String(row.access_token || '').trim();
+    }
+    if (!pageToken) {
+      const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+      pageToken = String(conn?.access_token || '').trim();
+    }
+    if (!pageToken) return res.status(400).json({ success: false, error: 'Facebook token not available — reconnect' });
+
+    const graphBase = 'https://graph.facebook.com/v19.0';
+
+    // Fetch post insights metrics
+    const insightsResp = await axios.get(`${graphBase}/${encodeURIComponent(postId)}/insights`, {
+      params: {
+        metric: 'post_impressions,post_impressions_unique,post_engaged_users,post_clicks,post_reactions_by_type_total',
+        access_token: pageToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const insightsData: any = insightsResp.data || {};
+
+    // Fetch reactions/comments/shares from post object
+    const postResp = await axios.get(`${graphBase}/${encodeURIComponent(postId)}`, {
+      params: {
+        fields: 'message,created_time,reactions.summary(true),comments.summary(true),shares,full_picture',
+        access_token: pageToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const postData: any = postResp.data || {};
+    if (postResp.status >= 400) {
+      const msg = postData?.error?.message || `Facebook post lookup failed (${postResp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    const metrics: Record<string, number> = {};
+    for (const item of insightsData?.data || []) {
+      metrics[item.name] = item.values?.[0]?.value ?? 0;
+    }
+
+    return res.json({
+      success: true,
+      postId,
+      post: {
+        message: postData.message || null,
+        createdTime: postData.created_time || null,
+        picture: postData.full_picture || null,
+      },
+      metrics: {
+        impressions: metrics['post_impressions'] ?? null,
+        reach: metrics['post_impressions_unique'] ?? null,
+        engagedUsers: metrics['post_engaged_users'] ?? null,
+        clicks: metrics['post_clicks'] ?? null,
+        reactions: postData?.reactions?.summary?.total_count ?? null,
+        comments: postData?.comments?.summary?.total_count ?? null,
+        shares: postData?.shares?.count ?? null,
+      },
+      rawInsights: insightsData.data || [],
+    });
+  } catch (err) {
+    console.error('v1 facebook post-insights error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch post insights' });
+  }
+});
+
+// POST /api/v1/social/facebook/token-refresh — manually exchange token for a fresh long-lived one
+app.post('/api/v1/social/facebook/token-refresh', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const currentToken = String(conn?.access_token || '').trim();
+    if (!currentToken) return res.status(400).json({ success: false, error: 'Facebook not connected' });
+
+    const cfg = await getPlatformConfig('facebook');
+    const appId = String(cfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+    const appSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+    if (!appId || !appSecret) return res.status(500).json({ success: false, error: 'Facebook app credentials not configured' });
+
+    const resp = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: {
+        grant_type: 'fb_exchange_token',
+        client_id: appId,
+        client_secret: appSecret,
+        fb_exchange_token: currentToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const data: any = resp.data || {};
+    if (resp.status >= 400 || !data.access_token) {
+      const msg = data?.error?.message || 'Facebook token refresh failed';
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    const expiresIn = Number(data.expires_in || 60 * 24 * 3600);
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+    const newToken = String(data.access_token).trim();
+    const encryptedToken = encryptIntegrationSecret(newToken);
+
+    await pool.query(
+      `UPDATE social_accounts
+       SET access_token = NULL,
+           access_token_encrypted = $2,
+           token_expires_at = $3,
+           expires_at = $3,
+           needs_reapproval = false,
+           updated_at = NOW()
+       WHERE user_id = $1 AND platform = 'facebook' AND account_type = 'profile'`,
+      [auth.userId, encryptedToken, expiresAt]
+    );
+
+    await logIntegrationEvent({
+      userId: auth.userId,
+      integrationSlug: 'facebook',
+      eventType: 'token_refresh',
+      status: 'success',
+      response: { expiresAt },
+    });
+
+    return res.json({ success: true, expiresAt, message: 'Facebook token refreshed successfully' });
+  } catch (err) {
+    console.error('v1 facebook token-refresh error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to refresh Facebook token' });
   }
 });
 
@@ -9476,34 +9917,38 @@ async function publishToplatform(
       //   return { status: 'failed', error: validation.error };
       // }
 
-      await acquirePlatformSlot('facebook');
-      // const result = await facebookPagesPlatform.post(facebookPost, {
-      //   accessToken: access_token,
-      //   accountId: conn.account_id,
-      //   accountName: conn.account_name,
-      //   tokenData: token_data,
-      //   helpers: {
-      //     graphBase: 'https://graph.facebook.com/v19.0',
-      //     resolvePageToken: async (dest: any) => resolveFacebookPageToken({
-      //       userId,
-      //       userAccessToken: access_token,
-      //       destination: dest,
-      //     }),
-      //   },
-      // });
-
-      // if (result.status === 'published') {
-      //   await logIntegrationEvent({
-      //     userId,
-      //     integrationSlug: 'facebook',
-      //     eventType: 'post_published',
-      //     status: 'success',
-      //     response: { platformPostId: result.platformPostId || null },
-      //   });
+      // const validation = facebookPagesPlatform.validate(facebookPost);
+      // if (!validation.ok) {
+      //   return { status: 'failed', error: validation.error };
       // }
 
-      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
-      return { status: 'failed', error: 'Facebook publishing temporarily disabled' };
+      await acquirePlatformSlot('facebook');
+      const result = await facebookPagesPlatform.post(facebookPost, {
+        accessToken: access_token,
+        accountId: conn.account_id,
+        accountName: conn.account_name,
+        tokenData: token_data,
+        helpers: {
+          graphBase: 'https://graph.facebook.com/v19.0',
+          resolvePageToken: async (dest: any) => resolveFacebookPageToken({
+            userId,
+            userAccessToken: access_token,
+            destination: dest,
+          }),
+        },
+      });
+
+      if (result.status === 'published') {
+        await logIntegrationEvent({
+          userId,
+          integrationSlug: 'facebook',
+          eventType: 'post_published',
+          status: 'success',
+          response: { platformPostId: result.platformPostId || null },
+        });
+      }
+
+      return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
     }
 
     if (platformId === 'threads') {
