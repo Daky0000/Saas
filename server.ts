@@ -5666,10 +5666,11 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
     const { provider } = req.params as { provider: string };
     const providerKey = String(provider || '').trim().toLowerCase();
 
-    // Integration callbacks (e.g. LinkedIn/Twitter/Facebook/Instagram/Pinterest/Threads) are handled in the frontend route `/auth/:platform/callback`.
-    // Social login providers are only google/github/microsoft in SOCIAL_PROVIDER_CONFIG.
+    // Integration callbacks (LinkedIn/Twitter/Facebook/Instagram/Pinterest/Threads) belong to the frontend SPA path.
     if (!SOCIAL_PROVIDER_CONFIG[providerKey]) {
-      return res.sendFile(path.join(__dirname, 'docs', 'index.html'));
+      const query = new URLSearchParams(req.query as Record<string, string>).toString();
+      const target = `${FRONTEND_URL}/auth/${encodeURIComponent(providerKey)}/callback${query ? `?${query}` : ''}`;
+      return res.redirect(target);
     }
 
     const { code, state, error: oauthError } = req.query as Record<string, string>;
