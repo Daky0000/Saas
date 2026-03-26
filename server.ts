@@ -2892,24 +2892,31 @@ async function exchangeLinkedInCode(code: string) {
   const accessToken = String(tokenData?.access_token || '').trim();
   if (accessToken) {
     try {
-      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+      // Prefer OpenID Connect userinfo (returns sub reliably with openid scope)
+      const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
         validateStatus: () => true,
         timeout: 15000,
       });
-      if (meResp.status < 400) {
-        const meData: any = meResp.data || {};
-        const linkedInId = String(meData?.id || '').trim();
-        const localizedFirst = String(meData?.localizedFirstName || '').trim();
-        const localizedLast = String(meData?.localizedLastName || '').trim();
-        const fullName = [localizedFirst, localizedLast].filter(Boolean).join(' ').trim();
-        if (linkedInId) {
-          tokenData.user_id = linkedInId;
-          tokenData.id = linkedInId;
-          tokenData.sub = linkedInId;
-        }
-        if (fullName) {
-          tokenData.name = fullName;
+      if (userinfoResp.status < 400) {
+        const ui: any = userinfoResp.data || {};
+        const sub = String(ui?.sub || '').trim();
+        const name = String(ui?.name || '').trim();
+        if (sub) { tokenData.sub = sub; tokenData.user_id = sub; tokenData.id = sub; }
+        if (name) tokenData.name = name;
+      } else {
+        // Fallback: legacy /v2/me
+        const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (meResp.status < 400) {
+          const meData: any = meResp.data || {};
+          const linkedInId = String(meData?.id || '').trim();
+          const fullName = [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()].filter(Boolean).join(' ').trim();
+          if (linkedInId) { tokenData.user_id = linkedInId; tokenData.id = linkedInId; tokenData.sub = linkedInId; }
+          if (fullName) tokenData.name = fullName;
         }
       }
     } catch {
@@ -5359,7 +5366,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_metadata,read_insights', idField: 'appId' },
   // LinkedIn scopes are space-separated
-  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'r_liteprofile r_emailaddress w_member_social rw_organization_admin w_organization_social', idField: 'clientId' },
+  linkedin:  { authUrl: 'https://www.linkedin.com/oauth/v2/authorization', scopes: 'openid profile email w_member_social r_organization_social w_organization_social rw_organization_admin', idField: 'clientId' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
@@ -7723,6 +7730,129 @@ app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/v1/social/linkedin/token-refresh — manually refresh a LinkedIn access token
+app.post('/api/v1/social/linkedin/token-refresh', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+  try {
+    const conn = await getPublishableSocialConnection(user.userId, 'linkedin');
+    if (!conn) return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
+    const refreshToken = String(conn.token_data?.refresh_token || '').trim();
+    if (!refreshToken) return res.status(400).json({ success: false, error: 'No refresh token stored — reconnect LinkedIn' });
+
+    const refreshed = await refreshLinkedInAccessToken(refreshToken);
+    const newToken = String(refreshed?.access_token || '').trim();
+    if (!newToken) return res.status(400).json({ success: false, error: 'LinkedIn token refresh returned no token' });
+
+    const expiresAt = refreshed?.expires_in
+      ? new Date(Date.now() + Number(refreshed.expires_in) * 1000).toISOString()
+      : null;
+    await pool.query(
+      `UPDATE social_accounts
+       SET access_token=$1, token_expires_at=$2, needs_reapproval=false, updated_at=NOW()
+       WHERE user_id=$3 AND LOWER(platform)='linkedin'`,
+      [newToken, expiresAt, user.userId]
+    );
+    return res.json({ success: true, message: 'LinkedIn access token refreshed', expiresAt });
+  } catch (err) {
+    console.error('LinkedIn token refresh error:', err);
+    return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Refresh failed' });
+  }
+});
+
+// GET /api/v1/social/linkedin/post-insights/:postId — social actions + share stats for a post
+app.get('/api/v1/social/linkedin/post-insights/:postId', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  try {
+    const conn = await getPublishableSocialConnection(user.userId, 'linkedin');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
+
+    const encodedId = encodeURIComponent(req.params.postId);
+    const [actionsResp, statsResp] = await Promise.all([
+      axios.get(`https://api.linkedin.com/v2/socialActions/${encodedId}`, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' },
+        validateStatus: () => true, timeout: 15000,
+      }),
+      axios.get(`https://api.linkedin.com/v2/organizationalEntityShareStatistics`, {
+        params: { q: 'organizationalEntity&organizationalEntity', ugcPost: encodedId },
+        headers: { Authorization: `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' },
+        validateStatus: () => true, timeout: 15000,
+      }),
+    ]);
+    const actions: any = actionsResp.data || {};
+    const stats: any = statsResp.data?.elements?.[0]?.totalShareStatistics || {};
+    return res.json({
+      success: true,
+      insights: {
+        likes: actions?.likesSummary?.totalLikes ?? null,
+        comments: actions?.commentsSummary?.totalFirstLevelComments ?? null,
+        shares: stats.shareCount ?? null,
+        impressions: stats.impressionCount ?? null,
+        clicks: stats.clickCount ?? null,
+        uniqueImpressionsCount: stats.uniqueImpressionsCount ?? null,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to fetch post insights' });
+  }
+});
+
+// GET /api/v1/social/linkedin/org-analytics — organization follower + visitor statistics
+app.get('/api/v1/social/linkedin/org-analytics', async (req: Request, res: Response) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+  try {
+    const conn = await getPublishableSocialConnection(user.userId, 'linkedin');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
+
+    // Get org ID from query or stored page accounts
+    let orgId = String((req.query as any)?.orgId || '').trim();
+    if (!orgId) {
+      const pageRow = await pool.query(
+        `SELECT account_id FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND account_type='page' AND connected=true ORDER BY created_at DESC LIMIT 1`,
+        [user.userId]
+      );
+      orgId = pageRow.rows[0]?.account_id ? String(pageRow.rows[0].account_id).trim() : '';
+    }
+    if (!orgId) return res.status(400).json({ success: false, error: 'No LinkedIn organization page found. Connect a company page first.' });
+
+    const orgUrn = `urn:li:organization:${orgId}`;
+    const since = String((req.query as any)?.since || '').trim();
+    const until = String((req.query as any)?.until || '').trim();
+    const timeGranularity = String((req.query as any)?.granularity || 'MONTH').toUpperCase();
+
+    const params: Record<string, string> = {
+      q: 'organizationalEntity',
+      organizationalEntity: orgUrn,
+      timeGranularityType: timeGranularity,
+      'timeRange.start': since || String(Date.now() - 30 * 24 * 60 * 60 * 1000),
+      'timeRange.end': until || String(Date.now()),
+    };
+    const headers = { Authorization: `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' };
+
+    const [followerResp, visitorResp, shareResp] = await Promise.all([
+      axios.get('https://api.linkedin.com/v2/organizationalEntityFollowerStatistics', { params, headers, validateStatus: () => true, timeout: 15000 }),
+      axios.get('https://api.linkedin.com/v2/organizationalEntityPageStatistics', { params, headers, validateStatus: () => true, timeout: 15000 }),
+      axios.get('https://api.linkedin.com/v2/organizationalEntityShareStatistics', { params, headers, validateStatus: () => true, timeout: 15000 }),
+    ]);
+
+    return res.json({
+      success: true,
+      orgId,
+      followers: followerResp.status < 400 ? (followerResp.data as any)?.elements || [] : null,
+      visitors: visitorResp.status < 400 ? (visitorResp.data as any)?.elements || [] : null,
+      shares: shareResp.status < 400 ? (shareResp.data as any)?.elements || [] : null,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to fetch org analytics' });
+  }
+});
+
 // Link metadata preview (no auth, rate-limited by IP)
 app.get('/api/link-metadata', async (req: Request, res: Response) => {
   const url = String((req.query as any)?.url || '').trim();
@@ -9938,7 +10068,7 @@ async function publishToplatform(
           id: destination.id,
           name: destination.name,
         } : undefined,
-        media: featuredImage && /^https?:\/\//i.test(featuredImage)
+        media: featuredImage && (/^https?:\/\//i.test(featuredImage) || featuredImage.startsWith('data:'))
           ? [{ url: featuredImage, type: 'image' }]
           : undefined,
       };
