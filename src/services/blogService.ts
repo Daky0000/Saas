@@ -227,6 +227,13 @@ export const blogService = {
     return parseApiResponse<{ success?: boolean; queued: number; skipped?: string[]; error?: string }>(res);
   },
 
+  async getDistributionStatus(postId: string): Promise<{ logs: Array<{ id: string; platform: string; status: string; error_message?: string; platform_post_id?: string; created_at: string }> }> {
+    const res = await fetch(`${API_BASE_URL}/api/distribution/status/${encodeURIComponent(postId)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    return parseApiResponse(res);
+  },
+
   async batchReschedule(postIds: string[], scheduledAt: string) {
     const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/reschedule`, {
       method: 'PATCH',
