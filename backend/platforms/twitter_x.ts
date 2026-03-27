@@ -25,6 +25,9 @@ const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'im
 const ALLOWED_VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;    // 5 MB
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024;  // 512 MB
+const TRANSIENT_X_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ─── X API error code helpers ────────────────────────────────────────────────
 
@@ -336,32 +339,56 @@ export class TwitterXPlatform implements SocialPlatform {
       }
 
       log(`[X] POST /2/tweets text="${text.slice(0, 60)}…"`);
-      const resp: AxiosResponse = await axios.post(TWEET_API, body, {
-        headers: {
-          Authorization: `Bearer ${ctx.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        validateStatus: () => true,
-        timeout: 20_000,
-      });
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const resp: AxiosResponse = await axios.post(TWEET_API, body, {
+            headers: {
+              Authorization: `Bearer ${ctx.accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            validateStatus: () => true,
+            timeout: 20_000,
+          });
 
-      const rateMeta = {
-        limit: resp.headers?.['x-rate-limit-limit'],
-        remaining: resp.headers?.['x-rate-limit-remaining'],
-        reset: resp.headers?.['x-rate-limit-reset'],
-      };
+          const rateMeta = {
+            limit: resp.headers?.['x-rate-limit-limit'],
+            remaining: resp.headers?.['x-rate-limit-remaining'],
+            reset: resp.headers?.['x-rate-limit-reset'],
+          };
 
-      if (resp.status >= 400) {
-        const { message, retryable } = parseXError(resp.data, resp.status);
-        log(`[X] Tweet failed (${resp.status}): ${message}`);
-        return { status: 'failed', error: message, retryable, raw: { ...resp.data, rateLimit: rateMeta } };
+          if (resp.status >= 400) {
+            const { message, retryable } = parseXError(resp.data, resp.status);
+            const shouldRetryNow =
+              retryable && attempt < 2 && TRANSIENT_X_HTTP_STATUSES.has(resp.status);
+            log(`[X] Tweet failed (${resp.status}): ${message}`);
+            if (shouldRetryNow) {
+              log('[X] Retrying transient failure in 2s');
+              await wait(2000);
+              continue;
+            }
+            return { status: 'failed', error: message, retryable, raw: { ...resp.data, rateLimit: rateMeta } };
+          }
+
+          helpers.incrementGlobalWriteCount?.();
+          const data: any = resp.data || {};
+          const tweetId: string = data?.data?.id || '';
+          log(`[X] Tweet published, id=${tweetId}`);
+          return { status: 'published', platformPostId: tweetId, raw: { ...data, rateLimit: rateMeta } };
+        } catch (err: any) {
+          const { retryable, message } = this.handleError(err);
+          const status = Number(err?.response?.status);
+          const shouldRetryNow =
+            retryable && attempt < 2 && TRANSIENT_X_HTTP_STATUSES.has(status);
+          if (shouldRetryNow) {
+            log(`[X] Request error on attempt ${attempt}: ${message}. Retrying in 2s`);
+            await wait(2000);
+            continue;
+          }
+          return { status: 'failed', error: message, retryable };
+        }
       }
 
-      helpers.incrementGlobalWriteCount?.();
-      const data: any = resp.data || {};
-      const tweetId: string = data?.data?.id || '';
-      log(`[X] Tweet published, id=${tweetId}`);
-      return { status: 'published', platformPostId: tweetId, raw: { ...data, rateLimit: rateMeta } };
+      return { status: 'failed', error: 'X publish failed after retry', retryable: true };
     } catch (err) {
       const { retryable, message } = this.handleError(err);
       return { status: 'failed', error: message, retryable };
