@@ -6977,29 +6977,43 @@ app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Respon
     const postRows = await pool.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [String(postId), auth.userId]);
     if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
 
+    // Optional: caller can pass specific account IDs to restrict which accounts are posted to
+    const requestedAccountIds: string[] | null = Array.isArray(req.body?.accountIds) && req.body.accountIds.length > 0
+      ? (req.body.accountIds as string[]).map(String).filter(Boolean)
+      : null;
+
     const visiblePlatforms = await getVisibleUserPlatformSlugs();
     const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads', 'twitter']);
-    const selectedRows = await pool.query(
-      `SELECT a.platform, a.account_type, a.account_id, a.account_name, s.template
-       FROM social_post_settings s
-       JOIN social_post_targets t ON t.social_post_id = s.id AND t.enabled = true
-       JOIN social_accounts a ON a.id = t.social_account_id
-       WHERE s.post_id = $1 AND a.connected = true`,
-      [String(postId)]
-    );
 
-    const template = String(selectedRows.rows[0]?.template || '').trim();
-    const sourceRows =
-      selectedRows.rows.length > 0
+    let sourceRows: any[];
+    if (requestedAccountIds) {
+      // Post only to the explicitly selected accounts (must belong to this user and be connected)
+      const { rows } = await pool.query(
+        `SELECT id, platform, account_type, account_id, account_name
+         FROM social_accounts
+         WHERE user_id=$1 AND connected=true AND id = ANY($2::text[])`,
+        [auth.userId, requestedAccountIds]
+      );
+      sourceRows = rows;
+    } else {
+      const selectedRows = await pool.query(
+        `SELECT a.id, a.platform, a.account_type, a.account_id, a.account_name, s.template
+         FROM social_post_settings s
+         JOIN social_post_targets t ON t.social_post_id = s.id AND t.enabled = true
+         JOIN social_accounts a ON a.id = t.social_account_id
+         WHERE s.post_id = $1 AND a.connected = true`,
+        [String(postId)]
+      );
+      sourceRows = selectedRows.rows.length > 0
         ? selectedRows.rows
-        : (
-            await pool.query(
-              `SELECT platform, account_type, account_id, account_name
-               FROM social_accounts
-               WHERE user_id=$1 AND connected=true`,
-              [auth.userId]
-            )
-          ).rows;
+        : (await pool.query(
+            `SELECT id, platform, account_type, account_id, account_name
+             FROM social_accounts WHERE user_id=$1 AND connected=true`,
+            [auth.userId]
+          )).rows;
+    }
+
+    const template = String(sourceRows[0]?.template || '').trim();
 
     const queuedKeys = new Set<string>();
     const skipped = new Set<string>();
