@@ -2919,8 +2919,9 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Re
       if (meResp.status < 400) {
         const u: any = meResp.data?.data || {};
         if (u.id) { tokenData.user_id = u.id; tokenData.id = u.id; tokenData.sub = u.id; }
-        if (u.name) tokenData.name = u.name;
         if (u.username) tokenData.username = u.username;
+        // Display name falls back to @username so account_name is never blank in the UI
+        tokenData.name = u.name || (u.username ? `@${u.username}` : null);
         if (u.profile_image_url) tokenData.avatar_url = u.profile_image_url;
       }
     } catch {
@@ -3131,7 +3132,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
 
   const platformId = normalizePlatformId(platform);
   const handle =
-    tokenData?.user_id || tokenData?.username || tokenData?.handle || `${platformId}_account`;
+    tokenData?.username || tokenData?.user_id || tokenData?.handle || `${platformId}_account`;
   const followers = Number(tokenData?.followers || tokenData?.followers_count || 0);
   const expiresAt = tokenData?.expires_in
     ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
@@ -6050,7 +6051,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
     const wpConn = wpConnRows.rows[0] || null;
 
     const socialRows = await pool.query(
-      `SELECT platform, account_type, account_id, account_name, connected, created_at
+      `SELECT platform, account_type, account_id, account_name, handle, connected, created_at
        FROM social_accounts
        WHERE user_id=$1 AND connected=true`,
       [auth.userId]
@@ -6078,6 +6079,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
         accountType: match.account_type || 'profile',
         accountId: match.account_id || null,
         accountName: match.account_name || null,
+        username: match.handle || null,
         connectedAt: match.created_at || null,
       };
     };
@@ -9686,16 +9688,23 @@ async function markSocialAccountNeedsReapproval(params: {
     reason: reason || 'needs_reapproval',
   };
 
+  const values: any[] = [];
+  const pushValue = (value: any) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+
+  const platformRef = pushValue(platformId);
+  const metaRef = pushValue(JSON.stringify(meta));
   const updates: string[] = [
     "needs_reapproval = true",
-    "token_data = COALESCE(token_data, '{}'::jsonb) || $4::jsonb",
+    `token_data = COALESCE(token_data, '{}'::jsonb) || ${metaRef}::jsonb`,
   ];
   if (disconnect) updates.push('connected = false');
 
-  const whereClauses: string[] = ["LOWER(platform)=LOWER($1)"];
-  const values: any[] = [platformId, accountId, userId, JSON.stringify(meta)];
-  if (accountId) whereClauses.push('account_id = $2');
-  if (userId) whereClauses.push('user_id = $3');
+  const whereClauses: string[] = [`LOWER(platform)=LOWER(${platformRef})`];
+  if (accountId) whereClauses.push(`account_id = ${pushValue(accountId)}`);
+  if (userId) whereClauses.push(`user_id = ${pushValue(userId)}`);
 
   const { rows } = await pool.query(
     `UPDATE social_accounts
@@ -11509,7 +11518,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
