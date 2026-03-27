@@ -20,11 +20,12 @@ const X_API_BASE        = 'https://api.x.com';
 const TWEET_API         = `${X_API_BASE}/2/tweets`;
 const OAUTH_TOKEN_URL   = `${X_API_BASE}/2/oauth2/token`;
 
-// v2 media upload endpoints (requires media.write scope)
-const MEDIA_V2_INIT     = `${X_API_BASE}/2/media/upload`;                   // POST
-const MEDIA_V2_APPEND   = (id: string) => `${X_API_BASE}/2/media/upload/${id}/append`;   // POST
-const MEDIA_V2_FINALIZE = (id: string) => `${X_API_BASE}/2/media/upload/${id}/finalize`; // POST
-const MEDIA_V2_STATUS   = `${X_API_BASE}/2/media/upload`;                   // GET ?media_id=&command=STATUS
+// v2 media upload endpoints from docs.x.com
+const MEDIA_V2_UPLOAD     = `${X_API_BASE}/2/media/upload`;
+const MEDIA_V2_INITIALIZE = `${X_API_BASE}/2/media/upload/initialize`;
+const MEDIA_V2_APPEND     = (id: string) => `${X_API_BASE}/2/media/upload/${id}/append`;
+const MEDIA_V2_FINALIZE   = (id: string) => `${X_API_BASE}/2/media/upload/${id}/finalize`;
+const MEDIA_V2_STATUS     = `${X_API_BASE}/2/media/upload`;
 
 // v1.1 fallback (still works when media.write scope is absent)
 const MEDIA_V1_UPLOAD   = 'https://upload.twitter.com/1.1/media/upload.json';
@@ -110,7 +111,7 @@ async function pollMediaStatus(
   return false; // timed out
 }
 
-/** Upload via X API v2 media endpoints (requires media.write scope). */
+/** Upload via the current X API v2 media endpoints documented on docs.x.com. */
 async function uploadV2(
   buffer: Buffer,
   mimeType: string,
@@ -119,29 +120,52 @@ async function uploadV2(
   log: (msg: string) => void
 ): Promise<UploadResult> {
   const totalBytes = buffer.byteLength;
-  log(`[X] v2 upload (${Math.round(totalBytes / 1024)} KB, ${mimeType})`);
+  const useChunked = totalBytes > CHUNK_SIZE || mimeType.startsWith('video/') || mimeType === 'image/gif';
+  log(`[X] v2 upload (${Math.round(totalBytes / 1024)} KB, ${mimeType}, chunked=${useChunked})`);
 
   // INIT — first chunk (or full file if ≤ CHUNK_SIZE)
-  const initForm = new FormData();
-  const firstChunk = buffer.subarray(0, CHUNK_SIZE);
-  initForm.append('media', firstChunk, { filename: 'upload', contentType: mimeType });
-  initForm.append('media_category', mediaCategory);
+  if (!useChunked) {
+    const uploadForm = new FormData();
+    uploadForm.append('media', buffer, { filename: 'upload', contentType: mimeType });
+    uploadForm.append('media_category', mediaCategory);
 
-  const initResp: AxiosResponse = await axios.post(MEDIA_V2_INIT, initForm, {
-    headers: { ...authHeader, ...initForm.getHeaders() },
-    validateStatus: () => true,
-    timeout: 60_000,
-  });
+    const uploadResp: AxiosResponse = await axios.post(MEDIA_V2_UPLOAD, uploadForm, {
+      headers: { ...authHeader, ...uploadForm.getHeaders() },
+      validateStatus: () => true,
+      timeout: 60_000,
+    });
+    if (uploadResp.status >= 400) {
+      const { message } = parseXError(uploadResp.data, uploadResp.status);
+      return { error: `Media upload failed (${uploadResp.status}): ${message}` };
+    }
+    const uploadedMediaId = String((uploadResp.data as any)?.data?.id || '');
+    return uploadedMediaId ? { mediaId: uploadedMediaId } : { error: 'No media id in upload response' };
+  }
+
+  const initResp: AxiosResponse = await axios.post(
+    MEDIA_V2_INITIALIZE,
+    {
+      media_category: mediaCategory,
+      media_type: mimeType,
+      total_bytes: totalBytes,
+    },
+    {
+      headers: { ...authHeader, 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+      timeout: 20_000,
+    }
+  );
   if (initResp.status >= 400) {
-    return { error: `Media INIT failed (${initResp.status}): ${(initResp.data as any)?.detail || ''}` };
+    const { message } = parseXError(initResp.data, initResp.status);
+    return { error: `Media initialize failed (${initResp.status}): ${message}` };
   }
   const mediaId = String((initResp.data as any)?.data?.id || '');
-  if (!mediaId) return { error: 'No media id in INIT response' };
-  log(`[X] INIT OK, id=${mediaId}`);
+  if (!mediaId) return { error: 'No media id in initialize response' };
+  log(`[X] INITIALIZE OK, id=${mediaId}`);
 
   // APPEND — remaining chunks (if file > CHUNK_SIZE)
-  let segmentIndex = 1;
-  for (let offset = CHUNK_SIZE; offset < totalBytes; offset += CHUNK_SIZE) {
+  let segmentIndex = 0;
+  for (let offset = 0; offset < totalBytes; offset += CHUNK_SIZE) {
     const chunk = buffer.subarray(offset, offset + CHUNK_SIZE);
     const appendForm = new FormData();
     appendForm.append('media', chunk, { filename: `seg_${segmentIndex}`, contentType: mimeType });
@@ -153,24 +177,24 @@ async function uploadV2(
       timeout: 120_000,
     });
     if (appendResp.status >= 400) {
-      return { error: `Media APPEND failed at segment ${segmentIndex} (${appendResp.status})` };
+      const { message } = parseXError(appendResp.data, appendResp.status);
+      return { error: `Media append failed at segment ${segmentIndex} (${appendResp.status}): ${message}` };
     }
     log(`[X] APPEND segment ${segmentIndex} OK`);
     segmentIndex++;
   }
 
-  // FINALIZE
   const finalResp: AxiosResponse = await axios.post(MEDIA_V2_FINALIZE(mediaId), null, {
     headers: authHeader,
     validateStatus: () => true,
     timeout: 15_000,
   });
   if (finalResp.status >= 400) {
-    return { error: `Media FINALIZE failed (${finalResp.status})` };
+    const { message } = parseXError(finalResp.data, finalResp.status);
+    return { error: `Media finalize failed (${finalResp.status}): ${message}` };
   }
   log(`[X] FINALIZE OK`);
 
-  // Poll STATUS if processing is async (video/GIF)
   const finalData: any = (finalResp.data as any)?.data || finalResp.data || {};
   const needsPoll = ['pending', 'in_progress'].includes(finalData?.processing_info?.state || '');
   if (needsPoll) {
