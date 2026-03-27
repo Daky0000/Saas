@@ -289,6 +289,8 @@ let dbReady = false;
 
 const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
 const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
+const TWITTER_AUTOMATION_MAX_ATTEMPTS = 6;
+const TWITTER_AUTOMATION_RETRY_BASE_DELAY_MS = 60_000;
 const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
 const facebookPagesPlatform = new FacebookPagesPlatform();
 // const instagramBusinessPlatform = new InstagramBusinessPlatform();
@@ -303,9 +305,19 @@ function isBullMqEnabled() {
   return Boolean(REDIS_URL && REDIS_URL.trim());
 }
 
-function getRetryDelayMs(attemptNumber: number) {
+function getSocialAutomationMaxAttempts(platform?: string) {
+  return normalizePlatformId(String(platform || '')) === 'twitter'
+    ? TWITTER_AUTOMATION_MAX_ATTEMPTS
+    : SOCIAL_AUTOMATION_MAX_ATTEMPTS;
+}
+
+function getRetryDelayMs(attemptNumber: number, platform?: string) {
   const n = Math.max(1, Number(attemptNumber || 1));
-  return SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS * Math.pow(2, n - 1);
+  const baseDelay =
+    normalizePlatformId(String(platform || '')) === 'twitter'
+      ? TWITTER_AUTOMATION_RETRY_BASE_DELAY_MS
+      : SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS;
+  return baseDelay * Math.pow(2, n - 1);
 }
 
 function hasDatabase() {
@@ -2917,7 +2929,12 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Re
         validateStatus: () => true,
         timeout: 10000,
       });
-      if (meResp.status < 400) {
+      if (meResp.status >= 400) {
+        const meErr: any = meResp.data || {};
+        if (String(meErr?.reason || '') === 'client-not-enrolled') {
+          throw new Error('X app is not attached to a Project or lacks API access. Fix it in the X developer portal, then reconnect X.');
+        }
+      } else {
         const u: any = meResp.data?.data || {};
         if (u.id) { tokenData.user_id = u.id; tokenData.id = u.id; tokenData.sub = u.id; }
         if (u.username) tokenData.username = u.username;
@@ -2925,7 +2942,10 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Re
         tokenData.name = u.name || (u.username ? `@${u.username}` : null);
         if (u.profile_image_url) tokenData.avatar_url = u.profile_image_url;
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('X app is not attached to a Project')) {
+        throw err;
+      }
       // best-effort; token stored even without profile data
     }
   }
@@ -3132,23 +3152,50 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   }
 
   const platformId = normalizePlatformId(platform);
+  const accessTokenRaw = String(tokenData?.access_token ?? tokenData?.accessToken ?? '').trim();
+  const refreshTokenRaw = String(tokenData?.refresh_token ?? tokenData?.refreshToken ?? '').trim();
+  let normalizedTokenData = tokenData && typeof tokenData === 'object' ? { ...tokenData } : {};
+
+  let accountId = String(normalizedTokenData?.user_id || normalizedTokenData?.id || '').trim() || null;
+  let accountName = normalizedTokenData?.name ? String(normalizedTokenData.name) : null;
+  let profileImage = normalizedTokenData?.avatar_url ? String(normalizedTokenData.avatar_url) : null;
+
+  if (platformId === 'twitter' && accessTokenRaw && (!accountId || !accountName || !profileImage)) {
+    try {
+      const meResp = await axios.get('https://api.twitter.com/2/users/me', {
+        params: { 'user.fields': 'id,name,username,profile_image_url' },
+        headers: { Authorization: `Bearer ${accessTokenRaw}` },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      if (meResp.status < 400) {
+        const meData: any = meResp.data?.data || {};
+        accountId = String(meData?.id || accountId || '').trim() || accountId;
+        accountName = meData?.name ? String(meData.name) : accountName;
+        profileImage = meData?.profile_image_url ? String(meData.profile_image_url) : profileImage;
+        normalizedTokenData = {
+          ...normalizedTokenData,
+          ...(accountId ? { user_id: accountId, id: accountId, sub: accountId } : {}),
+          ...(accountName ? { name: accountName } : {}),
+          ...(meData?.username ? { username: String(meData.username) } : {}),
+          ...(profileImage ? { avatar_url: profileImage } : {}),
+        };
+      }
+    } catch {
+      // Best-effort enrichment only; posting can still proceed with the token alone.
+    }
+  }
+
   const handle =
-    tokenData?.username || tokenData?.user_id || tokenData?.handle || `${platformId}_account`;
-  const followers = Number(tokenData?.followers || tokenData?.followers_count || 0);
-  const expiresAt = tokenData?.expires_in
-    ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
+    normalizedTokenData?.username || accountId || normalizedTokenData?.handle || `${platformId}_account`;
+  const followers = Number(normalizedTokenData?.followers || normalizedTokenData?.followers_count || 0);
+  const expiresAt = normalizedTokenData?.expires_in
+    ? new Date(Date.now() + Number(normalizedTokenData.expires_in) * 1000).toISOString()
     : null;
   const tokenExpiresAt = expiresAt;
 
-  const accountId = String(tokenData?.user_id || tokenData?.id || '').trim() || null;
-  const accountName = tokenData?.name ? String(tokenData.name) : null;
-  const profileImage = tokenData?.avatar_url ? String(tokenData.avatar_url) : null;
-
   const platRow = await dbQuery<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', [platformId]).catch(() => ({ rows: [] } as any));
   const platformDbId = platRow?.rows?.[0]?.id ?? null;
-
-  const accessTokenRaw = String(tokenData?.access_token ?? tokenData?.accessToken ?? '').trim();
-  const refreshTokenRaw = String(tokenData?.refresh_token ?? tokenData?.refreshToken ?? '').trim();
   const accessTokenEncrypted = accessTokenRaw ? encryptIntegrationSecret(accessTokenRaw) : null;
   const refreshTokenEncrypted = refreshTokenRaw ? encryptIntegrationSecret(refreshTokenRaw) : null;
 
@@ -3159,10 +3206,10 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
     VALUES ($1, $2, $3, $4, 'profile', $5, $6, $7, $8, $9, true, NOW(), $10, $11, $12, $13, $14, $15, $16, false)
     ON CONFLICT (user_id, platform) WHERE account_type = 'profile' DO UPDATE
       SET platform_id = EXCLUDED.platform_id,
-          account_id = EXCLUDED.account_id,
-          account_name = EXCLUDED.account_name,
-          profile_image = EXCLUDED.profile_image,
-          handle = EXCLUDED.handle,
+          account_id = COALESCE(EXCLUDED.account_id, social_accounts.account_id),
+          account_name = COALESCE(EXCLUDED.account_name, social_accounts.account_name),
+          profile_image = COALESCE(EXCLUDED.profile_image, social_accounts.profile_image),
+          handle = COALESCE(NULLIF(EXCLUDED.handle, ''), social_accounts.handle),
           followers = EXCLUDED.followers,
           connected = true,
           connected_at = NOW(),
@@ -3191,7 +3238,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
       null,
       accessTokenEncrypted,
       refreshTokenEncrypted,
-      tokenData || {},
+      normalizedTokenData || {},
     ]
   );
 
@@ -10162,15 +10209,22 @@ async function ensureBullMqSocialAutomationQueue() {
   });
 }
 
-async function enqueueBullMqJob(taskId: string, runAtIso: string) {
+async function enqueueBullMqJob(taskId: string, runAtIso: string, platform?: string) {
   if (!isBullMqEnabled()) return;
   await ensureBullMqSocialAutomationQueue();
   if (!socialAutomationQueue) return;
 
   const runAt = new Date(runAtIso);
   const delay = Math.max(0, runAt.getTime() - Date.now());
+  const attempts = getSocialAutomationMaxAttempts(platform);
+  const backoffDelay = getRetryDelayMs(1, platform);
   try {
-    await socialAutomationQueue.add('social-publish', { taskId }, { jobId: taskId, delay });
+    await socialAutomationQueue.add('social-publish', { taskId }, {
+      jobId: taskId,
+      delay,
+      attempts,
+      backoff: { type: 'exponential', delay: backoffDelay },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err || '');
     if (/Job.*already exists/i.test(msg)) return;
@@ -10290,7 +10344,7 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
   );
 
   const scheduleRetry = async (msg: string) => {
-    const retryAt = new Date(Date.now() + getRetryDelayMs(attemptNumber));
+    const retryAt = new Date(Date.now() + getRetryDelayMs(attemptNumber, platform));
     await pool
       .query(
         `UPDATE social_automation_tasks
@@ -10476,7 +10530,7 @@ async function enqueueSocialAutomationTask(params: {
     [taskId, params.userId, params.postId, params.platform, runAtIso, initialStatus, JSON.stringify(params.payload || {}), logId]
   );
 
-  await enqueueBullMqJob(taskId, runAtIso);
+  await enqueueBullMqJob(taskId, runAtIso, params.platform);
 }
 
 async function queueSocialAutomationForPublishedPost(userId: string, post: Record<string, any>) {
@@ -10569,7 +10623,11 @@ async function processDueSocialAutomationTasks() {
     const taskId = String((task as any).id);
     try {
       const attemptNumber = Number((task as any).attempts || 0) + 1;
-      await processSocialAutomationTaskById(taskId, attemptNumber, SOCIAL_AUTOMATION_MAX_ATTEMPTS);
+      await processSocialAutomationTaskById(
+        taskId,
+        attemptNumber,
+        getSocialAutomationMaxAttempts(String((task as any).platform || ''))
+      );
     } catch (err) {
       void err;
     }
@@ -10592,13 +10650,13 @@ function startSocialAutomationProcessor() {
       try {
         await ensureBullMqSocialAutomationQueue();
         const { rows } = await pool.query(
-          `SELECT id, run_at FROM social_automation_tasks
+          `SELECT id, run_at, platform FROM social_automation_tasks
            WHERE status IN ('scheduled','pending')
            ORDER BY run_at ASC
            LIMIT 200`
         );
         for (const r of rows as any[]) {
-          await enqueueBullMqJob(String(r.id), String(r.run_at));
+          await enqueueBullMqJob(String(r.id), String(r.run_at), String(r.platform || ''));
         }
       } catch (err) {
         console.error('[SocialAutomation] BullMQ init failed, falling back to DB worker:', err);
@@ -11519,10 +11577,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
-
 
 
 
