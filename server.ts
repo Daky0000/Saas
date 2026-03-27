@@ -60,6 +60,9 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
 const TWITTER_MONTHLY_WRITE_LIMIT = Number(process.env.TWITTER_MONTHLY_WRITE_LIMIT || process.env.X_MONTHLY_WRITE_LIMIT || 0);
 const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = Number(process.env.SOCIAL_TOKEN_SAFETY_MARGIN_DAYS || 10);
+const X_API_BASE = 'https://api.x.com';
+const X_OAUTH_TOKEN_URL = `${X_API_BASE}/2/oauth2/token`;
+const X_USERS_ME_API = `${X_API_BASE}/2/users/me`;
 
 const CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000;
 const calendarCache = new Map<string, { expiresAt: number; value: any }>();
@@ -2906,7 +2909,7 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Re
     code_verifier: (codeVerifier || cfg.codeVerifier || '').trim() || 'challenge',
   });
 
-  const response = await axios.post('https://api.twitter.com/2/oauth2/token', body.toString(), {
+  const response = await axios.post(X_OAUTH_TOKEN_URL, body.toString(), {
     auth: { username: clientId, password: clientSecret },
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
@@ -2923,7 +2926,7 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Re
   const accessToken = String(tokenData?.access_token || '').trim();
   if (accessToken) {
     try {
-      const meResp = await axios.get('https://api.twitter.com/2/users/me', {
+      const meResp = await axios.get(X_USERS_ME_API, {
         params: { 'user.fields': 'id,name,username,profile_image_url' },
         headers: { Authorization: `Bearer ${accessToken}` },
         validateStatus: () => true,
@@ -3162,7 +3165,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
 
   if (platformId === 'twitter' && accessTokenRaw && (!accountId || !accountName || !profileImage)) {
     try {
-      const meResp = await axios.get('https://api.twitter.com/2/users/me', {
+      const meResp = await axios.get(X_USERS_ME_API, {
         params: { 'user.fields': 'id,name,username,profile_image_url' },
         headers: { Authorization: `Bearer ${accessTokenRaw}` },
         validateStatus: () => true,
@@ -9895,7 +9898,7 @@ async function refreshTwitterAccessToken(refreshToken: string) {
     timeout: 15000,
   };
 
-  const resp = await axios.post('https://api.x.com/2/oauth2/token', data.toString(), axiosCfg);
+  const resp = await axios.post(X_OAUTH_TOKEN_URL, data.toString(), axiosCfg);
   if (resp.status >= 400) throw new Error(`Twitter token refresh failed (${resp.status})`);
   return resp.data;
 }
@@ -11577,9 +11580,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
 
 
 
