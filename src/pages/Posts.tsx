@@ -397,6 +397,7 @@ function PostsList({
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [distResults, setDistResults] = useState<Array<{ platform: string; status: string; error_message?: string }> | null>(null);
 
   const { recordUndo, undo, canUndo } = useBatchActions();
 
@@ -456,11 +457,34 @@ function PostsList({
 
   const handleRepublish = async (id: string) => {
     if (!confirm('Repost this post to your connected platforms?')) return;
+    setDistResults(null);
     try {
       const result = await blogService.repostToConnectedPlatforms(id);
       const skipped = result.skipped?.length ? ` Skipped: ${result.skipped.join(', ')}.` : '';
-      setMessage(`Queued repost to ${result.queued} connected platform${result.queued === 1 ? '' : 's'}.${skipped}`);
+      setMessage(`Queued repost to ${result.queued} platform${result.queued === 1 ? '' : 's'}.${skipped} Checking results…`);
       setDropdownOpen(null);
+
+      // Poll for results — worker runs every 5s, so check at 8s, 15s, 25s
+      const delays = [8000, 7000, 10000];
+      for (const delay of delays) {
+        await new Promise((r) => setTimeout(r, delay));
+        try {
+          const { logs } = await blogService.getDistributionStatus(id);
+          const relevant = logs.filter((l) => l.status !== 'pending' && l.status !== 'scheduled');
+          if (relevant.length > 0) {
+            setDistResults(relevant.map((l) => ({ platform: l.platform, status: l.status, error_message: l.error_message })));
+            const failed = relevant.filter((l) => l.status === 'failed');
+            setMessage(
+              failed.length === 0
+                ? `Published to ${relevant.length} platform${relevant.length === 1 ? '' : 's'} successfully.`
+                : `Published with errors: ${failed.length} of ${relevant.length} platform${relevant.length === 1 ? '' : 's'} failed.`
+            );
+            return;
+          }
+        } catch { /* silent */ }
+      }
+      // Still pending after all polls
+      setMessage('Post queued. Check back in a moment for publishing status.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to repost to connected platforms');
     }
@@ -831,6 +855,30 @@ function PostsList({
           onSubmit={handlePlatformsSubmit}
           onClose={() => setShowPlatformsModal(false)}
         />
+      )}
+
+      {distResults && distResults.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 w-80 rounded-xl border border-slate-200 bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <span className="text-sm font-bold text-slate-900">Publishing Results</span>
+            <button type="button" onClick={() => setDistResults(null)} className="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {distResults.map((r, i) => (
+              <li key={i} className="flex flex-col gap-0.5 px-4 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold capitalize text-slate-700">{r.platform}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${r.status === 'published' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                    {r.status}
+                  </span>
+                </div>
+                {r.error_message && (
+                  <p className="text-xs text-red-500 mt-0.5">{r.error_message}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

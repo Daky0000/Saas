@@ -9884,18 +9884,18 @@ async function refreshTwitterAccessToken(refreshToken: string) {
   if (!clientId) throw new Error('Twitter client_id not configured');
 
   const data = new URLSearchParams({
-    client_id: clientId,
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
   });
+  // Confidential clients: credentials via Basic auth only (not in body)
   const axiosCfg: any = {
+    auth: { username: clientId, password: clientSecret || '' },
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
     timeout: 15000,
   };
-  if (clientSecret) axiosCfg.auth = { username: clientId, password: clientSecret };
 
-  const resp = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), axiosCfg);
+  const resp = await axios.post('https://api.x.com/2/oauth2/token', data.toString(), axiosCfg);
   if (resp.status >= 400) throw new Error(`Twitter token refresh failed (${resp.status})`);
   return resp.data;
 }
