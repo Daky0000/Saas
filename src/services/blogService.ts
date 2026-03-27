@@ -219,10 +219,11 @@ export const blogService = {
     return data.post!;
   },
 
-  async repostToConnectedPlatforms(id: string): Promise<{ queued: number; skipped?: string[] }> {
+  async repostToConnectedPlatforms(id: string, accountIds?: string[]): Promise<{ queued: number; skipped?: string[] }> {
     const res = await fetch(`${API_BASE_URL}/api/v1/posts/${id}/social-repost`, {
       method: 'POST',
       headers: authHeaders(),
+      body: accountIds?.length ? JSON.stringify({ accountIds }) : undefined,
     });
     return parseApiResponse<{ success?: boolean; queued: number; skipped?: string[]; error?: string }>(res);
   },

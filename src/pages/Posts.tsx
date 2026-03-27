@@ -398,6 +398,7 @@ function PostsList({
   const [message, setMessage] = useState<string | null>(null);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
   const [distResults, setDistResults] = useState<Array<{ platform: string; status: string; error_message?: string }> | null>(null);
+  const [repostModal, setRepostModal] = useState<{ postId: string; loading: boolean; accounts: SocialAccount[]; selected: Set<string> } | null>(null);
 
   const { recordUndo, undo, canUndo } = useBatchActions();
 
@@ -455,21 +456,35 @@ function PostsList({
     }
   };
 
-  const handleRepublish = async (id: string) => {
-    if (!confirm('Repost this post to your connected platforms?')) return;
+  const openRepostModal = async (id: string) => {
+    setDropdownOpen(null);
     setDistResults(null);
+    setRepostModal({ postId: id, loading: true, accounts: [], selected: new Set() });
     try {
-      const result = await blogService.repostToConnectedPlatforms(id);
+      const accounts = (await socialPostService.listAccounts()).filter((a) => a.connected !== false);
+      setRepostModal({ postId: id, loading: false, accounts, selected: new Set(accounts.map((a) => a.id)) });
+    } catch {
+      setRepostModal(null);
+      setMessage('Failed to load social accounts');
+    }
+  };
+
+  const handleRepostSubmit = async () => {
+    if (!repostModal) return;
+    const { postId, selected } = repostModal;
+    if (selected.size === 0) return;
+    setRepostModal(null);
+    try {
+      const result = await blogService.repostToConnectedPlatforms(postId, Array.from(selected));
       const skipped = result.skipped?.length ? ` Skipped: ${result.skipped.join(', ')}.` : '';
       setMessage(`Queued repost to ${result.queued} platform${result.queued === 1 ? '' : 's'}.${skipped} Checking results…`);
-      setDropdownOpen(null);
 
       // Poll for results — worker runs every 5s, so check at 8s, 15s, 25s
       const delays = [8000, 7000, 10000];
       for (const delay of delays) {
         await new Promise((r) => setTimeout(r, delay));
         try {
-          const { logs } = await blogService.getDistributionStatus(id);
+          const { logs } = await blogService.getDistributionStatus(postId);
           const relevant = logs.filter((l) => l.status !== 'pending' && l.status !== 'scheduled');
           if (relevant.length > 0) {
             setDistResults(relevant.map((l) => ({ platform: l.platform, status: l.status, error_message: l.error_message })));
@@ -483,7 +498,6 @@ function PostsList({
           }
         } catch { /* silent */ }
       }
-      // Still pending after all polls
       setMessage('Post queued. Check back in a moment for publishing status.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to repost to connected platforms');
@@ -771,11 +785,11 @@ function PostsList({
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleRepublish(post.id)}
+                            onClick={() => void openRepostModal(post.id)}
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                           >
                             <CheckCircle2 size={14} />
-                            Repost to connected platforms
+                            Repost to selected Social
                           </button>
                         </div>
                       )}
@@ -855,6 +869,69 @@ function PostsList({
           onSubmit={handlePlatformsSubmit}
           onClose={() => setShowPlatformsModal(false)}
         />
+      )}
+
+      {repostModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div>
+                <div className="text-sm font-bold text-slate-900">Repost to Social</div>
+                <div className="text-xs text-slate-500 mt-0.5">Select accounts to post to</div>
+              </div>
+              <button type="button" onClick={() => setRepostModal(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="px-5 py-4 max-h-72 overflow-y-auto">
+              {repostModal.loading ? (
+                <div className="flex items-center justify-center py-6 text-sm text-slate-400">
+                  <Loader2 size={16} className="animate-spin mr-2" /> Loading accounts…
+                </div>
+              ) : repostModal.accounts.length === 0 ? (
+                <div className="py-6 text-center text-sm text-slate-400">No connected social accounts found.</div>
+              ) : (
+                <ul className="space-y-1">
+                  {repostModal.accounts.map((acc) => {
+                    const checked = repostModal.selected.has(acc.id);
+                    return (
+                      <li key={acc.id}>
+                        <label className="flex items-center gap-3 rounded-lg px-2 py-2 cursor-pointer hover:bg-slate-50">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setRepostModal((prev) => {
+                                if (!prev) return prev;
+                                const next = new Set(prev.selected);
+                                checked ? next.delete(acc.id) : next.add(acc.id);
+                                return { ...prev, selected: next };
+                              });
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 accent-slate-900"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold capitalize text-slate-800">{acc.platform}</div>
+                            <div className="text-xs text-slate-500 truncate">{acc.account_name || acc.account_id}</div>
+                          </div>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 gap-3">
+              <button type="button" onClick={() => setRepostModal(null)} className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 border border-slate-200">Cancel</button>
+              <button
+                type="button"
+                disabled={repostModal.loading || repostModal.selected.size === 0}
+                onClick={() => void handleRepostSubmit()}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700 disabled:opacity-40"
+              >
+                Post to {repostModal.selected.size} account{repostModal.selected.size === 1 ? '' : 's'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {distResults && distResults.length > 0 && (
