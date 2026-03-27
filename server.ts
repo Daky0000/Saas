@@ -2878,27 +2878,28 @@ async function exchangeInstagramCode(code: string) {
 
 async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Request) {
   const cfg = await getPlatformConfig('twitter');
-  const clientId = cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '';
-  const clientSecret = cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '';
+  const clientId = (cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '').trim();
+  const clientSecret = (cfg.clientSecret || process.env.TWITTER_CLIENT_SECRET || '').trim();
   const redirectUri = resolveOAuthRedirectUri('twitter', cfg.redirectUri || process.env.VITE_TWITTER_REDIRECT_URI, req);
 
-  const data = new URLSearchParams({
-    client_id: clientId,
+  if (!clientId) throw new Error('Twitter Client ID is not configured. Set it in Admin → Integrations → X.');
+  if (!clientSecret) throw new Error('Twitter Client Secret is not configured. Set it in Admin → Integrations → X.');
+
+  // Confidential clients: send credentials via HTTP Basic auth only (NOT in body)
+  // Public clients (no secret): send client_id in body — but Twitter apps with a secret must use Basic auth
+  const body = new URLSearchParams({
     code,
     grant_type: 'authorization_code',
     redirect_uri: redirectUri,
     code_verifier: (codeVerifier || cfg.codeVerifier || '').trim() || 'challenge',
   });
 
-  // Twitter requires Basic auth (clientId:clientSecret) when a client secret is configured
-  const axiosCfg: any = {
+  const response = await axios.post('https://api.twitter.com/2/oauth2/token', body.toString(), {
+    auth: { username: clientId, password: clientSecret },
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
     timeout: 15000,
-  };
-  if (clientSecret) axiosCfg.auth = { username: clientId, password: clientSecret };
-
-  const response = await axios.post('https://api.twitter.com/2/oauth2/token', data.toString(), axiosCfg);
+  });
   if (response.status >= 400) {
     const errBody: any = response.data || {};
     const detail = errBody?.error_description || errBody?.error || '';
