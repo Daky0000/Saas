@@ -38,6 +38,7 @@ function parseXError(data: any, httpStatus: number): { message: string; code?: n
   const code: number | undefined = firstErr.code ?? data?.status;
   const title: string = data?.title || firstErr.title || '';
   const detail: string = data?.detail || firstErr.message || firstErr.detail || '';
+  const reason: string = data?.reason || firstErr.reason || '';
 
   // Known X API v2 error codes
   const codeMessages: Record<number, string> = {
@@ -58,7 +59,14 @@ function parseXError(data: any, httpStatus: number): { message: string; code?: n
     326: 'X account locked. Please unlock at x.com.',
   };
 
-  const authErrors = new Set([32, 64, 89, 215]);
+  if (reason === 'client-not-enrolled') {
+    return {
+      message: 'X app is not attached to a Project or lacks API access. Fix the app in the X developer portal, then reconnect X.',
+      code,
+      retryable: false,
+    };
+  }
+
   const retryable = httpStatus === 429 || httpStatus >= 500 || code === 88;
 
   let message = codeMessages[code!] || detail || title || `X API error (HTTP ${httpStatus})`;
