@@ -311,6 +311,10 @@ let socialAutomationQueue: Queue | null = null;
 let socialAutomationWorker: Worker | null = null;
 let socialAutomationRedis: IORedis | null = null;
 
+const CAMPAIGN_QUEUE_NAME = 'campaign-jobs';
+let campaignQueue: Queue | null = null;
+let campaignWorker: Worker | null = null;
+
 function isBullMqEnabled() {
   return Boolean(REDIS_URL && REDIS_URL.trim());
 }
@@ -1230,6 +1234,49 @@ async function ensureDatabase() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS utm_links_campaign_idx ON utm_links (campaign_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS utm_links_user_idx ON utm_links (user_id);`).catch(() => undefined);
+  // ── Campaign Execution Tables ────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_jobs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      job_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      job_id TEXT,
+      payload JSONB DEFAULT '{}'::jsonb,
+      error TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_jobs_campaign_idx ON campaign_jobs (campaign_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_jobs_status_idx ON campaign_jobs (user_id, status);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_attribution (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      model TEXT NOT NULL DEFAULT 'last_touch',
+      visitor_id TEXT,
+      session_id TEXT,
+      first_touch_source TEXT,
+      first_touch_medium TEXT,
+      first_touch_at TIMESTAMPTZ,
+      last_touch_source TEXT,
+      last_touch_medium TEXT,
+      last_touch_at TIMESTAMPTZ,
+      converted BOOLEAN DEFAULT FALSE,
+      converted_at TIMESTAMPTZ,
+      revenue NUMERIC(12,2),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_attribution_campaign_idx ON campaign_attribution (campaign_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_attribution_visitor_idx ON campaign_attribution (campaign_id, visitor_id);`).catch(() => undefined);
+
+  await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS mailing_campaign_id TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS attribution_model TEXT NOT NULL DEFAULT 'last_touch';`).catch(() => undefined);
   // ── End Campaign Tables ───────────────────────────────────────────────────────
 
   dbReady = true;
@@ -12708,6 +12755,334 @@ function buildUtmUrl(base: string, utm: { source: string; medium: string; campai
 function campaignShortCode(): string {
   return randomBytes(4).toString('hex'); // 8 hex chars
 }
+
+// ── Campaign Queue & Worker ───────────────────────────────────────────────────
+
+async function ensureCampaignQueue() {
+  if (campaignQueue || !isBullMqEnabled() || !pool) return;
+  try {
+    const redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false });
+    campaignQueue = new Queue(CAMPAIGN_QUEUE_NAME, {
+      connection: redis as any,
+      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: { count: 200 }, removeOnFail: { count: 200 } },
+    });
+    campaignWorker = new Worker(CAMPAIGN_QUEUE_NAME, async (job) => {
+      const { jobRowId } = job.data as { jobRowId: string };
+      if (!jobRowId || !pool) return;
+      try {
+        await pool.query(`UPDATE campaign_jobs SET status='running', updated_at=NOW() WHERE id=$1`, [jobRowId]);
+        const jRes = await pool.query('SELECT * FROM campaign_jobs WHERE id=$1', [jobRowId]);
+        const jRow: any = jRes.rows[0];
+        if (!jRow) return;
+        const payload: any = jRow.payload || {};
+
+        if (jRow.job_type === 'analytics_init') {
+          // Register campaign creation in insights_cache for analytics
+          await pool.query(
+            `INSERT INTO insights_cache (id, user_id, cache_key, data, expires_at)
+             VALUES (gen_random_uuid()::text, $1, $2, $3::jsonb, NOW() + INTERVAL '90 days')
+             ON CONFLICT (user_id, cache_key) DO UPDATE SET data=EXCLUDED.data, expires_at=EXCLUDED.expires_at`,
+            [jRow.user_id, `campaign_created_${jRow.campaign_id}`, JSON.stringify({ campaignId: jRow.campaign_id, createdAt: new Date().toISOString(), channels: payload.channels || [], utmCount: payload.utmCount || 0 })]
+          ).catch(() => undefined);
+        }
+
+        if (jRow.job_type === 'attribution_init') {
+          // Attribution is ready on-demand via funnel_events; just mark initialized
+          await pool.query(`UPDATE campaigns SET attribution_model=$1, updated_at=NOW() WHERE id=$2`, [payload.model || 'last_touch', jRow.campaign_id]).catch(() => undefined);
+        }
+
+        if (jRow.job_type === 'mailing_link') {
+          // Link to mailing campaign if one was created alongside
+          if (payload.mailing_campaign_id) {
+            await pool.query(`UPDATE campaigns SET mailing_campaign_id=$1, updated_at=NOW() WHERE id=$2`, [payload.mailing_campaign_id, jRow.campaign_id]).catch(() => undefined);
+          }
+        }
+
+        await pool.query(`UPDATE campaign_jobs SET status='done', updated_at=NOW() WHERE id=$1`, [jobRowId]);
+      } catch (err: any) {
+        await pool!.query(`UPDATE campaign_jobs SET status='failed', error=$1, updated_at=NOW() WHERE id=$2`, [err?.message || 'Unknown error', jobRowId]).catch(() => undefined);
+        throw err;
+      }
+    }, { connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }) as any, concurrency: 5 });
+    campaignWorker.on('error', (err) => console.error('[CampaignQueue] Worker error:', err));
+  } catch (err) {
+    console.error('[CampaignQueue] Init failed:', err);
+    campaignQueue = null;
+  }
+}
+
+async function enqueueCampaignJob(jobRowId: string): Promise<string | null> {
+  if (!isBullMqEnabled()) return null;
+  try {
+    await ensureCampaignQueue();
+    if (!campaignQueue) return null;
+    const job = await campaignQueue.add('campaign-job', { jobRowId }, { jobId: jobRowId });
+    return String(job.id);
+  } catch (err: any) {
+    if (/Job.*already exists/i.test(String(err?.message || ''))) return jobRowId;
+    console.error('[CampaignQueue] Enqueue error:', err);
+    return null;
+  }
+}
+
+// If no Redis, process campaign job inline (fire-and-forget)
+async function processCampaignJobInline(jobRowId: string) {
+  if (!pool) return;
+  try {
+    const jRes = await pool.query('SELECT * FROM campaign_jobs WHERE id=$1', [jobRowId]);
+    const jRow: any = jRes.rows[0];
+    if (!jRow) return;
+    const payload: any = jRow.payload || {};
+    await pool.query(`UPDATE campaign_jobs SET status='running', updated_at=NOW() WHERE id=$1`, [jobRowId]);
+    if (jRow.job_type === 'analytics_init') {
+      await pool.query(
+        `INSERT INTO insights_cache (id, user_id, cache_key, data, expires_at) VALUES (gen_random_uuid()::text, $1, $2, $3::jsonb, NOW() + INTERVAL '90 days') ON CONFLICT (user_id, cache_key) DO UPDATE SET data=EXCLUDED.data, expires_at=EXCLUDED.expires_at`,
+        [jRow.user_id, `campaign_created_${jRow.campaign_id}`, JSON.stringify({ campaignId: jRow.campaign_id, createdAt: new Date().toISOString(), channels: payload.channels || [], utmCount: payload.utmCount || 0 })]
+      ).catch(() => undefined);
+    }
+    if (jRow.job_type === 'attribution_init') {
+      await pool.query(`UPDATE campaigns SET attribution_model=$1, updated_at=NOW() WHERE id=$2`, [payload.model || 'last_touch', jRow.campaign_id]).catch(() => undefined);
+    }
+    if (jRow.job_type === 'mailing_link' && payload.mailing_campaign_id) {
+      await pool.query(`UPDATE campaigns SET mailing_campaign_id=$1, updated_at=NOW() WHERE id=$2`, [payload.mailing_campaign_id, jRow.campaign_id]).catch(() => undefined);
+    }
+    await pool.query(`UPDATE campaign_jobs SET status='done', updated_at=NOW() WHERE id=$1`, [jobRowId]);
+  } catch (err: any) {
+    pool.query(`UPDATE campaign_jobs SET status='failed', error=$1, updated_at=NOW() WHERE id=$2`, [err?.message || 'Unknown', jobRowId]).catch(() => undefined);
+  }
+}
+
+// ── POST /api/campaign/campaigns/create — atomic campaign creation ────────────
+// Must be registered BEFORE /api/campaign/campaigns/:id to avoid route shadowing
+app.post('/api/campaign/campaigns/create', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+  const {
+    name, description, goal, start_date, end_date, budget, currency, target_url,
+    tags, channels = [], attribution_model = 'last_touch',
+    create_funnel = true, funnel_name, utm_auto_generate = true,
+    mailing_subject, mailing_segment_id,
+  } = req.body as any;
+
+  // ── Step 0: Input validation ──────────────────────────────────────────────
+  const validationErrors: string[] = [];
+  if (!name || !String(name).trim()) validationErrors.push('Campaign name is required.');
+  if (String(name || '').trim().length > 120) validationErrors.push('Campaign name must be 120 characters or fewer.');
+
+  const validGoals = ['awareness', 'traffic', 'leads', 'engagement', 'sales'];
+  if (goal && !validGoals.includes(goal)) validationErrors.push(`Goal must be one of: ${validGoals.join(', ')}.`);
+
+  if (start_date && end_date) {
+    const sd = new Date(start_date), ed = new Date(end_date);
+    if (isNaN(sd.getTime())) validationErrors.push('Invalid start_date.');
+    else if (isNaN(ed.getTime())) validationErrors.push('Invalid end_date.');
+    else if (sd >= ed) validationErrors.push('start_date must be before end_date.');
+  }
+
+  // Sanitize URLs
+  let sanitizedTargetUrl = '';
+  if (target_url) {
+    try {
+      const u = new URL(String(target_url).startsWith('http') ? target_url : `https://${target_url}`);
+      if (!['http:', 'https:'].includes(u.protocol)) validationErrors.push('target_url must be http or https.');
+      else sanitizedTargetUrl = u.toString();
+    } catch { validationErrors.push('Invalid target_url.'); }
+  }
+
+  if (budget !== undefined && budget !== null && budget !== '') {
+    const b = parseFloat(String(budget));
+    if (isNaN(b) || b < 0) validationErrors.push('Budget must be a positive number.');
+  }
+
+  // Validate channel ownership
+  const socialChannels = (channels as string[]).filter(c => !['email', 'landing_page'].includes(c));
+  if (socialChannels.length > 0) {
+    const acctRes = await pool.query(
+      `SELECT platform FROM social_accounts WHERE user_id=$1 AND connected=true AND platform = ANY($2::text[])`,
+      [auth.userId, socialChannels]
+    ).catch(() => ({ rows: [] as any[] }));
+    const connectedPlatforms = acctRes.rows.map((r: any) => r.platform.toLowerCase());
+    for (const ch of socialChannels) {
+      if (!connectedPlatforms.includes(ch.toLowerCase()) && ch !== 'email' && ch !== 'landing_page') {
+        validationErrors.push(`Channel "${ch}" is not connected. Please connect it in Integrations first.`);
+      }
+    }
+  }
+
+  if (validationErrors.length > 0) {
+    return res.status(400).json({ success: false, validationErrors, error: validationErrors[0] });
+  }
+
+  // Check name uniqueness for this user
+  const dupCheck = await pool.query('SELECT id FROM campaigns WHERE user_id=$1 AND LOWER(name)=LOWER($2)', [auth.userId, String(name).trim()]);
+  if (dupCheck.rows.length > 0) {
+    return res.status(409).json({ success: false, error: `A campaign named "${name}" already exists. Choose a unique name.`, validationErrors: [`A campaign named "${name}" already exists.`] });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // ── Step 1: Create campaign ───────────────────────────────────────────────
+    const campaignRes = await client.query(
+      `INSERT INTO campaigns (id, user_id, name, description, goal, status, start_date, end_date, budget, currency, target_url, tags, attribution_model)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [auth.userId, String(name).trim(), description || '', goal || 'awareness',
+       start_date || null, end_date || null,
+       budget ? parseFloat(String(budget)) : null, currency || 'USD',
+       sanitizedTargetUrl, Array.isArray(tags) ? tags : [],
+       attribution_model]
+    );
+    const campaign = campaignRes.rows[0];
+    const campaignId: string = campaign.id;
+    const utmCampaignSlug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+
+    // ── Step 2: Create channels ───────────────────────────────────────────────
+    const createdChannels: any[] = [];
+    for (const ch of channels as string[]) {
+      const saRes = await client.query(
+        `SELECT id FROM social_accounts WHERE user_id=$1 AND LOWER(platform)=LOWER($2) AND connected=true LIMIT 1`,
+        [auth.userId, ch]
+      );
+      const socialAccountId: string | null = saRes.rows[0]?.id || null;
+      const chRes = await client.query(
+        `INSERT INTO campaign_channels (id, campaign_id, user_id, channel_type, social_account_id, status)
+         VALUES (gen_random_uuid()::text,$1,$2,$3,$4,'active') RETURNING *`,
+        [campaignId, auth.userId, ch, socialAccountId]
+      );
+      createdChannels.push(chRes.rows[0]);
+    }
+
+    // ── Step 3: Create funnel with default AIDA steps ────────────────────────
+    let createdFunnel: any = null;
+    let createdSteps: any[] = [];
+    if (create_funnel) {
+      const funnelRes = await client.query(
+        `INSERT INTO funnels (id, campaign_id, user_id, name, description)
+         VALUES (gen_random_uuid()::text,$1,$2,$3,$4) RETURNING *`,
+        [campaignId, auth.userId, funnel_name || `${String(name).trim()} Funnel`, 'Auto-created AIDA funnel']
+      );
+      createdFunnel = funnelRes.rows[0];
+      const defaultSteps = [
+        { name: 'Impression', step_type: 'page_view', order: 0 },
+        { name: 'Click', step_type: 'click', order: 1 },
+        { name: 'Lead', step_type: 'form_submit', order: 2 },
+        { name: 'Conversion', step_type: 'purchase', order: 3 },
+      ];
+      for (const s of defaultSteps) {
+        const sRes = await client.query(
+          `INSERT INTO funnel_steps (id, funnel_id, user_id, name, step_order, step_type, target_url)
+           VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6) RETURNING *`,
+          [createdFunnel.id, auth.userId, s.name, s.order, s.step_type, sanitizedTargetUrl]
+        );
+        createdSteps.push(sRes.rows[0]);
+      }
+    }
+
+    // ── Step 4: Generate UTM links per channel ────────────────────────────────
+    const createdLinks: any[] = [];
+    if (utm_auto_generate && sanitizedTargetUrl && channels.length > 0) {
+      const channelMediumMap: Record<string, string> = {
+        facebook: 'social', instagram: 'social', twitter: 'social', linkedin: 'social',
+        email: 'email', landing_page: 'referral',
+      };
+      for (const ch of channels as string[]) {
+        const medium = channelMediumMap[ch] || 'social';
+        const full_url = buildUtmUrl(sanitizedTargetUrl, { source: ch, medium, campaign: utmCampaignSlug });
+        const short_code = campaignShortCode();
+        const lRes = await client.query(
+          `INSERT INTO utm_links (id, campaign_id, user_id, label, base_url, utm_source, utm_medium, utm_campaign, short_code, full_url)
+           VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (short_code) DO NOTHING RETURNING *`,
+          [campaignId, auth.userId, `${ch.charAt(0).toUpperCase() + ch.slice(1)} — ${String(name).trim()}`,
+           sanitizedTargetUrl, ch, medium, utmCampaignSlug, short_code, full_url]
+        );
+        if (lRes.rows[0]) createdLinks.push(lRes.rows[0]);
+      }
+    }
+
+    // ── Step 5: Create mailing campaign if email channel + subject provided ──
+    let mailingCampaign: any = null;
+    if (channels.includes('email') && mailing_subject) {
+      const mcRes = await client.query(
+        `INSERT INTO mailing_campaigns (id, user_id, name, subject, content, segment_id, status)
+         VALUES (gen_random_uuid()::text, $1, $2, $3, '', $4, 'draft') RETURNING *`,
+        [auth.userId, `${String(name).trim()} — Email`, mailing_subject, mailing_segment_id || null]
+      ).catch(() => ({ rows: [] as any[] }));
+      if (mcRes.rows[0]) {
+        mailingCampaign = mcRes.rows[0];
+        await client.query(`UPDATE campaigns SET mailing_campaign_id=$1 WHERE id=$2`, [mailingCampaign.id, campaignId]).catch(() => undefined);
+      }
+    }
+
+    // ── Step 6: Queue background jobs ────────────────────────────────────────
+    const jobsToQueue = [
+      { job_type: 'analytics_init', payload: { channels, utmCount: createdLinks.length, utmCampaign: utmCampaignSlug } },
+      { job_type: 'attribution_init', payload: { model: attribution_model } },
+      ...(mailingCampaign ? [{ job_type: 'mailing_link', payload: { mailing_campaign_id: mailingCampaign.id } }] : []),
+    ];
+    const jobRows: any[] = [];
+    for (const j of jobsToQueue) {
+      const jRes = await client.query(
+        `INSERT INTO campaign_jobs (id, campaign_id, user_id, job_type, status, payload)
+         VALUES (gen_random_uuid()::text, $1, $2, $3, 'queued', $4::jsonb) RETURNING *`,
+        [campaignId, auth.userId, j.job_type, JSON.stringify(j.payload)]
+      );
+      jobRows.push(jRes.rows[0]);
+    }
+
+    // ── Commit transaction ────────────────────────────────────────────────────
+    await client.query('COMMIT');
+
+    // ── Step 7: Dispatch jobs (outside transaction) ───────────────────────────
+    const jobIds: string[] = [];
+    for (const jRow of jobRows) {
+      if (isBullMqEnabled()) {
+        const jid = await enqueueCampaignJob(jRow.id).catch(() => null);
+        if (jid) {
+          await pool.query(`UPDATE campaign_jobs SET job_id=$1, updated_at=NOW() WHERE id=$2`, [jid, jRow.id]).catch(() => undefined);
+          jobIds.push(jid);
+        }
+      } else {
+        // Process inline when no Redis
+        processCampaignJobInline(jRow.id).catch(() => undefined);
+        jobIds.push(jRow.id);
+      }
+    }
+
+    // ── Step 8: Return complete payload ──────────────────────────────────────
+    return res.status(201).json({
+      success: true,
+      campaign: { ...campaign, mailing_campaign_id: mailingCampaign?.id || null },
+      channels: createdChannels,
+      funnel: createdFunnel,
+      funnel_steps: createdSteps,
+      utm_links: createdLinks,
+      mailing_campaign: mailingCampaign,
+      job_ids: jobIds,
+      summary: {
+        channels_created: createdChannels.length,
+        funnel_steps_created: createdSteps.length,
+        utm_links_created: createdLinks.length,
+        jobs_queued: jobIds.length,
+      },
+    });
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.error('[Campaign Create] Transaction failed:', err?.message || err);
+    // Log error context for debugging
+    pool.query(
+      `INSERT INTO funnel_events (id, owner_user_id, event_type, event_name, properties)
+       VALUES (gen_random_uuid()::text, $1, 'error', 'campaign_create_failed', $2::jsonb)`,
+      [auth.userId, JSON.stringify({ error: err?.message, ts: new Date().toISOString() })]
+    ).catch(() => undefined);
+    return res.status(500).json({ success: false, error: 'Campaign creation failed. All changes were rolled back.' });
+  } finally {
+    client.release();
+  }
+});
 
 // GET /api/campaign/campaigns
 app.get('/api/campaign/campaigns', async (req: Request, res: Response) => {

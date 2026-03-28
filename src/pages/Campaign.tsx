@@ -102,10 +102,13 @@ function EmptyState({ icon, title, description, action }: { icon: React.ReactNod
 
 type WizardStep = 'goal' | 'channels' | 'links' | 'review';
 
+type CreationProgressStep = { label: string; status: 'pending' | 'running' | 'done' | 'error' };
+
 function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => void; onClose: () => void }) {
   const [step, setStep] = useState<WizardStep>('goal');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [progressSteps, setProgressSteps] = useState<CreationProgressStep[]>([]);
 
   // Goal step
   const [name, setName] = useState('');
@@ -139,36 +142,68 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
   const removeUtmRow = (i: number) =>
     setUtmLinks(prev => prev.filter((_, idx) => idx !== i));
 
+  const PROGRESS_LABELS = [
+    'Validating inputs',
+    'Creating campaign record',
+    'Attaching channels',
+    'Initializing funnel',
+    'Generating UTM links',
+    'Queuing background jobs',
+  ];
+
+  function advanceProgress(idx: number, status: 'done' | 'error') {
+    setProgressSteps(prev => prev.map((s, i) => {
+      if (i === idx) return { ...s, status };
+      if (i === idx + 1 && status === 'done') return { ...s, status: 'running' };
+      return s;
+    }));
+  }
+
   async function handleLaunch() {
-    setSaving(true); setError('');
+    setSaving(true);
+    setError('');
+    const steps: CreationProgressStep[] = PROGRESS_LABELS.map((label, i) => ({
+      label,
+      status: i === 0 ? 'running' : 'pending',
+    }));
+    setProgressSteps(steps);
+
     try {
-      const campaign = await campaignService.createCampaign({
-        name, description, goal, target_url: targetUrl,
-        start_date: startDate || undefined, end_date: endDate || undefined,
+      // Small delay so the first "running" state renders before the blocking fetch
+      await new Promise(r => setTimeout(r, 80));
+
+      advanceProgress(0, 'done'); // validating → done, creating → running
+      await new Promise(r => setTimeout(r, 60));
+
+      const result = await campaignService.createCampaignAtomic({
+        name,
+        description: description || undefined,
+        goal,
+        target_url: targetUrl || undefined,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
         budget: budget ? parseFloat(budget) : undefined,
-        status: 'active',
-      } as Partial<Campaign>);
+        channels: selectedChannels,
+        utm_links: utmLinks.filter(l => l.label && l.utm_source),
+        attribution_model: 'last_touch',
+      });
 
-      // Add channels
-      for (const ch of selectedChannels) {
-        await campaignService.addChannel(campaign.id, { channel_type: ch }).catch(() => undefined);
-      }
+      // The backend did everything atomically; animate the remaining steps
+      advanceProgress(1, 'done'); // creating → done, channels → running
+      await new Promise(r => setTimeout(r, 120));
+      advanceProgress(2, 'done'); // channels → done, funnel → running
+      await new Promise(r => setTimeout(r, 100));
+      advanceProgress(3, 'done'); // funnel → done, utm → running
+      await new Promise(r => setTimeout(r, 100));
+      advanceProgress(4, 'done'); // utm → done, jobs → running
+      await new Promise(r => setTimeout(r, 100));
+      advanceProgress(5, 'done'); // jobs → done
 
-      // Add UTM links
-      const utmCampaign = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 30);
-      for (const lnk of utmLinks) {
-        if (!lnk.label || !lnk.utm_source) continue;
-        await campaignService.createUtmLink(campaign.id, {
-          label: lnk.label,
-          base_url: targetUrl || 'https://example.com',
-          utm_source: lnk.utm_source,
-          utm_medium: lnk.utm_medium,
-          utm_campaign: utmCampaign,
-        }).catch(() => undefined);
-      }
-
-      onDone(campaign);
+      await new Promise(r => setTimeout(r, 300));
+      onDone(result.campaign);
     } catch (e: any) {
+      // Mark current running step as error
+      setProgressSteps(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'error' } : s));
       setError(e.message || 'Failed to create campaign');
     } finally {
       setSaving(false);
@@ -331,12 +366,25 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
             </div>
           )}
 
+          {saving && progressSteps.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-3">
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Creating Campaign…</p>
+              {progressSteps.map((ps, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs ${ps.status === 'done' ? 'bg-green-500 text-white' : ps.status === 'running' ? 'bg-indigo-500 text-white' : ps.status === 'error' ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                    {ps.status === 'done' ? <Check size={10} /> : ps.status === 'running' ? <Loader2 size={10} className="animate-spin" /> : ps.status === 'error' ? <X size={10} /> : i + 1}
+                  </div>
+                  <span className={`text-sm ${ps.status === 'done' ? 'text-green-700 font-semibold' : ps.status === 'running' ? 'text-indigo-700 font-semibold' : ps.status === 'error' ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>{ps.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-slate-100 px-8 py-5">
-          <button onClick={() => stepIdx > 0 ? setStep(STEPS[stepIdx - 1]) : onClose()} className="rounded-2xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          <button disabled={saving} onClick={() => stepIdx > 0 ? setStep(STEPS[stepIdx - 1]) : onClose()} className="rounded-2xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40">
             {stepIdx === 0 ? 'Cancel' : 'Back'}
           </button>
           {step !== 'review' ? (
@@ -346,7 +394,7 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
           ) : (
             <button disabled={saving} onClick={handleLaunch} className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              Launch Campaign
+              {saving ? 'Launching…' : 'Launch Campaign'}
             </button>
           )}
         </div>
