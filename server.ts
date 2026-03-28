@@ -1113,6 +1113,125 @@ async function ensureDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS insights_cache_user_idx ON insights_cache (user_id);`).catch(() => undefined);
   // ── End Analytics Tables ─────────────────────────────────────────────────────
 
+  // ── Campaign & Funnel Builder Tables ─────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaigns (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      goal TEXT NOT NULL DEFAULT 'awareness',
+      status TEXT NOT NULL DEFAULT 'draft',
+      start_date DATE,
+      end_date DATE,
+      budget NUMERIC(12,2),
+      currency TEXT DEFAULT 'USD',
+      target_url TEXT DEFAULT '',
+      tags TEXT[] DEFAULT '{}',
+      settings JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaigns_user_idx ON campaigns (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaigns_status_idx ON campaigns (user_id, status);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_channels (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel_type TEXT NOT NULL,
+      social_account_id TEXT REFERENCES social_accounts(id) ON DELETE SET NULL,
+      config JSONB DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_channels_campaign_idx ON campaign_channels (campaign_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS funnels (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnels_campaign_idx ON funnels (campaign_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnels_user_idx ON funnels (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS funnel_steps (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      funnel_id TEXT NOT NULL REFERENCES funnels(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      step_order INTEGER NOT NULL DEFAULT 0,
+      step_type TEXT NOT NULL DEFAULT 'page_view',
+      target_url TEXT DEFAULT '',
+      goal_count INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnel_steps_funnel_idx ON funnel_steps (funnel_id, step_order);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS funnel_events (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      funnel_id TEXT,
+      funnel_step_id TEXT,
+      campaign_id TEXT,
+      owner_user_id TEXT,
+      session_id TEXT,
+      visitor_id TEXT,
+      event_type TEXT NOT NULL,
+      event_name TEXT,
+      url TEXT,
+      referrer TEXT,
+      utm_source TEXT,
+      utm_medium TEXT,
+      utm_campaign TEXT,
+      utm_term TEXT,
+      utm_content TEXT,
+      properties JSONB DEFAULT '{}'::jsonb,
+      ip TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnel_events_funnel_idx ON funnel_events (funnel_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnel_events_campaign_idx ON funnel_events (campaign_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnel_events_created_idx ON funnel_events (created_at);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS funnel_events_utm_idx ON funnel_events (utm_campaign, utm_source);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS utm_links (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      utm_source TEXT NOT NULL,
+      utm_medium TEXT NOT NULL,
+      utm_campaign TEXT NOT NULL,
+      utm_term TEXT DEFAULT '',
+      utm_content TEXT DEFAULT '',
+      short_code TEXT,
+      full_url TEXT NOT NULL,
+      clicks INTEGER DEFAULT 0,
+      conversions INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(short_code)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS utm_links_campaign_idx ON utm_links (campaign_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS utm_links_user_idx ON utm_links (user_id);`).catch(() => undefined);
+  // ── End Campaign Tables ───────────────────────────────────────────────────────
+
   dbReady = true;
 }
 
@@ -12569,6 +12688,451 @@ app.get('/api/blog/analytics/export', async (req: Request, res: Response) => {
 });
 
 // ─── End Analytics & Insights Engine ─────────────────────────────────────────
+
+// ─── Campaign & Funnel Builder ────────────────────────────────────────────────
+
+function buildUtmUrl(base: string, utm: { source: string; medium: string; campaign: string; term?: string; content?: string }): string {
+  try {
+    const url = new URL(base.startsWith('http') ? base : `https://${base}`);
+    url.searchParams.set('utm_source', utm.source);
+    url.searchParams.set('utm_medium', utm.medium);
+    url.searchParams.set('utm_campaign', utm.campaign);
+    if (utm.term) url.searchParams.set('utm_term', utm.term);
+    if (utm.content) url.searchParams.set('utm_content', utm.content);
+    return url.toString();
+  } catch {
+    return base;
+  }
+}
+
+function campaignShortCode(): string {
+  return randomBytes(4).toString('hex'); // 8 hex chars
+}
+
+// GET /api/campaign/campaigns
+app.get('/api/campaign/campaigns', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query(
+      `SELECT c.*,
+        (SELECT COUNT(*) FROM campaign_channels cc WHERE cc.campaign_id=c.id) as channel_count,
+        (SELECT COUNT(*) FROM funnels f WHERE f.campaign_id=c.id) as funnel_count,
+        (SELECT COUNT(*) FROM utm_links ul WHERE ul.campaign_id=c.id) as link_count,
+        (SELECT COALESCE(SUM(ul.clicks),0) FROM utm_links ul WHERE ul.campaign_id=c.id) as total_clicks,
+        (SELECT COALESCE(SUM(ul.conversions),0) FROM utm_links ul WHERE ul.campaign_id=c.id) as total_conversions
+       FROM campaigns c WHERE c.user_id=$1 ORDER BY c.updated_at DESC`,
+      [auth.userId]
+    );
+    return res.json({ success: true, campaigns: rows });
+  } catch (err) {
+    console.error('list campaigns error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to list campaigns' });
+  }
+});
+
+// POST /api/campaign/campaigns
+app.post('/api/campaign/campaigns', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { name, description, goal, status, start_date, end_date, budget, currency, target_url, tags } = req.body as any;
+    if (!name) return res.status(400).json({ success: false, error: 'name is required' });
+    const { rows } = await pool.query(
+      `INSERT INTO campaigns (id,user_id,name,description,goal,status,start_date,end_date,budget,currency,target_url,tags)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [auth.userId, name, description||'', goal||'awareness', status||'draft',
+       start_date||null, end_date||null, budget||null, currency||'USD', target_url||'', tags||[]]
+    );
+    return res.status(201).json({ success: true, campaign: rows[0] });
+  } catch (err) {
+    console.error('create campaign error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create campaign' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id
+app.get('/api/campaign/campaigns/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query(
+      'SELECT * FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    return res.json({ success: true, campaign: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch campaign' });
+  }
+});
+
+// PUT /api/campaign/campaigns/:id
+app.put('/api/campaign/campaigns/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { name, description, goal, status, start_date, end_date, budget, currency, target_url, tags } = req.body as any;
+    const { rows } = await pool.query(
+      `UPDATE campaigns SET name=COALESCE($3,name), description=COALESCE($4,description),
+        goal=COALESCE($5,goal), status=COALESCE($6,status), start_date=COALESCE($7,start_date),
+        end_date=COALESCE($8,end_date), budget=COALESCE($9,budget), currency=COALESCE($10,currency),
+        target_url=COALESCE($11,target_url), tags=COALESCE($12,tags), updated_at=NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [req.params.id, auth.userId, name||null, description||null, goal||null, status||null,
+       start_date||null, end_date||null, budget||null, currency||null, target_url||null, tags||null]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    return res.json({ success: true, campaign: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to update campaign' });
+  }
+});
+
+// DELETE /api/campaign/campaigns/:id
+app.delete('/api/campaign/campaigns/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    await pool.query('DELETE FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to delete campaign' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/channels
+app.get('/api/campaign/campaigns/:id/channels', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query(
+      `SELECT cc.*, sa.account_name, sa.handle, sa.profile_image, sa.followers
+       FROM campaign_channels cc
+       LEFT JOIN social_accounts sa ON sa.id=cc.social_account_id
+       WHERE cc.campaign_id=$1 AND cc.user_id=$2 ORDER BY cc.created_at`,
+      [req.params.id, auth.userId]
+    );
+    return res.json({ success: true, channels: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch channels' });
+  }
+});
+
+// POST /api/campaign/campaigns/:id/channels
+app.post('/api/campaign/campaigns/:id/channels', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { channel_type, social_account_id, config } = req.body as any;
+    if (!channel_type) return res.status(400).json({ success: false, error: 'channel_type required' });
+    const campaignCheck = await pool.query('SELECT id FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!campaignCheck.rows[0]) return res.status(404).json({ success: false, error: 'Campaign not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO campaign_channels (id,campaign_id,user_id,channel_type,social_account_id,config)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5::jsonb) RETURNING *`,
+      [req.params.id, auth.userId, channel_type, social_account_id||null, JSON.stringify(config||{})]
+    );
+    return res.status(201).json({ success: true, channel: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to add channel' });
+  }
+});
+
+// DELETE /api/campaign/channels/:channelId
+app.delete('/api/campaign/channels/:channelId', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    await pool.query('DELETE FROM campaign_channels WHERE id=$1 AND user_id=$2', [req.params.channelId, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to delete channel' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/funnels
+app.get('/api/campaign/campaigns/:id/funnels', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query(
+      `SELECT f.*,
+        (SELECT COUNT(*) FROM funnel_steps fs WHERE fs.funnel_id=f.id) as step_count,
+        (SELECT COUNT(*) FROM funnel_events fe WHERE fe.funnel_id=f.id) as event_count
+       FROM funnels f WHERE f.campaign_id=$1 AND f.user_id=$2 ORDER BY f.created_at`,
+      [req.params.id, auth.userId]
+    );
+    return res.json({ success: true, funnels: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch funnels' });
+  }
+});
+
+// POST /api/campaign/campaigns/:id/funnels
+app.post('/api/campaign/campaigns/:id/funnels', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { name, description, steps } = req.body as any;
+    if (!name) return res.status(400).json({ success: false, error: 'name required' });
+    const campaignCheck = await pool.query('SELECT id FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!campaignCheck.rows[0]) return res.status(404).json({ success: false, error: 'Campaign not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO funnels (id,campaign_id,user_id,name,description) VALUES (gen_random_uuid()::text,$1,$2,$3,$4) RETURNING *`,
+      [req.params.id, auth.userId, name, description||'']
+    );
+    const funnel = rows[0];
+    // Insert default steps if provided
+    if (Array.isArray(steps) && steps.length > 0) {
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i];
+        await pool.query(
+          `INSERT INTO funnel_steps (id,funnel_id,user_id,name,step_order,step_type,target_url,goal_count)
+           VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7)`,
+          [funnel.id, auth.userId, s.name||`Step ${i+1}`, i, s.step_type||'page_view', s.target_url||'', s.goal_count||0]
+        );
+      }
+    }
+    return res.status(201).json({ success: true, funnel });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to create funnel' });
+  }
+});
+
+// GET /api/campaign/funnels/:id
+app.get('/api/campaign/funnels/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query('SELECT * FROM funnels WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    const steps = await pool.query('SELECT * FROM funnel_steps WHERE funnel_id=$1 ORDER BY step_order', [req.params.id]);
+    return res.json({ success: true, funnel: rows[0], steps: steps.rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch funnel' });
+  }
+});
+
+// DELETE /api/campaign/funnels/:id
+app.delete('/api/campaign/funnels/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    await pool.query('DELETE FROM funnels WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to delete funnel' });
+  }
+});
+
+// GET /api/campaign/funnels/:id/steps
+app.get('/api/campaign/funnels/:id/steps', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const fCheck = await pool.query('SELECT id FROM funnels WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!fCheck.rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    // Get steps with event counts
+    const { rows } = await pool.query(
+      `SELECT fs.*,
+        (SELECT COUNT(*) FROM funnel_events fe WHERE fe.funnel_step_id=fs.id) as event_count
+       FROM funnel_steps fs WHERE fs.funnel_id=$1 ORDER BY fs.step_order`,
+      [req.params.id]
+    );
+    return res.json({ success: true, steps: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch steps' });
+  }
+});
+
+// PUT /api/campaign/funnels/:id/steps — bulk replace steps
+app.put('/api/campaign/funnels/:id/steps', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const fCheck = await pool.query('SELECT id FROM funnels WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!fCheck.rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    const { steps } = req.body as { steps: Array<{ id?: string; name: string; step_type: string; target_url?: string; goal_count?: number }> };
+    if (!Array.isArray(steps)) return res.status(400).json({ success: false, error: 'steps array required' });
+    // Delete existing steps (cascade will handle events by step_id)
+    await pool.query('DELETE FROM funnel_steps WHERE funnel_id=$1', [req.params.id]);
+    const inserted = [];
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      const { rows } = await pool.query(
+        `INSERT INTO funnel_steps (id,funnel_id,user_id,name,step_order,step_type,target_url,goal_count)
+         VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [req.params.id, auth.userId, s.name||`Step ${i+1}`, i, s.step_type||'page_view', s.target_url||'', s.goal_count||0]
+      );
+      inserted.push(rows[0]);
+    }
+    return res.json({ success: true, steps: inserted });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to update steps' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/utmlinks
+app.get('/api/campaign/campaigns/:id/utmlinks', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query(
+      'SELECT * FROM utm_links WHERE campaign_id=$1 AND user_id=$2 ORDER BY created_at DESC',
+      [req.params.id, auth.userId]
+    );
+    return res.json({ success: true, links: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch UTM links' });
+  }
+});
+
+// POST /api/campaign/campaigns/:id/utmlinks
+app.post('/api/campaign/campaigns/:id/utmlinks', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { label, base_url, utm_source, utm_medium, utm_campaign, utm_term, utm_content } = req.body as any;
+    if (!label || !base_url || !utm_source || !utm_medium || !utm_campaign) {
+      return res.status(400).json({ success: false, error: 'label, base_url, utm_source, utm_medium, utm_campaign required' });
+    }
+    const campaignCheck = await pool.query('SELECT id FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!campaignCheck.rows[0]) return res.status(404).json({ success: false, error: 'Campaign not found' });
+    const full_url = buildUtmUrl(base_url, { source: utm_source, medium: utm_medium, campaign: utm_campaign, term: utm_term, content: utm_content });
+    const short_code = campaignShortCode();
+    const { rows } = await pool.query(
+      `INSERT INTO utm_links (id,campaign_id,user_id,label,base_url,utm_source,utm_medium,utm_campaign,utm_term,utm_content,short_code,full_url)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [req.params.id, auth.userId, label, base_url, utm_source, utm_medium, utm_campaign, utm_term||'', utm_content||'', short_code, full_url]
+    );
+    return res.status(201).json({ success: true, link: rows[0] });
+  } catch (err) {
+    console.error('create utm link error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create UTM link' });
+  }
+});
+
+// DELETE /api/campaign/utmlinks/:linkId
+app.delete('/api/campaign/utmlinks/:linkId', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    await pool.query('DELETE FROM utm_links WHERE id=$1 AND user_id=$2', [req.params.linkId, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to delete link' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/metrics
+app.get('/api/campaign/campaigns/:id/metrics', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const campaignCheck = await pool.query('SELECT * FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!campaignCheck.rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    const campaign = campaignCheck.rows[0];
+
+    const [linksRes, eventsRes, channelsRes, funnelsRes] = await Promise.all([
+      pool.query(`SELECT utm_source, utm_medium, SUM(clicks) as clicks, SUM(conversions) as conversions FROM utm_links WHERE campaign_id=$1 GROUP BY utm_source, utm_medium ORDER BY clicks DESC`, [req.params.id]),
+      pool.query(`SELECT event_type, DATE_TRUNC('day', created_at) as day, COUNT(*) as cnt FROM funnel_events WHERE campaign_id=$1 GROUP BY event_type, day ORDER BY day`, [req.params.id]),
+      pool.query(`SELECT channel_type, status FROM campaign_channels WHERE campaign_id=$1 AND user_id=$2`, [req.params.id, auth.userId]),
+      pool.query(`SELECT f.id, f.name, (SELECT COUNT(*) FROM funnel_events fe WHERE fe.funnel_id=f.id) as total_events FROM funnels f WHERE f.campaign_id=$1`, [req.params.id]),
+    ]);
+
+    const totalClicks = linksRes.rows.reduce((s: number, r: any) => s + parseInt(r.clicks||0), 0);
+    const totalConversions = linksRes.rows.reduce((s: number, r: any) => s + parseInt(r.conversions||0), 0);
+    const conversionRate = totalClicks > 0 ? parseFloat(((totalConversions / totalClicks) * 100).toFixed(2)) : 0;
+
+    return res.json({
+      success: true,
+      campaign,
+      metrics: {
+        totalClicks,
+        totalConversions,
+        conversionRate,
+        clicksBySource: linksRes.rows,
+        eventTimeline: eventsRes.rows,
+        channels: channelsRes.rows,
+        funnels: funnelsRes.rows,
+      },
+    });
+  } catch (err) {
+    console.error('campaign metrics error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch metrics' });
+  }
+});
+
+// POST /api/track/click — public, no auth (tracking pixel / redirect log)
+app.post('/api/track/click', async (req: Request, res: Response) => {
+  try {
+    if (!pool) return res.json({ success: true });
+    const { campaign_id, funnel_id, funnel_step_id, session_id, visitor_id, url, referrer, utm_source, utm_medium, utm_campaign, utm_term, utm_content, properties } = req.body as any;
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    await pool.query(
+      `INSERT INTO funnel_events (id,funnel_id,funnel_step_id,campaign_id,session_id,visitor_id,event_type,url,referrer,utm_source,utm_medium,utm_campaign,utm_term,utm_content,properties,ip,user_agent)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,'click',$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)`,
+      [funnel_id||null, funnel_step_id||null, campaign_id||null, session_id||null, visitor_id||null,
+       url||null, referrer||null, utm_source||null, utm_medium||null, utm_campaign||null, utm_term||null, utm_content||null,
+       JSON.stringify(properties||{}), ip, req.headers['user-agent']||null]
+    );
+    return res.json({ success: true });
+  } catch (err) {
+    return res.json({ success: true }); // never fail tracking
+  }
+});
+
+// POST /api/track/event — public
+app.post('/api/track/event', async (req: Request, res: Response) => {
+  try {
+    if (!pool) return res.json({ success: true });
+    const { campaign_id, funnel_id, funnel_step_id, event_type, event_name, session_id, visitor_id, url, referrer, utm_source, utm_medium, utm_campaign, utm_term, utm_content, properties } = req.body as any;
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    // If this is a conversion event, increment utm_links conversions
+    if ((event_type === 'conversion' || event_type === 'purchase') && campaign_id && utm_campaign) {
+      await pool.query(
+        `UPDATE utm_links SET conversions=conversions+1 WHERE campaign_id=$1 AND utm_campaign=$2`,
+        [campaign_id, utm_campaign]
+      ).catch(() => undefined);
+    }
+    await pool.query(
+      `INSERT INTO funnel_events (id,funnel_id,funnel_step_id,campaign_id,session_id,visitor_id,event_type,event_name,url,referrer,utm_source,utm_medium,utm_campaign,utm_term,utm_content,properties,ip,user_agent)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)`,
+      [funnel_id||null, funnel_step_id||null, campaign_id||null, session_id||null, visitor_id||null,
+       event_type||'custom', event_name||null, url||null, referrer||null,
+       utm_source||null, utm_medium||null, utm_campaign||null, utm_term||null, utm_content||null,
+       JSON.stringify(properties||{}), ip, req.headers['user-agent']||null]
+    );
+    return res.json({ success: true });
+  } catch (err) {
+    return res.json({ success: true });
+  }
+});
+
+// GET /r/:shortCode — public UTM link redirect
+app.get('/r/:shortCode', async (req: Request, res: Response) => {
+  try {
+    if (!pool) return res.redirect('/');
+    const { rows } = await pool.query('SELECT * FROM utm_links WHERE short_code=$1 LIMIT 1', [req.params.shortCode]);
+    if (!rows[0]) return res.status(404).send('Link not found');
+    // Increment clicks asynchronously
+    pool.query('UPDATE utm_links SET clicks=clicks+1 WHERE id=$1', [rows[0].id]).catch(() => undefined);
+    // Log tracking event
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    pool.query(
+      `INSERT INTO funnel_events (id,campaign_id,event_type,url,referrer,utm_source,utm_medium,utm_campaign,utm_term,utm_content,ip,user_agent)
+       VALUES (gen_random_uuid()::text,$1,'click',$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [rows[0].campaign_id, rows[0].full_url, req.headers.referer||null,
+       rows[0].utm_source, rows[0].utm_medium, rows[0].utm_campaign, rows[0].utm_term||null, rows[0].utm_content||null,
+       ip, req.headers['user-agent']||null]
+    ).catch(() => undefined);
+    return res.redirect(302, rows[0].full_url);
+  } catch (err) {
+    return res.redirect('/');
+  }
+});
+
+// ─── End Campaign & Funnel Builder ────────────────────────────────────────────
 
 // SPA fallback
 app.use((req, res) => {

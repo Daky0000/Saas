@@ -7,6 +7,7 @@ import {
   Image,
   LogOut,
   Mail,
+  Megaphone,
   Menu,
   Palette,
   Receipt,
@@ -34,6 +35,7 @@ import DataDeletion from './pages/DataDeletion';
 import OAuthCallback from './pages/OAuthCallback';
 import PostAutomation from './pages/PostAutomation';
 import Mailing from './pages/Mailing';
+import Campaign from './pages/Campaign';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { API_BASE_URL } from './utils/apiBase';
@@ -57,7 +59,8 @@ type PageType =
   | 'profile'
   | 'media'
   | 'integrations'
-  | 'mailing';
+  | 'mailing'
+  | 'campaign';
 
 type AuthMeResponse = {
   success: boolean;
@@ -84,6 +87,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   media: '/media',
   integrations: '/integrations',
   mailing: '/mailing',
+  campaign: '/campaign',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -390,6 +394,7 @@ function App() {
     { id: 'media' as const, label: 'Media', icon: Image },
     { id: 'integrations' as const, label: 'Integrations', icon: Waypoints },
     { id: 'mailing' as const, label: 'Mailing', icon: Mail },
+    { id: 'campaign' as const, label: 'Campaigns', icon: Megaphone },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
     { id: 'profile' as const, label: 'Settings', icon: Settings },
@@ -419,6 +424,8 @@ function App() {
         return <Integrations />;
       case 'mailing':
         return <Mailing />;
+      case 'campaign':
+        return <Campaign />;
       default:
         return <Dashboard currentUser={authUser} />;
     }
