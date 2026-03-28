@@ -57,11 +57,10 @@ const cssMap = assets.find(f => f === `${cssBundle}.map`);
 if (cssMap) rmSync(resolve(buildAssets, cssMap));
 
 
-const cacheBust = Date.now().toString();
 const rewriteHtml = (html) =>
   html
-    .replace(/src="\/assets\/index-[^"]+\.js"/, `src="/assets/app.js?v=${cacheBust}"`)
-    .replace(/href="\/assets\/index-[^"]+\.css"/, `href="/assets/app.css?v=${cacheBust}"`);
+    .replace(/src="\/assets\/[^"]+\.js(\?[^"]*)?"/g, `src="/assets/app.js"`)
+    .replace(/href="\/assets\/[^"]+\.css(\?[^"]*)?"/g, `href="/assets/app.css"`);
 
 const builtHtml = readFileSync(buildIndex, 'utf8');
 const syncedHtml = rewriteHtml(builtHtml);
