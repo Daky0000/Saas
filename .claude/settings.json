@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.microsoft.com)",
+      "Bash(curl -s \"https://learn.microsoft.com/en-gb/linkedin/shared/authentication/authentication\")",
+      "Bash(curl -s -w \"\\\\n\\\\nHTTP_STATUS: %{http_code}\" -H \"Authorization: Bearer AQVHKsxwa48aja9nHuPf0xK6zIYd9amFM8TXU1zN_LEYXYJnG0iEvJwq7Kgrq9u9cAVLk6f2oU4GY1MT5akpRRcUB3xHHNPxRm4A5xlc8O8amOlX9MSH_vcd5P4WABbRKiXuiV4Tdd8XLQph2zf6qkJ2Dz7In5M2Q-LBE-6vHZMLPGVGen82XrUVzLHEKcodFnl5Dvi_ft0zWH8cl2CfZGy74Kdn0aNJ39YVg7ZZVeAvs0cw4yBoZNHxVIDVnJ61mPpmwZ4jBZO8qXagoPbuTnNi8njn8lEQVynw4NwGQkDFPbg9zNbibiDxMm7vX7ibz6RvlU1k3zxfFsZV3O5vr57kxK1Wfg\" \"https://api.linkedin.com/v2/userinfo\")",
+      "Bash(curl -s -w \"\\\\n\\\\nHTTP_STATUS: %{http_code}\" -H \"Authorization: Bearer AQVHKsxwa48aja9nHuPf0xK6zIYd9amFM8TXU1zN_LEYXYJnG0iEvJwq7Kgrq9u9cAVLk6f2oU4GY1MT5akpRRcUB3xHHNPxRm4A5xlc8O8amOlX9MSH_vcd5P4WABbRKiXuiV4Tdd8XLQph2zf6qkJ2Dz7In5M2Q-LBE-6vHZMLPGVGen82XrUVzLHEKcodFnl5Dvi_ft0zWH8cl2CfZGy74Kdn0aNJ39YVg7ZZVeAvs0cw4yBoZNHxVIDVnJ61mPpmwZ4jBZO8qXagoPbuTnNi8njn8lEQVynw4NwGQkDFPbg9zNbibiDxMm7vX7ibz6RvlU1k3zxfFsZV3O5vr57kxK1Wfg\" \"https://api.linkedin.com/v2/me\")",
+      "Bash(curl -s \"https://learn.microsoft.com/en-us/linkedin/shared/authentication/authentication?accept=text/markdown\")",
+      "Bash(curl -s \"https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow?accept=text/markdown\")",
+      "WebFetch(domain:developer.x.com)",
+      "WebSearch",
+      "Bash(git commit:*)",
+      "Bash(give access to the App\". tweet.write is sufficient for both posting:*)",
+      "Bash(grep -rn \"error_message\\\\|publish.*result\\\\|platform.*failed\\\\|distribution\" d:/Saas/src --include=*.tsx -l)",
+      "Bash(grep -rn \"publish\\\\|distribute\\\\|send.*post\\\\|post.*send\" d:/Saas/src --include=*.tsx -l)",
+      "WebFetch(domain:docs.x.com)",
+      "Bash(grep -r feature_flags /d/Saas/backend --include=*.ts)",
+      "Bash(find /d/Saas/src -name *useBatchActions* -o -name *batch*)",
+      "Bash(grep -r batch /d/Saas/backend/src/routes --include=*.ts)",
+      "Bash(xargs -I {} basename {})",
+      "Bash(find d:/Saas/src -name *Sidebar* -o -name *Nav* -o -name *nav* -o -name *sidebar*)"
+    ]
+  }
+}

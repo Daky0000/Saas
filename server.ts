@@ -1052,6 +1052,66 @@ async function ensureDatabase() {
 
   // ── End Mailing Module ──────────────────────────────────────────────────────
 
+  // ── Analytics & Insights Engine Tables ──────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_metrics (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      platform_post_id TEXT NOT NULL,
+      post_id TEXT,
+      social_account_id TEXT,
+      likes INTEGER DEFAULT 0,
+      comments INTEGER DEFAULT 0,
+      shares INTEGER DEFAULT 0,
+      impressions INTEGER DEFAULT 0,
+      reach INTEGER DEFAULT 0,
+      engagement INTEGER DEFAULT 0,
+      clicks INTEGER DEFAULT 0,
+      saves INTEGER DEFAULT 0,
+      raw_data JSONB DEFAULT '{}'::jsonb,
+      posted_at TIMESTAMPTZ,
+      fetched_at TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, platform, platform_post_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_metrics_user_idx ON social_metrics (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_metrics_platform_idx ON social_metrics (user_id, platform);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_metrics_posted_idx ON social_metrics (posted_at);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_metrics (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      social_account_id TEXT NOT NULL DEFAULT '',
+      date DATE NOT NULL,
+      followers INTEGER DEFAULT 0,
+      impressions INTEGER DEFAULT 0,
+      reach INTEGER DEFAULT 0,
+      profile_views INTEGER DEFAULT 0,
+      raw_data JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, platform, social_account_id, date)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS account_metrics_user_idx ON account_metrics (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS insights_cache (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      cache_key TEXT NOT NULL,
+      data JSONB NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, cache_key)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS insights_cache_user_idx ON insights_cache (user_id);`).catch(() => undefined);
+  // ── End Analytics Tables ─────────────────────────────────────────────────────
+
   dbReady = true;
 }
 
@@ -11991,6 +12051,523 @@ app.get('/api/mailing/analytics', async (req: Request, res: Response) => {
 });
 
 // ─── End Mailing API Routes ───────────────────────────────────────────────────
+
+// ─── Analytics & Insights Engine ─────────────────────────────────────────────
+
+function parseAnalyticsRange(preset: string | undefined, startStr: string | undefined, endStr: string | undefined) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let start: Date, end: Date, label: string;
+  const p = preset || '30d';
+  if (p === 'custom' && startStr && endStr) {
+    start = new Date(startStr);
+    end = new Date(endStr);
+    label = `${startStr} – ${endStr}`;
+  } else if (p === '7d') {
+    start = new Date(today); start.setDate(start.getDate() - 6);
+    end = today; label = 'Last 7 days';
+  } else if (p === '90d') {
+    start = new Date(today); start.setDate(start.getDate() - 89);
+    end = today; label = 'Last 90 days';
+  } else {
+    start = new Date(today); start.setDate(start.getDate() - 29);
+    end = today; label = 'Last 30 days';
+  }
+  const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  const prevEnd = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
+  const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - days + 1);
+  return {
+    preset: p as '7d' | '30d' | '90d' | 'custom',
+    start, end, label, days, prevStart, prevEnd,
+    startIso: start.toISOString(),
+    endIso: new Date(end.getTime() + 86399999).toISOString(),
+    prevStartIso: prevStart.toISOString(),
+    prevEndIso: new Date(prevEnd.getTime() + 86399999).toISOString(),
+  };
+}
+
+function analyticsPlatformLabel(platform: string): string {
+  const map: Record<string, string> = {
+    facebook: 'Facebook', instagram: 'Instagram', twitter: 'X (Twitter)',
+    linkedin: 'LinkedIn', pinterest: 'Pinterest', threads: 'Threads',
+    tiktok: 'TikTok', wordpress: 'WordPress',
+  };
+  return map[platform?.toLowerCase()] || platform;
+}
+
+function analyticsFmtDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// GET /api/blog/analytics/dashboard
+app.get('/api/blog/analytics/dashboard', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const range = parseAnalyticsRange(q.preset, q.start, q.end);
+
+    const [pubRes, prevRes, metricsRes, scheduledRes, accountRes, lastSyncRes] = await Promise.all([
+      pool.query(
+        `SELECT platform, status, created_at, post_id, platform_post_id FROM publishing_logs
+         WHERE user_id=$1 AND created_at >= $2 AND created_at <= $3`,
+        [auth.userId, range.startIso, range.endIso]
+      ),
+      pool.query(
+        `SELECT platform, status FROM publishing_logs
+         WHERE user_id=$1 AND created_at >= $2 AND created_at <= $3`,
+        [auth.userId, range.prevStartIso, range.prevEndIso]
+      ),
+      pool.query(
+        `SELECT platform, platform_post_id, post_id, likes, comments, shares, impressions, reach, engagement, posted_at
+         FROM social_metrics WHERE user_id=$1 AND (posted_at IS NULL OR (posted_at >= $2 AND posted_at <= $3))`,
+        [auth.userId, range.startIso, range.endIso]
+      ),
+      pool.query(
+        `SELECT COUNT(*) as cnt FROM publishing_logs WHERE user_id=$1 AND status='scheduled' AND scheduled_for > NOW()`,
+        [auth.userId]
+      ),
+      pool.query(
+        `SELECT platform, COUNT(*) as cnt, COALESCE(SUM(followers), 0) as total_followers
+         FROM social_accounts WHERE user_id=$1 AND connected=true GROUP BY platform`,
+        [auth.userId]
+      ),
+      pool.query(
+        `SELECT data->>'lastSyncedAt' as ts FROM insights_cache WHERE user_id=$1 AND cache_key='last_synced' LIMIT 1`,
+        [auth.userId]
+      ),
+    ]);
+
+    const logs: any[] = pubRes.rows;
+    const prevLogs: any[] = prevRes.rows;
+    const metrics: any[] = metricsRes.rows;
+    const futureScheduledCount = parseInt(scheduledRes.rows[0]?.cnt || '0');
+    const lastSyncedAt: string | null = lastSyncRes.rows[0]?.ts || null;
+
+    const accountsByPlatform = new Map<string, { count: number; followers: number }>();
+    for (const r of accountRes.rows as any[]) {
+      accountsByPlatform.set(r.platform.toLowerCase(), { count: parseInt(r.cnt), followers: parseInt(r.total_followers || '0') });
+    }
+
+    // Fetch post titles for top posts
+    const postIds = [...new Set([...logs.map((l: any) => l.post_id), ...metrics.map((m: any) => m.post_id)].filter(Boolean))];
+    const postTitles = new Map<string, { title: string; tags: string[]; hasImage: boolean }>();
+    if (postIds.length > 0) {
+      const postRes = await pool.query(
+        `SELECT p.id, p.title, p.featured_image,
+                ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tags
+         FROM blog_posts p WHERE p.id = ANY($1::text[])`,
+        [postIds]
+      );
+      for (const r of postRes.rows as any[]) {
+        postTitles.set(r.id, { title: r.title || '', tags: r.tags || [], hasImage: !!(r.featured_image) });
+      }
+    }
+
+    // KPIs
+    const published = logs.filter((l: any) => l.status === 'success' || l.status === 'published').length;
+    const failed = logs.filter((l: any) => l.status === 'failed' || l.status === 'error').length;
+    const total = logs.length;
+    const publishSuccessRate = total > 0 ? Math.round((published / total) * 100) : null;
+    const prevPublished = prevLogs.filter((l: any) => l.status === 'success' || l.status === 'published').length;
+    const prevTotal = prevLogs.length;
+    const prevSuccessRate = prevTotal > 0 ? Math.round((prevPublished / prevTotal) * 100) : null;
+
+    const totalReach = metrics.reduce((s: number, m: any) => s + (m.reach || 0), 0) || null;
+    const totalEngagement = metrics.reduce((s: number, m: any) => s + (m.engagement || (parseInt(m.likes || 0) + parseInt(m.comments || 0) + parseInt(m.shares || 0))), 0) || null;
+    const engagementRate = totalReach && totalEngagement ? parseFloat(((totalEngagement / totalReach) * 100).toFixed(2)) : null;
+
+    // Top platform
+    const platformCounts = new Map<string, number>();
+    for (const l of logs as any[]) {
+      const p = (l.platform || '').toLowerCase();
+      if (p) platformCounts.set(p, (platformCounts.get(p) || 0) + 1);
+    }
+    let topPlatform: { platform: string; label: string; published: number; share: number } | null = null;
+    if (platformCounts.size > 0) {
+      const [tp, tpCount] = [...platformCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      topPlatform = { platform: tp, label: analyticsPlatformLabel(tp), published: tpCount, share: total > 0 ? Math.round((tpCount / total) * 100) : 0 };
+    }
+
+    // Best posting time
+    const hourCounts = new Map<number, number>();
+    for (const l of logs as any[]) {
+      if (l.status === 'success' || l.status === 'published') {
+        const h = new Date(l.created_at).getHours();
+        hourCounts.set(h, (hourCounts.get(h) || 0) + 1);
+      }
+    }
+    let bestTimeWindow: { label: string; supportingValue: string } | null = null;
+    if (hourCounts.size > 0) {
+      const bestHour = [...hourCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      const endHour = (bestHour + 2) % 24;
+      const fmt = (h: number) => `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? 'am' : 'pm'}`;
+      bestTimeWindow = { label: `${fmt(bestHour)}–${fmt(endHour)}`, supportingValue: 'Most posts published in this window' };
+    }
+
+    // Trend by date
+    const trendMap = new Map<string, { publishedPosts: number; successfulPublishes: number; failedPublishes: number; scheduledPublishes: number; reach: number; engagement: number }>();
+    const cur = new Date(range.start);
+    while (cur <= range.end) {
+      trendMap.set(analyticsFmtDate(cur), { publishedPosts: 0, successfulPublishes: 0, failedPublishes: 0, scheduledPublishes: 0, reach: 0, engagement: 0 });
+      cur.setDate(cur.getDate() + 1);
+    }
+    for (const l of logs as any[]) {
+      const d = analyticsFmtDate(new Date(l.created_at));
+      const e = trendMap.get(d);
+      if (e) {
+        e.publishedPosts++;
+        if (l.status === 'success' || l.status === 'published') e.successfulPublishes++;
+        else if (l.status === 'failed' || l.status === 'error') e.failedPublishes++;
+        else if (l.status === 'scheduled') e.scheduledPublishes++;
+      }
+    }
+    for (const m of metrics as any[]) {
+      if (!m.posted_at) continue;
+      const d = analyticsFmtDate(new Date(m.posted_at));
+      const e = trendMap.get(d);
+      if (e) {
+        e.reach += parseInt(m.reach || 0);
+        e.engagement += parseInt(m.engagement || 0) || (parseInt(m.likes || 0) + parseInt(m.comments || 0) + parseInt(m.shares || 0));
+      }
+    }
+    const trend = [...trendMap.entries()].sort().map(([date, v]) => ({
+      date, ...v,
+      reach: v.reach || null, engagement: v.engagement || null,
+      engagementRate: v.reach && v.engagement ? parseFloat(((v.engagement / v.reach) * 100).toFixed(2)) : null,
+    }));
+
+    // Platform breakdown
+    const platformStats = new Map<string, { published: number; failed: number; scheduled: number; reach: number; engagement: number }>();
+    for (const l of logs as any[]) {
+      const p = (l.platform || 'unknown').toLowerCase();
+      if (!platformStats.has(p)) platformStats.set(p, { published: 0, failed: 0, scheduled: 0, reach: 0, engagement: 0 });
+      const ps = platformStats.get(p)!;
+      if (l.status === 'success' || l.status === 'published') ps.published++;
+      else if (l.status === 'failed' || l.status === 'error') ps.failed++;
+      else if (l.status === 'scheduled') ps.scheduled++;
+    }
+    for (const m of metrics as any[]) {
+      const p = (m.platform || 'unknown').toLowerCase();
+      if (!platformStats.has(p)) platformStats.set(p, { published: 0, failed: 0, scheduled: 0, reach: 0, engagement: 0 });
+      const ps = platformStats.get(p)!;
+      ps.reach += parseInt(m.reach || 0);
+      ps.engagement += parseInt(m.engagement || 0) || (parseInt(m.likes || 0) + parseInt(m.comments || 0) + parseInt(m.shares || 0));
+    }
+    const platformBreakdown = [...platformStats.entries()].map(([platform, ps]) => {
+      const t2 = ps.published + ps.failed;
+      const acc = accountsByPlatform.get(platform);
+      return {
+        platform, label: analyticsPlatformLabel(platform),
+        published: ps.published, failed: ps.failed, scheduled: ps.scheduled,
+        successRate: t2 > 0 ? Math.round((ps.published / t2) * 100) : null,
+        reach: ps.reach || null, engagement: ps.engagement || null,
+        engagementRate: ps.reach && ps.engagement ? parseFloat(((ps.engagement / ps.reach) * 100).toFixed(2)) : null,
+        accounts: acc?.count || 0, followerReach: acc?.followers || null,
+      };
+    }).sort((a, b) => b.published - a.published);
+
+    // Top posts
+    const postStats = new Map<string, { platforms: string[]; success: number; fail: number; reach: number; engagement: number; publishedAt: string | null }>();
+    for (const l of logs as any[]) {
+      const pid = l.post_id; if (!pid) continue;
+      if (!postStats.has(pid)) postStats.set(pid, { platforms: [], success: 0, fail: 0, reach: 0, engagement: 0, publishedAt: null });
+      const ps = postStats.get(pid)!;
+      if (l.platform && !ps.platforms.includes(l.platform)) ps.platforms.push(l.platform);
+      if (l.status === 'success' || l.status === 'published') { ps.success++; if (!ps.publishedAt) ps.publishedAt = l.created_at; }
+      else if (l.status === 'failed' || l.status === 'error') ps.fail++;
+    }
+    for (const m of metrics as any[]) {
+      const pid = m.post_id; if (!pid) continue;
+      if (!postStats.has(pid)) postStats.set(pid, { platforms: [], success: 0, fail: 0, reach: 0, engagement: 0, publishedAt: null });
+      const ps = postStats.get(pid)!;
+      ps.reach += parseInt(m.reach || 0);
+      ps.engagement += parseInt(m.engagement || 0) || (parseInt(m.likes || 0) + parseInt(m.comments || 0) + parseInt(m.shares || 0));
+    }
+    const topPosts = [...postStats.entries()]
+      .map(([pid, ps]) => {
+        const score = ps.success * 2 + (ps.reach > 0 ? Math.log10(ps.reach + 1) : 0) + (ps.engagement > 0 ? Math.log10(ps.engagement + 1) * 2 : 0);
+        const info = postTitles.get(pid);
+        return {
+          id: pid, title: info?.title || 'Untitled', publishedAt: ps.publishedAt,
+          platforms: ps.platforms, type: (info?.hasImage ? 'image' : 'text') as 'image' | 'text',
+          hashtags: [], tagNames: info?.tags || [],
+          successfulPublishes: ps.success, failedPublishes: ps.fail,
+          reach: ps.reach || null, engagement: ps.engagement || null,
+          engagementRate: ps.reach && ps.engagement ? parseFloat(((ps.engagement / ps.reach) * 100).toFixed(2)) : null,
+          score: Math.round(score * 10) / 10,
+          scoreLabel: score > 10 ? 'Top Performer' : score > 5 ? 'Good' : score > 2 ? 'Average' : 'Low',
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    // Insights
+    const insights: Array<{ type: string; title: string; description: string; actionLabel?: string; actionHref?: string }> = [];
+    if (published === 0 && total === 0) {
+      insights.push({ type: 'warning', title: 'No publishing activity yet', description: 'Start publishing posts to see analytics data.', actionLabel: 'Create Post', actionHref: '/posts' });
+    }
+    if (publishSuccessRate !== null && publishSuccessRate < 70) {
+      insights.push({ type: 'warning', title: 'Low publish success rate', description: `Only ${publishSuccessRate}% of attempts succeeded. Check your social account connections.`, actionLabel: 'Check Integrations', actionHref: '/integrations' });
+    } else if (publishSuccessRate !== null && publishSuccessRate >= 90) {
+      insights.push({ type: 'positive', title: 'Excellent publish success rate', description: `${publishSuccessRate}% success rate — your integrations are working great.` });
+    }
+    if (bestTimeWindow && published >= 5) {
+      insights.push({ type: 'suggestion', title: `Best posting time: ${bestTimeWindow.label}`, description: 'Schedule future posts in this window for maximum visibility.' });
+    }
+    if (accountsByPlatform.size === 0) {
+      insights.push({ type: 'suggestion', title: 'Connect social accounts', description: 'Connect your social media accounts to start publishing and tracking analytics.', actionLabel: 'Connect Accounts', actionHref: '/integrations' });
+    }
+    if (prevPublished > 0) {
+      const growthPct = Math.round(((published - prevPublished) / prevPublished) * 100);
+      if (growthPct > 20) insights.push({ type: 'positive', title: 'Publishing frequency increased', description: `${growthPct}% more posts than the previous period.` });
+      else if (growthPct < -20) insights.push({ type: 'warning', title: 'Publishing frequency decreased', description: `${Math.abs(growthPct)}% fewer posts compared to the previous period.` });
+    }
+    if (metrics.length === 0 && total > 0) {
+      insights.push({ type: 'suggestion', title: 'Sync for reach & engagement data', description: 'Click "Sync Analytics" to fetch reach and engagement data from your connected platforms.' });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        lastSyncedAt,
+        range: { preset: range.preset, start: analyticsFmtDate(range.start), end: analyticsFmtDate(range.end), label: range.label, days: range.days },
+        metricsAvailability: { performance: metrics.length > 0 },
+        summaryNote: metrics.length === 0 && total > 0 ? 'Sync analytics to see reach and engagement data from your platforms.' : null,
+        kpis: {
+          publishedPosts: published,
+          publishedPostsChange: prevPublished > 0 ? Math.round(((published - prevPublished) / prevPublished) * 100) : null,
+          totalReach, totalReachChange: null,
+          totalEngagement, totalEngagementChange: null,
+          engagementRate, engagementRateChange: null,
+          publishSuccessRate,
+          publishSuccessRateChange: prevSuccessRate !== null && publishSuccessRate !== null ? publishSuccessRate - prevSuccessRate : null,
+          topPlatform, bestTimeWindow, futureScheduledCount,
+        },
+        trend, platformBreakdown, topPosts, insights,
+      },
+    });
+  } catch (err) {
+    console.error('Analytics dashboard error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch analytics dashboard' });
+  }
+});
+
+// POST /api/blog/analytics/refresh — sync social metrics from platform APIs
+app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const accountRes = await pool.query(
+      `SELECT id, platform, account_id, account_name, access_token, access_token_encrypted, refresh_token, token_data, followers
+       FROM social_accounts WHERE user_id=$1 AND connected=true`,
+      [auth.userId]
+    );
+
+    let synced = 0;
+    const errors: string[] = [];
+
+    for (const acct of accountRes.rows as any[]) {
+      const platform = (acct.platform || '').toLowerCase();
+      let token = '';
+      if (acct.access_token_encrypted) {
+        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+      }
+      if (!token) token = String(acct.access_token || '').trim();
+      if (!token) continue;
+
+      try {
+        if (platform === 'facebook') {
+          const feedResp = await axios.get(`https://graph.facebook.com/v19.0/${acct.account_id || 'me'}/posts`, {
+            params: { access_token: token, fields: 'id,message,created_time,full_picture', limit: 25 },
+            validateStatus: () => true, timeout: 15000,
+          });
+          if (feedResp.status === 200) {
+            const posts: any[] = feedResp.data?.data || [];
+            for (const post of posts) {
+              try {
+                const insResp = await axios.get(`https://graph.facebook.com/v19.0/${post.id}/insights`, {
+                  params: { access_token: token, metric: 'post_impressions,post_impressions_unique,post_engaged_users,post_clicks,post_reactions_by_type_total' },
+                  validateStatus: () => true, timeout: 10000,
+                });
+                const insData: any[] = insResp.data?.data || [];
+                const getM = (name: string) => insData.find((m: any) => m.name === name)?.values?.[0]?.value;
+                const reactions: Record<string, number> = getM('post_reactions_by_type_total') || {};
+                const likes = Object.values(reactions).reduce((s, v) => s + (parseInt(String(v)) || 0), 0);
+                const impressions = parseInt(getM('post_impressions') || 0);
+                const reach = parseInt(getM('post_impressions_unique') || 0);
+                const engagement = parseInt(getM('post_engaged_users') || 0);
+                await pool!.query(
+                  `INSERT INTO social_metrics (id, user_id, platform, platform_post_id, social_account_id, likes, impressions, reach, engagement, raw_data, posted_at)
+                   VALUES (gen_random_uuid()::text, $1, 'facebook', $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+                   ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+                     likes=EXCLUDED.likes, impressions=EXCLUDED.impressions, reach=EXCLUDED.reach,
+                     engagement=EXCLUDED.engagement, raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
+                  [auth.userId, post.id, acct.id, likes, impressions, reach, engagement,
+                   JSON.stringify({ post, insights: insData }),
+                   post.created_time ? new Date(post.created_time).toISOString() : null]
+                );
+                synced++;
+              } catch { /* skip individual post errors */ }
+            }
+            const pageResp = await axios.get(`https://graph.facebook.com/v19.0/${acct.account_id || 'me'}`, {
+              params: { access_token: token, fields: 'fan_count,followers_count' },
+              validateStatus: () => true, timeout: 10000,
+            });
+            if (pageResp.status === 200 && (pageResp.data?.fan_count || pageResp.data?.followers_count)) {
+              await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
+                [pageResp.data.fan_count || pageResp.data.followers_count, acct.id]);
+            }
+          }
+        } else if (platform === 'twitter' || platform === 'x') {
+          const twitterUserId = acct.token_data?.userId || acct.token_data?.user_id || acct.account_id;
+          if (twitterUserId) {
+            const tweetsResp = await axios.get(`https://api.x.com/2/users/${twitterUserId}/tweets`, {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { max_results: 25, 'tweet.fields': 'public_metrics,created_at' },
+              validateStatus: () => true, timeout: 15000,
+            });
+            if (tweetsResp.status === 200) {
+              const tweets: any[] = tweetsResp.data?.data || [];
+              for (const tweet of tweets) {
+                const m = tweet.public_metrics || {};
+                const engagement = (m.like_count || 0) + (m.reply_count || 0) + (m.retweet_count || 0);
+                await pool!.query(
+                  `INSERT INTO social_metrics (id, user_id, platform, platform_post_id, social_account_id, likes, comments, shares, impressions, engagement, raw_data, posted_at)
+                   VALUES (gen_random_uuid()::text, $1, 'twitter', $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+                   ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+                     likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
+                     impressions=EXCLUDED.impressions, engagement=EXCLUDED.engagement,
+                     raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
+                  [auth.userId, tweet.id, acct.id, m.like_count || 0, m.reply_count || 0,
+                   m.retweet_count || 0, m.impression_count || 0, engagement, JSON.stringify(tweet),
+                   tweet.created_at ? new Date(tweet.created_at).toISOString() : null]
+                );
+                synced++;
+              }
+              const userResp = await axios.get(`https://api.x.com/2/users/${twitterUserId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                params: { 'user.fields': 'public_metrics' },
+                validateStatus: () => true, timeout: 10000,
+              });
+              if (userResp.status === 200 && userResp.data?.data?.public_metrics?.followers_count) {
+                await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
+                  [userResp.data.data.public_metrics.followers_count, acct.id]);
+              }
+            }
+          }
+        } else if (platform === 'linkedin') {
+          const tokenData = acct.token_data || {};
+          const personUrn = tokenData.personUrn || tokenData.urn || tokenData.sub;
+          if (personUrn) {
+            const sharesResp = await axios.get('https://api.linkedin.com/v2/shares', {
+              headers: { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0' },
+              params: { q: 'owners', owners: personUrn, count: 20 },
+              validateStatus: () => true, timeout: 15000,
+            });
+            if (sharesResp.status === 200) {
+              const shares: any[] = sharesResp.data?.elements || [];
+              for (const share of shares) {
+                const shareId = share.activity || share.id;
+                if (!shareId) continue;
+                let stats: any = {};
+                try {
+                  const statsResp = await axios.get('https://api.linkedin.com/v2/socialActions/' + encodeURIComponent(shareId), {
+                    headers: { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0' },
+                    validateStatus: () => true, timeout: 10000,
+                  });
+                  stats = statsResp.data || {};
+                } catch { /* optional */ }
+                const likeCount = stats.likesSummary?.totalLikes || 0;
+                const commentCount = stats.commentsSummary?.totalFirstLevelComments || 0;
+                await pool!.query(
+                  `INSERT INTO social_metrics (id, user_id, platform, platform_post_id, social_account_id, likes, comments, engagement, raw_data, posted_at)
+                   VALUES (gen_random_uuid()::text, $1, 'linkedin', $2, $3, $4, $5, $6, $7::jsonb, $8)
+                   ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+                     likes=EXCLUDED.likes, comments=EXCLUDED.comments, engagement=EXCLUDED.engagement,
+                     raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
+                  [auth.userId, shareId, acct.id, likeCount, commentCount,
+                   likeCount + commentCount, JSON.stringify({ share, stats }),
+                   share.created?.time ? new Date(share.created.time).toISOString() : null]
+                );
+                synced++;
+              }
+            }
+          }
+        }
+      } catch (platformErr: any) {
+        const msg = platformErr?.response?.data?.error?.message || platformErr?.message || 'Failed';
+        errors.push(`${platform}: ${msg}`);
+        console.error(`Analytics sync error for ${platform}:`, msg);
+      }
+    }
+
+    // Store last synced timestamp
+    await pool.query(
+      `INSERT INTO insights_cache (id, user_id, cache_key, data, expires_at)
+       VALUES (gen_random_uuid()::text, $1, 'last_synced', $2::jsonb, NOW() + INTERVAL '1 year')
+       ON CONFLICT (user_id, cache_key) DO UPDATE SET data=EXCLUDED.data, expires_at=EXCLUDED.expires_at`,
+      [auth.userId, JSON.stringify({ lastSyncedAt: new Date().toISOString() })]
+    );
+
+    return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+  } catch (err) {
+    console.error('Analytics refresh error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to sync analytics' });
+  }
+});
+
+// GET /api/blog/analytics/export — CSV export
+app.get('/api/blog/analytics/export', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const range = parseAnalyticsRange(q.preset, q.start, q.end);
+
+    const rows = await pool.query(
+      `SELECT pl.platform, pl.status, pl.created_at, pl.error_message,
+              bp.title as post_title,
+              sm.likes, sm.comments, sm.shares, sm.impressions, sm.reach, sm.engagement
+       FROM publishing_logs pl
+       LEFT JOIN blog_posts bp ON bp.id = pl.post_id
+       LEFT JOIN social_metrics sm ON sm.user_id = pl.user_id AND sm.platform = pl.platform
+         AND sm.platform_post_id = COALESCE(pl.platform_post_id, '')
+       WHERE pl.user_id=$1 AND pl.created_at >= $2 AND pl.created_at <= $3
+       ORDER BY pl.created_at DESC`,
+      [auth.userId, range.startIso, range.endIso]
+    );
+
+    const headers = ['Date', 'Platform', 'Post Title', 'Status', 'Likes', 'Comments', 'Shares', 'Impressions', 'Reach', 'Engagement', 'Error'];
+    const csvLines = [headers.join(',')];
+    for (const row of rows.rows as any[]) {
+      csvLines.push([
+        new Date(row.created_at).toISOString().slice(0, 10),
+        row.platform || '',
+        `"${(row.post_title || 'Untitled').replace(/"/g, '""')}"`,
+        row.status || '',
+        row.likes ?? '', row.comments ?? '', row.shares ?? '',
+        row.impressions ?? '', row.reach ?? '', row.engagement ?? '',
+        `"${(row.error_message || '').replace(/"/g, '""')}"`,
+      ].join(','));
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="analytics-${range.preset}-${analyticsFmtDate(new Date())}.csv"`);
+    return res.send(csvLines.join('\n'));
+  } catch (err) {
+    console.error('Analytics export error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to export analytics' });
+  }
+});
+
+// ─── End Analytics & Insights Engine ─────────────────────────────────────────
 
 // SPA fallback
 app.use((req, res) => {
