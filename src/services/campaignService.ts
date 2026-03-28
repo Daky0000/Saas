@@ -210,4 +210,44 @@ export const campaignService = {
     const res = await fetch(`${BASE}/campaigns/${campaignId}/metrics`, { headers: authHeaders() });
     return parseJson(res);
   },
+
+  // Atomic creation (transaction-backed)
+  async createCampaignAtomic(payload: {
+    name: string;
+    description?: string;
+    goal: CampaignGoal;
+    target_url?: string;
+    start_date?: string;
+    end_date?: string;
+    budget?: number;
+    channels?: string[];
+    utm_links?: Array<{ label: string; utm_source: string; utm_medium: string }>;
+    mailing_subject?: string;
+    attribution_model?: string;
+  }): Promise<{
+    campaign: Campaign;
+    channels: CampaignChannel[];
+    funnel: Funnel;
+    funnel_steps: FunnelStep[];
+    utm_links: UtmLink[];
+    mailing_campaign: unknown | null;
+    job_ids: string[];
+    summary: { channels_created: number; utm_links_created: number; funnel_steps: number; jobs_queued: number };
+  }> {
+    const res = await fetch(`${BASE}/campaigns/create`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await parseJson<{ success: boolean; error?: string; validationErrors?: string[] } & {
+      campaign: Campaign; channels: CampaignChannel[]; funnel: Funnel; funnel_steps: FunnelStep[];
+      utm_links: UtmLink[]; mailing_campaign: unknown | null; job_ids: string[];
+      summary: { channels_created: number; utm_links_created: number; funnel_steps: number; jobs_queued: number };
+    }>(res);
+    if (!data.success) {
+      const msg = data.validationErrors?.length ? data.validationErrors.join('; ') : (data.error || 'Failed to create campaign');
+      throw new Error(msg);
+    }
+    return data;
+  },
 };
