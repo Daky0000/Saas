@@ -957,6 +957,101 @@ async function ensureDatabase() {
     console.warn('Card template seed skipped:', e);
   }
 
+  // ─── Mailing Module (additive only) ────────────────────────────────────────
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mailing_contacts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      first_name TEXT,
+      last_name TEXT,
+      source TEXT DEFAULT 'manual',
+      subscribed BOOLEAN NOT NULL DEFAULT true,
+      email_marketing_consent BOOLEAN NOT NULL DEFAULT false,
+      unsubscribed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, email)
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contacts_user_idx ON mailing_contacts (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contacts_email_idx ON mailing_contacts (email);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mailing_contact_tags (
+      id TEXT PRIMARY KEY,
+      contact_id TEXT NOT NULL REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tag TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(contact_id, tag)
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contact_tags_contact_idx ON mailing_contact_tags (contact_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mailing_segments (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_segments_user_idx ON mailing_segments (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mailing_campaigns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      preview_text TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      segment_id TEXT REFERENCES mailing_segments(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      scheduled_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      recipient_count INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_campaigns_user_idx ON mailing_campaigns (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mailing_automations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      trigger_type TEXT NOT NULL DEFAULT 'signup',
+      conditions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automations_user_idx ON mailing_automations (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mailing_email_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      campaign_id TEXT REFERENCES mailing_campaigns(id) ON DELETE CASCADE,
+      contact_id TEXT REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_email_events_campaign_idx ON mailing_email_events (campaign_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mailing_email_events_contact_idx ON mailing_email_events (contact_id);`).catch(() => undefined);
+
+  // ── End Mailing Module ──────────────────────────────────────────────────────
+
   dbReady = true;
 }
 
@@ -11589,6 +11684,313 @@ app.use((err: any, req: Request, res: Response, next: Function) => {
   console.error('Unhandled API error:', err);
   return res.status(status).json({ success: false, error: message });
 });
+
+// ─── Mailing API Routes ───────────────────────────────────────────────────────
+
+// GET /api/mailing/contacts
+app.get('/api/mailing/contacts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const search = String(req.query.search || '').trim();
+    const tag = String(req.query.tag || '').trim();
+    let q = `SELECT c.*, COALESCE(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
+             FROM mailing_contacts c
+             LEFT JOIN mailing_contact_tags t ON t.contact_id = c.id
+             WHERE c.user_id = $1`;
+    const params: any[] = [auth.userId];
+    if (search) { params.push(`%${search}%`); q += ` AND (c.email ILIKE $${params.length} OR c.first_name ILIKE $${params.length} OR c.last_name ILIKE $${params.length})`; }
+    if (tag) { params.push(tag); q += ` AND c.id IN (SELECT contact_id FROM mailing_contact_tags WHERE tag = $${params.length} AND user_id = $1)`; }
+    q += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT 500`;
+    const { rows } = await pool!.query(q, params);
+    return res.json({ success: true, contacts: rows });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch contacts' }); }
+});
+
+// POST /api/mailing/contacts
+app.post('/api/mailing/contacts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { email, first_name, last_name, source, tags, email_marketing_consent } = req.body;
+    if (!email || !String(email).includes('@')) return res.status(400).json({ success: false, error: 'Valid email required' });
+    const id = randomUUID();
+    const { rows } = await pool!.query(
+      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, email_marketing_consent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (user_id, email) DO UPDATE SET first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, updated_at=NOW()
+       RETURNING *`,
+      [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, source || 'manual', !!email_marketing_consent]
+    );
+    const contact = rows[0];
+    if (Array.isArray(tags) && tags.length) {
+      for (const tag of tags) {
+        await pool!.query(
+          `INSERT INTO mailing_contact_tags (id, contact_id, user_id, tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+          [randomUUID(), contact.id, auth.userId, String(tag).trim()]
+        ).catch(() => undefined);
+      }
+    }
+    return res.json({ success: true, contact });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create contact' }); }
+});
+
+// PATCH /api/mailing/contacts/:id
+app.patch('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { first_name, last_name, subscribed, email_marketing_consent } = req.body;
+    const { rows } = await pool!.query(
+      `UPDATE mailing_contacts SET first_name=$1, last_name=$2, subscribed=$3, email_marketing_consent=$4,
+       unsubscribed_at = CASE WHEN $3=false THEN NOW() ELSE NULL END, updated_at=NOW()
+       WHERE id=$5 AND user_id=$6 RETURNING *`,
+      [first_name || null, last_name || null, subscribed !== false, !!email_marketing_consent, req.params.id, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
+    return res.json({ success: true, contact: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update contact' }); }
+});
+
+// DELETE /api/mailing/contacts/:id
+app.delete('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    await pool!.query('DELETE FROM mailing_contacts WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete contact' }); }
+});
+
+// GET /api/mailing/contacts/tags — list all unique tags for user
+app.get('/api/mailing/contacts/tags', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { rows } = await pool!.query(
+      `SELECT DISTINCT tag FROM mailing_contact_tags WHERE user_id=$1 ORDER BY tag`, [auth.userId]
+    );
+    return res.json({ success: true, tags: rows.map((r: any) => r.tag) });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch tags' }); }
+});
+
+// POST /api/mailing/contacts/import — bulk CSV import
+app.post('/api/mailing/contacts/import', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { contacts } = req.body; // [{ email, first_name, last_name }]
+    if (!Array.isArray(contacts) || !contacts.length) return res.status(400).json({ success: false, error: 'contacts array required' });
+    let imported = 0, skipped = 0;
+    for (const c of contacts.slice(0, 5000)) {
+      if (!c.email || !String(c.email).includes('@')) { skipped++; continue; }
+      await pool!.query(
+        `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id, email) DO NOTHING`,
+        [randomUUID(), auth.userId, String(c.email).toLowerCase().trim(), c.first_name || null, c.last_name || null]
+      ).then(() => imported++).catch(() => { skipped++; });
+    }
+    return res.json({ success: true, imported, skipped });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Import failed' }); }
+});
+
+// GET /api/mailing/segments
+app.get('/api/mailing/segments', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { rows } = await pool!.query('SELECT * FROM mailing_segments WHERE user_id=$1 ORDER BY created_at DESC', [auth.userId]);
+    return res.json({ success: true, segments: rows });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch segments' }); }
+});
+
+// POST /api/mailing/segments
+app.post('/api/mailing/segments', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, rules } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'Name required' });
+    const id = randomUUID();
+    const { rows } = await pool!.query(
+      `INSERT INTO mailing_segments (id, user_id, name, rules) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [id, auth.userId, name, JSON.stringify(rules || [])]
+    );
+    return res.json({ success: true, segment: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create segment' }); }
+});
+
+// PATCH /api/mailing/segments/:id
+app.patch('/api/mailing/segments/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, rules } = req.body;
+    const { rows } = await pool!.query(
+      `UPDATE mailing_segments SET name=COALESCE($1,name), rules=COALESCE($2::jsonb,rules), updated_at=NOW()
+       WHERE id=$3 AND user_id=$4 RETURNING *`,
+      [name || null, rules ? JSON.stringify(rules) : null, req.params.id, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Segment not found' });
+    return res.json({ success: true, segment: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update segment' }); }
+});
+
+// DELETE /api/mailing/segments/:id
+app.delete('/api/mailing/segments/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    await pool!.query('DELETE FROM mailing_segments WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete segment' }); }
+});
+
+// GET /api/mailing/campaigns
+app.get('/api/mailing/campaigns', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { rows } = await pool!.query(
+      `SELECT c.*, s.name as segment_name FROM mailing_campaigns c
+       LEFT JOIN mailing_segments s ON s.id = c.segment_id
+       WHERE c.user_id=$1 ORDER BY c.created_at DESC`,
+      [auth.userId]
+    );
+    return res.json({ success: true, campaigns: rows });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch campaigns' }); }
+});
+
+// POST /api/mailing/campaigns
+app.post('/api/mailing/campaigns', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, subject, preview_text, content, segment_id, status, scheduled_at } = req.body;
+    if (!name || !subject) return res.status(400).json({ success: false, error: 'Name and subject required' });
+    const id = randomUUID();
+    const { rows } = await pool!.query(
+      `INSERT INTO mailing_campaigns (id, user_id, name, subject, preview_text, content, segment_id, status, scheduled_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [id, auth.userId, name, subject, preview_text || null, content || '', segment_id || null, status || 'draft', scheduled_at || null]
+    );
+    return res.json({ success: true, campaign: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create campaign' }); }
+});
+
+// PATCH /api/mailing/campaigns/:id
+app.patch('/api/mailing/campaigns/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, subject, preview_text, content, segment_id, status, scheduled_at } = req.body;
+    const { rows } = await pool!.query(
+      `UPDATE mailing_campaigns SET
+         name=COALESCE($1,name), subject=COALESCE($2,subject), preview_text=$3,
+         content=COALESCE($4,content), segment_id=$5, status=COALESCE($6,status),
+         scheduled_at=$7, updated_at=NOW()
+       WHERE id=$8 AND user_id=$9 RETURNING *`,
+      [name||null, subject||null, preview_text||null, content||null, segment_id||null, status||null, scheduled_at||null, req.params.id, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Campaign not found' });
+    return res.json({ success: true, campaign: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update campaign' }); }
+});
+
+// DELETE /api/mailing/campaigns/:id
+app.delete('/api/mailing/campaigns/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    await pool!.query('DELETE FROM mailing_campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete campaign' }); }
+});
+
+// GET /api/mailing/automations
+app.get('/api/mailing/automations', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { rows } = await pool!.query('SELECT * FROM mailing_automations WHERE user_id=$1 ORDER BY created_at DESC', [auth.userId]);
+    return res.json({ success: true, automations: rows });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch automations' }); }
+});
+
+// POST /api/mailing/automations
+app.post('/api/mailing/automations', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, trigger_type, conditions, actions, status } = req.body;
+    if (!name || !trigger_type) return res.status(400).json({ success: false, error: 'Name and trigger_type required' });
+    const id = randomUUID();
+    const { rows } = await pool!.query(
+      `INSERT INTO mailing_automations (id, user_id, name, trigger_type, conditions, actions, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [id, auth.userId, name, trigger_type, JSON.stringify(conditions||[]), JSON.stringify(actions||[]), status||'draft']
+    );
+    return res.json({ success: true, automation: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create automation' }); }
+});
+
+// PATCH /api/mailing/automations/:id
+app.patch('/api/mailing/automations/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name, trigger_type, conditions, actions, status } = req.body;
+    const { rows } = await pool!.query(
+      `UPDATE mailing_automations SET
+         name=COALESCE($1,name), trigger_type=COALESCE($2,trigger_type),
+         conditions=COALESCE($3::jsonb,conditions), actions=COALESCE($4::jsonb,actions),
+         status=COALESCE($5,status), updated_at=NOW()
+       WHERE id=$6 AND user_id=$7 RETURNING *`,
+      [name||null, trigger_type||null, conditions?JSON.stringify(conditions):null, actions?JSON.stringify(actions):null, status||null, req.params.id, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Automation not found' });
+    return res.json({ success: true, automation: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update automation' }); }
+});
+
+// DELETE /api/mailing/automations/:id
+app.delete('/api/mailing/automations/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    await pool!.query('DELETE FROM mailing_automations WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete automation' }); }
+});
+
+// GET /api/mailing/analytics
+app.get('/api/mailing/analytics', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const [contactsRes, campaignsRes, eventsRes] = await Promise.all([
+      pool!.query(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE subscribed=true) as subscribed, COUNT(*) FILTER (WHERE subscribed=false) as unsubscribed FROM mailing_contacts WHERE user_id=$1`, [auth.userId]),
+      pool!.query(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='sent') as sent, COUNT(*) FILTER (WHERE status='draft') as draft, COUNT(*) FILTER (WHERE status='scheduled') as scheduled FROM mailing_campaigns WHERE user_id=$1`, [auth.userId]),
+      pool!.query(`SELECT event_type, COUNT(*) as count FROM mailing_email_events WHERE user_id=$1 GROUP BY event_type`, [auth.userId]),
+    ]);
+    const eventCounts: Record<string, number> = {};
+    for (const row of eventsRes.rows) eventCounts[row.event_type] = Number(row.count);
+    const delivered = eventCounts['delivered'] || 0;
+    return res.json({
+      success: true,
+      contacts: { total: Number(contactsRes.rows[0].total), subscribed: Number(contactsRes.rows[0].subscribed), unsubscribed: Number(contactsRes.rows[0].unsubscribed) },
+      campaigns: { total: Number(campaignsRes.rows[0].total), sent: Number(campaignsRes.rows[0].sent), draft: Number(campaignsRes.rows[0].draft), scheduled: Number(campaignsRes.rows[0].scheduled) },
+      events: eventCounts,
+      rates: {
+        openRate: delivered > 0 ? Math.round(((eventCounts['open'] || 0) / delivered) * 100) : 0,
+        clickRate: delivered > 0 ? Math.round(((eventCounts['click'] || 0) / delivered) * 100) : 0,
+        bounceRate: delivered > 0 ? Math.round(((eventCounts['bounced'] || 0) / delivered) * 100) : 0,
+      },
+    });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
+});
+
+// ─── End Mailing API Routes ───────────────────────────────────────────────────
 
 // SPA fallback
 app.use((req, res) => {
