@@ -4,6 +4,7 @@ import { integrationService, type IntegrationCatalogItem } from '../services/int
 import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
 import { socialPostService } from '../services/socialPostService';
+import { PlatformLogo } from '../components/PlatformLogo';
 
 type Props = {
   onNavigateSettings?: () => void;
@@ -25,22 +26,6 @@ const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   disabled: { bg: 'bg-amber-50', text: 'text-amber-700' },
 };
 
-const INTEGRATION_BRAND: Record<string, { label: string; bg: string; text: string }> = {
-  wordpress: { label: 'W', bg: 'bg-indigo-500', text: 'text-white' },
-  facebook: { label: 'f', bg: 'bg-blue-600', text: 'text-white' },
-  instagram: { label: 'IG', bg: 'bg-pink-500', text: 'text-white' },
-  linkedin: { label: 'in', bg: 'bg-sky-600', text: 'text-white' },
-  twitter: { label: 'X', bg: 'bg-slate-900', text: 'text-white' },
-  pinterest: { label: 'P', bg: 'bg-red-500', text: 'text-white' },
-  mailchimp: { label: 'MC', bg: 'bg-amber-400', text: 'text-slate-900' },
-};
-
-const getBrandStyle = (slug: string) =>
-  INTEGRATION_BRAND[slug] || {
-    label: String(slug || '?').slice(0, 2).toUpperCase(),
-    bg: 'bg-slate-200',
-    text: 'text-slate-700',
-  };
 
 const formatDate = (value?: string | null) => {
   if (!value) return '';
@@ -60,8 +45,6 @@ function Card({
   statusLabel,
   statusTone,
   icon,
-  iconBg,
-  iconText,
   meta,
   disabledReason,
   children,
@@ -70,9 +53,7 @@ function Card({
   description: string;
   statusLabel: string;
   statusTone: keyof typeof PLATFORM_BADGE;
-  icon: string;
-  iconBg: string;
-  iconText: string;
+  icon: React.ReactNode;
   meta?: string | null;
   disabledReason?: string | null;
   children: React.ReactNode;
@@ -82,7 +63,7 @@ function Card({
     <div className="group rounded-[24px] border-2 border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${iconBg} ${iconText} text-base font-black shadow-sm`}>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl overflow-hidden shadow-sm">
             {icon}
           </div>
           <div className="min-w-0">
@@ -412,7 +393,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
-    const brand = getBrandStyle(slug);
     const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest'].includes(slug);
     const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
     const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || '';
@@ -437,9 +417,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
         description="Connect your WordPress site using Application Passwords. Publish, update, import posts and sync categories/tags."
         statusLabel={item.connected ? 'Connected' : 'Disconnected'}
         statusTone={item.connected ? 'connected' : 'disconnected'}
-        icon={brand.label}
-        iconBg={brand.bg}
-        iconText={brand.text}
+        icon={<PlatformLogo platform="wordpress" size={48} />}
         meta={connectedMeta}
       >
           {!item.connected ? (
@@ -480,9 +458,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
           description="Connect Mailchimp using an API key + server prefix (e.g. us19)."
           statusLabel={item.connected ? 'Connected' : 'Disconnected'}
           statusTone={item.connected ? 'connected' : 'disconnected'}
-          icon={brand.label}
-          iconBg={brand.bg}
-          iconText={brand.text}
+          icon={<PlatformLogo platform="mailchimp" size={48} />}
           meta={connectedMeta}
         >
           {!item.connected ? (
@@ -552,9 +528,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
         statusLabel={disabledReason ? 'Admin disabled' : item.connected ? 'Connected' : 'Disconnected'}
         statusTone={statusTone}
         disabledReason={disabledReason}
-        icon={brand.label}
-        iconBg={brand.bg}
-        iconText={brand.text}
+        icon={<PlatformLogo platform={slug} size={48} />}
         meta={connectedMeta}
       >
         {slug === 'instagram' ? (

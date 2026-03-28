@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PlatformLogo } from '../components/PlatformLogo';
 import {
   Plus,
   Search,
@@ -908,8 +909,9 @@ function PostsList({
                             }}
                             className="h-4 w-4 rounded border-slate-300 accent-slate-900"
                           />
+                          <PlatformLogo platform={acc.platform} size={28} />
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold capitalize text-slate-800">{acc.platform}</div>
+                            <div className="text-sm font-semibold capitalize text-slate-800">{acc.platform === 'twitter' ? 'X (Twitter)' : acc.platform}</div>
                             <div className="text-xs text-slate-500 truncate">{acc.account_name || acc.account_id}</div>
                           </div>
                         </label>
@@ -944,7 +946,10 @@ function PostsList({
             {distResults.map((r, i) => (
               <li key={i} className="flex flex-col gap-0.5 px-4 py-2.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold capitalize text-slate-700">{r.platform}</span>
+                  <span className="flex items-center gap-2">
+                    <PlatformLogo platform={r.platform} size={20} />
+                    <span className="text-xs font-semibold capitalize text-slate-700">{r.platform === 'twitter' ? 'X' : r.platform}</span>
+                  </span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${r.status === 'published' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
                     {r.status}
                   </span>
