@@ -903,6 +903,7 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS account TEXT;`).catch(() => undefined);
   await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS response JSONB;`).catch(() => undefined);
   await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ;`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_automation_tasks (
@@ -10589,8 +10590,8 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
     } else {
       await pool
         .query(
-          'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message,response) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)',
-          [randomUUID(), postId, userId, platform, result.status, result.platformPostId || null, result.error || null, JSON.stringify(result as any)]
+          'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message,response,posted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)',
+          [randomUUID(), postId, userId, platform, result.status, result.platformPostId || null, result.error || null, JSON.stringify(result as any), result.status === 'published' ? new Date().toISOString() : null]
         )
         .catch(() => undefined);
     }
@@ -11435,8 +11436,8 @@ app.post('/api/distribution/publish', async (req: Request, res: Response) => {
       const result = await publishToplatform(auth.userId, post, platformId);
       const logId = randomUUID();
       await pool!.query(
-        'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [logId, postId, auth.userId, platformId, result.status, result.platformPostId || null, result.error || null]
+        'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message,posted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [logId, postId, auth.userId, platformId, result.status, result.platformPostId || null, result.error || null, result.status === 'published' ? new Date().toISOString() : null]
       );
       results.push({ platform: platformId, ...result });
     }
