@@ -54,7 +54,15 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use(express.static(path.join(__dirname, 'docs')));
+// Serve static assets — JS/CSS get long cache (versioned filenames), HTML never cached
+app.use(express.static(path.join(__dirname, 'docs'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+    }
+  },
+}));
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const DATABASE_URL = process.env.DATABASE_URL;
 const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
