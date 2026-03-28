@@ -41,7 +41,14 @@
       "Bash(git -C /d/Saas push origin master)",
       "Bash(git rm:*)",
       "Bash(git add:*)",
-      "Bash(ls /d/Saas/*.toml)"
+      "Bash(ls /d/Saas/*.toml)",
+      "Bash(npx tsc:*)",
+      "Bash(find /d/Saas -type f -name *facebook* -o -name *meta* -o -name *fb*)",
+      "Bash(grep -r \"webhook\\\\|facebook.*hook\\\\|graph.*hook\" /d/Saas/backend --include=*.ts)",
+      "Bash(xargs grep:*)",
+      "Bash(git push:*)",
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(grep -rn \"LINKEDIN\\\\|linkedin\" .env*)"
     ]
   }
 }
