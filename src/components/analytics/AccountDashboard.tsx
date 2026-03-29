@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, ArrowLeft, Eye, TrendingUp, Heart, MessageCircle, Share2 } from 'lucide-react';
+import { Loader2, ArrowLeft, Eye, TrendingUp, Heart, MessageCircle, Share2, Check, Users, Zap } from 'lucide-react';
 import {
   CartesianGrid,
   ComposedChart,
@@ -101,6 +101,68 @@ export default function AccountDashboard({ account, days, onBack }: Props) {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Profile Snapshot - Basic Insights */}
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-sm">
+        <div className="text-base font-bold text-slate-950 mb-4">Profile Insights</div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Followers */}
+          <div className="space-y-1">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 flex items-center gap-1">
+              <Users size={14} /> Followers
+            </div>
+            <div className="text-2xl font-black text-slate-950">{formatCompactNumber(data.account.followers)}</div>
+          </div>
+
+          {/* Following */}
+          {Number(account.following_count) > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 flex items-center gap-1">
+                <Zap size={14} /> Following
+              </div>
+              <div className="text-2xl font-black text-slate-950">{formatCompactNumber(account.following_count)}</div>
+            </div>
+          )}
+
+          {/* Video Count */}
+          {Number(account.video_count) > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 flex items-center gap-1">
+                <Share2 size={14} /> Videos
+              </div>
+              <div className="text-2xl font-black text-slate-950">{formatCompactNumber(account.video_count)}</div>
+            </div>
+          )}
+
+          {/* Total Likes */}
+          {Number(account.total_likes_count) > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 flex items-center gap-1">
+                <Heart size={14} /> Total Likes
+              </div>
+              <div className="text-2xl font-black text-slate-950">{formatCompactNumber(account.total_likes_count)}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Bio & Verification */}
+        {(account.bio || account.is_verified) && (
+          <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+            {account.is_verified && (
+              <div className="flex items-center gap-2 text-sm text-slate-700">
+                <Check size={16} className="text-blue-500 flex-shrink-0" />
+                <span className="font-semibold">Verified Account</span>
+              </div>
+            )}
+            {account.bio && (
+              <div className="text-sm text-slate-600 leading-relaxed">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 mb-1">Bio</div>
+                <p className="line-clamp-3">{account.bio}</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* KPI cards */}
