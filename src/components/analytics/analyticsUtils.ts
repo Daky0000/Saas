@@ -1,20 +1,26 @@
-export function formatCompactNumber(value: number | null | undefined) {
-  if (value === null || value === undefined) return 'N/A';
+export function formatCompactNumber(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '0';
+  const n = Number(value);
+  if (isNaN(n)) return '0';
   return new Intl.NumberFormat('en-US', {
-    notation: value >= 1000 ? 'compact' : 'standard',
-    maximumFractionDigits: value >= 1000 ? 1 : 0,
-  }).format(value);
+    notation: n >= 1000 ? 'compact' : 'standard',
+    maximumFractionDigits: n >= 1000 ? 1 : 0,
+  }).format(n);
 }
 
-export function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined) return 'N/A';
-  return `${value.toFixed(1)}%`;
+export function formatPercent(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return 'N/A';
+  const n = Number(value);
+  if (isNaN(n)) return 'N/A';
+  return `${n.toFixed(1)}%`;
 }
 
-export function formatTrend(value: number | null | undefined) {
-  if (value === null || value === undefined) return null;
-  const prefix = value > 0 ? '+' : '';
-  return `${prefix}${value.toFixed(1)}%`;
+export function formatTrend(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (isNaN(n)) return null;
+  const prefix = n > 0 ? '+' : '';
+  return `${prefix}${n.toFixed(1)}%`;
 }
 
 export function formatShortDate(value: string | null | undefined) {

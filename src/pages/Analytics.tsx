@@ -17,11 +17,9 @@ import PlatformBreakdown from '../components/analytics/PlatformBreakdown';
 import TopPostsTable from '../components/analytics/TopPostsTable';
 import TrendChart from '../components/analytics/TrendChart';
 import SocialAccountsOverview from '../components/analytics/SocialAccountsOverview';
-import AccountDashboard from '../components/analytics/AccountDashboard';
 import ComparisonView from '../components/analytics/ComparisonView';
 import type { AnalyticsRangePreset, BlogAnalyticsDashboard, DashboardQuery } from '../services/blogAnalyticsService';
 import { blogAnalyticsService } from '../services/blogAnalyticsService';
-import type { SocialAccount } from '../services/socialAnalyticsService';
 
 type Tab = 'publishing' | 'accounts' | 'comparison';
 
@@ -47,7 +45,6 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function Analytics() {
   const [activeTab, setActiveTab] = useState<Tab>('publishing');
-  const [selectedAccount, setSelectedAccount] = useState<SocialAccount | null>(null);
 
   // Publishing tab state (existing)
   const [selectedPreset, setSelectedPreset] = useState<AnalyticsRangePreset>('30d');
@@ -152,13 +149,8 @@ export default function Analytics() {
       dashboard.platformBreakdown.some((e) => e.published > 0 || e.failed > 0 || e.scheduled > 0 || e.accounts > 0) ||
       dashboard.topPosts.length > 0);
 
-  const handleSelectAccount = (account: SocialAccount) => {
-    setSelectedAccount(account);
-  };
-
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
-    if (tab !== 'accounts') setSelectedAccount(null);
   };
 
   return (
@@ -320,19 +312,7 @@ export default function Analytics() {
 
       {/* ── Social Accounts tab ────────────────────────────────────── */}
       {activeTab === 'accounts' && (
-        selectedAccount ? (
-          <AccountDashboard
-            account={selectedAccount}
-            days={socialDays}
-            onBack={() => setSelectedAccount(null)}
-          />
-        ) : (
-          <SocialAccountsOverview
-            days={socialDays}
-            onSelectAccount={handleSelectAccount}
-            selectedAccountId={selectedAccount ? (selectedAccount as SocialAccount).id : null}
-          />
-        )
+        <SocialAccountsOverview days={socialDays} />
       )}
 
       {/* ── Comparison tab ─────────────────────────────────────────── */}
