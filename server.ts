@@ -3452,12 +3452,16 @@ async function exchangeThreadsCode(code: string) {
 
 async function exchangeTikTokCode(code: string) {
   const cfg = await getPlatformConfig('tiktok');
+  const clientKey = (cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID || '').trim();
+  const clientSecret = (cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '').trim();
+  const redirectUri = resolveOAuthRedirectUri('tiktok', cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI);
+
   const data = new URLSearchParams({
-    client_key: cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID || '',
-    client_secret: cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '',
+    client_key: clientKey,
+    client_secret: clientSecret,
     code,
     grant_type: 'authorization_code',
-    redirect_uri: resolveOAuthRedirectUri('tiktok', cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI),
+    redirect_uri: redirectUri,
   });
   const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', data.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -3465,9 +3469,38 @@ async function exchangeTikTokCode(code: string) {
     timeout: 15000,
   });
   if (response.status >= 400) {
-    throw new Error(`TikTok token exchange failed (${response.status})`);
+    const errBody: any = response.data || {};
+    const detail = errBody?.error_description || errBody?.error || '';
+    throw new Error(`TikTok token exchange failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
-  return response.data;
+  const tokenData: any = response.data || {};
+
+  // Enrich with user profile — TikTok returns open_id which we use as user identity
+  const accessToken = String(tokenData?.access_token || '').trim();
+  const openId = String(tokenData?.open_id || '').trim();
+  if (accessToken) {
+    try {
+      const userResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
+        params: { fields: 'open_id,union_id,avatar_url,display_name,username' },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      if (userResp.status < 400) {
+        const u: any = userResp.data?.data?.user || {};
+        if (u.open_id) tokenData.user_id = u.open_id;
+        if (u.display_name) tokenData.name = u.display_name;
+        if (u.username) tokenData.username = u.username;
+        if (u.avatar_url) tokenData.avatar_url = u.avatar_url;
+      }
+    } catch {
+      // best-effort enrichment
+    }
+  }
+  // Always store open_id as user_id so storeUserConnection can use it as account_id
+  if (openId && !tokenData.user_id) tokenData.user_id = openId;
+
+  return tokenData;
 }
 
 // Database/Storage Functions
@@ -5853,7 +5886,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // tweet.write is sufficient for posting tweets and uploading media via the v1.1 media upload endpoint.
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
-  tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload', idField: 'clientKey' },
+  tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,video.upload,video.publish', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
 
@@ -7312,7 +7345,7 @@ app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Respon
       : null;
 
     const visiblePlatforms = await getVisibleUserPlatformSlugs();
-    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads', 'twitter']);
+    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads', 'twitter', 'tiktok']);
 
     let sourceRows: any[];
     if (requestedAccountIds) {
@@ -10267,6 +10300,27 @@ async function refreshLinkedInAccessToken(refreshToken: string) {
   return resp.data;
 }
 
+async function refreshTikTokAccessToken(refreshToken: string) {
+  const cfg = await getPlatformConfig('tiktok');
+  const clientKey = (cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID || '').trim();
+  const clientSecret = (cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '').trim();
+  if (!clientKey || !clientSecret) throw new Error('TikTok client credentials not configured');
+
+  const data = new URLSearchParams({
+    client_key: clientKey,
+    client_secret: clientSecret,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+  const resp = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400) throw new Error(`TikTok token refresh failed (${resp.status})`);
+  return resp.data;
+}
+
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
   if (!pool) return null;
   const rows = await pool.query(
@@ -10329,7 +10383,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   const rawExpiry = match.token_expires_at || match.expires_at;
   const expiresAtMs = rawExpiry ? new Date(rawExpiry).getTime() : NaN;
   const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const supportsTokenRefresh = platformId === 'twitter' || platformId === 'linkedin';
+  const supportsTokenRefresh = platformId === 'twitter' || platformId === 'linkedin' || platformId === 'tiktok';
   const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
   const shouldRefreshSoon =
     supportsTokenRefresh && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
@@ -10388,6 +10442,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       refreshed = await refreshTwitterAccessToken(refreshToken);
     } else if (platformId === 'linkedin') {
       refreshed = await refreshLinkedInAccessToken(refreshToken);
+    } else if (platformId === 'tiktok') {
+      refreshed = await refreshTikTokAccessToken(refreshToken);
     }
   } catch {
     await markSocialAccountNeedsReapproval({
@@ -11526,6 +11582,111 @@ async function publishToplatform(
         return { status: 'pending', error: msg };
       }
       return { status: 'published', platformPostId: String(pubData?.id || '') };
+    }
+
+    if (platformId === 'tiktok') {
+      // Step 1: Query creator info to get posting capabilities
+      const creatorResp = await axios.get(
+        'https://open.tiktokapis.com/v2/post/publish/creator_info/query/',
+        {
+          headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
+      );
+      const creatorData: any = creatorResp.data || {};
+      if (creatorResp.status >= 400) {
+        const msg = creatorData?.error?.message || `TikTok creator info failed (${creatorResp.status})`;
+        return { status: 'failed', error: msg, retryable: creatorResp.status >= 500 };
+      }
+      const creatorInfo = creatorData?.data || {};
+      const privacyOptions: string[] = Array.isArray(creatorInfo?.privacy_level_options)
+        ? creatorInfo.privacy_level_options
+        : ['PUBLIC_TO_EVERYONE'];
+      const privacyLevel = privacyOptions.includes('PUBLIC_TO_EVERYONE')
+        ? 'PUBLIC_TO_EVERYONE'
+        : privacyOptions[0] || 'PUBLIC_TO_EVERYONE';
+      const duetDisabled  = creatorInfo?.duet_disabled  ?? false;
+      const stitchDisabled = creatorInfo?.stitch_disabled ?? false;
+      const commentDisabled = creatorInfo?.comment_disabled ?? false;
+      const maxVideoDuration = Number(creatorInfo?.max_video_post_duration_sec || 60);
+
+      // Step 2: Initialize post — photo post if image available, otherwise text-to-video (draft)
+      const postCaption = text.slice(0, 2200); // TikTok caption limit
+
+      if (featuredImage) {
+        // Photo post flow
+        const initBody = {
+          post_info: {
+            title: postCaption,
+            privacy_level: privacyLevel,
+            disable_duet: duetDisabled,
+            disable_stitch: stitchDisabled,
+            disable_comment: commentDisabled,
+          },
+          source_info: {
+            source: 'PULL_FROM_URL',
+            photo_images: [featuredImage],
+            photo_cover_index: 0,
+          },
+          post_mode: 'DIRECT_POST',
+          media_type: 'PHOTO',
+        };
+        const initResp = await axios.post(
+          'https://open.tiktokapis.com/v2/post/publish/content/init/',
+          initBody,
+          {
+            headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
+            validateStatus: () => true,
+            timeout: 20000,
+          }
+        );
+        const initData: any = initResp.data || {};
+        if (initResp.status >= 400) {
+          const msg = initData?.error?.message || `TikTok photo post init failed (${initResp.status})`;
+          return { status: 'failed', error: msg, retryable: initResp.status >= 500 };
+        }
+        const publishId = String(initData?.data?.publish_id || '').trim();
+        if (!publishId) return { status: 'failed', error: 'TikTok did not return a publish_id' };
+        await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_published', status: 'success', response: { publishId } });
+        return { status: 'published', platformPostId: publishId };
+      }
+
+      // No image — send as draft video so user can finish in TikTok app
+      const draftBody = {
+        post_info: {
+          title: postCaption,
+          privacy_level: 'SELF_ONLY', // draft always goes to self
+          disable_duet: true,
+          disable_stitch: true,
+          disable_comment: false,
+        },
+        source_info: { source: 'FILE_UPLOAD', video_size: 0, chunk_size: 0, total_chunk_count: 1 },
+        post_mode: 'UPLOAD_TO_DRAFT',
+        media_type: 'VIDEO',
+      };
+      const draftResp = await axios.post(
+        'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/',
+        draftBody,
+        {
+          headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
+          validateStatus: () => true,
+          timeout: 20000,
+        }
+      );
+      const draftData: any = draftResp.data || {};
+      if (draftResp.status >= 400) {
+        const msg = draftData?.error?.message || `TikTok draft init failed (${draftResp.status})`;
+        return { status: 'failed', error: msg, retryable: draftResp.status >= 500 };
+      }
+      const draftPublishId = String(draftData?.data?.publish_id || '').trim();
+      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_drafted', status: 'success', response: { publishId: draftPublishId, note: 'Text-only post sent as TikTok draft — open TikTok app to finish and post' } });
+      // Return as published with a note so the user knows to check their TikTok drafts
+      return {
+        status: 'published',
+        platformPostId: draftPublishId,
+        error: 'Sent to TikTok drafts (text-only posts must be completed in the TikTok app)',
+      };
     }
 
     console.log(`[Distribution] ${platformName}: token available, platform publishing not yet implemented`);
