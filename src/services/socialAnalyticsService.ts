@@ -24,6 +24,12 @@ export type SocialAccount = {
   handle: string | null;
   followers: number;
   connected_at: string | null;
+  // profile-level stats (populated from token_data after sync)
+  following_count: number;
+  video_count: number;
+  total_likes_count: number;
+  bio: string | null;
+  // aggregated post metrics
   total_reach: number;
   total_impressions: number;
   total_engagement: number;

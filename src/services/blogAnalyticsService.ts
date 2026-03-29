@@ -192,11 +192,31 @@ export const blogAnalyticsService = {
   },
 
   async syncAnalytics(): Promise<void> {
-    const res = await fetchAnalyticsResponse('/api/blog/analytics/refresh', 'json');
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || 'Sync failed');
+    const token = localStorage.getItem('auth_token') || '';
+    const candidates = [API_BASE_URL];
+    if (typeof window !== 'undefined') {
+      const origin = window.location.origin.replace(/\/$/, '');
+      if (!isFrontendHost(origin)) candidates.push(origin);
     }
+    candidates.push(ANALYTICS_FALLBACK_API_BASE_URL);
+    const bases = Array.from(new Set(candidates.filter(Boolean)));
+
+    let lastErr: Error | null = null;
+    for (const base of bases) {
+      try {
+        const res = await fetch(`${base}/api/blog/analytics/refresh`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+        if (res.ok) return;
+        const text = await res.text();
+        const parsed = text ? safeJsonParse(text) : null;
+        throw new Error(parsed?.error || parsed?.message || text || 'Sync failed');
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error('Sync failed');
+      }
+    }
+    throw lastErr || new Error('Sync failed');
   },
 
   async exportDashboard(query: DashboardQuery): Promise<Blob> {

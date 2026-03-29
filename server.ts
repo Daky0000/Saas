@@ -12786,67 +12786,50 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             }
           }
         } else if (platform === 'tiktok') {
-          // ── Step 1: fetch user info (follower_count requires user.info.stats scope) ──
+          // ── Fetch TikTok user profile ──────────────────────────────────────────
+          // user.info.basic (already granted): username, display_name, following_count, bio_description
+          // user.info.stats (add in dev portal):  follower_count, video_count, likes_count
+          // We request all fields — TikTok silently omits any the token lacks scope for.
           const ttUserResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
             headers: { Authorization: `Bearer ${token}` },
-            params: { fields: 'open_id,display_name,follower_count,following_count,likes_count,video_count' },
+            params: {
+              fields: 'open_id,display_name,username,bio_description,is_verified,' +
+                      'follower_count,following_count,likes_count,video_count',
+            },
             validateStatus: () => true,
             timeout: 15000,
           });
-          if (ttUserResp.status === 200 && ttUserResp.data?.data?.user?.follower_count !== undefined) {
-            await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
-              [ttUserResp.data.data.user.follower_count, acct.id]);
-          }
 
-          // ── Step 2: fetch video list with metrics (video.list scope) ──
-          // Paginate up to 3 pages of 20 videos = 60 most-recent videos
-          let ttCursor: number | undefined;
-          let ttHasMore = true;
-          let ttPage = 0;
-          while (ttHasMore && ttPage < 3) {
-            const ttVideoResp = await axios.post(
-              'https://open.tiktokapis.com/v2/video/list/',
-              { max_count: 20, ...(ttCursor !== undefined ? { cursor: ttCursor } : {}) },
-              {
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                params: { fields: 'id,title,create_time,like_count,comment_count,share_count,view_count,cover_image_url,embed_link' },
-                validateStatus: () => true,
-                timeout: 20000,
-              }
-            );
-            if (ttVideoResp.status !== 200) break;
-            const ttVideos: any[] = ttVideoResp.data?.data?.videos || [];
-            ttHasMore = ttVideoResp.data?.data?.has_more === true;
-            ttCursor = ttVideoResp.data?.data?.cursor;
-            ttPage++;
-            for (const vid of ttVideos) {
-              const likes      = Number(vid.like_count)    || 0;
-              const comments   = Number(vid.comment_count) || 0;
-              const shares     = Number(vid.share_count)   || 0;
-              const views      = Number(vid.view_count)    || 0;
-              const engagement = likes + comments + shares;
-              // create_time is a Unix timestamp (seconds)
-              const postedAt   = vid.create_time ? new Date(vid.create_time * 1000).toISOString() : null;
-              await pool!.query(
-                `INSERT INTO social_metrics
-                   (id, user_id, platform, platform_post_id, social_account_id,
-                    likes, comments, shares, impressions, reach, engagement, raw_data, posted_at)
-                 VALUES (gen_random_uuid()::text, $1, 'tiktok', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
-                 ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
-                   likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
-                   impressions=EXCLUDED.impressions, reach=EXCLUDED.reach, engagement=EXCLUDED.engagement,
-                   raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
-                [auth.userId, String(vid.id), acct.id,
-                 likes, comments, shares,
-                 views,  // impressions = view_count for TikTok
-                 views,  // reach = view_count (best approximation without Content API)
-                 engagement,
-                 JSON.stringify({ title: vid.title || '', cover: vid.cover_image_url, embed: vid.embed_link, id: vid.id }),
-                 postedAt]
-              );
-              synced++;
+          if (ttUserResp.status === 200 && ttUserResp.data?.data?.user) {
+            const u = ttUserResp.data.data.user;
+
+            // Update follower count if returned (needs user.info.stats scope)
+            if (u.follower_count !== undefined) {
+              await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
+                [Number(u.follower_count), acct.id]);
             }
-            if (!ttHasMore) break;
+
+            // Persist following_count, video_count, likes_count in token_data
+            // so the analytics API can surface them alongside the account card
+            const profileSnapshot: Record<string, number | string | boolean> = {};
+            if (u.following_count !== undefined) profileSnapshot.following_count = Number(u.following_count);
+            if (u.video_count     !== undefined) profileSnapshot.video_count     = Number(u.video_count);
+            if (u.likes_count     !== undefined) profileSnapshot.likes_count     = Number(u.likes_count);
+            if (u.is_verified     !== undefined) profileSnapshot.is_verified     = Boolean(u.is_verified);
+            if (u.bio_description !== undefined) profileSnapshot.bio             = String(u.bio_description);
+
+            if (Object.keys(profileSnapshot).length > 0) {
+              await pool!.query(
+                `UPDATE social_accounts
+                 SET token_data = token_data || $1::jsonb
+                 WHERE id = $2`,
+                [JSON.stringify(profileSnapshot), acct.id]
+              );
+            }
+            synced++;
+          } else {
+            const errMsg = ttUserResp.data?.error?.message || `HTTP ${ttUserResp.status}`;
+            errors.push(`tiktok profile: ${errMsg}`);
           }
 
         } else if (platform === 'linkedin') {
@@ -12976,6 +12959,10 @@ app.get('/api/analytics/social/accounts', async (req: Request, res: Response) =>
          sa.handle,
          COALESCE(sa.followers, 0)::bigint AS followers,
          sa.connected_at,
+         COALESCE((sa.token_data->>'following_count')::bigint, 0) AS following_count,
+         COALESCE((sa.token_data->>'video_count')::bigint, 0)     AS video_count,
+         COALESCE((sa.token_data->>'likes_count')::bigint, 0)     AS total_likes_count,
+         sa.token_data->>'bio'                                     AS bio,
          COALESCE(SUM(sm.reach), 0)::bigint AS total_reach,
          COALESCE(SUM(sm.impressions), 0)::bigint AS total_impressions,
          COALESCE(SUM(sm.engagement), 0)::bigint AS total_engagement,
@@ -12991,7 +12978,7 @@ app.get('/api/analytics/social/accounts', async (req: Request, res: Response) =>
          AND sm.user_id = $1
          AND (sm.posted_at >= $2 OR sm.posted_at IS NULL)
        WHERE sa.user_id = $1 AND sa.connected = true
-       GROUP BY sa.id, sa.platform, sa.account_name, sa.handle, sa.followers, sa.connected_at
+       GROUP BY sa.id, sa.platform, sa.account_name, sa.handle, sa.followers, sa.connected_at, sa.token_data
        ORDER BY sa.platform`,
       [auth.userId, since]
     );
