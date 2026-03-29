@@ -19,7 +19,7 @@ export type IntegrationCatalogItem = {
 };
 
 const isVisibleIntegration = (item: IntegrationCatalogItem) =>
-  item.slug === 'wordpress' || item.slug === 'mailchimp' || (item.adminEnabled && item.configured);
+  item.adminEnabled && item.configured;
 
 const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationType }> = [
   { slug: 'wordpress', name: 'WordPress', type: 'cms' },
@@ -28,6 +28,8 @@ const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationTyp
   { slug: 'linkedin', name: 'LinkedIn', type: 'social' },
   { slug: 'twitter', name: 'X (Twitter)', type: 'social' },
   { slug: 'pinterest', name: 'Pinterest', type: 'social' },
+  { slug: 'tiktok', name: 'TikTok', type: 'social' },
+  { slug: 'threads', name: 'Threads', type: 'social' },
   { slug: 'mailchimp', name: 'Mailchimp', type: 'marketing' },
 ];
 
@@ -71,9 +73,8 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
     const wpConnected = Boolean(wpData?.connected);
 
     const integrations: IntegrationCatalogItem[] = FALLBACK_CATALOG.map((item) => {
-      const isUserManaged = item.slug === 'wordpress' || item.slug === 'mailchimp';
-      const adminEnabled = isUserManaged ? true : enabledSet.has(item.slug);
-      const configured = isUserManaged ? true : enabledSet.has(item.slug);
+      const adminEnabled = enabledSet.has(item.slug);
+      const configured = item.slug === 'wordpress' || item.slug === 'mailchimp' ? true : enabledSet.has(item.slug);
       const connected =
         item.slug === 'wordpress'
           ? wpConnected

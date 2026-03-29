@@ -6381,11 +6381,10 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
       return res.json({ success: true, enabled });
     }
 
-    // Treat platforms as enabled if they are explicitly enabled OR if they have a non-empty config record.
     const platformResult = await dbQuery(
       `SELECT platform
        FROM platform_configs
-       WHERE enabled = true OR (config IS NOT NULL AND config <> '{}'::jsonb)`
+       WHERE enabled = true`
     );
     const providerResult = await dbQuery(
       `SELECT provider
@@ -6418,7 +6417,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp'] as const;
+    const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp', 'tiktok', 'threads'] as const;
 
     const integrations: Array<{
       slug: string;
@@ -6436,8 +6435,8 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
         const item = {
           slug,
           name: slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1),
-          type: slug === 'wordpress' ? 'cms' : slug === 'mailchimp' ? 'marketing' : 'social',
-          adminEnabled: configRow ? Boolean(configRow.enabled) : slug === 'wordpress' || slug === 'mailchimp',
+          type: (slug === 'wordpress' ? 'cms' : slug === 'mailchimp' ? 'marketing' : 'social') as 'cms' | 'social' | 'marketing' | 'other',
+          adminEnabled: configRow ? Boolean(configRow.enabled) : false,
           configured:
             slug === 'wordpress' || slug === 'mailchimp'
               ? true
@@ -6445,8 +6444,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
           connected: false,
           connection: null,
         };
-        const isAlwaysVisible = slug === 'wordpress' || slug === 'mailchimp';
-        if (isAlwaysVisible || (item.adminEnabled && item.configured)) {
+        if (item.adminEnabled && item.configured) {
           integrations.push(item);
         }
       }
@@ -6507,7 +6505,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
       const cfg = cfgMap.get(slug)?.config || {};
       const adminEnabledRaw = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : slug === 'wordpress' || slug === 'mailchimp';
       const hasConfig = Object.keys(cfg || {}).length > 0;
-      const adminEnabled = adminEnabledRaw || (hasConfig && slug !== 'wordpress' && slug !== 'mailchimp');
+      const adminEnabled = adminEnabledRaw;
 
       let configured = false;
       if (slug === 'wordpress') {
@@ -6549,8 +6547,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
               : null
             : getPrimaryAccount(slug);
 
-      const isAlwaysVisible = slug === 'wordpress' || slug === 'mailchimp';
-      if (isAlwaysVisible || (adminEnabled && configured)) {
+      if (adminEnabled && configured) {
         integrations.push({ slug, name, type, adminEnabled, configured, connected, connection });
       }
     }
