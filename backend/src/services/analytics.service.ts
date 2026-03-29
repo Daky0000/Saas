@@ -1,4 +1,5 @@
 
+import axios from "axios";
 import { PrismaClient, PostStatus } from "@prisma/client";
 import { logIntegrationEvent } from "../utils/integration-log";
 import { decryptToken } from "../utils/encryption";
@@ -1101,11 +1102,69 @@ export class AnalyticsService {
   }
 
   static async fetchTikTokMetrics(
-    _accessToken: string,
-    _businessAccountId: string,
-    _dateRange: DateRange
+    accessToken: string,
+    businessAccountId: string,
+    dateRange: DateRange
   ) {
-    return null;
+    if (!accessToken || !businessAccountId) return null;
+    try {
+      // Fetch user's video list to aggregate metrics
+      const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {
+          fields: 'id,create_time,like_count,comment_count,share_count,view_count',
+          max_count: 100, // Fetch up to 100 recent videos
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+
+      if (videosResp.status !== 200 || videosResp.data?.error?.code) {
+        return null;
+      }
+
+      const videos: any[] = videosResp.data?.data?.videos || [];
+      
+      // Filter videos within date range if needed
+      let filteredVideos = videos;
+      if (dateRange) {
+        filteredVideos = videos.filter((v: any) => {
+          const createTime = new Date(v.create_time * 1000); // TikTok returns unix timestamp
+          return createTime >= dateRange.start && createTime <= dateRange.end;
+        });
+      }
+
+      // Aggregate metrics
+      const metadata = {
+        totalVideos: filteredVideos.length,
+        likes: filteredVideos.reduce((sum: number, v: any) => sum + (v.like_count || 0), 0),
+        comments: filteredVideos.reduce((sum: number, v: any) => sum + (v.comment_count || 0), 0),
+        shares: filteredVideos.reduce((sum: number, v: any) => sum + (v.share_count || 0), 0),
+        views: filteredVideos.reduce((sum: number, v: any) => sum + (v.view_count || 0), 0),
+        avgEngagement: filteredVideos.length > 0 
+          ? Math.round(
+              (filteredVideos.reduce((sum: number, v: any) => 
+                sum + (v.like_count || 0) + (v.comment_count || 0) + (v.share_count || 0), 0) / 
+              (filteredVideos.length * 3)) * 100
+            ) / 100
+          : 0,
+      };
+
+      return normalizeMetrics({
+        postsPublished: metadata.totalVideos,
+        totalReach: metadata.views,
+        totalImpressions: metadata.views,
+        totalEngagement: metadata.likes + metadata.comments + metadata.shares,
+        totalLikes: metadata.likes,
+        totalComments: metadata.comments,
+        totalShares: metadata.shares,
+        totalSaves: 0,
+        engagementRate: metadata.avgEngagement,
+        rawData: { videos: filteredVideos, summary: metadata },
+      });
+    } catch {
+      return null;
+    }
   }
 
   static async fetchPinterestMetrics(
