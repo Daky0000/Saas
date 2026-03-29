@@ -16,8 +16,14 @@ import KpiCard from '../components/analytics/KpiCard';
 import PlatformBreakdown from '../components/analytics/PlatformBreakdown';
 import TopPostsTable from '../components/analytics/TopPostsTable';
 import TrendChart from '../components/analytics/TrendChart';
+import SocialAccountsOverview from '../components/analytics/SocialAccountsOverview';
+import AccountDashboard from '../components/analytics/AccountDashboard';
+import ComparisonView from '../components/analytics/ComparisonView';
 import type { AnalyticsRangePreset, BlogAnalyticsDashboard, DashboardQuery } from '../services/blogAnalyticsService';
 import { blogAnalyticsService } from '../services/blogAnalyticsService';
+import type { SocialAccount } from '../services/socialAnalyticsService';
+
+type Tab = 'publishing' | 'accounts' | 'comparison';
 
 const PRESETS: Array<{ value: AnalyticsRangePreset; label: string }> = [
   { value: '7d', label: 'Last 7 days' },
@@ -25,6 +31,8 @@ const PRESETS: Array<{ value: AnalyticsRangePreset; label: string }> = [
   { value: '90d', label: 'Last 90 days' },
   { value: 'custom', label: 'Custom range' },
 ];
+
+const DAYS_MAP: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -38,6 +46,10 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export default function Analytics() {
+  const [activeTab, setActiveTab] = useState<Tab>('publishing');
+  const [selectedAccount, setSelectedAccount] = useState<SocialAccount | null>(null);
+
+  // Publishing tab state (existing)
   const [selectedPreset, setSelectedPreset] = useState<AnalyticsRangePreset>('30d');
   const [query, setQuery] = useState<DashboardQuery>({ preset: '30d' });
   const [dashboard, setDashboard] = useState<BlogAnalyticsDashboard | null>(null);
@@ -49,106 +61,41 @@ export default function Analytics() {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
+  // Days integer for social tabs
+  const socialDays = DAYS_MAP[selectedPreset] ?? 30;
+
   useEffect(() => {
+    if (activeTab !== 'publishing') return;
     let alive = true;
     setLoading(true);
     setError(null);
 
     void blogAnalyticsService
       .fetchDashboard(query)
-      .then((data) => {
-        if (!alive) return;
-        setDashboard(data);
-      })
-      .catch((err) => {
-        if (!alive) return;
-        setError(err instanceof Error ? err.message : 'Failed to load analytics');
-      })
-      .finally(() => {
-        if (!alive) return;
-        setLoading(false);
-        setRefreshing(false);
-      });
+      .then((data) => { if (!alive) return; setDashboard(data); })
+      .catch((err) => { if (!alive) return; setError(err instanceof Error ? err.message : 'Failed to load analytics'); })
+      .finally(() => { if (!alive) return; setLoading(false); setRefreshing(false); });
 
-    return () => {
-      alive = false;
-    };
-  }, [query]);
+    return () => { alive = false; };
+  }, [query, activeTab]);
 
   const performanceMode = dashboard?.metricsAvailability.performance ?? false;
+
   const cards = useMemo(() => {
     if (!dashboard) return [];
-
     if (performanceMode) {
       return [
-        {
-          label: 'Total Reach',
-          value: dashboard.kpis.totalReach,
-          trend: dashboard.kpis.totalReachChange,
-          icon: <TrendingUp size={20} />,
-          valueType: 'number' as const,
-          subtext: dashboard.range.label,
-        },
-        {
-          label: 'Engagement Rate',
-          value: dashboard.kpis.engagementRate,
-          trend: dashboard.kpis.engagementRateChange,
-          icon: <Activity size={20} />,
-          valueType: 'percent' as const,
-          subtext: dashboard.range.label,
-        },
-        {
-          label: 'Top Platform',
-          value: dashboard.kpis.topPlatform?.label || null,
-          trend: null,
-          icon: <Layers3 size={20} />,
-          valueType: 'text' as const,
-          subtext: dashboard.kpis.topPlatform ? `${dashboard.kpis.topPlatform.share}% of publishes` : 'No platform data yet',
-        },
-        {
-          label: 'Best Time Window',
-          value: dashboard.kpis.bestTimeWindow?.label || null,
-          trend: null,
-          icon: <Clock3 size={20} />,
-          valueType: 'text' as const,
-          subtext: dashboard.kpis.bestTimeWindow?.supportingValue || 'Need more publishing data',
-        },
+        { label: 'Total Reach', value: dashboard.kpis.totalReach, trend: dashboard.kpis.totalReachChange, icon: <TrendingUp size={20} />, valueType: 'number' as const, subtext: dashboard.range.label },
+        { label: 'Engagement Rate', value: dashboard.kpis.engagementRate, trend: dashboard.kpis.engagementRateChange, icon: <Activity size={20} />, valueType: 'percent' as const, subtext: dashboard.range.label },
+        { label: 'Top Platform', value: dashboard.kpis.topPlatform?.label || null, trend: null, icon: <Layers3 size={20} />, valueType: 'text' as const, subtext: dashboard.kpis.topPlatform ? `${dashboard.kpis.topPlatform.share}% of publishes` : 'No platform data yet' },
+        { label: 'Best Time Window', value: dashboard.kpis.bestTimeWindow?.label || null, trend: null, icon: <Clock3 size={20} />, valueType: 'text' as const, subtext: dashboard.kpis.bestTimeWindow?.supportingValue || 'Need more publishing data' },
       ];
     }
-
     return [
-      {
-        label: 'Published Posts',
-        value: dashboard.kpis.publishedPosts,
-        trend: dashboard.kpis.publishedPostsChange,
-        icon: <BarChart3 size={20} />,
-        valueType: 'number' as const,
-        subtext: dashboard.range.label,
-      },
-      {
-        label: 'Publish Success Rate',
-        value: dashboard.kpis.publishSuccessRate,
-        trend: dashboard.kpis.publishSuccessRateChange,
-        icon: <Target size={20} />,
-        valueType: 'percent' as const,
-        subtext: dashboard.range.label,
-      },
-      {
-        label: 'Top Platform',
-        value: dashboard.kpis.topPlatform?.label || null,
-        trend: null,
-        icon: <Layers3 size={20} />,
-        valueType: 'text' as const,
-        subtext: dashboard.kpis.topPlatform ? `${dashboard.kpis.topPlatform.share}% of publishes` : 'No platform data yet',
-      },
-      {
-        label: 'Best Time Window',
-        value: dashboard.kpis.bestTimeWindow?.label || null,
-        trend: null,
-        icon: <Clock3 size={20} />,
-        valueType: 'text' as const,
-        subtext: dashboard.kpis.bestTimeWindow?.supportingValue || 'Need more publishing data',
-      },
+      { label: 'Published Posts', value: dashboard.kpis.publishedPosts, trend: dashboard.kpis.publishedPostsChange, icon: <BarChart3 size={20} />, valueType: 'number' as const, subtext: dashboard.range.label },
+      { label: 'Publish Success Rate', value: dashboard.kpis.publishSuccessRate, trend: dashboard.kpis.publishSuccessRateChange, icon: <Target size={20} />, valueType: 'percent' as const, subtext: dashboard.range.label },
+      { label: 'Top Platform', value: dashboard.kpis.topPlatform?.label || null, trend: null, icon: <Layers3 size={20} />, valueType: 'text' as const, subtext: dashboard.kpis.topPlatform ? `${dashboard.kpis.topPlatform.share}% of publishes` : 'No platform data yet' },
+      { label: 'Best Time Window', value: dashboard.kpis.bestTimeWindow?.label || null, trend: null, icon: <Clock3 size={20} />, valueType: 'text' as const, subtext: dashboard.kpis.bestTimeWindow?.supportingValue || 'Need more publishing data' },
     ];
   }, [dashboard, performanceMode]);
 
@@ -160,33 +107,24 @@ export default function Analytics() {
       setCustomStart((prev) => prev || new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
       return;
     }
-
     setQuery({ preset });
   };
 
   const handleApplyCustomRange = () => {
-    if (!customStart || !customEnd) {
-      setError('Choose both a start and end date for the custom range.');
-      return;
-    }
-
+    if (!customStart || !customEnd) { setError('Choose both a start and end date for the custom range.'); return; }
     setSelectedPreset('custom');
     setQuery({ preset: 'custom', start: customStart, end: customEnd });
   };
 
-  const handleRefresh = () => {
-    setRefreshing(true);
-    setQuery((current) => ({ ...current }));
-  };
+  const handleRefresh = () => { setRefreshing(true); setQuery((c) => ({ ...c })); };
 
   const handleSyncAnalytics = async () => {
     setSyncing(true);
     setError(null);
     try {
       await blogAnalyticsService.syncAnalytics();
-      // Reload data after sync completes
       setRefreshing(true);
-      setQuery((current) => ({ ...current }));
+      setQuery((c) => ({ ...c }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sync failed');
     } finally {
@@ -211,33 +149,38 @@ export default function Analytics() {
     !!dashboard &&
     (dashboard.kpis.publishedPosts > 0 ||
       dashboard.kpis.futureScheduledCount > 0 ||
-      dashboard.platformBreakdown.some(
-        (entry) => entry.published > 0 || entry.failed > 0 || entry.scheduled > 0 || entry.accounts > 0
-      ) ||
+      dashboard.platformBreakdown.some((e) => e.published > 0 || e.failed > 0 || e.scheduled > 0 || e.accounts > 0) ||
       dashboard.topPosts.length > 0);
+
+  const handleSelectAccount = (account: SocialAccount) => {
+    setSelectedAccount(account);
+  };
+
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+    if (tab !== 'accounts') setSelectedAccount(null);
+  };
 
   return (
     <div className="space-y-8">
+      {/* Page header */}
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Analytics</div>
           <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-slate-950">Content Intelligence</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-500">
-            Turn publishing history into a clearer plan with KPI cards, trend lines, platform reliability, top posts, and next-step recommendations.
+            Publishing history, platform reliability, per-account engagement metrics, and cross-account comparison — all from your connected accounts.
           </p>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <select
             value={selectedPreset}
-            onChange={(event) => handlePresetChange(event.target.value as AnalyticsRangePreset)}
+            onChange={(e) => handlePresetChange(e.target.value as AnalyticsRangePreset)}
             className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-slate-400"
-            data-testid="date-range-selector"
           >
-            {PRESETS.map((preset) => (
-              <option key={preset.value} value={preset.value}>
-                {preset.label}
-              </option>
+            {PRESETS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
             ))}
           </select>
 
@@ -252,120 +195,149 @@ export default function Analytics() {
             Sync
           </button>
 
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            {refreshing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-            Refresh
-          </button>
-
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={exporting}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            Export CSV
-          </button>
+          {activeTab === 'publishing' && (
+            <>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {refreshing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exporting}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                Export CSV
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {(selectedPreset === 'custom' || query.preset === 'custom') && (
+      {/* Custom date range picker (publishing tab only) */}
+      {activeTab === 'publishing' && (selectedPreset === 'custom' || query.preset === 'custom') && (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
             <div className="flex-1">
               <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Start Date</label>
-              <input
-                type="date"
-                value={customStart}
-                onChange={(event) => setCustomStart(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400"
-              />
+              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)}
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400" />
             </div>
             <div className="flex-1">
               <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">End Date</label>
-              <input
-                type="date"
-                value={customEnd}
-                onChange={(event) => setCustomEnd(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400"
-              />
+              <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)}
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400" />
             </div>
-            <button
-              type="button"
-              onClick={handleApplyCustomRange}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <CalendarRange size={16} />
-              Apply Custom Range
+            <button type="button" onClick={handleApplyCustomRange}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <CalendarRange size={16} /> Apply Custom Range
             </button>
           </div>
         </div>
       )}
 
-      {dashboard?.lastSyncedAt && (
-        <p className="text-xs text-slate-400">
-          Analytics last synced: {new Date(dashboard.lastSyncedAt).toLocaleString()}
-        </p>
+      {dashboard?.lastSyncedAt && activeTab === 'publishing' && (
+        <p className="text-xs text-slate-400">Analytics last synced: {new Date(dashboard.lastSyncedAt).toLocaleString()}</p>
       )}
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
       )}
 
-      {loading ? (
-        <div className="grid gap-4 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white" />
-          ))}
-        </div>
-      ) : !hasData ? (
-        <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-8 py-16 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-slate-100 text-slate-500">
-            <BarChart3 size={24} />
-          </div>
-          <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">No analytics yet</h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-500">
-            Publish a few posts and connect at least one platform to unlock trend lines, top posts, and recommendations here.
-          </p>
-          <a href="/posts" className="mt-6 inline-flex rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
-            Create your next post
-          </a>
-        </div>
-      ) : (
-        <>
-          {dashboard?.summaryNote && (
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              {dashboard.summaryNote}
-            </div>
-          )}
+      {/* Tab navigation */}
+      <div className="flex flex-wrap gap-2" role="tablist">
+        {([
+          { id: 'publishing' as Tab, label: 'Publishing' },
+          { id: 'accounts' as Tab, label: 'Social Accounts' },
+          { id: 'comparison' as Tab, label: 'Comparison' },
+        ] as const).map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => handleTabChange(tab.id)}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+                isActive ? 'bg-slate-900 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
+      {/* ── Publishing tab ─────────────────────────────────────────── */}
+      {activeTab === 'publishing' && (
+        loading ? (
           <div className="grid gap-4 lg:grid-cols-4">
-            {cards.map((card) => (
-              <KpiCard
-                key={card.label}
-                label={card.label}
-                value={card.value}
-                trend={card.trend}
-                icon={card.icon}
-                valueType={card.valueType}
-                subtext={card.subtext}
-              />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white" />
             ))}
           </div>
-
-          <div className="grid gap-6">
-            <TrendChart data={dashboard?.trend || []} performanceMode={performanceMode} />
-            <PlatformBreakdown data={dashboard?.platformBreakdown || []} performanceMode={performanceMode} />
-            <TopPostsTable posts={dashboard?.topPosts || []} performanceMode={performanceMode} />
-            <InsightsPanel insights={dashboard?.insights || []} />
+        ) : !hasData ? (
+          <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-8 py-16 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-slate-100 text-slate-500">
+              <BarChart3 size={24} />
+            </div>
+            <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">No analytics yet</h2>
+            <p className="mx-auto mt-3 max-w-xl text-sm text-slate-500">
+              Publish a few posts and connect at least one platform to unlock trend lines, top posts, and recommendations here.
+            </p>
+            <a href="/posts" className="mt-6 inline-flex rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+              Create your next post
+            </a>
           </div>
-        </>
+        ) : (
+          <>
+            {dashboard?.summaryNote && (
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                {dashboard.summaryNote}
+              </div>
+            )}
+            <div className="grid gap-4 lg:grid-cols-4">
+              {cards.map((card) => (
+                <KpiCard key={card.label} label={card.label} value={card.value} trend={card.trend}
+                  icon={card.icon} valueType={card.valueType} subtext={card.subtext} />
+              ))}
+            </div>
+            <div className="grid gap-6">
+              <TrendChart data={dashboard?.trend || []} performanceMode={performanceMode} />
+              <PlatformBreakdown data={dashboard?.platformBreakdown || []} performanceMode={performanceMode} />
+              <TopPostsTable posts={dashboard?.topPosts || []} performanceMode={performanceMode} />
+              <InsightsPanel insights={dashboard?.insights || []} />
+            </div>
+          </>
+        )
+      )}
+
+      {/* ── Social Accounts tab ────────────────────────────────────── */}
+      {activeTab === 'accounts' && (
+        selectedAccount ? (
+          <AccountDashboard
+            account={selectedAccount}
+            days={socialDays}
+            onBack={() => setSelectedAccount(null)}
+          />
+        ) : (
+          <SocialAccountsOverview
+            days={socialDays}
+            onSelectAccount={handleSelectAccount}
+            selectedAccountId={selectedAccount ? (selectedAccount as SocialAccount).id : null}
+          />
+        )
+      )}
+
+      {/* ── Comparison tab ─────────────────────────────────────────── */}
+      {activeTab === 'comparison' && (
+        <ComparisonView days={socialDays} />
       )}
     </div>
   );
