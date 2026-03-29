@@ -74,14 +74,29 @@ function AccountSnapshot({ account, days }: { account: SocialAccount; days: numb
   return (
     <div className="space-y-5">
       {/* Account identity */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-4">
         <PlatformLogo platform={account.platform} size={38} />
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="text-lg font-black tracking-tight text-slate-950 capitalize">{account.platform}</div>
           <div className="text-sm text-slate-500">
             {account.account_name || account.handle || '—'}
+          </div>
+          {account.bio && (
+            <div className="mt-1 text-xs text-slate-400 leading-relaxed max-w-lg line-clamp-2">{account.bio}</div>
+          )}
+          {/* Profile-level stats row */}
+          <div className="mt-2 flex flex-wrap gap-4 text-xs text-slate-500">
             {Number(data.account.followers) > 0 && (
-              <span className="ml-2 text-slate-400">· {formatCompactNumber(data.account.followers)} followers</span>
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(data.account.followers)}</span> followers</span>
+            )}
+            {Number(account.following_count) > 0 && (
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(account.following_count)}</span> following</span>
+            )}
+            {Number(account.video_count) > 0 && (
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(account.video_count)}</span> posts</span>
+            )}
+            {Number(account.total_likes_count) > 0 && (
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(account.total_likes_count)}</span> total likes</span>
             )}
           </div>
         </div>
