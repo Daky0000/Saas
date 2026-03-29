@@ -107,6 +107,34 @@ const PLATFORMS: PlatformDef[] = [
     docsUrl: 'https://developers.pinterest.com/docs/api/v5/',
     redirectHint: 'Use `/auth/pinterest/callback` on the backend.',
   },
+  {
+    id: 'tiktok',
+    name: 'TikTok',
+    description: 'OAuth credentials for publishing photo posts and video drafts via Content Posting API.',
+    icon: 'TT',
+    accentClass: 'bg-black text-white font-black',
+    fields: [
+      { id: 'clientKey', label: 'Client Key', placeholder: 'TikTok Client Key', type: 'text', helpText: 'From developers.tiktok.com → your app → App info. This is the "Client Key" (not Client ID).' },
+      { id: 'clientSecret', label: 'Client Secret', placeholder: 'TikTok Client Secret', type: 'password', helpText: 'Keep this secret. From developers.tiktok.com → your app → App info.' },
+      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/tiktok/callback', type: 'text', helpText: 'Must match the redirect URI registered in your TikTok app settings.' },
+    ],
+    docsUrl: 'https://developers.tiktok.com/doc/login-kit-web/',
+    redirectHint: 'Use `/auth/tiktok/callback` on the backend. Required scopes: user.info.basic, video.upload, video.publish.',
+  },
+  {
+    id: 'threads',
+    name: 'Threads',
+    description: 'OAuth credentials for publishing text and photo posts to Threads (Meta Graph API).',
+    icon: '@',
+    accentClass: 'bg-black text-white font-black',
+    fields: [
+      { id: 'appId', label: 'App ID', placeholder: 'Meta / Threads App ID', type: 'text', helpText: 'From Meta for Developers. Same app can cover Facebook + Instagram + Threads.' },
+      { id: 'appSecret', label: 'App Secret', placeholder: 'Meta / Threads App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
+      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/threads/callback', type: 'text', helpText: 'Must match the redirect URI in your Meta app. Required scopes: threads_basic, threads_content_publish.' },
+    ],
+    docsUrl: 'https://developers.facebook.com/docs/threads/',
+    redirectHint: 'Use `/auth/threads/callback` on the backend.',
+  },
 ];
 
 export default function AdminIntegrations() {
