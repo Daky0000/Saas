@@ -54,7 +54,7 @@ const PLATFORMS: PlatformDef[] = [
   {
     id: 'facebook',
     name: 'Facebook (Meta)',
-    description: 'OAuth credentials for Facebook Graph API and Instagram Graph API publishing.',
+    description: 'OAuth credentials for Facebook Graph API — pages, publishing, and webhooks.',
     icon: 'f',
     accentClass: 'bg-[#1877F2] text-white font-black',
     fields: [
@@ -64,6 +64,20 @@ const PLATFORMS: PlatformDef[] = [
     ],
     docsUrl: 'https://developers.facebook.com/',
     redirectHint: 'Use `/auth/facebook/callback` on the backend.',
+  },
+  {
+    id: 'instagram',
+    name: 'Instagram',
+    description: 'OAuth credentials for Instagram Basic Display API — publishing and engagement metrics.',
+    icon: 'IG',
+    accentClass: 'bg-gradient-to-br from-[#f58529] via-[#dd2a7b] to-[#8134af] text-white font-black',
+    fields: [
+      { id: 'appId', label: 'App ID', placeholder: 'Instagram / Meta App ID', type: 'text', helpText: 'From Meta for Developers. Can be the same app as Facebook.' },
+      { id: 'appSecret', label: 'App Secret', placeholder: 'Instagram / Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
+      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/instagram/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI in your Meta app settings.' },
+    ],
+    docsUrl: 'https://developers.facebook.com/docs/instagram-basic-display-api/',
+    redirectHint: 'Use `/auth/instagram/callback` on the backend.',
   },
   {
     id: 'linkedin',
@@ -134,6 +148,30 @@ const PLATFORMS: PlatformDef[] = [
     ],
     docsUrl: 'https://developers.facebook.com/docs/threads/',
     redirectHint: 'Use `/auth/threads/callback` on the backend.',
+  },
+  {
+    id: 'mailchimp',
+    name: 'Mailchimp',
+    description: 'API key for connecting user Mailchimp accounts to sync contacts and campaigns.',
+    icon: 'MC',
+    accentClass: 'bg-[#FFE01B] text-black font-black',
+    fields: [],
+    docsUrl: 'https://mailchimp.com/developer/',
+    redirectHint: 'No OAuth needed — users connect with their own Mailchimp API key in the Integrations page.',
+  },
+  {
+    id: 'hubtel',
+    name: 'Hubtel (Payments)',
+    description: 'Hubtel payment gateway credentials for processing GHS subscription payments.',
+    icon: '₵',
+    accentClass: 'bg-[#00539B] text-white font-black',
+    fields: [
+      { id: 'clientId', label: 'Client ID', placeholder: 'Hubtel Client ID', type: 'text', helpText: 'From Hubtel merchant dashboard → API credentials.' },
+      { id: 'clientSecret', label: 'Client Secret', placeholder: 'Hubtel Client Secret', type: 'password', helpText: 'Keep this secret. Used server-side for payment initiation.' },
+      { id: 'merchantAccountNumber', label: 'Merchant Account Number', placeholder: 'e.g. 2024XXX', type: 'text', helpText: 'Your Hubtel merchant account number from the dashboard.' },
+    ],
+    docsUrl: 'https://developers.hubtel.com/',
+    redirectHint: 'Callback URL is handled automatically at `/api/payments/hubtel/callback`.',
   },
 ];
 
