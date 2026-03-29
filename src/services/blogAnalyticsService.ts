@@ -191,7 +191,7 @@ export const blogAnalyticsService = {
     return payload.data;
   },
 
-  async syncAnalytics(): Promise<void> {
+  async syncAnalytics(): Promise<{ synced: number; errors?: string[] }> {
     const token = localStorage.getItem('auth_token') || '';
     const candidates = [API_BASE_URL];
     if (typeof window !== 'undefined') {
@@ -208,10 +208,12 @@ export const blogAnalyticsService = {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         });
-        if (res.ok) return;
         const text = await res.text();
         const parsed = text ? safeJsonParse(text) : null;
-        throw new Error(parsed?.error || parsed?.message || text || 'Sync failed');
+        if (!res.ok) {
+          throw new Error(parsed?.error || parsed?.message || text || 'Sync failed');
+        }
+        return { synced: parsed?.synced ?? 0, errors: parsed?.errors };
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error('Sync failed');
       }
