@@ -1103,6 +1103,27 @@ async function ensureDatabase() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS account_metrics_user_idx ON account_metrics (user_id);`).catch(() => undefined);
 
+  // One row per connected social account — upserted on every Sync click.
+  // Stores the latest profile snapshot returned by the platform API.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_profile_stats (
+      id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      social_account_id TEXT NOT NULL,
+      platform          TEXT NOT NULL,
+      followers         BIGINT  DEFAULT 0,
+      following         BIGINT  DEFAULT 0,
+      posts_count       BIGINT  DEFAULT 0,
+      total_likes       BIGINT  DEFAULT 0,
+      bio               TEXT,
+      is_verified       BOOLEAN DEFAULT FALSE,
+      raw_response      JSONB   DEFAULT '{}'::jsonb,
+      synced_at         TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(social_account_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sps_user_idx ON social_profile_stats (user_id);`).catch(() => undefined);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS insights_cache (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -12787,9 +12808,9 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
           }
         } else if (platform === 'tiktok') {
           // ── Fetch TikTok user profile ──────────────────────────────────────────
-          // user.info.basic (already granted): username, display_name, following_count, bio_description
-          // user.info.stats (add in dev portal):  follower_count, video_count, likes_count
-          // We request all fields — TikTok silently omits any the token lacks scope for.
+          // user.info.basic (already granted): display_name, username, following_count, bio_description
+          // user.info.stats (add in dev portal): follower_count, video_count, likes_count
+          // TikTok silently omits fields the token lacks scope for — no error thrown.
           const ttUserResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
             headers: { Authorization: `Bearer ${token}` },
             params: {
@@ -12800,36 +12821,50 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             timeout: 15000,
           });
 
-          if (ttUserResp.status === 200 && ttUserResp.data?.data?.user) {
+          const ttErrCode = ttUserResp.data?.error?.code;
+          const ttErrMsg  = ttUserResp.data?.error?.message;
+          if (ttUserResp.status !== 200 || (ttErrCode && ttErrCode !== 'ok')) {
+            errors.push(`tiktok: ${ttErrMsg || ttErrCode || `HTTP ${ttUserResp.status}`}`);
+          } else if (ttUserResp.data?.data?.user) {
             const u = ttUserResp.data.data.user;
+            const followers   = Number(u.follower_count  ?? 0);
+            const following   = Number(u.following_count ?? 0);
+            const postsCount  = Number(u.video_count     ?? 0);
+            const totalLikes  = Number(u.likes_count     ?? 0);
+            const bio         = typeof u.bio_description === 'string' ? u.bio_description : null;
+            const isVerified  = Boolean(u.is_verified ?? false);
 
-            // Update follower count if returned (needs user.info.stats scope)
-            if (u.follower_count !== undefined) {
+            // Upsert into social_profile_stats — one row per account, updated on every sync
+            await pool!.query(
+              `INSERT INTO social_profile_stats
+                 (id, user_id, social_account_id, platform,
+                  followers, following, posts_count, total_likes,
+                  bio, is_verified, raw_response, synced_at)
+               VALUES (gen_random_uuid()::text, $1, $2, 'tiktok',
+                       $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+               ON CONFLICT (social_account_id) DO UPDATE SET
+                 followers   = EXCLUDED.followers,
+                 following   = EXCLUDED.following,
+                 posts_count = EXCLUDED.posts_count,
+                 total_likes = EXCLUDED.total_likes,
+                 bio         = EXCLUDED.bio,
+                 is_verified = EXCLUDED.is_verified,
+                 raw_response= EXCLUDED.raw_response,
+                 synced_at   = NOW()`,
+              [auth.userId, acct.id,
+               followers, following, postsCount, totalLikes,
+               bio, isVerified,
+               JSON.stringify(u)]
+            );
+
+            // Also mirror followers into social_accounts for aggregate KPI cards
+            if (followers > 0) {
               await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
-                [Number(u.follower_count), acct.id]);
-            }
-
-            // Persist following_count, video_count, likes_count in token_data
-            // so the analytics API can surface them alongside the account card
-            const profileSnapshot: Record<string, number | string | boolean> = {};
-            if (u.following_count !== undefined) profileSnapshot.following_count = Number(u.following_count);
-            if (u.video_count     !== undefined) profileSnapshot.video_count     = Number(u.video_count);
-            if (u.likes_count     !== undefined) profileSnapshot.likes_count     = Number(u.likes_count);
-            if (u.is_verified     !== undefined) profileSnapshot.is_verified     = Boolean(u.is_verified);
-            if (u.bio_description !== undefined) profileSnapshot.bio             = String(u.bio_description);
-
-            if (Object.keys(profileSnapshot).length > 0) {
-              await pool!.query(
-                `UPDATE social_accounts
-                 SET token_data = token_data || $1::jsonb
-                 WHERE id = $2`,
-                [JSON.stringify(profileSnapshot), acct.id]
-              );
+                [followers, acct.id]);
             }
             synced++;
           } else {
-            const errMsg = ttUserResp.data?.error?.message || `HTTP ${ttUserResp.status}`;
-            errors.push(`tiktok profile: ${errMsg}`);
+            errors.push(`tiktok: unexpected response — ${JSON.stringify(ttUserResp.data).slice(0, 120)}`);
           }
 
         } else if (platform === 'linkedin') {
@@ -12957,28 +12992,35 @@ app.get('/api/analytics/social/accounts', async (req: Request, res: Response) =>
          sa.platform,
          COALESCE(sa.account_name, sa.handle, sa.platform) AS account_name,
          sa.handle,
-         COALESCE(sa.followers, 0)::bigint AS followers,
          sa.connected_at,
-         COALESCE((sa.token_data->>'following_count')::bigint, 0) AS following_count,
-         COALESCE((sa.token_data->>'video_count')::bigint, 0)     AS video_count,
-         COALESCE((sa.token_data->>'likes_count')::bigint, 0)     AS total_likes_count,
-         sa.token_data->>'bio'                                     AS bio,
-         COALESCE(SUM(sm.reach), 0)::bigint AS total_reach,
+         -- followers: prefer live value from social_profile_stats, fall back to social_accounts
+         COALESCE(sps.followers, sa.followers, 0)::bigint  AS followers,
+         COALESCE(sps.following,    0)::bigint             AS following_count,
+         COALESCE(sps.posts_count,  0)::bigint             AS video_count,
+         COALESCE(sps.total_likes,  0)::bigint             AS total_likes_count,
+         sps.bio,
+         sps.is_verified,
+         sps.synced_at,
+         -- aggregated post-level metrics from social_metrics
+         COALESCE(SUM(sm.reach),       0)::bigint AS total_reach,
          COALESCE(SUM(sm.impressions), 0)::bigint AS total_impressions,
-         COALESCE(SUM(sm.engagement), 0)::bigint AS total_engagement,
-         COALESCE(SUM(sm.likes), 0)::bigint AS total_likes,
-         COALESCE(SUM(sm.comments), 0)::bigint AS total_comments,
-         COALESCE(SUM(sm.shares), 0)::bigint AS total_shares,
+         COALESCE(SUM(sm.engagement),  0)::bigint AS total_engagement,
+         COALESCE(SUM(sm.likes),       0)::bigint AS total_likes,
+         COALESCE(SUM(sm.comments),    0)::bigint AS total_comments,
+         COALESCE(SUM(sm.shares),      0)::bigint AS total_shares,
          COUNT(sm.id)::int AS posts_synced,
          CASE WHEN SUM(sm.impressions) > 0
            THEN ROUND(SUM(sm.engagement)::numeric / NULLIF(SUM(sm.impressions), 0) * 100, 2)
            ELSE 0 END AS engagement_rate
        FROM social_accounts sa
+       LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
        LEFT JOIN social_metrics sm ON sm.social_account_id = sa.id
          AND sm.user_id = $1
          AND (sm.posted_at >= $2 OR sm.posted_at IS NULL)
        WHERE sa.user_id = $1 AND sa.connected = true
-       GROUP BY sa.id, sa.platform, sa.account_name, sa.handle, sa.followers, sa.connected_at, sa.token_data
+       GROUP BY sa.id, sa.platform, sa.account_name, sa.handle, sa.followers, sa.connected_at,
+                sps.followers, sps.following, sps.posts_count, sps.total_likes,
+                sps.bio, sps.is_verified, sps.synced_at
        ORDER BY sa.platform`,
       [auth.userId, since]
     );
@@ -13002,10 +13044,17 @@ app.get('/api/analytics/social/account/:accountId', async (req: Request, res: Re
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     const acctResult = await pool.query(
-      `SELECT id, platform,
-         COALESCE(account_name, handle, platform) AS account_name,
-         handle, COALESCE(followers, 0)::bigint AS followers, connected_at
-       FROM social_accounts WHERE id = $1 AND user_id = $2 AND connected = true`,
+      `SELECT sa.id, sa.platform,
+         COALESCE(sa.account_name, sa.handle, sa.platform) AS account_name,
+         sa.handle, sa.connected_at,
+         COALESCE(sps.followers, sa.followers, 0)::bigint AS followers,
+         COALESCE(sps.following,   0)::bigint AS following_count,
+         COALESCE(sps.posts_count, 0)::bigint AS video_count,
+         COALESCE(sps.total_likes, 0)::bigint AS total_likes_count,
+         sps.bio, sps.is_verified, sps.synced_at
+       FROM social_accounts sa
+       LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
+       WHERE sa.id = $1 AND sa.user_id = $2 AND sa.connected = true`,
       [accountId, auth.userId]
     );
     if (acctResult.rows.length === 0) {

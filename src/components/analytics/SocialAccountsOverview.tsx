@@ -243,10 +243,15 @@ export default function SocialAccountsOverview({ days }: Props) {
     );
   }
 
-  const totalFollowers = accounts.reduce((s, a) => s + Number(a.followers), 0);
-  const totalReach = accounts.reduce((s, a) => s + Number(a.total_reach), 0);
+  const totalFollowers  = accounts.reduce((s, a) => s + Number(a.followers), 0);
+  const totalReach      = accounts.reduce((s, a) => s + Number(a.total_reach), 0);
   const totalEngagement = accounts.reduce((s, a) => s + Number(a.total_engagement), 0);
-  const totalPosts = accounts.reduce((s, a) => s + Number(a.posts_synced), 0);
+  // video_count = total posts across all platforms (from social_profile_stats)
+  const totalPosts = accounts.reduce((s, a) => {
+    const fromProfile = Number(a.video_count);
+    const fromMetrics = Number(a.posts_synced);
+    return s + (fromProfile > 0 ? fromProfile : fromMetrics);
+  }, 0);
   const activeAccount = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];
 
   return (

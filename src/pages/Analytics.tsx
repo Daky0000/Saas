@@ -53,6 +53,7 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ synced: number; errors?: string[] } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [customStart, setCustomStart] = useState('');
@@ -117,9 +118,11 @@ export default function Analytics() {
 
   const handleSyncAnalytics = async () => {
     setSyncing(true);
+    setSyncResult(null);
     setError(null);
     try {
-      await blogAnalyticsService.syncAnalytics();
+      const result = await blogAnalyticsService.syncAnalytics();
+      setSyncResult(result);
       setRefreshing(true);
       setQuery((c) => ({ ...c }));
     } catch (err) {
@@ -239,6 +242,26 @@ export default function Analytics() {
 
       {error && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+      )}
+
+      {syncResult && !syncing && (
+        <div className={`rounded-2xl border px-4 py-3 text-sm ${
+          syncResult.errors?.length
+            ? 'border-amber-200 bg-amber-50 text-amber-800'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+        }`}>
+          {syncResult.errors?.length ? (
+            <>
+              <span className="font-semibold">Sync completed with issues</span>
+              {syncResult.synced > 0 && <span className="ml-1">({syncResult.synced} item{syncResult.synced !== 1 ? 's' : ''} saved)</span>}
+              <ul className="mt-1 list-disc list-inside space-y-0.5 text-xs">
+                {syncResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            </>
+          ) : (
+            <span><span className="font-semibold">Sync complete.</span> {syncResult.synced} item{syncResult.synced !== 1 ? 's' : ''} updated.</span>
+          )}
+        </div>
       )}
 
       {/* Tab navigation */}
