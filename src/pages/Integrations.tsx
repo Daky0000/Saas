@@ -393,9 +393,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
-    const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest'].includes(slug);
+    const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest', 'tiktok'].includes(slug);
     const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
-    const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || '';
+    const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || item.connection?.handle || '';
     const connectedMeta = item.connected
       ? [connectedLabel ? `Connected as ${connectedLabel}` : 'Connected', connectedAt ? formatDate(connectedAt) : '']
           .filter(Boolean)

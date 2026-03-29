@@ -72,6 +72,15 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
 
     const wpConnected = Boolean(wpData?.connected);
 
+    // Build a map of platform -> account data for connection objects
+    const accountsByPlatform = new Map<string, any>();
+    for (const acc of accounts) {
+      const platform = normalizePlatform(acc.platform);
+      if (platform && acc.connected !== false) {
+        accountsByPlatform.set(platform, acc);
+      }
+    }
+
     const integrations: IntegrationCatalogItem[] = FALLBACK_CATALOG.map((item) => {
       const adminEnabled = enabledSet.has(item.slug);
       const configured = item.slug === 'wordpress' || item.slug === 'mailchimp' ? true : enabledSet.has(item.slug);
@@ -81,10 +90,20 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
           : item.slug === 'mailchimp'
             ? false
             : connectedSet.has(item.slug);
-      const connection =
-        item.slug === 'wordpress' && wpConnected
-          ? { siteUrl: wpData?.siteUrl || null, connectedAt: null }
-          : null;
+      
+      let connection: Record<string, any> | null = null;
+      if (item.slug === 'wordpress' && wpConnected) {
+        connection = { siteUrl: wpData?.siteUrl || null, connectedAt: null };
+      } else if (accountsByPlatform.has(item.slug) && connected) {
+        const acc = accountsByPlatform.get(item.slug);
+        connection = {
+          accountId: acc.accountId || acc.id || null,
+          accountName: acc.accountName || null,
+          username: acc.handle || null,
+          connectedAt: acc.connectedAt || null,
+        };
+      }
+      
       return { ...item, adminEnabled, configured, connected, connection };
     }).filter(isVisibleIntegration);
 

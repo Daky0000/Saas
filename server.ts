@@ -3744,6 +3744,7 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
       user_id AS "userId",
       platform,
       handle,
+      account_name AS "accountName",
       followers::text AS followers,
       connected,
       connected_at AS "connectedAt",
@@ -12867,7 +12868,49 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             errors.push(`tiktok: unexpected response — ${JSON.stringify(ttUserResp.data).slice(0, 120)}`);
           }
 
-        } else if (platform === 'linkedin') {
+          // ── Fetch TikTok videos and metrics ────────────────────────────────────
+          try {
+            const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
+              headers: { Authorization: `Bearer ${token}` },
+              params: {
+                fields: 'id,create_time,like_count,comment_count,share_count,view_count',
+                max_count: 100,
+              },
+              validateStatus: () => true,
+              timeout: 15000,
+            });
+
+            const vidErr = videosResp.data?.error?.code;
+            if (videosResp.status === 200 && !vidErr) {
+              const videos: any[] = videosResp.data?.data?.videos || [];
+              for (const v of videos) {
+                if (!v.id) continue;
+                const videoId = String(v.id);
+                const likes = Number(v.like_count || 0);
+                const comments = Number(v.comment_count || 0);
+                const shares = Number( v.share_count || 0);
+                const views = Number(v.view_count || 0);
+                const engagement = likes + comments + shares;
+                const postedAt = v.create_time ? new Date(v.create_time * 1000).toISOString() : null;
+
+                await pool!.query(
+                  `INSERT INTO social_metrics (id, user_id, platform, platform_post_id, social_account_id, likes, comments, shares, impressions, reach, engagement, raw_data, posted_at, fetched_at)
+                   VALUES (gen_random_uuid()::text, $1, 'tiktok', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, NOW())
+                   ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+                     likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
+                     impressions=EXCLUDED.impressions, reach=EXCLUDED.reach, engagement=EXCLUDED.engagement,
+                     raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
+                  [auth.userId, videoId, acct.id, 
+                   likes, comments, shares, views, views, engagement,
+                   JSON.stringify(v), postedAt]
+                );
+                synced++;
+              }
+            }
+          } catch (vidErr: any) {
+            console.error('TikTok video fetch error:', vidErr.message);
+            // Don't block sync on video fetch failure
+          }
           const tokenData = acct.token_data || {};
           const personUrn = tokenData.personUrn || tokenData.urn || tokenData.sub;
           if (personUrn) {
