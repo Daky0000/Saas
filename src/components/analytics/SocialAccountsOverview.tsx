@@ -1,86 +1,182 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Users, TrendingUp, Eye, MessageSquare } from 'lucide-react';
+import { Loader2, Users, TrendingUp, Eye, MessageSquare, Heart, MessageCircle, Share2 } from 'lucide-react';
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 import { PlatformLogo } from '../PlatformLogo';
-import { socialAnalyticsService, type SocialAccount } from '../../services/socialAnalyticsService';
-import { formatCompactNumber, formatPercent } from './analyticsUtils';
+import { socialAnalyticsService, type SocialAccount, type AccountDashboard } from '../../services/socialAnalyticsService';
+import { formatCompactNumber, formatPercent, formatShortDate } from './analyticsUtils';
 
 type Props = {
   days: number;
-  onSelectAccount: (account: SocialAccount) => void;
-  selectedAccountId: string | null;
 };
 
-function AccountCard({ account, selected, onClick }: { account: SocialAccount; selected: boolean; onClick: () => void }) {
-  const hasMetrics = account.posts_synced > 0 || account.total_engagement > 0;
-
+function MetricPill({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full rounded-2xl border p-5 text-left transition hover:shadow-md ${
-        selected
-          ? 'border-slate-900 bg-slate-950 text-white shadow-md'
-          : 'border-slate-200 bg-white hover:border-slate-300'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="shrink-0">
-            <PlatformLogo platform={account.platform} size={36} />
-          </div>
-          <div>
-            <div className={`text-sm font-bold capitalize ${selected ? 'text-white' : 'text-slate-900'}`}>
-              {account.platform}
-            </div>
-            <div className={`text-xs truncate max-w-[140px] ${selected ? 'text-slate-300' : 'text-slate-500'}`}>
-              {account.account_name || account.handle || '—'}
-            </div>
-          </div>
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{label}</div>
+          <div className="mt-2 text-2xl font-black tracking-tight text-slate-950">{value}</div>
         </div>
-        {account.followers > 0 && (
-          <div className="text-right shrink-0">
-            <div className={`text-lg font-black tracking-tight ${selected ? 'text-white' : 'text-slate-950'}`}>
-              {formatCompactNumber(account.followers)}
-            </div>
-            <div className={`text-xs ${selected ? 'text-slate-400' : 'text-slate-400'}`}>followers</div>
-          </div>
-        )}
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">{icon}</div>
       </div>
-
-      <div className={`mt-4 grid grid-cols-3 gap-2 border-t pt-4 ${selected ? 'border-slate-700' : 'border-slate-100'}`}>
-        <div className="text-center">
-          <div className={`text-sm font-bold ${selected ? 'text-white' : 'text-slate-900'}`}>
-            {formatCompactNumber(account.total_reach)}
-          </div>
-          <div className={`text-[10px] uppercase tracking-wide ${selected ? 'text-slate-400' : 'text-slate-400'}`}>Reach</div>
-        </div>
-        <div className="text-center">
-          <div className={`text-sm font-bold ${selected ? 'text-white' : 'text-slate-900'}`}>
-            {formatPercent(account.engagement_rate)}
-          </div>
-          <div className={`text-[10px] uppercase tracking-wide ${selected ? 'text-slate-400' : 'text-slate-400'}`}>Engagement</div>
-        </div>
-        <div className="text-center">
-          <div className={`text-sm font-bold ${selected ? 'text-white' : 'text-slate-900'}`}>
-            {formatCompactNumber(account.posts_synced)}
-          </div>
-          <div className={`text-[10px] uppercase tracking-wide ${selected ? 'text-slate-400' : 'text-slate-400'}`}>Posts</div>
-        </div>
-      </div>
-
-      {!hasMetrics && (
-        <div className={`mt-3 text-xs ${selected ? 'text-slate-400' : 'text-slate-400'}`}>
-          No metrics yet — click Sync to pull data
-        </div>
-      )}
-    </button>
+    </div>
   );
 }
 
-export default function SocialAccountsOverview({ days, onSelectAccount, selectedAccountId }: Props) {
+function AccountSnapshot({ account, days }: { account: SocialAccount; days: number }) {
+  const [data, setData] = useState<AccountDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    socialAnalyticsService
+      .getAccountDashboard(account.id, days)
+      .then((d) => { if (alive) setData(d); })
+      .catch((err) => { if (alive) setError(err instanceof Error ? err.message : 'Failed to load account data'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [account.id, days]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-slate-400">
+        <Loader2 size={18} className="animate-spin mr-2" /> Loading {account.platform} data…
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>;
+  }
+
+  if (!data) return null;
+
+  const s = data.summary;
+  const trendData = data.trend.map((t) => ({
+    ...t,
+    dateLabel: new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+  }));
+  const hasEngagementData = data.trend.some((t) => Number(t.engagement) > 0 || Number(t.impressions) > 0);
+  const hasTopPosts = data.top_posts.length > 0;
+
+  return (
+    <div className="space-y-5">
+      {/* Account identity */}
+      <div className="flex items-center gap-3">
+        <PlatformLogo platform={account.platform} size={38} />
+        <div>
+          <div className="text-lg font-black tracking-tight text-slate-950 capitalize">{account.platform}</div>
+          <div className="text-sm text-slate-500">
+            {account.account_name || account.handle || '—'}
+            {Number(data.account.followers) > 0 && (
+              <span className="ml-2 text-slate-400">· {formatCompactNumber(data.account.followers)} followers</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* KPI pills */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <MetricPill label="Reach" value={formatCompactNumber(s.total_reach)} icon={<Eye size={16} />} />
+        <MetricPill label="Impressions" value={formatCompactNumber(s.total_impressions)} icon={<TrendingUp size={16} />} />
+        <MetricPill label="Engagement" value={formatPercent(s.engagement_rate)} icon={<TrendingUp size={16} />} />
+        <MetricPill label="Likes" value={formatCompactNumber(s.total_likes)} icon={<Heart size={16} />} />
+        <MetricPill label="Comments" value={formatCompactNumber(s.total_comments)} icon={<MessageCircle size={16} />} />
+        <MetricPill label="Posts" value={formatCompactNumber(s.posts_count)} icon={<Share2 size={16} />} />
+      </div>
+
+      {/* Trend chart */}
+      {trendData.length > 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6">
+          <div className="text-base font-bold text-slate-950">Engagement Trend</div>
+          <div className="text-xs text-slate-500 mt-1">Daily engagement and impressions · last {days} days</div>
+          <div className="mt-5 h-[240px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={trendData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="dateLabel" tick={{ fill: '#64748b', fontSize: 10 }} />
+                <YAxis yAxisId="vol" tick={{ fill: '#64748b', fontSize: 10 }} />
+                <YAxis yAxisId="rate" orientation="right" tick={{ fill: '#64748b', fontSize: 10 }} />
+                <Tooltip />
+                <Bar yAxisId="vol" dataKey="engagement" fill="#0f172a" radius={[4, 4, 0, 0]} name="Engagement" />
+                <Bar yAxisId="vol" dataKey="impressions" fill="#e2e8f0" radius={[4, 4, 0, 0]} name="Impressions" />
+                <Line yAxisId="rate" type="monotone" dataKey="engagement_rate" stroke="#2563eb" strokeWidth={2} dot={false} name="Eng. Rate (%)" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-5 text-sm text-slate-500">
+          No daily trend data yet — use Sync to pull metrics from {account.platform}.
+        </div>
+      )}
+
+      {/* Top posts */}
+      {hasTopPosts ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6">
+          <div className="text-base font-bold text-slate-950">Top Posts</div>
+          <div className="text-xs text-slate-500 mt-1">Ranked by engagement from synced posts</div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.18em] text-slate-400">
+                <tr>
+                  <th className="pb-3 text-left font-semibold">Post</th>
+                  <th className="pb-3 text-right font-semibold">Likes</th>
+                  <th className="pb-3 text-right font-semibold">Comments</th>
+                  <th className="pb-3 text-right font-semibold">Reach</th>
+                  <th className="pb-3 text-right font-semibold">Rate</th>
+                  <th className="pb-3 text-right font-semibold">Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.top_posts.map((post) => (
+                  <tr key={post.platform_post_id} className="border-b border-slate-100">
+                    <td className="py-2.5 pr-4 max-w-[220px]">
+                      <span className="block truncate font-medium text-slate-900">{post.title}</span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(post.likes)}</td>
+                    <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(post.comments)}</td>
+                    <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(post.reach)}</td>
+                    <td className="py-2.5 pr-4 text-right font-semibold text-slate-900">{formatPercent(post.engagement_rate)}</td>
+                    <td className="py-2.5 text-right text-slate-400">{formatShortDate(post.posted_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-5 text-sm text-slate-500">
+          No posts synced for this account yet.
+        </div>
+      )}
+
+      {!hasEngagementData && !hasTopPosts && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-semibold">No engagement data yet.</span> Use the Sync button to pull real metrics from {account.platform}.
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SocialAccountsOverview({ days }: Props) {
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -91,6 +187,7 @@ export default function SocialAccountsOverview({ days, onSelectAccount, selected
       .then((data) => {
         if (!alive) return;
         setAccounts(data.accounts);
+        if (data.accounts.length > 0) setActiveAccountId((prev) => prev ?? data.accounts[0].id);
       })
       .catch((err) => {
         if (!alive) return;
@@ -131,10 +228,11 @@ export default function SocialAccountsOverview({ days, onSelectAccount, selected
     );
   }
 
-  const totalFollowers = accounts.reduce((s, a) => s + a.followers, 0);
-  const totalReach = accounts.reduce((s, a) => s + a.total_reach, 0);
-  const totalEngagement = accounts.reduce((s, a) => s + a.total_engagement, 0);
-  const totalPosts = accounts.reduce((s, a) => s + a.posts_synced, 0);
+  const totalFollowers = accounts.reduce((s, a) => s + Number(a.followers), 0);
+  const totalReach = accounts.reduce((s, a) => s + Number(a.total_reach), 0);
+  const totalEngagement = accounts.reduce((s, a) => s + Number(a.total_engagement), 0);
+  const totalPosts = accounts.reduce((s, a) => s + Number(a.posts_synced), 0);
+  const activeAccount = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];
 
   return (
     <div className="space-y-6">
@@ -156,33 +254,44 @@ export default function SocialAccountsOverview({ days, onSelectAccount, selected
                 {kpi.icon}
               </div>
             </div>
-            <div className="mt-4 text-xs text-slate-400">Across {accounts.length} account{accounts.length !== 1 ? 's' : ''} · last {days}d</div>
+            <div className="mt-4 text-xs text-slate-400">
+              Across {accounts.length} account{accounts.length !== 1 ? 's' : ''} · last {days}d
+            </div>
           </div>
         ))}
       </div>
 
-      {/* Account cards */}
-      <div>
-        <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-400">
-          Connected Accounts — click to view details
-        </h3>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {accounts.map((account) => (
-            <AccountCard
-              key={account.id}
-              account={account}
-              selected={selectedAccountId === account.id}
-              onClick={() => onSelectAccount(account)}
-            />
-          ))}
+      {/* Per-account tab strip */}
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
+        <div className="flex flex-wrap gap-1">
+          {accounts.map((account) => {
+            const isActive = account.id === activeAccount.id;
+            return (
+              <button
+                key={account.id}
+                type="button"
+                onClick={() => setActiveAccountId(account.id)}
+                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                  isActive
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <PlatformLogo platform={account.platform} size={16} />
+                <span className="capitalize">{account.platform}</span>
+                {account.account_name && (
+                  <span className={`text-xs font-normal truncate max-w-[100px] ${isActive ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {account.account_name}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {totalPosts === 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <span className="font-semibold">No metrics synced yet.</span> Use the Sync button above to pull real engagement data from your connected platforms.
-        </div>
-      )}
+      {/* Active account snapshot */}
+      <AccountSnapshot key={activeAccount.id} account={activeAccount} days={days} />
     </div>
   );
 }
