@@ -285,6 +285,7 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:3000',
   'https://marketing.dakyworld.com',
   'https://daky0000.github.io',
+  'https://contentflow-api-production.up.railway.app',
   ...extraOrigins,
 ]);
 
