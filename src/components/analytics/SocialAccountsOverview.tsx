@@ -52,7 +52,7 @@ function AccountSnapshot({ account, days }: { account: SocialAccount; days: numb
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 text-slate-400">
-        <Loader2 size={18} className="animate-spin mr-2" /> Loading {account.platform} dataâ€?
+        <Loader2 size={18} className="animate-spin mr-2" /> Loading {account.platform} dataâ€¦
       </div>
     );
   }
@@ -79,7 +79,7 @@ function AccountSnapshot({ account, days }: { account: SocialAccount; days: numb
         <div className="min-w-0 flex-1">
           <div className="text-lg font-black tracking-tight text-slate-950 capitalize">{account.platform}</div>
           <div className="text-sm text-slate-500">
-            {account.account_name || account.handle || 'â€?}
+            {account.account_name || account.handle || 'â€”'}
           </div>
           {account.bio && (
             <div className="mt-1 text-xs text-slate-400 leading-relaxed max-w-lg line-clamp-2">{account.bio}</div>
@@ -134,7 +134,7 @@ function AccountSnapshot({ account, days }: { account: SocialAccount; days: numb
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-5 text-sm text-slate-500">
-          No daily trend data yet â€?use Sync to pull metrics from {account.platform}.
+          No daily trend data yet â€” use Sync to pull metrics from {account.platform}.
         </div>
       )}
 
@@ -215,7 +215,7 @@ export default function SocialAccountsOverview({ days }: Props) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-slate-400">
-        <Loader2 size={20} className="animate-spin mr-2" /> Loading accountsâ€?
+        <Loader2 size={20} className="animate-spin mr-2" /> Loading accountsâ€¦
       </div>
     );
   }
@@ -309,7 +309,6 @@ export default function SocialAccountsOverview({ days }: Props) {
           })}
         </div>
       </div>
-
 
       {/* Active account title */}
       <div className="flex items-center gap-3 pt-2">
