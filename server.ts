@@ -10385,10 +10385,16 @@ async function refreshTikTokAccessToken(refreshToken: string) {
 
 // Fetch TikTok user profile with graceful scope fallback.
 // Tries full fields (user.info.stats) first; if TikTok returns a scope error
-// falls back to the fields always available under user.info.basic.
+// falls back progressively to narrower field sets so we always get at least
+// display_name, and as many stats as the token permits.
 async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scopeLimited: boolean }> {
-  const fullFields  = 'open_id,display_name,username,bio_description,is_verified,follower_count,following_count,likes_count,video_count';
-  const basicFields = 'open_id,display_name,username,bio_description,is_verified';
+  // Attempt order: all stats → stats-only → basic with follower → basic only
+  const fieldSets = [
+    'open_id,display_name,username,bio_description,is_verified,follower_count,following_count,likes_count,video_count',
+    'open_id,display_name,username,follower_count,following_count,likes_count,video_count',
+    'open_id,display_name,username,bio_description,is_verified,follower_count',
+    'open_id,display_name,username,bio_description,is_verified',
+  ];
 
   const tryFetch = (fields: string) =>
     axios.get('https://open.tiktokapis.com/v2/user/info/', {
@@ -10398,23 +10404,18 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
       timeout: 15000,
     });
 
-  let resp = await tryFetch(fullFields);
-  const errCode = resp.data?.error?.code;
-  const isScopeError = errCode && errCode !== 'ok';
-
-  // On any API-level error (scope, permission, etc.) fall back to basic fields
-  if (resp.status !== 200 || isScopeError) {
-    const fallback = await tryFetch(basicFields);
-    const fbErr = fallback.data?.error?.code;
-    if (fallback.status === 200 && (!fbErr || fbErr === 'ok') && fallback.data?.data?.user) {
-      return { user: fallback.data.data.user, scopeLimited: true };
+  let lastErr = '';
+  for (let i = 0; i < fieldSets.length; i++) {
+    const resp = await tryFetch(fieldSets[i]);
+    const errCode = resp.data?.error?.code;
+    if (resp.status === 200 && (!errCode || errCode === 'ok') && resp.data?.data?.user) {
+      // scopeLimited = true if we had to fall back past the first (full) attempt
+      return { user: resp.data.data.user, scopeLimited: i > 0 };
     }
-    // Even basic failed — surface the original error code/message
-    const msg = resp.data?.error?.message || errCode || `HTTP ${resp.status}`;
-    throw new Error(msg);
+    lastErr = resp.data?.error?.message || errCode || `HTTP ${resp.status}`;
   }
 
-  return { user: resp.data?.data?.user ?? null, scopeLimited: false };
+  throw new Error(lastErr || 'TikTok user info unavailable');
 }
 
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
@@ -12904,11 +12905,11 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                  VALUES (gen_random_uuid()::text, $1, $2, 'tiktok',
                          $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
                  ON CONFLICT (social_account_id) DO UPDATE SET
-                   followers   = EXCLUDED.followers,
-                   following   = EXCLUDED.following,
-                   posts_count = EXCLUDED.posts_count,
-                   total_likes = EXCLUDED.total_likes,
-                   bio         = EXCLUDED.bio,
+                   followers   = CASE WHEN EXCLUDED.followers > 0 THEN EXCLUDED.followers ELSE social_profile_stats.followers END,
+                   following   = CASE WHEN EXCLUDED.following   > 0 THEN EXCLUDED.following   ELSE social_profile_stats.following   END,
+                   posts_count = CASE WHEN EXCLUDED.posts_count > 0 THEN EXCLUDED.posts_count ELSE social_profile_stats.posts_count END,
+                   total_likes = CASE WHEN EXCLUDED.total_likes > 0 THEN EXCLUDED.total_likes ELSE social_profile_stats.total_likes END,
+                   bio         = COALESCE(EXCLUDED.bio,         social_profile_stats.bio),
                    is_verified = EXCLUDED.is_verified,
                    raw_response= EXCLUDED.raw_response,
                    synced_at   = NOW()`,
@@ -13404,10 +13405,14 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
                 bio, is_verified, raw_response, synced_at)
              VALUES (gen_random_uuid()::text, $1, $2, 'tiktok', $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
              ON CONFLICT (social_account_id) DO UPDATE SET
-               followers=EXCLUDED.followers, following=EXCLUDED.following,
-               posts_count=EXCLUDED.posts_count, total_likes=EXCLUDED.total_likes,
-               bio=EXCLUDED.bio, is_verified=EXCLUDED.is_verified,
-               raw_response=EXCLUDED.raw_response, synced_at=NOW()`,
+               followers   = CASE WHEN EXCLUDED.followers   > 0 THEN EXCLUDED.followers   ELSE social_profile_stats.followers   END,
+               following   = CASE WHEN EXCLUDED.following   > 0 THEN EXCLUDED.following   ELSE social_profile_stats.following   END,
+               posts_count = CASE WHEN EXCLUDED.posts_count > 0 THEN EXCLUDED.posts_count ELSE social_profile_stats.posts_count END,
+               total_likes = CASE WHEN EXCLUDED.total_likes > 0 THEN EXCLUDED.total_likes ELSE social_profile_stats.total_likes END,
+               bio         = COALESCE(EXCLUDED.bio, social_profile_stats.bio),
+               is_verified = EXCLUDED.is_verified,
+               raw_response= EXCLUDED.raw_response,
+               synced_at   = NOW()`,
             [auth.userId, acct.id,
              followers, following, postsCount, totalLikes,
              bio, isVerified, JSON.stringify(u)]
