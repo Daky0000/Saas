@@ -10412,6 +10412,7 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
   try {
     const statsResp = await ttGet('follower_count,following_count,likes_count,video_count');
     const statsErr  = statsResp.data?.error?.code;
+    console.log('[TikTok stats] status:', statsResp.status, 'error:', statsErr, 'user:', JSON.stringify(statsResp.data?.data?.user));
     if (statsResp.status === 200 && (!statsErr || statsErr === 'ok') && statsResp.data?.data?.user) {
       const s = statsResp.data.data.user;
       if (s.follower_count  != null) user.follower_count  = s.follower_count;
@@ -10419,10 +10420,11 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
       if (s.likes_count     != null) user.likes_count     = s.likes_count;
       if (s.video_count     != null) user.video_count     = s.video_count;
     }
-  } catch {
-    // stats scope not available — ignore, basic profile is still saved
+  } catch (statsErr: any) {
+    console.log('[TikTok stats] exception:', statsErr?.message);
   }
 
+  console.log('[TikTok profile] final user object:', JSON.stringify(user));
   const hasStats = user.follower_count != null;
   return { user, scopeLimited: !hasStats };
 }
@@ -12903,6 +12905,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
               const following  = Number(u.following_count ?? 0);
               const postsCount = Number(u.video_count     ?? 0);
               const totalLikes = Number(u.likes_count     ?? 0);
+              console.log('[TikTok sync] followers:', followers, 'following:', following, 'posts:', postsCount, 'likes:', totalLikes, 'scopeLimited:', scopeLimited);
               const bio        = typeof u.bio_description === 'string' ? u.bio_description : null;
               const isVerified = Boolean(u.is_verified ?? false);
 
@@ -12937,6 +12940,9 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                  WHERE id = $4`,
                 [displayName, username, followers, acct.id]
               );
+              // Verify what actually landed in the DB
+              const verify = await pool!.query(`SELECT followers FROM social_profile_stats WHERE social_account_id=$1`, [acct.id]);
+              console.log('[TikTok sync] DB followers after upsert:', verify.rows[0]?.followers);
               synced++;
               if (scopeLimited) {
                 errors.push('tiktok: stats scope not granted — reconnect TikTok to enable follower/video counts');
@@ -13269,6 +13275,7 @@ app.get('/api/analytics/social/account/:accountId', async (req: Request, res: Re
       ),
     ]);
 
+    console.log('[TikTok dashboard] account row followers:', account.followers, 'following_count:', account.following_count, 'video_count:', account.video_count);
     return res.json({
       success: true,
       account: {
