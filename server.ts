@@ -10374,6 +10374,40 @@ async function refreshTikTokAccessToken(refreshToken: string) {
   return resp.data;
 }
 
+// Fetch TikTok user profile with graceful scope fallback.
+// Tries full fields (user.info.stats) first; if TikTok returns a scope error
+// falls back to the fields always available under user.info.basic.
+async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scopeLimited: boolean }> {
+  const fullFields  = 'open_id,display_name,username,bio_description,is_verified,follower_count,following_count,likes_count,video_count';
+  const basicFields = 'open_id,display_name,username,bio_description,is_verified';
+
+  const tryFetch = (fields: string) =>
+    axios.get('https://open.tiktokapis.com/v2/user/info/', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { fields },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+
+  let resp = await tryFetch(fullFields);
+  const errCode = resp.data?.error?.code;
+  const isScopeError = errCode && errCode !== 'ok';
+
+  // On any API-level error (scope, permission, etc.) fall back to basic fields
+  if (resp.status !== 200 || isScopeError) {
+    const fallback = await tryFetch(basicFields);
+    const fbErr = fallback.data?.error?.code;
+    if (fallback.status === 200 && (!fbErr || fbErr === 'ok') && fallback.data?.data?.user) {
+      return { user: fallback.data.data.user, scopeLimited: true };
+    }
+    // Even basic failed — surface the original error code/message
+    const msg = resp.data?.error?.message || errCode || `HTTP ${resp.status}`;
+    throw new Error(msg);
+  }
+
+  return { user: resp.data?.data?.user ?? null, scopeLimited: false };
+}
+
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
   if (!pool) return null;
   const rows = await pool.query(
@@ -12842,67 +12876,51 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             }
           }
         } else if (platform === 'tiktok') {
-          // ── Fetch TikTok user profile ──────────────────────────────────────────
-          // user.info.basic (already granted): display_name, username, following_count, bio_description
-          // user.info.stats (add in dev portal): follower_count, video_count, likes_count
-          // TikTok silently omits fields the token lacks scope for — no error thrown.
-          const ttUserResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
-            headers: { Authorization: `Bearer ${token}` },
-            params: {
-              fields: 'open_id,display_name,username,bio_description,is_verified,' +
-                      'follower_count,following_count,likes_count,video_count',
-            },
-            validateStatus: () => true,
-            timeout: 15000,
-          });
+          // ── Fetch TikTok user profile (with scope fallback) ────────────────────
+          try {
+            const { user: u, scopeLimited } = await fetchTikTokUserProfile(token);
+            if (u) {
+              const followers  = Number(u.follower_count  ?? 0);
+              const following  = Number(u.following_count ?? 0);
+              const postsCount = Number(u.video_count     ?? 0);
+              const totalLikes = Number(u.likes_count     ?? 0);
+              const bio        = typeof u.bio_description === 'string' ? u.bio_description : null;
+              const isVerified = Boolean(u.is_verified ?? false);
 
-          const ttErrCode = ttUserResp.data?.error?.code;
-          const ttErrMsg  = ttUserResp.data?.error?.message;
-          if (ttUserResp.status !== 200 || (ttErrCode && ttErrCode !== 'ok')) {
-            errors.push(`tiktok: ${ttErrMsg || ttErrCode || `HTTP ${ttUserResp.status}`}`);
-          } else if (ttUserResp.data?.data?.user) {
-            const u = ttUserResp.data.data.user;
-            const followers   = Number(u.follower_count  ?? 0);
-            const following   = Number(u.following_count ?? 0);
-            const postsCount  = Number(u.video_count     ?? 0);
-            const totalLikes  = Number(u.likes_count     ?? 0);
-            const bio         = typeof u.bio_description === 'string' ? u.bio_description : null;
-            const isVerified  = Boolean(u.is_verified ?? false);
-
-            // Upsert into social_profile_stats — one row per account, updated on every sync
-            await pool!.query(
-              `INSERT INTO social_profile_stats
-                 (id, user_id, social_account_id, platform,
-                  followers, following, posts_count, total_likes,
-                  bio, is_verified, raw_response, synced_at)
-               VALUES (gen_random_uuid()::text, $1, $2, 'tiktok',
-                       $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
-               ON CONFLICT (social_account_id) DO UPDATE SET
-                 followers   = EXCLUDED.followers,
-                 following   = EXCLUDED.following,
-                 posts_count = EXCLUDED.posts_count,
-                 total_likes = EXCLUDED.total_likes,
-                 bio         = EXCLUDED.bio,
-                 is_verified = EXCLUDED.is_verified,
-                 raw_response= EXCLUDED.raw_response,
-                 synced_at   = NOW()`,
-              [auth.userId, acct.id,
-               followers, following, postsCount, totalLikes,
-               bio, isVerified,
-               JSON.stringify(u)]
-            );
-
-            // Also mirror followers into social_accounts for aggregate KPI cards
-            if (followers > 0) {
-              await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
-                [followers, acct.id]);
+              await pool!.query(
+                `INSERT INTO social_profile_stats
+                   (id, user_id, social_account_id, platform,
+                    followers, following, posts_count, total_likes,
+                    bio, is_verified, raw_response, synced_at)
+                 VALUES (gen_random_uuid()::text, $1, $2, 'tiktok',
+                         $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+                 ON CONFLICT (social_account_id) DO UPDATE SET
+                   followers   = EXCLUDED.followers,
+                   following   = EXCLUDED.following,
+                   posts_count = EXCLUDED.posts_count,
+                   total_likes = EXCLUDED.total_likes,
+                   bio         = EXCLUDED.bio,
+                   is_verified = EXCLUDED.is_verified,
+                   raw_response= EXCLUDED.raw_response,
+                   synced_at   = NOW()`,
+                [auth.userId, acct.id,
+                 followers, following, postsCount, totalLikes,
+                 bio, isVerified, JSON.stringify(u)]
+              );
+              if (followers > 0) {
+                await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
+                  [followers, acct.id]);
+              }
+              synced++;
+              if (scopeLimited) {
+                errors.push('tiktok: stats scope not granted — reconnect TikTok to enable follower/video counts');
+              }
             }
-            synced++;
-          } else {
-            errors.push(`tiktok: unexpected response — ${JSON.stringify(ttUserResp.data).slice(0, 120)}`);
+          } catch (profileErr: any) {
+            errors.push(`tiktok: ${profileErr.message}`);
           }
 
-          // ── Fetch TikTok videos and metrics ────────────────────────────────────
+          // ── Fetch TikTok videos and metrics (skip if video.list scope missing) ─
           try {
             const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
               headers: { Authorization: `Bearer ${token}` },
@@ -12915,7 +12933,10 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             });
 
             const vidErr = videosResp.data?.error?.code;
-            if (videosResp.status === 200 && !vidErr) {
+            // Silently skip if video.list scope not granted — don't surface as error
+            if (vidErr && vidErr !== 'ok') {
+              console.log(`TikTok video.list scope not available (${vidErr}) — skipping video sync`);
+            } else if (videosResp.status === 200 && !vidErr) {
               const videos: any[] = videosResp.data?.data?.videos || [];
               for (const v of videos) {
                 if (!v.id) continue;
@@ -13350,22 +13371,16 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
       if (!token) token = String(acct.access_token || '').trim();
       if (!token) { errors.push('No access token available'); continue; }
 
-      // ── Profile sync ───────────────────────────────────────────────────────
+      // ── Profile sync (with scope fallback) ────────────────────────────────
       try {
-        const userResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
-          headers: { Authorization: `Bearer ${token}` },
-          params: {
-            fields: 'open_id,display_name,username,bio_description,is_verified,' +
-                    'follower_count,following_count,likes_count,video_count',
-          },
-          validateStatus: () => true, timeout: 15000,
-        });
-        const errCode = userResp.data?.error?.code;
-        const errMsg  = userResp.data?.error?.message;
-        if (userResp.status !== 200 || (errCode && errCode !== 'ok')) {
-          errors.push(errMsg || errCode || `HTTP ${userResp.status}`);
-        } else if (userResp.data?.data?.user) {
-          const u = userResp.data.data.user;
+        const { user: u, scopeLimited } = await fetchTikTokUserProfile(token);
+        if (u) {
+          const followers  = Number(u.follower_count  ?? 0);
+          const following  = Number(u.following_count ?? 0);
+          const postsCount = Number(u.video_count     ?? 0);
+          const totalLikes = Number(u.likes_count     ?? 0);
+          const bio        = typeof u.bio_description === 'string' ? u.bio_description : null;
+          const isVerified = Boolean(u.is_verified ?? false);
           await pool.query(
             `INSERT INTO social_profile_stats
                (id, user_id, social_account_id, platform,
@@ -13378,22 +13393,22 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
                bio=EXCLUDED.bio, is_verified=EXCLUDED.is_verified,
                raw_response=EXCLUDED.raw_response, synced_at=NOW()`,
             [auth.userId, acct.id,
-             Number(u.follower_count ?? 0), Number(u.following_count ?? 0),
-             Number(u.video_count ?? 0), Number(u.likes_count ?? 0),
-             typeof u.bio_description === 'string' ? u.bio_description : null,
-             Boolean(u.is_verified ?? false), JSON.stringify(u)]
+             followers, following, postsCount, totalLikes,
+             bio, isVerified, JSON.stringify(u)]
           );
-          const followers = Number(u.follower_count ?? 0);
           if (followers > 0) {
             await pool.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`, [followers, acct.id]);
           }
           synced++;
+          if (scopeLimited) {
+            errors.push('Stats scope not granted — reconnect TikTok to enable follower/video counts');
+          }
         }
       } catch (profileErr: any) {
         errors.push(`Profile sync failed: ${profileErr.message}`);
       }
 
-      // ── Video insights sync ────────────────────────────────────────────────
+      // ── Video insights sync (skip silently if video.list scope missing) ───
       try {
         const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
           headers: { Authorization: `Bearer ${token}` },
@@ -13404,7 +13419,10 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
           validateStatus: () => true, timeout: 15000,
         });
         const vidErrCode = videosResp.data?.error?.code;
-        if (videosResp.status === 200 && !vidErrCode) {
+        if (vidErrCode && vidErrCode !== 'ok') {
+          // video.list scope not granted — skip without surfacing as user-facing error
+          console.log(`TikTok video.list scope not available (${vidErrCode}) — skipping`);
+        } else if (videosResp.status === 200 && !vidErrCode) {
           const videos: any[] = videosResp.data?.data?.videos || [];
           for (const v of videos) {
             if (!v.id) continue;
@@ -13434,8 +13452,6 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
             );
             synced++;
           }
-        } else if (vidErrCode && vidErrCode !== 'ok') {
-          errors.push(`Video sync: ${videosResp.data?.error?.message || vidErrCode}`);
         }
       } catch (vidErr: any) {
         errors.push(`Video sync failed: ${vidErr.message}`);
