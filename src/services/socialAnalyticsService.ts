@@ -48,6 +48,11 @@ export type AccountDashboard = {
     account_name: string;
     handle: string | null;
     followers: number;
+    following_count: number;
+    video_count: number;
+    total_likes_count: number;
+    bio: string | null;
+    is_verified: boolean;
     connected_at: string | null;
   };
   summary: {
