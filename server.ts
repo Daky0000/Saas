@@ -3532,13 +3532,22 @@ async function exchangeTikTokCode(code: string, codeVerifier?: string) {
         validateStatus: () => true,
         timeout: 10000,
       });
-      if (userResp.status < 400) {
-        const u: any = userResp.data?.data?.user || {};
-        if (u.open_id) tokenData.user_id = u.open_id;
-        if (u.display_name) tokenData.name = u.display_name;
-        if (u.username) tokenData.username = u.username;
-        if (u.avatar_url) tokenData.avatar_url = u.avatar_url;
+      const u: any = userResp.data?.data?.user || {};
+      // If scope error or empty response, try with minimal fields (always permitted)
+      let finalUser = u;
+      if (userResp.status >= 400 || (!u.display_name && !u.open_id)) {
+        const fallbackResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
+          params: { fields: 'open_id,display_name' },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          validateStatus: () => true,
+          timeout: 10000,
+        });
+        finalUser = fallbackResp.data?.data?.user || u;
       }
+      if (finalUser.open_id) tokenData.user_id = finalUser.open_id;
+      if (finalUser.display_name) tokenData.name = finalUser.display_name;
+      if (finalUser.username) tokenData.username = finalUser.username;
+      if (finalUser.avatar_url) tokenData.avatar_url = finalUser.avatar_url;
     } catch {
       // best-effort enrichment
     }
@@ -12907,10 +12916,17 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                  followers, following, postsCount, totalLikes,
                  bio, isVerified, JSON.stringify(u)]
               );
-              if (followers > 0) {
-                await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
-                  [followers, acct.id]);
-              }
+              // Update account_name and handle in social_accounts from live profile data
+              const displayName = typeof u.display_name === 'string' && u.display_name.trim() ? u.display_name.trim() : null;
+              const username    = typeof u.username    === 'string' && u.username.trim()    ? u.username.trim()    : null;
+              await pool!.query(
+                `UPDATE social_accounts SET
+                   account_name = COALESCE($1, account_name),
+                   handle       = COALESCE($2, handle),
+                   followers    = CASE WHEN $3 > 0 THEN $3 ELSE followers END
+                 WHERE id = $4`,
+                [displayName, username, followers, acct.id]
+              );
               synced++;
               if (scopeLimited) {
                 errors.push('tiktok: stats scope not granted — reconnect TikTok to enable follower/video counts');
@@ -13396,9 +13412,16 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
              followers, following, postsCount, totalLikes,
              bio, isVerified, JSON.stringify(u)]
           );
-          if (followers > 0) {
-            await pool.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`, [followers, acct.id]);
-          }
+          const displayName = typeof u.display_name === 'string' && u.display_name.trim() ? u.display_name.trim() : null;
+          const username    = typeof u.username    === 'string' && u.username.trim()    ? u.username.trim()    : null;
+          await pool.query(
+            `UPDATE social_accounts SET
+               account_name = COALESCE($1, account_name),
+               handle       = COALESCE($2, handle),
+               followers    = CASE WHEN $3 > 0 THEN $3 ELSE followers END
+             WHERE id = $4`,
+            [displayName, username, followers, acct.id]
+          );
           synced++;
           if (scopeLimited) {
             errors.push('Stats scope not granted — reconnect TikTok to enable follower/video counts');
