@@ -68,6 +68,28 @@ export class LinkedInAdapter {
     }
   }
 
+  static async getAccountProfile(organizationId: string, accessToken: string) {
+    try {
+      const resp = await axios.get(
+        `https://api.linkedin.com/v2/organizations/${encodeURIComponent(organizationId)}?projection=(id,localizedName,followerCount,description,website)`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+      return {
+        username: resp.data.localizedName || "",
+        followers: resp.data.followerCount || 0,
+        followings: 0,
+        total_likes: 0,
+        verified: false,
+        website: resp.data.website || null,
+        raw: resp.data,
+      };
+    } catch (error: any) {
+      return { error: error?.message || "LinkedIn profile fetch failed" };
+    }
+  }
+
   static async getProfile(accessToken: string) {
     try {
       const profileResp = await axios.get("https://api.linkedin.com/v2/me", {

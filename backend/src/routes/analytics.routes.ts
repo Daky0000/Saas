@@ -1,992 +1,1202 @@
-import { Router, Response } from "express";
-import { authMiddleware, AuthRequest } from "../middleware/auth.middleware";
-import { AnalyticsService } from "../services/analytics.service";
-import { AnalyticsSyncService } from "../services/analytics-sync.service";
-import { PrismaClient, PostStatus } from "@prisma/client";
 
-const router = Router();
+import axios from "axios";
+import { PrismaClient, PostStatus } from "@prisma/client";
+import { logIntegrationEvent } from "../utils/integration-log";
+import { decryptToken } from "../utils/encryption";
+import { FacebookAdapter } from "./platform-adapters/facebook.adapter";
+import { InstagramAdapter } from "./platform-adapters/instagram.adapter";
+import { TwitterAdapter } from "./platform-adapters/twitter.adapter";
+import { LinkedInAdapter } from "./platform-adapters/linkedin.adapter";
+import { PinterestAdapter } from "./platform-adapters/pinterest.adapter";
+
 const prisma = new PrismaClient();
 
-const parseDays = (value?: string) => (value === "60" ? 60 : 30) as 30 | 60;
+export type DateRange = { start: Date; end: Date };
 
-const buildRange = (days: 30 | 60) => {
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  const start = new Date(end);
-  start.setDate(start.getDate() - (days - 1));
-  start.setHours(0, 0, 0, 0);
+export type StandardMetrics = {
+  postsPublished: number;
+  totalReach: number;
+  totalImpressions: number;
+  totalEngagement: number;
+  totalLikes: number;
+  totalComments: number;
+  totalShares: number;
+  totalSaves: number;
+  engagementRate: number;
+  rawData?: any;
+};
+
+const emptyMetrics = (): StandardMetrics => ({
+  postsPublished: 0,
+  totalReach: 0,
+  totalImpressions: 0,
+  totalEngagement: 0,
+  totalLikes: 0,
+  totalComments: 0,
+  totalShares: 0,
+  totalSaves: 0,
+  engagementRate: 0,
+});
+
+const calcEngagementRate = (engagement: number, impressions: number) =>
+  impressions > 0 ? Number(((engagement / impressions) * 100).toFixed(2)) : 0;
+
+const startOfDay = (date: Date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const endOfDay = (date: Date) => {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+};
+
+const addDays = (date: Date, days: number) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+};
+
+const buildDateRange = (days: 30 | 60): DateRange => {
+  const end = endOfDay(new Date());
+  const start = startOfDay(addDays(end, -(days - 1)));
   return { start, end };
 };
 
-const sumTotals = (rows: any[]) => {
-  return rows.reduce(
-    (acc, row) => {
-      acc.postsPublished += row.postsPublished || 0;
-      acc.totalReach += row.totalReach || 0;
-      acc.totalImpressions += row.totalImpressions || 0;
-      acc.totalEngagement += row.totalEngagement || 0;
+const getDaysList = (range: DateRange) => {
+  const dates: Date[] = [];
+  let cursor = startOfDay(range.start);
+  const end = startOfDay(range.end);
+  while (cursor.getTime() <= end.getTime()) {
+    dates.push(new Date(cursor));
+    cursor = addDays(cursor, 1);
+  }
+  return dates;
+};
+
+const sumMetrics = (items: StandardMetrics[]) => {
+  if (!items.length) return null;
+  return items.reduce(
+    (acc, item) => {
+      acc.postsPublished += item.postsPublished;
+      acc.totalReach += item.totalReach;
+      acc.totalImpressions += item.totalImpressions;
+      acc.totalEngagement += item.totalEngagement;
+      acc.totalLikes += item.totalLikes;
+      acc.totalComments += item.totalComments;
+      acc.totalShares += item.totalShares;
+      acc.totalSaves += item.totalSaves;
       return acc;
     },
-    {
-      postsPublished: 0,
-      totalReach: 0,
-      totalImpressions: 0,
-      totalEngagement: 0,
-    }
+    emptyMetrics()
   );
 };
 
-const calcGrowth = (current: number, previous: number) => {
-  if (!previous) return 0;
-  return Number((((current - previous) / previous) * 100).toFixed(2));
+const normalizeMetrics = (metrics: StandardMetrics) => {
+  return {
+    ...metrics,
+    totalEngagement:
+      metrics.totalEngagement ||
+      metrics.totalLikes + metrics.totalComments + metrics.totalShares,
+    engagementRate: calcEngagementRate(
+      metrics.totalEngagement ||
+        metrics.totalLikes + metrics.totalComments + metrics.totalShares,
+      metrics.totalImpressions
+    ),
+  } as StandardMetrics;
 };
 
-router.get(
-  "/overview",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const analytics = await AnalyticsService.getUserAnalytics(
-        req.userId!,
-        req.agencyId!,
-        days
-      );
+const isEmptyMetrics = (metrics: StandardMetrics | null) => {
+  if (!metrics) return true;
+  return (
+    metrics.postsPublished === 0 &&
+    metrics.totalReach === 0 &&
+    metrics.totalImpressions === 0 &&
+    metrics.totalEngagement === 0 &&
+    metrics.totalLikes === 0 &&
+    metrics.totalComments === 0 &&
+    metrics.totalShares === 0 &&
+    metrics.totalSaves === 0
+  );
+};
 
-      if (!analytics.combined) {
-        return res.json({
-          success: true,
-          data: {
-            dateRange: analytics.dateRange,
-            summary: null,
-            platforms: [],
-            topPlatforms: [],
-            trends: null,
-          },
-          message: "No data available yet",
-        });
-      }
+const getPlatformMetricsFromAnalytics = (
+  analytics: any,
+  platform: string
+): StandardMetrics | null => {
+  if (!analytics) return null;
+  switch (platform) {
+    case "instagram":
+      return normalizeMetrics({
+        postsPublished: 1,
+        totalReach: analytics.instagramReach || 0,
+        totalImpressions: analytics.instagramImpressions || 0,
+        totalEngagement:
+          (analytics.instagramLikes || 0) +
+          (analytics.instagramComments || 0) +
+          (analytics.instagramShares || 0),
+        totalLikes: analytics.instagramLikes || 0,
+        totalComments: analytics.instagramComments || 0,
+        totalShares: analytics.instagramShares || 0,
+        totalSaves: analytics.instagramSaves || 0,
+        engagementRate: 0,
+      });
+    case "tiktok":
+      return normalizeMetrics({
+        postsPublished: 1,
+        totalReach: analytics.tiktokViews || 0,
+        totalImpressions: analytics.tiktokViews || 0,
+        totalEngagement:
+          (analytics.tiktokLikes || 0) +
+          (analytics.tiktokComments || 0) +
+          (analytics.tiktokShares || 0),
+        totalLikes: analytics.tiktokLikes || 0,
+        totalComments: analytics.tiktokComments || 0,
+        totalShares: analytics.tiktokShares || 0,
+        totalSaves: 0,
+        engagementRate: 0,
+      });
+    case "linkedin":
+      return normalizeMetrics({
+        postsPublished: 1,
+        totalReach: analytics.linkedinImpressions || 0,
+        totalImpressions: analytics.linkedinImpressions || 0,
+        totalEngagement:
+          (analytics.linkedinLikes || 0) +
+          (analytics.linkedinComments || 0),
+        totalLikes: analytics.linkedinLikes || 0,
+        totalComments: analytics.linkedinComments || 0,
+        totalShares: 0,
+        totalSaves: 0,
+        engagementRate: 0,
+      });
+    case "twitter":
+      return normalizeMetrics({
+        postsPublished: 1,
+        totalReach: analytics.twitterImpressions || 0,
+        totalImpressions: analytics.twitterImpressions || 0,
+        totalEngagement:
+          (analytics.twitterLikes || 0) +
+          (analytics.twitterRetweets || 0) +
+          (analytics.twitterReplies || 0),
+        totalLikes: analytics.twitterLikes || 0,
+        totalComments: analytics.twitterReplies || 0,
+        totalShares: analytics.twitterRetweets || 0,
+        totalSaves: 0,
+        engagementRate: 0,
+      });
+    case "facebook":
+      return normalizeMetrics({
+        postsPublished: 1,
+        totalReach: analytics.facebookReach || 0,
+        totalImpressions: analytics.facebookImpressions || 0,
+        totalEngagement:
+          (analytics.facebookLikes || 0) +
+          (analytics.facebookComments || 0) +
+          (analytics.facebookShares || 0),
+        totalLikes: analytics.facebookLikes || 0,
+        totalComments: analytics.facebookComments || 0,
+        totalShares: analytics.facebookShares || 0,
+        totalSaves: 0,
+        engagementRate: 0,
+      });
+    default:
+      return null;
+  }
+};
 
-      const range = buildRange(days);
-      const previousRange = {
-        start: new Date(range.start.getTime() - days * 24 * 60 * 60 * 1000),
-        end: new Date(range.start.getTime() - 1),
-      };
+const buildTrendSeries = (rows: any[], key: keyof StandardMetrics) => {
+  const grouped = new Map<string, number>();
+  rows.forEach((row) => {
+    const dateKey = new Date(row.date).toISOString().split("T")[0];
+    grouped.set(dateKey, (grouped.get(dateKey) || 0) + (row[key] || 0));
+  });
+  return Array.from(grouped.entries())
+    .map(([date, value]) => ({ date, value }))
+    .sort((a, b) => (a.date > b.date ? 1 : -1));
+};
 
-      const previousRows = await prisma.platformDailyMetrics.findMany({
+const hasAnyNonZeroTrend = (
+  trend: Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }> | null
+) => {
+  if (!trend || !trend.length) return false;
+  return trend.some(
+    (item) =>
+      (item.totalEngagement ?? 0) !== 0 ||
+      (item.totalReach ?? 0) !== 0 ||
+      (item.totalImpressions ?? 0) !== 0
+  );
+};
+
+export class AnalyticsService {
+  static async fetchPlatformMetrics(
+    userIntegrationId: string,
+    days: 30 | 60,
+    refresh = false
+  ) {
+    const integration = await prisma.userIntegration.findUnique({
+      where: { id: userIntegrationId },
+      include: { integration: true, user: true },
+    });
+    if (!integration) throw new Error("Integration not found");
+
+    const range = buildDateRange(days);
+    const daysList = getDaysList(range);
+
+    const cached = await prisma.platformDailyMetrics.findMany({
+      where: {
+        userIntegrationId,
+        date: { gte: range.start, lte: range.end },
+      },
+      orderBy: { date: "asc" },
+    });
+
+    const cacheFresh =
+      cached.length >= daysList.length &&
+      cached.every((row) => Date.now() - row.updatedAt.getTime() < 60 * 60 * 1000);
+
+    if (!refresh && cacheFresh) {
+      return cached;
+    }
+
+    const platform = integration.integration.slug;
+    const metrics = await this.fetchMetricsFromApi(integration, range);
+
+    if (!metrics) {
+      return cached;
+    }
+
+    await this.storeDailyMetrics(integration, platform, metrics, daysList);
+
+    return prisma.platformDailyMetrics.findMany({
+      where: {
+        userIntegrationId,
+        date: { gte: range.start, lte: range.end },
+      },
+      orderBy: { date: "asc" },
+    });
+  }
+
+  private static async storeDailyMetrics(
+    integration: any,
+    platform: string,
+    metrics: StandardMetrics,
+    daysList: Date[]
+  ) {
+    const daysCount = daysList.length || 1;
+    const perDay = (value: number) => Math.round(value / daysCount);
+
+    for (const date of daysList) {
+      const payload: StandardMetrics = normalizeMetrics({
+        postsPublished: perDay(metrics.postsPublished),
+        totalReach: perDay(metrics.totalReach),
+        totalImpressions: perDay(metrics.totalImpressions),
+        totalEngagement: perDay(metrics.totalEngagement),
+        totalLikes: perDay(metrics.totalLikes),
+        totalComments: perDay(metrics.totalComments),
+        totalShares: perDay(metrics.totalShares),
+        totalSaves: perDay(metrics.totalSaves),
+        engagementRate: 0,
+        rawData: metrics.rawData,
+      });
+
+      await prisma.platformDailyMetrics.upsert({
         where: {
-          agencyId: req.agencyId!,
-          date: { gte: previousRange.start, lte: previousRange.end },
-        },
-      });
-
-      const previousTotals = sumTotals(previousRows);
-      const growthRate = previousTotals.totalEngagement
-        ? calcGrowth(
-            analytics.combined.totalEngagement,
-            previousTotals.totalEngagement
-          )
-        : null;
-
-      const platformData = analytics.platforms
-        .filter((item) => item.metrics)
-        .map((item) => ({
-          platform: item.platform,
-          reach: item.metrics?.totalReach ?? null,
-          impressions: item.metrics?.totalImpressions ?? null,
-          engagement: item.metrics?.totalEngagement ?? null,
-          engagementRate: item.metrics?.engagementRate ?? null,
-        }));
-
-      res.json({
-        success: true,
-        data: {
-          dateRange: analytics.dateRange,
-          summary: {
-            totalPosts: analytics.combined.postsPublished,
-            totalReach: analytics.combined.totalReach,
-            totalImpressions: analytics.combined.totalImpressions,
-            totalEngagement: analytics.combined.totalEngagement,
-            engagementRate: analytics.combined.engagementRate,
-            growthRate,
-          },
-          platforms: platformData,
-          topPlatforms: analytics.topPlatforms ?? [],
-          trends: analytics.trends,
-        },
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/platforms",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const analytics = await AnalyticsService.getUserAnalytics(
-        req.userId!,
-        req.agencyId!,
-        days
-      );
-
-      const data = analytics.platforms.map((item) => ({
-        platform: item.platform,
-        accountName: item.accountName,
-        metrics: item.metrics,
-      }));
-
-      res.json({
-        success: true,
-        data,
-        message: data.length ? undefined : "No data available yet",
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/platforms/:platformSlug",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const slug = req.params.platformSlug;
-      const integrations = await prisma.userIntegration.findMany({
-        where: {
-          userId: req.userId!,
-          integration: { slug },
-        },
-        include: { integration: true },
-      });
-      if (!integrations.length) {
-        return res.json({
-          success: true,
-          data: null,
-          message: "Platform not connected",
-        });
-      }
-
-      const details = await AnalyticsService.getPlatformAnalytics(
-        integrations[0].id,
-        days
-      );
-
-      if (!details) {
-        return res.json({
-          success: true,
-          data: null,
-          message: "No data for this platform",
-        });
-      }
-
-      res.json({ success: true, data: details });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/trending",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const analytics = await AnalyticsService.getUserAnalytics(
-        req.userId!,
-        req.agencyId!,
-        days
-      );
-
-      if (!analytics.trends) {
-        return res.json({
-          success: true,
-          data: null,
-          message: "No data available yet",
-        });
-      }
-
-      const topPosts = await AnalyticsService.getTopPosts(
-        req.userId!,
-        req.agencyId!,
-        10,
-        days
-      );
-      const topPlatforms = await AnalyticsService.getTopPlatforms(
-        req.userId!,
-        req.agencyId!,
-        days
-      );
-
-      res.json({
-        success: true,
-        data: {
-          engagementTrend: analytics.trends.map((item) => ({
-            date: item.date,
-            value: item.totalEngagement,
-          })),
-          reachTrend: analytics.trends.map((item) => ({
-            date: item.date,
-            value: item.totalReach,
-          })),
-          impressionsTrend: analytics.trends.map((item) => ({
-            date: item.date,
-            value: item.totalImpressions ?? null,
-          })),
-          topPosts,
-          topPlatforms,
-        },
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/posts",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const limit = Number(req.query.limit || 20);
-      const offset = Number(req.query.offset || 0);
-      const sortBy = (req.query.sortBy as string) || "engagement";
-
-      let posts = await AnalyticsService.getTopPosts(
-        req.userId!,
-        req.agencyId!,
-        200,
-        days
-      );
-
-      if (!posts.length) {
-        return res.json({
-          success: true,
-          data: [],
-          message: "No posts published yet",
-        });
-      }
-
-      if (sortBy === "reach") {
-        posts = posts.sort((a, b) => (b.reach ?? -1) - (a.reach ?? -1));
-      } else if (sortBy === "date") {
-        posts = posts.sort(
-          (a, b) =>
-            new Date(b.postedAt).getTime() -
-            new Date(a.postedAt).getTime()
-        );
-      } else {
-        posts = posts.sort((a, b) => (b.engagement ?? -1) - (a.engagement ?? -1));
-      }
-
-      res.json({ success: true, data: posts.slice(offset, offset + limit) });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/posts/:postId",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const payload = await AnalyticsService.getPostAnalytics(req.params.postId);
-      res.json({ success: true, data: payload });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/performance",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const groupBy = (req.query.groupBy as string) || "daily";
-      const range = buildRange(days);
-      const rows = await prisma.platformDailyMetrics.findMany({
-        where: { agencyId: req.agencyId!, date: { gte: range.start, lte: range.end } },
-      });
-
-      if (!rows.length) {
-        return res.json({
-          success: true,
-          data: null,
-          message: "No data available yet",
-        });
-      }
-
-      const grouped = new Map<string, any>();
-      rows.forEach((row) => {
-        const date = new Date(row.date);
-        let key = date.toISOString().split("T")[0];
-        if (groupBy === "weekly") {
-          const weekStart = new Date(date);
-          weekStart.setDate(date.getDate() - date.getDay());
-          key = weekStart.toISOString().split("T")[0];
-        } else if (groupBy === "monthly") {
-          key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        }
-
-        const existing = grouped.get(key) || { period: key, posts: 0, engagement: 0, reach: 0 };
-        existing.posts += row.postsPublished || 0;
-        existing.engagement += row.totalEngagement || 0;
-        existing.reach += row.totalReach || 0;
-        grouped.set(key, existing);
-      });
-
-      const groupedData = Array.from(grouped.values()).sort((a, b) =>
-        a.period > b.period ? 1 : -1
-      );
-
-      const currentTotals = groupedData.reduce(
-        (acc, row) => {
-          acc.posts += row.posts;
-          acc.engagement += row.engagement;
-          acc.reach += row.reach;
-          return acc;
-        },
-        { posts: 0, engagement: 0, reach: 0 }
-      );
-
-      const comparison = {
-        currentPeriod: currentTotals,
-        previousPeriod: { posts: 0, engagement: 0, reach: 0 },
-        growth: { posts: 0, engagement: 0, reach: 0 },
-      };
-
-      res.json({ success: true, data: { groupedData, comparison } });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.post(
-  "/refresh",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const integrationId = req.query.userIntegrationId as string | undefined;
-      if (integrationId) {
-        await AnalyticsSyncService.syncPlatformAnalytics(integrationId);
-      } else {
-        await AnalyticsSyncService.syncAllUserAnalytics(req.userId!, req.agencyId!);
-      }
-      res.json({ success: true, jobId: `sync-${Date.now()}` });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/export",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const days = parseDays(req.query.days as string | undefined);
-      const format = (req.query.format as string) || "csv";
-      const analytics = await AnalyticsService.getUserAnalytics(
-        req.userId!,
-        req.agencyId!,
-        days
-      );
-
-      const rows = [
-        ["Platform", "Reach", "Impressions", "Engagement", "Engagement Rate"],
-        ...(analytics.platforms
-          .filter((item) => item.metrics)
-          .map((item) => [
-            item.platform,
-            item.metrics?.totalReach ?? "",
-            item.metrics?.totalImpressions ?? "",
-            item.metrics?.totalEngagement ?? "",
-            item.metrics?.engagementRate ?? "",
-          ])),
-      ];
-
-      const csv = rows.map((row) => row.join(",")).join("\n");
-
-      if (format === "pdf") {
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", "attachment; filename=analytics.pdf");
-        return res.send(csv);
-      }
-
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=analytics.csv");
-      res.send(csv);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-router.get(
-  "/comparison",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const now = new Date();
-      const currentStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const currentEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      const lastStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const lastEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-
-      const currentRows = await prisma.platformDailyMetrics.findMany({
-        where: { agencyId: req.agencyId!, date: { gte: currentStart, lte: currentEnd } },
-      });
-      const lastRows = await prisma.platformDailyMetrics.findMany({
-        where: { agencyId: req.agencyId!, date: { gte: lastStart, lte: lastEnd } },
-      });
-
-      if (!currentRows.length && !lastRows.length) {
-        return res.json({
-          success: true,
-          data: null,
-          message: "No data available yet",
-        });
-      }
-
-      const currentTotals = sumTotals(currentRows);
-      const lastTotals = sumTotals(lastRows);
-
-      res.json({
-        success: true,
-        data: {
-          thisMonth: currentTotals,
-          lastMonth: lastTotals,
-          change: {
-            posts: calcGrowth(currentTotals.postsPublished, lastTotals.postsPublished),
-            engagement: calcGrowth(currentTotals.totalEngagement, lastTotals.totalEngagement),
-            reach: calcGrowth(currentTotals.totalReach, lastTotals.totalReach),
+          userIntegrationId_date_platform: {
+            userIntegrationId: integration.id,
+            date: startOfDay(date),
+            platform,
           },
         },
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-);
-
-// GET /api/analytics/dashboard
-// Returns the unified BlogAnalyticsDashboard shape expected by the frontend.
-router.get(
-  "/dashboard",
-  authMiddleware,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const preset = (req.query.preset as string) || "30d";
-      const customStart = req.query.start as string | undefined;
-      const customEnd = req.query.end as string | undefined;
-
-      // Build date range
-      const now = new Date();
-      now.setHours(23, 59, 59, 999);
-
-      let daysCount: number;
-      let rangeStart: Date;
-      const rangeEnd = new Date(now);
-      let rangeLabel: string;
-
-      if (preset === "custom" && customStart && customEnd) {
-        rangeStart = new Date(customStart);
-        rangeStart.setHours(0, 0, 0, 0);
-        const customEndDate = new Date(customEnd);
-        customEndDate.setHours(23, 59, 59, 999);
-        rangeEnd.setTime(customEndDate.getTime());
-        daysCount = Math.max(
-          1,
-          Math.ceil(
-            (rangeEnd.getTime() - rangeStart.getTime()) / (1000 * 60 * 60 * 24)
-          )
-        );
-        rangeLabel = `${customStart} – ${customEnd}`;
-      } else {
-        daysCount = preset === "7d" ? 7 : preset === "90d" ? 90 : 30;
-        rangeStart = new Date(now);
-        rangeStart.setDate(rangeStart.getDate() - (daysCount - 1));
-        rangeStart.setHours(0, 0, 0, 0);
-        rangeLabel = `Last ${daysCount} days`;
-      }
-
-      const previousRangeMs = rangeEnd.getTime() - rangeStart.getTime();
-      const previousStart = new Date(rangeStart.getTime() - previousRangeMs);
-      const previousEnd = new Date(rangeStart.getTime() - 1);
-
-      const [currentPosts, previousPosts, platformMetrics, prevPlatformMetrics, futurePosts, lastSyncRecord] =
-        await Promise.all([
-          prisma.post.findMany({
-            where: {
-              agencyId: req.agencyId!,
-              createdAt: { gte: rangeStart, lte: rangeEnd },
-            },
-            include: {
-              platformIntegrations: {
-                include: {
-                  userIntegration: { include: { integration: true } },
-                },
-              },
-            },
-            orderBy: { postedAt: "desc" },
-          }),
-          prisma.post.count({
-            where: {
-              agencyId: req.agencyId!,
-              status: PostStatus.POSTED,
-              createdAt: { gte: previousStart, lte: previousEnd },
-            },
-          }),
-          prisma.platformDailyMetrics.findMany({
-            where: {
-              agencyId: req.agencyId!,
-              date: { gte: rangeStart, lte: rangeEnd },
-            },
-            orderBy: { date: "asc" },
-          }),
-          prisma.platformDailyMetrics.findMany({
-            where: {
-              agencyId: req.agencyId!,
-              date: { gte: previousStart, lte: previousEnd },
-            },
-          }),
-          prisma.post.count({
-            where: {
-              agencyId: req.agencyId!,
-              status: PostStatus.SCHEDULED,
-              scheduledAt: { gt: new Date() },
-            },
-          }),
-          prisma.platformDailyMetrics.findFirst({
-            where: { agencyId: req.agencyId! },
-            orderBy: { updatedAt: "desc" },
-            select: { updatedAt: true },
-          }),
-        ]);
-
-      // ── KPIs ──────────────────────────────────────────────────────────────
-      const publishedPosts = currentPosts.filter(
-        (p) => p.status === PostStatus.POSTED
-      ).length;
-
-      const totalReachCurrent = platformMetrics.reduce(
-        (s, r) => s + r.totalReach,
-        0
-      );
-      const totalEngagementCurrent = platformMetrics.reduce(
-        (s, r) => s + r.totalEngagement,
-        0
-      );
-      const totalImpressionsCurrent = platformMetrics.reduce(
-        (s, r) => s + r.totalImpressions,
-        0
-      );
-
-      const totalReachPrev = prevPlatformMetrics.reduce(
-        (s, r) => s + r.totalReach,
-        0
-      );
-      const totalEngagementPrev = prevPlatformMetrics.reduce(
-        (s, r) => s + r.totalEngagement,
-        0
-      );
-      const totalImpressionsPrev = prevPlatformMetrics.reduce(
-        (s, r) => s + r.totalImpressions,
-        0
-      );
-
-      const engagementRate =
-        totalImpressionsCurrent > 0
-          ? Number(
-              (
-                (totalEngagementCurrent / totalImpressionsCurrent) *
-                100
-              ).toFixed(2)
-            )
-          : null;
-      const prevEngagementRate =
-        totalImpressionsPrev > 0
-          ? Number(
-              (
-                (totalEngagementPrev / totalImpressionsPrev) *
-                100
-              ).toFixed(2)
-            )
-          : null;
-
-      const calcChange = (
-        curr: number | null,
-        prev: number | null
-      ): number | null => {
-        if (curr === null || prev === null || prev === 0) return null;
-        return Number((((curr - prev) / prev) * 100).toFixed(1));
-      };
-
-      const allIntegrations = currentPosts.flatMap(
-        (p) => p.platformIntegrations
-      );
-      const postedCount = allIntegrations.filter(
-        (i) => i.status === "POSTED"
-      ).length;
-      const failedCount = allIntegrations.filter(
-        (i) => i.status === "FAILED"
-      ).length;
-      const publishSuccessRate =
-        postedCount + failedCount > 0
-          ? Number(
-              ((postedCount / (postedCount + failedCount)) * 100).toFixed(1)
-            )
-          : null;
-
-      // Top platform by published count
-      const platformPublishCounts = new Map<string, number>();
-      currentPosts
-        .filter((p) => p.status === PostStatus.POSTED)
-        .forEach((p) =>
-          p.platformIntegrations
-            .filter((i) => i.status === "POSTED")
-            .forEach((i) => {
-              const slug = i.userIntegration.integration.slug;
-              platformPublishCounts.set(
-                slug,
-                (platformPublishCounts.get(slug) || 0) + 1
-              );
-            })
-        );
-      const topEntry = Array.from(platformPublishCounts.entries()).sort(
-        (a, b) => b[1] - a[1]
-      )[0];
-      const totalPublished = Array.from(platformPublishCounts.values()).reduce(
-        (s, v) => s + v,
-        0
-      );
-      const topPlatform = topEntry
-        ? {
-            platform: topEntry[0],
-            label:
-              topEntry[0].charAt(0).toUpperCase() + topEntry[0].slice(1),
-            published: topEntry[1],
-            share:
-              totalPublished > 0
-                ? Number(((topEntry[1] / totalPublished) * 100).toFixed(1))
-                : 0,
-          }
-        : null;
-
-      // Best time window from postedAt hours
-      const hourCounts = new Map<number, number>();
-      currentPosts
-        .filter((p) => p.postedAt)
-        .forEach((p) => {
-          const h = new Date(p.postedAt!).getHours();
-          hourCounts.set(h, (hourCounts.get(h) || 0) + 1);
-        });
-      const bestHour = Array.from(hourCounts.entries()).sort(
-        (a, b) => b[1] - a[1]
-      )[0];
-      const bestTimeWindow = bestHour
-        ? {
-            label: `${bestHour[0]}:00 – ${bestHour[0] + 1}:00`,
-            supportingValue: `${bestHour[1]} post${bestHour[1] !== 1 ? "s" : ""} published`,
-          }
-        : null;
-
-      // ── Trend by date ──────────────────────────────────────────────────────
-      const trendMap = new Map<
-        string,
-        {
-          publishedPosts: number;
-          successfulPublishes: number;
-          failedPublishes: number;
-          scheduledPublishes: number;
-          reach: number;
-          engagement: number;
-          impressions: number;
-        }
-      >();
-      let cur = new Date(rangeStart);
-      while (cur <= rangeEnd) {
-        trendMap.set(cur.toISOString().split("T")[0], {
-          publishedPosts: 0,
-          successfulPublishes: 0,
-          failedPublishes: 0,
-          scheduledPublishes: 0,
-          reach: 0,
-          engagement: 0,
-          impressions: 0,
-        });
-        cur.setDate(cur.getDate() + 1);
-      }
-      currentPosts.forEach((post) => {
-        const dateKey = new Date(post.postedAt || post.createdAt)
-          .toISOString()
-          .split("T")[0];
-        const entry = trendMap.get(dateKey);
-        if (!entry) return;
-        if (post.status === PostStatus.POSTED) {
-          entry.publishedPosts += 1;
-          entry.successfulPublishes += post.platformIntegrations.filter(
-            (i) => i.status === "POSTED"
-          ).length;
-          entry.failedPublishes += post.platformIntegrations.filter(
-            (i) => i.status === "FAILED"
-          ).length;
-        } else if (post.status === PostStatus.SCHEDULED) {
-          entry.scheduledPublishes += 1;
-        }
-      });
-      platformMetrics.forEach((row) => {
-        const dateKey = new Date(row.date).toISOString().split("T")[0];
-        const entry = trendMap.get(dateKey);
-        if (!entry) return;
-        entry.reach += row.totalReach;
-        entry.engagement += row.totalEngagement;
-        entry.impressions += row.totalImpressions;
-      });
-      const trend = Array.from(trendMap.entries()).map(([date, d]) => ({
-        date,
-        publishedPosts: d.publishedPosts,
-        successfulPublishes: d.successfulPublishes,
-        failedPublishes: d.failedPublishes,
-        scheduledPublishes: d.scheduledPublishes,
-        reach: d.reach || null,
-        engagement: d.engagement || null,
-        engagementRate:
-          d.impressions > 0 && d.engagement > 0
-            ? Number(((d.engagement / d.impressions) * 100).toFixed(2))
-            : null,
-      }));
-
-      // ── Platform breakdown ─────────────────────────────────────────────────
-      const platformMap = new Map<
-        string,
-        {
-          label: string;
-          published: number;
-          failed: number;
-          scheduled: number;
-          accounts: Set<string>;
-          reach: number;
-          engagement: number;
-          impressions: number;
-        }
-      >();
-      currentPosts.forEach((post) =>
-        post.platformIntegrations.forEach((i) => {
-          const slug = i.userIntegration.integration.slug;
-          const e = platformMap.get(slug) || {
-            label: slug.charAt(0).toUpperCase() + slug.slice(1),
-            published: 0,
-            failed: 0,
-            scheduled: 0,
-            accounts: new Set<string>(),
-            reach: 0,
-            engagement: 0,
-            impressions: 0,
-          };
-          if (i.status === "POSTED") e.published += 1;
-          else if (i.status === "FAILED") e.failed += 1;
-          else e.scheduled += 1;
-          e.accounts.add(i.userIntegrationId);
-          platformMap.set(slug, e);
-        })
-      );
-      platformMetrics.forEach((row) => {
-        const e = platformMap.get(row.platform);
-        if (e) {
-          e.reach += row.totalReach;
-          e.engagement += row.totalEngagement;
-          e.impressions += row.totalImpressions;
-        }
-      });
-      const platformBreakdown = Array.from(platformMap.entries()).map(
-        ([platform, d]) => ({
+        update: {
+          postsPublished: payload.postsPublished,
+          totalReach: payload.totalReach,
+          totalImpressions: payload.totalImpressions,
+          totalEngagement: payload.totalEngagement,
+          totalLikes: payload.totalLikes,
+          totalComments: payload.totalComments,
+          totalShares: payload.totalShares,
+          totalSaves: payload.totalSaves,
+          engagementRate: payload.engagementRate,
+          rawData: payload.rawData,
+        },
+        create: {
+          userIntegrationId: integration.id,
+          agencyId: integration.user.agencyId,
+          userId: integration.userId,
+          date: startOfDay(date),
           platform,
-          label: d.label,
-          published: d.published,
-          failed: d.failed,
-          scheduled: d.scheduled,
-          successRate:
-            d.published + d.failed > 0
-              ? Number(
-                  ((d.published / (d.published + d.failed)) * 100).toFixed(1)
-                )
-              : null,
-          reach: d.reach || null,
-          engagement: d.engagement || null,
-          engagementRate:
-            d.impressions > 0 && d.engagement > 0
-              ? Number(((d.engagement / d.impressions) * 100).toFixed(2))
-              : null,
-          accounts: d.accounts.size,
-          followerReach: null,
-        })
-      );
-
-      // ── Top posts ──────────────────────────────────────────────────────────
-      const topPosts = currentPosts
-        .filter((p) => p.status === PostStatus.POSTED)
-        .map((post) => {
-          const platforms = post.platformIntegrations.map(
-            (i) => i.userIntegration.integration.slug
-          );
-          const successfulPublishes = post.platformIntegrations.filter(
-            (i) => i.status === "POSTED"
-          ).length;
-          const failedPublishes = post.platformIntegrations.filter(
-            (i) => i.status === "FAILED"
-          ).length;
-          const postedDateStr = post.postedAt
-            ? new Date(post.postedAt).toISOString().split("T")[0]
-            : null;
-          const dayMetrics = postedDateStr
-            ? platformMetrics.filter(
-                (r) =>
-                  new Date(r.date).toISOString().split("T")[0] === postedDateStr
-              )
-            : [];
-          const reach =
-            dayMetrics.reduce((s, r) => s + r.totalReach, 0) || null;
-          const engagement =
-            dayMetrics.reduce((s, r) => s + r.totalEngagement, 0) || null;
-          const score = Math.min(
-            100,
-            Math.round(
-              successfulPublishes * 20 +
-                (engagement ? Math.min(engagement / 10, 60) : 0)
-            )
-          );
-          const content = post.content as any;
-          const hasMedia =
-            Array.isArray(content?.original?.mediaUrls) &&
-            content.original.mediaUrls.length > 0;
-          return {
-            id: post.id,
-            title: post.title,
-            publishedAt: post.postedAt?.toISOString() || null,
-            platforms,
-            type: hasMedia ? ("image" as const) : ("text" as const),
-            hashtags: [] as string[],
-            tagNames: [] as string[],
-            successfulPublishes,
-            failedPublishes,
-            reach,
-            engagement,
-            engagementRate: null as number | null,
-            score,
-            scoreLabel:
-              score >= 80
-                ? "Excellent"
-                : score >= 60
-                  ? "Good"
-                  : score >= 40
-                    ? "Average"
-                    : "Low",
-          };
-        })
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10);
-
-      // ── Insights ───────────────────────────────────────────────────────────
-      const insights: Array<{
-        type: "positive" | "warning" | "suggestion";
-        title: string;
-        description: string;
-        actionLabel?: string;
-      }> = [];
-      if (publishSuccessRate !== null && publishSuccessRate < 80) {
-        insights.push({
-          type: "warning",
-          title: "High publish failure rate",
-          description: `${(100 - publishSuccessRate).toFixed(0)}% of posts failed to publish. Check your integration connections.`,
-          actionLabel: "Check Integrations",
-        });
-      }
-      if (publishedPosts > previousPosts && previousPosts > 0) {
-        const inc = publishedPosts - previousPosts;
-        insights.push({
-          type: "positive",
-          title: "Publishing frequency up",
-          description: `You published ${inc} more post${inc !== 1 ? "s" : ""} compared to the previous period.`,
-        });
-      }
-      if (topPlatform) {
-        insights.push({
-          type: "suggestion",
-          title: `${topPlatform.label} is your top platform`,
-          description: `${topPlatform.share}% of your published content goes to ${topPlatform.label}. Consider diversifying.`,
-        });
-      }
-      if (futurePosts > 0) {
-        insights.push({
-          type: "positive",
-          title: `${futurePosts} post${futurePosts !== 1 ? "s" : ""} scheduled`,
-          description: "You have upcoming scheduled posts ready to publish.",
-        });
-      }
-
-      const hasPerformanceData = platformMetrics.some(
-        (r) =>
-          r.totalReach > 0 || r.totalEngagement > 0 || r.totalImpressions > 0
-      );
-
-      res.json({
-        success: true,
-        data: {
-          range: {
-            preset,
-            start: rangeStart.toISOString(),
-            end: rangeEnd.toISOString(),
-            label: rangeLabel,
-            days: daysCount,
-          },
-          lastSyncedAt: lastSyncRecord?.updatedAt?.toISOString() ?? null,
-          metricsAvailability: { performance: hasPerformanceData },
-          summaryNote: hasPerformanceData
-            ? null
-            : "Connect integrations and sync analytics to see performance data.",
-          kpis: {
-            publishedPosts,
-            publishedPostsChange: calcChange(publishedPosts, previousPosts),
-            totalReach: totalReachCurrent || null,
-            totalReachChange: calcChange(
-              totalReachCurrent || null,
-              totalReachPrev || null
-            ),
-            totalEngagement: totalEngagementCurrent || null,
-            totalEngagementChange: calcChange(
-              totalEngagementCurrent || null,
-              totalEngagementPrev || null
-            ),
-            engagementRate,
-            engagementRateChange: calcChange(engagementRate, prevEngagementRate),
-            publishSuccessRate,
-            publishSuccessRateChange: null,
-            topPlatform,
-            bestTimeWindow,
-            futureScheduledCount: futurePosts,
-          },
-          trend,
-          platformBreakdown,
-          topPosts,
-          insights,
+          postsPublished: payload.postsPublished,
+          totalReach: payload.totalReach,
+          totalImpressions: payload.totalImpressions,
+          totalEngagement: payload.totalEngagement,
+          totalLikes: payload.totalLikes,
+          totalComments: payload.totalComments,
+          totalShares: payload.totalShares,
+          totalSaves: payload.totalSaves,
+          engagementRate: payload.engagementRate,
+          rawData: payload.rawData,
         },
       });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
     }
   }
-);
 
-export default router;
+  private static async fetchMetricsFromApi(integration: any, range: DateRange) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return null;
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await this.fetchFacebookMetrics(
+            accessToken,
+            integration.accountId,
+            range
+          );
+        case "instagram":
+          return await this.fetchInstagramMetrics(
+            accessToken,
+            integration.accountId,
+            range
+          );
+        case "twitter":
+          return await this.fetchTwitterMetrics(
+            accessToken,
+            integration.accountId,
+            range
+          );
+        case "linkedin":
+          return await this.fetchLinkedInMetrics(
+            accessToken,
+            integration.accountId,
+            range
+          );
+        case "pinterest":
+          return await this.fetchPinterestMetrics(
+            accessToken,
+            integration.accountId,
+            range
+          );
+        case "tiktok":
+          return await this.fetchTikTokMetrics(accessToken, integration.accountId, range);
+        default:
+          return null;
+      }
+    } catch (error: any) {
+      await logIntegrationEvent({
+        userId: integration.userId,
+        integrationId: integration.integrationId,
+        userIntegrationId: integration.id,
+        eventType: "analytics_fetch",
+        status: "failed",
+        errorMessage: error?.message || "Analytics fetch failed",
+      });
+      return null;
+    }
+  }
+
+  static async aggregateDailyMetrics(userIntegrationId: string, date: Date) {
+    const integration = await prisma.userIntegration.findUnique({
+      where: { id: userIntegrationId },
+      include: { integration: true, user: true },
+    });
+    if (!integration) throw new Error("Integration not found");
+
+    const day = startOfDay(date);
+    const platform = integration.integration.slug;
+
+    const record = await prisma.platformDailyMetrics.findUnique({
+      where: {
+        userIntegrationId_date_platform: {
+          userIntegrationId,
+          date: day,
+          platform,
+        },
+      },
+    });
+
+    if (record) return record;
+
+    return null;
+  }
+
+  static async aggregateMonthlyMetrics(
+    userIntegrationId: string,
+    year: number,
+    month: number
+  ) {
+    const integration = await prisma.userIntegration.findUnique({
+      where: { id: userIntegrationId },
+      include: { integration: true, user: true },
+    });
+    if (!integration) throw new Error("Integration not found");
+
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const rows = await prisma.platformDailyMetrics.findMany({
+      where: {
+        userIntegrationId,
+        date: { gte: start, lte: end },
+      },
+    });
+
+    if (!rows.length) return null;
+
+    const totals = sumMetrics(
+      rows.map((row) =>
+        normalizeMetrics({
+          postsPublished: row.postsPublished,
+          totalReach: row.totalReach,
+          totalImpressions: row.totalImpressions,
+          totalEngagement: row.totalEngagement,
+          totalLikes: row.totalLikes,
+          totalComments: row.totalComments,
+          totalShares: row.totalShares,
+          totalSaves: row.totalSaves,
+          engagementRate: row.engagementRate,
+        })
+      )
+    );
+
+    if (!totals) return null;
+
+    const engagementRate = calcEngagementRate(
+      totals.totalEngagement,
+      totals.totalImpressions
+    );
+
+    const previous = await prisma.platformMonthlyMetrics.findFirst({
+      where: {
+        userIntegrationId,
+        year: month === 1 ? year - 1 : year,
+        month: month === 1 ? 12 : month - 1,
+        platform: integration.integration.slug,
+      },
+    });
+
+    const growthRate = previous
+      ? Number(
+          (
+            ((totals.totalEngagement - previous.totalEngagement) /
+              (previous.totalEngagement || 1)) *
+            100
+          ).toFixed(2)
+        )
+      : 0;
+
+    return prisma.platformMonthlyMetrics.upsert({
+      where: {
+        userIntegrationId_year_month_platform: {
+          userIntegrationId,
+          year,
+          month,
+          platform: integration.integration.slug,
+        },
+      },
+      update: {
+        postsPublished: totals.postsPublished,
+        totalReach: totals.totalReach,
+        totalImpressions: totals.totalImpressions,
+        totalEngagement: totals.totalEngagement,
+        totalLikes: totals.totalLikes,
+        totalComments: totals.totalComments,
+        totalShares: totals.totalShares,
+        totalSaves: totals.totalSaves,
+        engagementRate,
+        growthRate,
+      },
+      create: {
+        userIntegrationId,
+        agencyId: integration.user.agencyId,
+        userId: integration.userId,
+        year,
+        month,
+        platform: integration.integration.slug,
+        postsPublished: totals.postsPublished,
+        totalReach: totals.totalReach,
+        totalImpressions: totals.totalImpressions,
+        totalEngagement: totals.totalEngagement,
+        totalLikes: totals.totalLikes,
+        totalComments: totals.totalComments,
+        totalShares: totals.totalShares,
+        totalSaves: totals.totalSaves,
+        engagementRate,
+        growthRate,
+      },
+    });
+  }
+
+  static async getUserAnalytics(
+    userId: string,
+    agencyId: string,
+    days: 30 | 60
+  ) {
+    const range = buildDateRange(days);
+    const integrations = await prisma.userIntegration.findMany({
+      where: {
+        userId,
+        user: { agencyId },
+      },
+      include: { integration: true },
+    });
+
+    const platforms = [] as Array<{
+      platform: string;
+      accountName?: string | null;
+      metrics: StandardMetrics | null;
+    }>;
+    const combinedMetrics = emptyMetrics();
+    let hasData = false;
+
+    for (const integration of integrations) {
+      const dailyMetrics = await prisma.platformDailyMetrics.findMany({
+        where: {
+          userIntegrationId: integration.id,
+          date: { gte: range.start, lte: range.end },
+        },
+      });
+
+      if (!dailyMetrics.length) {
+        platforms.push({
+          platform: integration.integration.slug,
+          accountName: integration.accountName,
+          metrics: null,
+        });
+        continue;
+      }
+
+      const totals = sumMetrics(
+        dailyMetrics.map((row) =>
+          normalizeMetrics({
+            postsPublished: row.postsPublished,
+            totalReach: row.totalReach,
+            totalImpressions: row.totalImpressions,
+            totalEngagement: row.totalEngagement,
+            totalLikes: row.totalLikes,
+            totalComments: row.totalComments,
+            totalShares: row.totalShares,
+            totalSaves: row.totalSaves,
+            engagementRate: row.engagementRate,
+          })
+        )
+      );
+
+      if (totals) {
+        const normalized = normalizeMetrics(totals);
+        const hasRealMetrics = !isEmptyMetrics(normalized);
+
+        platforms.push({
+          platform: integration.integration.slug,
+          accountName: integration.accountName,
+          metrics: hasRealMetrics ? normalized : null,
+        });
+
+        if (hasRealMetrics) {
+          hasData = true;
+          combinedMetrics.postsPublished += normalized.postsPublished;
+          combinedMetrics.totalReach += normalized.totalReach;
+          combinedMetrics.totalImpressions += normalized.totalImpressions;
+          combinedMetrics.totalEngagement += normalized.totalEngagement;
+          combinedMetrics.totalLikes += normalized.totalLikes;
+          combinedMetrics.totalComments += normalized.totalComments;
+          combinedMetrics.totalShares += normalized.totalShares;
+          combinedMetrics.totalSaves += normalized.totalSaves;
+        }
+      } else {
+        platforms.push({
+          platform: integration.integration.slug,
+          accountName: integration.accountName,
+          metrics: null,
+        });
+      }
+    }
+
+    if (!hasData) {
+      return {
+        dateRange: range,
+        platforms,
+        combined: null as StandardMetrics | null,
+        trends: null as
+          | Array<{
+              date: string;
+              totalEngagement: number;
+              totalReach: number;
+              totalImpressions?: number;
+            }>
+          | null,
+        topPlatforms: [],
+      };
+    }
+
+    combinedMetrics.engagementRate = calcEngagementRate(
+      combinedMetrics.totalEngagement,
+      combinedMetrics.totalImpressions
+    );
+
+    const allDaily = await prisma.platformDailyMetrics.findMany({
+      where: { agencyId, date: { gte: range.start, lte: range.end } },
+    });
+
+    let trends:
+      | Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }>
+      | null = null;
+
+    if (allDaily.length) {
+      trends = Array.from(
+        new Map(
+          allDaily.map((row) => {
+            const dateKey = new Date(row.date).toISOString().split("T")[0];
+            return [dateKey, row];
+          })
+        ).keys()
+      )
+        .map((dateKey) => {
+          const rows = allDaily.filter(
+            (row) => new Date(row.date).toISOString().split("T")[0] === dateKey
+          );
+          const dayTotals = sumMetrics(
+            rows.map((row) =>
+              normalizeMetrics({
+                postsPublished: row.postsPublished,
+                totalReach: row.totalReach,
+                totalImpressions: row.totalImpressions,
+                totalEngagement: row.totalEngagement,
+                totalLikes: row.totalLikes,
+                totalComments: row.totalComments,
+                totalShares: row.totalShares,
+                totalSaves: row.totalSaves,
+                engagementRate: row.engagementRate,
+              })
+            )
+          );
+          if (!dayTotals) return null;
+          return {
+            date: dateKey,
+            totalEngagement: dayTotals.totalEngagement,
+            totalReach: dayTotals.totalReach,
+            totalImpressions: dayTotals.totalImpressions,
+          };
+        })
+        .filter((item): item is {
+          date: string;
+          totalEngagement: number;
+          totalReach: number;
+          totalImpressions?: number;
+        } => item !== null);
+
+      if (!hasAnyNonZeroTrend(trends)) {
+        trends = null;
+      } else {
+        trends.sort((a, b) => (a.date > b.date ? 1 : -1));
+      }
+    }
+
+    const topPlatforms = [...platforms]
+      .filter((item) => item.metrics)
+      .sort(
+        (a, b) =>
+          (b.metrics?.totalEngagement || 0) -
+          (a.metrics?.totalEngagement || 0)
+      )
+      .slice(0, 5)
+      .map((item) => ({
+        platform: item.platform,
+        engagement: item.metrics?.totalEngagement || 0,
+      }));
+
+    return {
+      dateRange: range,
+      platforms,
+      combined: {
+        postsPublished: combinedMetrics.postsPublished,
+        totalReach: combinedMetrics.totalReach,
+        totalImpressions: combinedMetrics.totalImpressions,
+        totalEngagement: combinedMetrics.totalEngagement,
+        totalLikes: combinedMetrics.totalLikes,
+        totalComments: combinedMetrics.totalComments,
+        totalShares: combinedMetrics.totalShares,
+        totalSaves: combinedMetrics.totalSaves,
+        engagementRate: combinedMetrics.engagementRate,
+      },
+      trends,
+      topPlatforms,
+    };
+  }
+
+  static async getPlatformAnalytics(userIntegrationId: string, days: 30 | 60) {
+    const range = buildDateRange(days);
+    const integration = await prisma.userIntegration.findUnique({
+      where: { id: userIntegrationId },
+      include: { integration: true },
+    });
+    if (!integration) throw new Error("Integration not found");
+
+    const dailyMetrics = await prisma.platformDailyMetrics.findMany({
+      where: {
+        userIntegrationId,
+        date: { gte: range.start, lte: range.end },
+      },
+      orderBy: { date: "asc" },
+    });
+
+    if (!dailyMetrics.length) return null;
+
+    const totals = sumMetrics(
+      dailyMetrics.map((row) =>
+        normalizeMetrics({
+          postsPublished: row.postsPublished,
+          totalReach: row.totalReach,
+          totalImpressions: row.totalImpressions,
+          totalEngagement: row.totalEngagement,
+          totalLikes: row.totalLikes,
+          totalComments: row.totalComments,
+          totalShares: row.totalShares,
+          totalSaves: row.totalSaves,
+          engagementRate: row.engagementRate,
+        })
+      )
+    );
+
+    if (!totals) return null;
+
+    const normalized = normalizeMetrics(totals);
+    if (isEmptyMetrics(normalized)) return null;
+
+    return {
+      platform: integration.integration.slug,
+      accountName: integration.accountName,
+      metrics: normalized,
+      dailyBreakdown: dailyMetrics.map((row) => ({
+        date: row.date,
+        reach: row.totalReach,
+        impressions: row.totalImpressions,
+        engagement: row.totalEngagement,
+        likes: row.totalLikes,
+        comments: row.totalComments,
+        shares: row.totalShares,
+        saves: row.totalSaves,
+      })),
+    };
+  }
+
+  static async getPostAnalytics(postId: string) {
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      include: {
+        analytics: true,
+        platformIntegrations: {
+          include: { userIntegration: { include: { integration: true } } },
+        },
+      },
+    });
+    if (!post) throw new Error("Post not found");
+
+    const platforms = post.platformIntegrations.map((integration) => {
+      const platform = integration.userIntegration.integration.slug;
+      const metrics = getPlatformMetricsFromAnalytics(post.analytics, platform);
+      return {
+        platform,
+        status: integration.status,
+        platformPostId: integration.platformPostId,
+        metrics: metrics
+          ? {
+              likes: metrics.totalLikes,
+              comments: metrics.totalComments,
+              shares: metrics.totalShares,
+              reach: metrics.totalReach,
+              impressions: metrics.totalImpressions,
+            }
+          : null,
+      };
+    });
+
+    const metricsList = platforms
+      .map((item) => item.metrics)
+      .filter((item): item is NonNullable<typeof item> => !!item);
+
+    if (!metricsList.length) {
+      return {
+        post: { id: post.id, title: post.title, content: post.content },
+        platforms,
+        combined: null,
+      };
+    }
+
+    const combined = sumMetrics(
+      metricsList.map((item) =>
+        normalizeMetrics({
+          postsPublished: 1,
+          totalReach: item.reach,
+          totalImpressions: item.impressions,
+          totalEngagement: item.likes + item.comments + item.shares,
+          totalLikes: item.likes,
+          totalComments: item.comments,
+          totalShares: item.shares,
+          totalSaves: 0,
+          engagementRate: 0,
+        })
+      )
+    );
+
+    if (!combined) {
+      return {
+        post: { id: post.id, title: post.title, content: post.content },
+        platforms,
+        combined: null,
+      };
+    }
+
+    return {
+      post: { id: post.id, title: post.title, content: post.content },
+      platforms,
+      combined: {
+        totalEngagement: combined.totalEngagement,
+        totalReach: combined.totalReach,
+      },
+    };
+  }
+
+  static async calculateEngagementTrend(
+    userIntegrationId: string,
+    days: 30 | 60
+  ) {
+    const range = buildDateRange(days);
+    const rows = await prisma.platformDailyMetrics.findMany({
+      where: {
+        userIntegrationId,
+        date: { gte: range.start, lte: range.end },
+      },
+      orderBy: { date: "asc" },
+    });
+    return buildTrendSeries(rows, "totalEngagement");
+  }
+
+  static async calculateReachTrend(userIntegrationId: string, days: 30 | 60) {
+    const range = buildDateRange(days);
+    const rows = await prisma.platformDailyMetrics.findMany({
+      where: {
+        userIntegrationId,
+        date: { gte: range.start, lte: range.end },
+      },
+      orderBy: { date: "asc" },
+    });
+    return buildTrendSeries(rows, "totalReach");
+  }
+
+  static async getTopPosts(
+    userId: string,
+    agencyId: string,
+    limit = 10,
+    days: 30 | 60
+  ) {
+    const range = buildDateRange(days);
+    const posts = await prisma.post.findMany({
+      where: {
+        agencyId,
+        createdById: userId,
+        status: PostStatus.POSTED,
+        createdAt: { gte: range.start, lte: range.end },
+      },
+      include: {
+        analytics: true,
+        platformIntegrations: {
+          include: { userIntegration: { include: { integration: true } } },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const rows = posts.map((post) => {
+      const platforms = post.platformIntegrations.map(
+        (integration) => integration.userIntegration.integration.slug
+      );
+      const metricsList = post.analytics
+        ? platforms
+            .map((platform) => getPlatformMetricsFromAnalytics(post.analytics, platform))
+            .filter((item): item is StandardMetrics => !!item)
+        : [];
+
+      const metrics = metricsList.length ? sumMetrics(metricsList) : null;
+      const normalized = metrics ? normalizeMetrics(metrics) : null;
+
+      return {
+        id: post.id,
+        title: post.title,
+        platforms,
+        engagement: normalized ? normalized.totalEngagement : null,
+        reach: normalized ? normalized.totalReach : null,
+        impressions: normalized ? normalized.totalImpressions : null,
+        postedAt: post.postedAt || post.createdAt,
+        engagementRate: normalized ? normalized.engagementRate : null,
+      };
+    });
+
+    return rows
+      .sort((a, b) => (b.engagement ?? -1) - (a.engagement ?? -1))
+      .slice(0, limit);
+  }
+
+  static async getTopPlatforms(userId: string, agencyId: string, days: 30 | 60) {
+    const range = buildDateRange(days);
+    const rows = await prisma.platformDailyMetrics.findMany({
+      where: { agencyId, date: { gte: range.start, lte: range.end } },
+    });
+
+    if (!rows.length) return [];
+
+    const grouped = new Map<string, StandardMetrics>();
+    rows.forEach((row) => {
+      const key = row.platform;
+      const current = grouped.get(key) || emptyMetrics();
+      grouped.set(
+        key,
+        normalizeMetrics({
+          postsPublished: current.postsPublished + row.postsPublished,
+          totalReach: current.totalReach + row.totalReach,
+          totalImpressions: current.totalImpressions + row.totalImpressions,
+          totalEngagement: current.totalEngagement + row.totalEngagement,
+          totalLikes: current.totalLikes + row.totalLikes,
+          totalComments: current.totalComments + row.totalComments,
+          totalShares: current.totalShares + row.totalShares,
+          totalSaves: current.totalSaves + row.totalSaves,
+          engagementRate: 0,
+        })
+      );
+    });
+
+    return Array.from(grouped.entries())
+      .map(([platform, metrics]) => ({
+        platform,
+        engagementRate: metrics.engagementRate,
+        engagement: metrics.totalEngagement,
+      }))
+      .sort((a, b) => b.engagementRate - a.engagementRate);
+  }
+
+  static async fetchFacebookMetrics(
+    accessToken: string,
+    pageId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !pageId) return null;
+    try {
+      const resp = await FacebookAdapter.getPageMetrics(
+        pageId,
+        accessToken,
+        dateRange
+      );
+      if (!resp || resp.error) return null;
+      return normalizeMetrics({
+        postsPublished: 0,
+        totalReach: resp.reach || 0,
+        totalImpressions: resp.impressions || 0,
+        totalEngagement: resp.engagement || 0,
+        totalLikes: resp.likes || 0,
+        totalComments: resp.comments || 0,
+        totalShares: resp.shares || 0,
+        totalSaves: resp.saves || 0,
+        engagementRate: 0,
+        rawData: resp.raw,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  static async fetchInstagramMetrics(
+    accessToken: string,
+    accountId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !accountId) return null;
+    try {
+      const resp = await InstagramAdapter.getAccountMetrics(
+        accountId,
+        accessToken,
+        dateRange
+      );
+      if (!resp || resp.error) return null;
+      return normalizeMetrics({
+        postsPublished: 0,
+        totalReach: resp.reach || 0,
+        totalImpressions: resp.impressions || 0,
+        totalEngagement: resp.engagement || 0,
+        totalLikes: resp.likes || 0,
+        totalComments: resp.comments || 0,
+        totalShares: resp.shares || 0,
+        totalSaves: resp.saves || 0,
+        engagementRate: 0,
+        rawData: resp.raw,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  static async fetchTwitterMetrics(
+    accessToken: string,
+    userId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !userId) return null;
+    try {
+      const resp = await TwitterAdapter.getUserMetrics(
+        userId,
+        accessToken,
+        dateRange
+      );
+      if (!resp || resp.error) return null;
+      return normalizeMetrics({
+        postsPublished: resp.posts || 0,
+        totalReach: resp.impressions || 0,
+        totalImpressions: resp.impressions || 0,
+        totalEngagement: resp.engagement || 0,
+        totalLikes: resp.likes || 0,
+        totalComments: resp.comments || 0,
+        totalShares: resp.retweets || 0,
+        totalSaves: 0,
+        engagementRate: 0,
+        rawData: resp.raw,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  static async fetchLinkedInMetrics(
+    accessToken: string,
+    organizationId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !organizationId) return null;
+    try {
+      const resp = await LinkedInAdapter.getOrganizationMetrics(
+        organizationId,
+        accessToken,
+        dateRange
+      );
+      if (!resp || resp.error) return null;
+      return normalizeMetrics({
+        postsPublished: resp.posts || 0,
+        totalReach: resp.reach || 0,
+        totalImpressions: resp.impressions || 0,
+        totalEngagement: resp.engagement || 0,
+        totalLikes: resp.likes || 0,
+        totalComments: resp.comments || 0,
+        totalShares: resp.shares || 0,
+        totalSaves: 0,
+        engagementRate: 0,
+        rawData: resp.raw,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  static async fetchTikTokMetrics(
+    accessToken: string,
+    businessAccountId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !businessAccountId) return null;
+    try {
+      // Fetch user's video list to aggregate metrics
+      const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {
+          fields: 'id,create_time,like_count,comment_count,share_count,view_count',
+          max_count: 100, // Fetch up to 100 recent videos
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+
+      if (videosResp.status !== 200 || videosResp.data?.error?.code) {
+        return null;
+      }
+
+      const videos: any[] = videosResp.data?.data?.videos || [];
+      
+      // Filter videos within date range if needed
+      let filteredVideos = videos;
+      if (dateRange) {
+        filteredVideos = videos.filter((v: any) => {
+          const createTime = new Date(v.create_time * 1000); // TikTok returns unix timestamp
+          return createTime >= dateRange.start && createTime <= dateRange.end;
+        });
+      }
+
+      // Aggregate metrics
+      const metadata = {
+        totalVideos: filteredVideos.length,
+        likes: filteredVideos.reduce((sum: number, v: any) => sum + (v.like_count || 0), 0),
+        comments: filteredVideos.reduce((sum: number, v: any) => sum + (v.comment_count || 0), 0),
+        shares: filteredVideos.reduce((sum: number, v: any) => sum + (v.share_count || 0), 0),
+        views: filteredVideos.reduce((sum: number, v: any) => sum + (v.view_count || 0), 0),
+        avgEngagement: filteredVideos.length > 0 
+          ? Math.round(
+              (filteredVideos.reduce((sum: number, v: any) => 
+                sum + (v.like_count || 0) + (v.comment_count || 0) + (v.share_count || 0), 0) / 
+              (filteredVideos.length * 3)) * 100
+            ) / 100
+          : 0,
+      };
+
+      return normalizeMetrics({
+        postsPublished: metadata.totalVideos,
+        totalReach: metadata.views,
+        totalImpressions: metadata.views,
+        totalEngagement: metadata.likes + metadata.comments + metadata.shares,
+        totalLikes: metadata.likes,
+        totalComments: metadata.comments,
+        totalShares: metadata.shares,
+        totalSaves: 0,
+        engagementRate: metadata.avgEngagement,
+        rawData: { videos: filteredVideos, summary: metadata },
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  static async fetchPinterestMetrics(
+    accessToken: string,
+    boardId: string,
+    dateRange: DateRange
+  ) {
+    if (!accessToken || !boardId) return null;
+    try {
+      const resp = await PinterestAdapter.getBoardMetrics(
+        boardId,
+        accessToken,
+        dateRange
+      );
+      if (!resp || resp.error) return null;
+      return normalizeMetrics({
+        postsPublished: resp.posts || 0,
+        totalReach: resp.reach || 0,
+        totalImpressions: resp.impressions || 0,
+        totalEngagement: resp.engagement || 0,
+        totalLikes: resp.likes || 0,
+        totalComments: resp.comments || 0,
+        totalShares: resp.shares || 0,
+        totalSaves: resp.saves || 0,
+        engagementRate: 0,
+        rawData: resp.raw,
+      });
+    } catch {
+      return null;
+    }
+  }
+}
+
+
+

@@ -1,17 +1,422 @@
 
 import axios from "axios";
-import { PrismaClient, PostStatus } from "@prisma/client";
-import { logIntegrationEvent } from "../utils/integration-log";
-import { decryptToken } from "../utils/encryption";
-import { FacebookAdapter } from "./platform-adapters/facebook.adapter";
-import { InstagramAdapter } from "./platform-adapters/instagram.adapter";
-import { TwitterAdapter } from "./platform-adapters/twitter.adapter";
-import { LinkedInAdapter } from "./platform-adapters/linkedin.adapter";
-import { PinterestAdapter } from "./platform-adapters/pinterest.adapter";
+import { PrismaClient, PostStatus 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "@prisma/client";
+import { logIntegrationEvent 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "../utils/integration-log";
+import { decryptToken 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "../utils/encryption";
+import { FacebookAdapter 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "./platform-adapters/facebook.adapter";
+import { InstagramAdapter 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "./platform-adapters/instagram.adapter";
+import { TwitterAdapter 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "./platform-adapters/twitter.adapter";
+import { LinkedInAdapter 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "./platform-adapters/linkedin.adapter";
+import { PinterestAdapter 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} from "./platform-adapters/pinterest.adapter";
 
 const prisma = new PrismaClient();
 
-export type DateRange = { start: Date; end: Date };
+export type DateRange = { start: Date; end: Date 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
 
 export type StandardMetrics = {
   postsPublished: number;
@@ -24,6 +429,51 @@ export type StandardMetrics = {
   totalSaves: number;
   engagementRate: number;
   rawData?: any;
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const emptyMetrics = (): StandardMetrics => ({
@@ -36,6 +486,51 @@ const emptyMetrics = (): StandardMetrics => ({
   totalShares: 0,
   totalSaves: 0,
   engagementRate: 0,
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 });
 
 const calcEngagementRate = (engagement: number, impressions: number) =>
@@ -45,24 +540,249 @@ const startOfDay = (date: Date) => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d;
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const endOfDay = (date: Date) => {
   const d = new Date(date);
   d.setHours(23, 59, 59, 999);
   return d;
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const addDays = (date: Date, days: number) => {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const buildDateRange = (days: 30 | 60): DateRange => {
   const end = endOfDay(new Date());
   const start = startOfDay(addDays(end, -(days - 1)));
-  return { start, end };
+  return { start, end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const getDaysList = (range: DateRange) => {
@@ -72,8 +792,98 @@ const getDaysList = (range: DateRange) => {
   while (cursor.getTime() <= end.getTime()) {
     dates.push(new Date(cursor));
     cursor = addDays(cursor, 1);
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+}
   return dates;
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const sumMetrics = (items: StandardMetrics[]) => {
@@ -89,9 +899,99 @@ const sumMetrics = (items: StandardMetrics[]) => {
       acc.totalShares += item.totalShares;
       acc.totalSaves += item.totalSaves;
       return acc;
-    },
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
     emptyMetrics()
   );
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const normalizeMetrics = (metrics: StandardMetrics) => {
@@ -105,7 +1005,97 @@ const normalizeMetrics = (metrics: StandardMetrics) => {
         metrics.totalLikes + metrics.totalComments + metrics.totalShares,
       metrics.totalImpressions
     ),
-  } as StandardMetrics;
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} as StandardMetrics;
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const isEmptyMetrics = (metrics: StandardMetrics | null) => {
@@ -120,6 +1110,51 @@ const isEmptyMetrics = (metrics: StandardMetrics | null) => {
     metrics.totalShares === 0 &&
     metrics.totalSaves === 0
   );
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const getPlatformMetricsFromAnalytics = (
@@ -142,7 +1177,52 @@ const getPlatformMetricsFromAnalytics = (
         totalShares: analytics.instagramShares || 0,
         totalSaves: analytics.instagramSaves || 0,
         engagementRate: 0,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     case "tiktok":
       return normalizeMetrics({
         postsPublished: 1,
@@ -157,7 +1237,52 @@ const getPlatformMetricsFromAnalytics = (
         totalShares: analytics.tiktokShares || 0,
         totalSaves: 0,
         engagementRate: 0,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     case "linkedin":
       return normalizeMetrics({
         postsPublished: 1,
@@ -171,7 +1296,52 @@ const getPlatformMetricsFromAnalytics = (
         totalShares: 0,
         totalSaves: 0,
         engagementRate: 0,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     case "twitter":
       return normalizeMetrics({
         postsPublished: 1,
@@ -186,7 +1356,52 @@ const getPlatformMetricsFromAnalytics = (
         totalShares: analytics.twitterRetweets || 0,
         totalSaves: 0,
         engagementRate: 0,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     case "facebook":
       return normalizeMetrics({
         postsPublished: 1,
@@ -201,9 +1416,144 @@ const getPlatformMetricsFromAnalytics = (
         totalShares: analytics.facebookShares || 0,
         totalSaves: 0,
         engagementRate: 0,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     default:
       return null;
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
 };
 
@@ -212,14 +1562,194 @@ const buildTrendSeries = (rows: any[], key: keyof StandardMetrics) => {
   rows.forEach((row) => {
     const dateKey = new Date(row.date).toISOString().split("T")[0];
     grouped.set(dateKey, (grouped.get(dateKey) || 0) + (row[key] || 0));
-  });
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
   return Array.from(grouped.entries())
-    .map(([date, value]) => ({ date, value }))
+    .map(([date, value]) => ({ date, value 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}))
     .sort((a, b) => (a.date > b.date ? 1 : -1));
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 const hasAnyNonZeroTrend = (
-  trend: Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }> | null
+  trend: Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}> | null
 ) => {
   if (!trend || !trend.length) return false;
   return trend.some(
@@ -228,6 +1758,51 @@ const hasAnyNonZeroTrend = (
       (item.totalReach ?? 0) !== 0 ||
       (item.totalImpressions ?? 0) !== 0
   );
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
 };
 
 export class AnalyticsService {
@@ -237,9 +1812,144 @@ export class AnalyticsService {
     refresh = false
   ) {
     const integration = await prisma.userIntegration.findUnique({
-      where: { id: userIntegrationId },
-      include: { integration: true, user: true },
-    });
+      where: { id: userIntegrationId 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      include: { integration: true, user: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     if (!integration) throw new Error("Integration not found");
 
     const range = buildDateRange(days);
@@ -248,10 +1958,190 @@ export class AnalyticsService {
     const cached = await prisma.platformDailyMetrics.findMany({
       where: {
         userIntegrationId,
-        date: { gte: range.start, lte: range.end },
-      },
-      orderBy: { date: "asc" },
-    });
+        date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      orderBy: { date: "asc" 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     const cacheFresh =
       cached.length >= daysList.length &&
@@ -259,25 +2149,340 @@ export class AnalyticsService {
 
     if (!refresh && cacheFresh) {
       return cached;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     const platform = integration.integration.slug;
     const metrics = await this.fetchMetricsFromApi(integration, range);
 
     if (!metrics) {
       return cached;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     await this.storeDailyMetrics(integration, platform, metrics, daysList);
 
     return prisma.platformDailyMetrics.findMany({
       where: {
         userIntegrationId,
-        date: { gte: range.start, lte: range.end },
-      },
-      orderBy: { date: "asc" },
-    });
+        date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      orderBy: { date: "asc" 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   private static async storeDailyMetrics(
     integration: any,
@@ -300,7 +2505,52 @@ export class AnalyticsService {
         totalSaves: perDay(metrics.totalSaves),
         engagementRate: 0,
         rawData: metrics.rawData,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
       await prisma.platformDailyMetrics.upsert({
         where: {
@@ -308,8 +2558,98 @@ export class AnalyticsService {
             userIntegrationId: integration.id,
             date: startOfDay(date),
             platform,
-          },
-        },
+          
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
         update: {
           postsPublished: payload.postsPublished,
           totalReach: payload.totalReach,
@@ -321,7 +2661,52 @@ export class AnalyticsService {
           totalSaves: payload.totalSaves,
           engagementRate: payload.engagementRate,
           rawData: payload.rawData,
-        },
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
         create: {
           userIntegrationId: integration.id,
           agencyId: integration.user.agencyId,
@@ -338,10 +2723,190 @@ export class AnalyticsService {
           totalSaves: payload.totalSaves,
           engagementRate: payload.engagementRate,
           rawData: payload.rawData,
-        },
-      });
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   private static async fetchMetricsFromApi(integration: any, range: DateRange) {
     const accessToken = integration.accessToken
@@ -350,7 +2915,52 @@ export class AnalyticsService {
 
     if (!accessToken) {
       return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     try {
       switch (integration.integration.slug) {
@@ -388,8 +2998,98 @@ export class AnalyticsService {
           return await this.fetchTikTokMetrics(accessToken, integration.accountId, range);
         default:
           return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
       }
     } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch (error: any) {
       await logIntegrationEvent({
         userId: integration.userId,
         integrationId: integration.integrationId,
@@ -397,16 +3097,286 @@ export class AnalyticsService {
         eventType: "analytics_fetch",
         status: "failed",
         errorMessage: error?.message || "Analytics fetch failed",
-      });
-      return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+});
+      return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async aggregateDailyMetrics(userIntegrationId: string, date: Date) {
     const integration = await prisma.userIntegration.findUnique({
-      where: { id: userIntegrationId },
-      include: { integration: true, user: true },
-    });
+      where: { id: userIntegrationId 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      include: { integration: true, user: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     if (!integration) throw new Error("Integration not found");
 
     const day = startOfDay(date);
@@ -418,14 +3388,194 @@ export class AnalyticsService {
           userIntegrationId,
           date: day,
           platform,
-        },
-      },
-    });
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     if (record) return record;
 
     return null;
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+}
 
   static async aggregateMonthlyMetrics(
     userIntegrationId: string,
@@ -433,9 +3583,144 @@ export class AnalyticsService {
     month: number
   ) {
     const integration = await prisma.userIntegration.findUnique({
-      where: { id: userIntegrationId },
-      include: { integration: true, user: true },
-    });
+      where: { id: userIntegrationId 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      include: { integration: true, user: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     if (!integration) throw new Error("Integration not found");
 
     const start = new Date(year, month - 1, 1);
@@ -444,9 +3729,144 @@ export class AnalyticsService {
     const rows = await prisma.platformDailyMetrics.findMany({
       where: {
         userIntegrationId,
-        date: { gte: start, lte: end },
-      },
-    });
+        date: { gte: start, lte: end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     if (!rows.length) return null;
 
@@ -462,7 +3882,52 @@ export class AnalyticsService {
           totalShares: row.totalShares,
           totalSaves: row.totalSaves,
           engagementRate: row.engagementRate,
-        })
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
       )
     );
 
@@ -479,8 +3944,98 @@ export class AnalyticsService {
         year: month === 1 ? year - 1 : year,
         month: month === 1 ? 12 : month - 1,
         platform: integration.integration.slug,
-      },
-    });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     const growthRate = previous
       ? Number(
@@ -499,8 +4054,98 @@ export class AnalyticsService {
           year,
           month,
           platform: integration.integration.slug,
-        },
-      },
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
       update: {
         postsPublished: totals.postsPublished,
         totalReach: totals.totalReach,
@@ -512,7 +4157,52 @@ export class AnalyticsService {
         totalSaves: totals.totalSaves,
         engagementRate,
         growthRate,
-      },
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
       create: {
         userIntegrationId,
         agencyId: integration.user.agencyId,
@@ -530,9 +4220,144 @@ export class AnalyticsService {
         totalSaves: totals.totalSaves,
         engagementRate,
         growthRate,
-      },
-    });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async getUserAnalytics(
     userId: string,
@@ -543,16 +4368,241 @@ export class AnalyticsService {
     const integrations = await prisma.userIntegration.findMany({
       where: {
         userId,
-        user: { agencyId },
-      },
-      include: { integration: true },
-    });
+        user: { agencyId 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      include: { integration: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     const platforms = [] as Array<{
       platform: string;
       accountName?: string | null;
       metrics: StandardMetrics | null;
-    }>;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}>;
     const combinedMetrics = emptyMetrics();
     let hasData = false;
 
@@ -560,18 +4610,243 @@ export class AnalyticsService {
       const dailyMetrics = await prisma.platformDailyMetrics.findMany({
         where: {
           userIntegrationId: integration.id,
-          date: { gte: range.start, lte: range.end },
-        },
-      });
+          date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
       if (!dailyMetrics.length) {
         platforms.push({
           platform: integration.integration.slug,
           accountName: integration.accountName,
           metrics: null,
-        });
-        continue;
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
       }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+        continue;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
       const totals = sumMetrics(
         dailyMetrics.map((row) =>
@@ -585,7 +4860,52 @@ export class AnalyticsService {
             totalShares: row.totalShares,
             totalSaves: row.totalSaves,
             engagementRate: row.engagementRate,
-          })
+          
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
         )
       );
 
@@ -597,7 +4917,52 @@ export class AnalyticsService {
           platform: integration.integration.slug,
           accountName: integration.accountName,
           metrics: hasRealMetrics ? normalized : null,
-        });
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
         if (hasRealMetrics) {
           hasData = true;
@@ -609,15 +4974,240 @@ export class AnalyticsService {
           combinedMetrics.totalComments += normalized.totalComments;
           combinedMetrics.totalShares += normalized.totalShares;
           combinedMetrics.totalSaves += normalized.totalSaves;
-        }
-      } else {
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} else {
         platforms.push({
           platform: integration.integration.slug,
           accountName: integration.accountName,
           metrics: null,
-        });
-      }
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     if (!hasData) {
       return {
@@ -630,11 +5220,146 @@ export class AnalyticsService {
               totalEngagement: number;
               totalReach: number;
               totalImpressions?: number;
-            }>
+            
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}>
           | null,
         topPlatforms: [],
-      };
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     combinedMetrics.engagementRate = calcEngagementRate(
       combinedMetrics.totalEngagement,
@@ -642,11 +5367,191 @@ export class AnalyticsService {
     );
 
     const allDaily = await prisma.platformDailyMetrics.findMany({
-      where: { agencyId, date: { gte: range.start, lte: range.end } },
-    });
+      where: { agencyId, date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     let trends:
-      | Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number }>
+      | Array<{ date: string; totalEngagement: number; totalReach: number; totalImpressions?: number 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}>
       | null = null;
 
     if (allDaily.length) {
@@ -655,7 +5560,52 @@ export class AnalyticsService {
           allDaily.map((row) => {
             const dateKey = new Date(row.date).toISOString().split("T")[0];
             return [dateKey, row];
-          })
+          
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
         ).keys()
       )
         .map((dateKey) => {
@@ -674,7 +5624,52 @@ export class AnalyticsService {
                 totalShares: row.totalShares,
                 totalSaves: row.totalSaves,
                 engagementRate: row.engagementRate,
-              })
+              
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
             )
           );
           if (!dayTotals) return null;
@@ -683,21 +5678,291 @@ export class AnalyticsService {
             totalEngagement: dayTotals.totalEngagement,
             totalReach: dayTotals.totalReach,
             totalImpressions: dayTotals.totalImpressions,
-          };
-        })
+          
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
         .filter((item): item is {
           date: string;
           totalEngagement: number;
           totalReach: number;
           totalImpressions?: number;
-        } => item !== null);
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} => item !== null);
 
       if (!hasAnyNonZeroTrend(trends)) {
         trends = null;
-      } else {
-        trends.sort((a, b) => (a.date > b.date ? 1 : -1));
-      }
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} else {
+        trends.sort((a, b) => (a.date > b.date ? 1 : -1));
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     const topPlatforms = [...platforms]
       .filter((item) => item.metrics)
@@ -710,7 +5975,52 @@ export class AnalyticsService {
       .map((item) => ({
         platform: item.platform,
         engagement: item.metrics?.totalEngagement || 0,
-      }));
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}));
 
     return {
       dateRange: range,
@@ -725,27 +6035,477 @@ export class AnalyticsService {
         totalShares: combinedMetrics.totalShares,
         totalSaves: combinedMetrics.totalSaves,
         engagementRate: combinedMetrics.engagementRate,
-      },
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
       trends,
       topPlatforms,
-    };
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+};
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async getPlatformAnalytics(userIntegrationId: string, days: 30 | 60) {
     const range = buildDateRange(days);
     const integration = await prisma.userIntegration.findUnique({
-      where: { id: userIntegrationId },
-      include: { integration: true },
-    });
+      where: { id: userIntegrationId 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      include: { integration: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     if (!integration) throw new Error("Integration not found");
 
     const dailyMetrics = await prisma.platformDailyMetrics.findMany({
       where: {
         userIntegrationId,
-        date: { gte: range.start, lte: range.end },
-      },
-      orderBy: { date: "asc" },
-    });
+        date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      orderBy: { date: "asc" 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     if (!dailyMetrics.length) return null;
 
@@ -761,7 +6521,52 @@ export class AnalyticsService {
           totalShares: row.totalShares,
           totalSaves: row.totalSaves,
           engagementRate: row.engagementRate,
-        })
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
       )
     );
 
@@ -783,20 +6588,470 @@ export class AnalyticsService {
         comments: row.totalComments,
         shares: row.totalShares,
         saves: row.totalSaves,
-      })),
-    };
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+})),
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async getPostAnalytics(postId: string) {
     const post = await prisma.post.findUnique({
-      where: { id: postId },
+      where: { id: postId 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
       include: {
         analytics: true,
         platformIntegrations: {
-          include: { userIntegration: { include: { integration: true } } },
-        },
-      },
-    });
+          include: { userIntegration: { include: { integration: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
     if (!post) throw new Error("Post not found");
 
     const platforms = post.platformIntegrations.map((integration) => {
@@ -813,10 +7068,145 @@ export class AnalyticsService {
               shares: metrics.totalShares,
               reach: metrics.totalReach,
               impressions: metrics.totalImpressions,
-            }
+            
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
           : null,
-      };
-    });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     const metricsList = platforms
       .map((item) => item.metrics)
@@ -824,11 +7214,146 @@ export class AnalyticsService {
 
     if (!metricsList.length) {
       return {
-        post: { id: post.id, title: post.title, content: post.content },
+        post: { id: post.id, title: post.title, content: post.content 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
         platforms,
         combined: null,
-      };
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
     const combined = sumMetrics(
       metricsList.map((item) =>
@@ -842,27 +7367,387 @@ export class AnalyticsService {
           totalShares: item.shares,
           totalSaves: 0,
           engagementRate: 0,
-        })
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
       )
     );
 
     if (!combined) {
       return {
-        post: { id: post.id, title: post.title, content: post.content },
-        platforms,
-        combined: null,
-      };
+        post: { id: post.id, title: post.title, content: post.content 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
     }
 
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+        platforms,
+        combined: null,
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+
     return {
-      post: { id: post.id, title: post.title, content: post.content },
+      post: { id: post.id, title: post.title, content: post.content 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
       platforms,
       combined: {
         totalEngagement: combined.totalEngagement,
         totalReach: combined.totalReach,
-      },
-    };
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async calculateEngagementTrend(
     userIntegrationId: string,
@@ -872,24 +7757,474 @@ export class AnalyticsService {
     const rows = await prisma.platformDailyMetrics.findMany({
       where: {
         userIntegrationId,
-        date: { gte: range.start, lte: range.end },
-      },
-      orderBy: { date: "asc" },
-    });
-    return buildTrendSeries(rows, "totalEngagement");
+        date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      orderBy: { date: "asc" 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+    return buildTrendSeries(rows, "totalEngagement");
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async calculateReachTrend(userIntegrationId: string, days: 30 | 60) {
     const range = buildDateRange(days);
     const rows = await prisma.platformDailyMetrics.findMany({
       where: {
         userIntegrationId,
-        date: { gte: range.start, lte: range.end },
-      },
-      orderBy: { date: "asc" },
-    });
-    return buildTrendSeries(rows, "totalReach");
+        date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      orderBy: { date: "asc" 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+    return buildTrendSeries(rows, "totalReach");
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async getTopPosts(
     userId: string,
@@ -903,16 +8238,421 @@ export class AnalyticsService {
         agencyId,
         createdById: userId,
         status: PostStatus.POSTED,
-        createdAt: { gte: range.start, lte: range.end },
-      },
+        createdAt: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
       include: {
         analytics: true,
         platformIntegrations: {
-          include: { userIntegration: { include: { integration: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+          include: { userIntegration: { include: { integration: true 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+      orderBy: { createdAt: "desc" 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     const rows = posts.map((post) => {
       const platforms = post.platformIntegrations.map(
@@ -936,19 +8676,289 @@ export class AnalyticsService {
         impressions: normalized ? normalized.totalImpressions : null,
         postedAt: post.postedAt || post.createdAt,
         engagementRate: normalized ? normalized.engagementRate : null,
-      };
-    });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     return rows
       .sort((a, b) => (b.engagement ?? -1) - (a.engagement ?? -1))
       .slice(0, limit);
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+}
 
   static async getTopPlatforms(userId: string, agencyId: string, days: 30 | 60) {
     const range = buildDateRange(days);
     const rows = await prisma.platformDailyMetrics.findMany({
-      where: { agencyId, date: { gte: range.start, lte: range.end } },
-    });
+      where: { agencyId, date: { gte: range.start, lte: range.end 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     if (!rows.length) return [];
 
@@ -968,18 +8978,198 @@ export class AnalyticsService {
           totalShares: current.totalShares + row.totalShares,
           totalSaves: current.totalSaves + row.totalSaves,
           engagementRate: 0,
-        })
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+})
       );
-    });
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
     return Array.from(grouped.entries())
       .map(([platform, metrics]) => ({
         platform,
         engagementRate: metrics.engagementRate,
         engagement: metrics.totalEngagement,
-      }))
-      .sort((a, b) => b.engagementRate - a.engagementRate);
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
   }
+}))
+      .sort((a, b) => b.engagementRate - a.engagementRate);
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async fetchFacebookMetrics(
     accessToken: string,
@@ -1005,11 +9195,191 @@ export class AnalyticsService {
         totalSaves: resp.saves || 0,
         engagementRate: 0,
         rawData: resp.raw,
-      });
-    } catch {
-      return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch {
+      return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async fetchInstagramMetrics(
     accessToken: string,
@@ -1035,11 +9405,191 @@ export class AnalyticsService {
         totalSaves: resp.saves || 0,
         engagementRate: 0,
         rawData: resp.raw,
-      });
-    } catch {
-      return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch {
+      return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async fetchTwitterMetrics(
     accessToken: string,
@@ -1065,11 +9615,191 @@ export class AnalyticsService {
         totalSaves: 0,
         engagementRate: 0,
         rawData: resp.raw,
-      });
-    } catch {
-      return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch {
+      return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async fetchLinkedInMetrics(
     accessToken: string,
@@ -1095,11 +9825,191 @@ export class AnalyticsService {
         totalSaves: 0,
         engagementRate: 0,
         rawData: resp.raw,
-      });
-    } catch {
-      return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch {
+      return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async fetchTikTokMetrics(
     accessToken: string,
@@ -1110,18 +10020,243 @@ export class AnalyticsService {
     try {
       // Fetch user's video list to aggregate metrics
       const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${accessToken
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}` 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
         params: {
           fields: 'id,create_time,like_count,comment_count,share_count,view_count',
           max_count: 100, // Fetch up to 100 recent videos
-        },
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+},
         validateStatus: () => true,
         timeout: 15000,
-      });
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
 
       if (videosResp.status !== 200 || videosResp.data?.error?.code) {
         return null;
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
       }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
       const videos: any[] = videosResp.data?.data?.videos || [];
       
@@ -1131,8 +10266,98 @@ export class AnalyticsService {
         filteredVideos = videos.filter((v: any) => {
           const createTime = new Date(v.create_time * 1000); // TikTok returns unix timestamp
           return createTime >= dateRange.start && createTime <= dateRange.end;
-        });
+        
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
       }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
       // Aggregate metrics
       const metadata = {
@@ -1148,7 +10373,52 @@ export class AnalyticsService {
               (filteredVideos.length * 3)) * 100
             ) / 100
           : 0,
-      };
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+};
 
       return normalizeMetrics({
         postsPublished: metadata.totalVideos,
@@ -1160,12 +10430,237 @@ export class AnalyticsService {
         totalShares: metadata.shares,
         totalSaves: 0,
         engagementRate: metadata.avgEngagement,
-        rawData: { videos: filteredVideos, summary: metadata },
-      });
-    } catch {
-      return null;
+        rawData: { videos: filteredVideos, summary: metadata 
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
+},
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch {
+      return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
 
   static async fetchPinterestMetrics(
     accessToken: string,
@@ -1191,9 +10686,234 @@ export class AnalyticsService {
         totalSaves: resp.saves || 0,
         engagementRate: 0,
         rawData: resp.raw,
-      });
-    } catch {
+      
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+});
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+} catch {
       return null;
+    
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+  
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
+    }
+  }
+}
+
+
+  static async fetchAccountProfile(integration: any) {
+    const accessToken = integration.accessToken
+      ? decryptToken(integration.accessToken)
+      : "";
+
+    if (!accessToken) {
+      return { error: "No access token" };
+    }
+
+    try {
+      switch (integration.integration.slug) {
+        case "facebook":
+          return await FacebookAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "instagram":
+          return await InstagramAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "twitter":
+          return await TwitterAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "linkedin":
+          return await LinkedInAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        case "pinterest":
+          return await PinterestAdapter.getAccountProfile(
+            integration.accountId,
+            accessToken
+          );
+        default:
+          return { error: "Unsupported platform" };
+      }
+    } catch (error: any) {
+      return { error: error?.message || "Failed to fetch account profile" };
     }
   }
 }

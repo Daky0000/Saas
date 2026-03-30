@@ -85,6 +85,31 @@ export class FacebookAdapter {
     }
   }
 
+  static async getAccountProfile(pageId: string, accessToken: string) {
+    try {
+      const resp = await axios.get(
+        `${GRAPH_BASE}/${encodeURIComponent(pageId)}`,
+        {
+          params: {
+            fields: "id,name,fan_count,website,about,picture,category,is_verified",
+            access_token: accessToken,
+          },
+        }
+      );
+      return {
+        username: resp.data.name || "",
+        followers: resp.data.fan_count || 0,
+        followings: 0,
+        total_likes: 0,
+        verified: resp.data.is_verified || false,
+        website: resp.data.website || null,
+        raw: resp.data,
+      };
+    } catch (error: any) {
+      return { error: error?.message || "Facebook profile fetch failed" };
+    }
+  }
+
   static async getInsights(
     pageId: string,
     accessToken: string,

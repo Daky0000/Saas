@@ -120,6 +120,32 @@ export class InstagramAdapter {
       return { valid: false };
     }
   }
+
+  static async getAccountProfile(accountId: string, accessToken: string) {
+    try {
+      const resp = await axios.get(
+        `${GRAPH_BASE}/${encodeURIComponent(accountId)}`,
+        {
+          params: {
+            fields: "username,name,biography,follower_count,follows_count,ig_id,ig_user_id,website,is_verified",
+            access_token: accessToken,
+          },
+        }
+      );
+      return {
+        username: resp.data.username || "",
+        followers: resp.data.follower_count || 0,
+        followings: resp.data.follows_count || 0,
+        total_likes: 0,
+        bio: resp.data.biography || null,
+        verified: resp.data.is_verified || false,
+        raw: resp.data,
+      };
+    } catch (error: any) {
+      return { error: error?.message || "Instagram profile fetch failed" };
+    }
+  }
+
   static async getAccountMetrics(
     accountId: string,
     accessToken: string,

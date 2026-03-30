@@ -322,6 +322,36 @@ export class TwitterAdapter {
     }
   }
 
+  /** Get account profile info */
+  static async getAccountProfile(userId: string, accessToken: string) {
+    try {
+      const resp: AxiosResponse = await axios.get(
+        `https://api.twitter.com/2/users/${encodeURIComponent(userId)}`,
+        {
+          params: { "user.fields": "username,name,public_metrics,verified" },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          validateStatus: () => true,
+          timeout: 10_000,
+        }
+      );
+      if (resp.status >= 400) {
+        return { error: parseXApiError(resp.data, resp.status) };
+      }
+      const user = (resp.data as any)?.data || {};
+      const metrics = user.public_metrics || {};
+      return {
+        username: user.username || "",
+        followers: metrics.followers_count || 0,
+        followings: metrics.following_count || 0,
+        total_likes: 0,
+        verified: user.verified || false,
+        raw: resp.data,
+      };
+    } catch (error: any) {
+      return { error: error?.message || "Twitter profile fetch failed" };
+    }
+  }
+
   /** Fetch public metrics for a single tweet */
   static async getTweetMetrics(
     tweetId: string,

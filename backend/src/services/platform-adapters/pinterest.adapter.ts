@@ -54,6 +54,31 @@ export class PinterestAdapter {
     }
   }
 
+  static async getAccountProfile(accountId: string, accessToken: string) {
+    try {
+      const resp = await axios.get(
+        "https://api.pinterest.com/v5/user_account",
+        {
+          params: {
+            fields: "username,first_name,last_name,about,follower_count,following_count,website,profile_image",
+          },
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+      return {
+        username: resp.data.username || "",
+        followers: resp.data.follower_count || 0,
+        followings: resp.data.following_count || 0,
+        total_likes: 0,
+        verified: false,
+        website: resp.data.website || null,
+        raw: resp.data,
+      };
+    } catch (error: any) {
+      return { error: error?.message || "Pinterest profile fetch failed" };
+    }
+  }
+
   static async getBoards(accessToken: string) {
     try {
       const resp = await axios.get("https://api.pinterest.com/v5/boards", {
