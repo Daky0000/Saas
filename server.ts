@@ -1125,6 +1125,30 @@ async function ensureDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS sps_user_idx ON social_profile_stats (user_id);`).catch(() => undefined);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS tiktok_video_insights (
+      id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      social_account_id TEXT NOT NULL,
+      video_id          TEXT NOT NULL,
+      title             TEXT,
+      cover_url         TEXT,
+      share_url         TEXT,
+      likes             BIGINT DEFAULT 0,
+      comments          BIGINT DEFAULT 0,
+      shares            BIGINT DEFAULT 0,
+      views             BIGINT DEFAULT 0,
+      engagement        BIGINT DEFAULT 0,
+      duration_seconds  INTEGER DEFAULT 0,
+      posted_at         TIMESTAMPTZ,
+      fetched_at        TIMESTAMPTZ DEFAULT NOW(),
+      raw_data          JSONB DEFAULT '{}'::jsonb,
+      UNIQUE(social_account_id, video_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS tvi_user_idx ON tiktok_video_insights (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS tvi_account_idx ON tiktok_video_insights (social_account_id);`).catch(() => undefined);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS insights_cache (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -3194,7 +3218,7 @@ async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?
     case 'threads':
       return exchangeThreadsCode(code);
     case 'tiktok':
-      return exchangeTikTokCode(code);
+      return exchangeTikTokCode(code, codeVerifier);
     default:
       throw new Error('Unsupported platform');
   }
@@ -3471,7 +3495,7 @@ async function exchangeThreadsCode(code: string) {
   return tokenRes.data;
 }
 
-async function exchangeTikTokCode(code: string) {
+async function exchangeTikTokCode(code: string, codeVerifier?: string) {
   const cfg = await getPlatformConfig('tiktok');
   const clientKey = (cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID || '').trim();
   const clientSecret = (cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '').trim();
@@ -3484,6 +3508,7 @@ async function exchangeTikTokCode(code: string) {
     grant_type: 'authorization_code',
     redirect_uri: redirectUri,
   });
+  if (codeVerifier) data.set('code_verifier', codeVerifier);
   const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', data.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
@@ -5983,6 +6008,15 @@ function resolveOAuthRedirectUri(platform: string, redirectUri?: string, req?: R
       }
       params.set('code_challenge', challenge);
       params.set('code_challenge_method', method || 'S256');
+    }
+
+    if (platform === 'tiktok') {
+      const { code_challenge, code_challenge_method } = req.query as { code_challenge?: string; code_challenge_method?: string };
+      const challenge = String(code_challenge || '').trim();
+      if (challenge) {
+        params.set('code_challenge', challenge);
+        params.set('code_challenge_method', String(code_challenge_method || 'S256').trim() || 'S256');
+      }
     }
 
     return res.json({ success: true, url: `${meta.authUrl}?${params.toString()}` });
@@ -12873,7 +12907,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
               headers: { Authorization: `Bearer ${token}` },
               params: {
-                fields: 'id,create_time,like_count,comment_count,share_count,view_count',
+                fields: 'id,title,cover_image_url,share_url,create_time,duration,like_count,comment_count,share_count,view_count',
                 max_count: 100,
               },
               validateStatus: () => true,
@@ -12888,11 +12922,31 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                 const videoId = String(v.id);
                 const likes = Number(v.like_count || 0);
                 const comments = Number(v.comment_count || 0);
-                const shares = Number( v.share_count || 0);
+                const shares = Number(v.share_count || 0);
                 const views = Number(v.view_count || 0);
                 const engagement = likes + comments + shares;
+                const duration = Number(v.duration || 0);
                 const postedAt = v.create_time ? new Date(v.create_time * 1000).toISOString() : null;
+                const videoTitle = typeof v.title === 'string' ? v.title.slice(0, 500) : null;
+                const coverUrl = typeof v.cover_image_url === 'string' ? v.cover_image_url : null;
+                const shareUrl = typeof v.share_url === 'string' ? v.share_url : null;
 
+                // Upsert into dedicated tiktok_video_insights table
+                await pool!.query(
+                  `INSERT INTO tiktok_video_insights
+                     (id, user_id, social_account_id, video_id, title, cover_url, share_url,
+                      likes, comments, shares, views, engagement, duration_seconds, posted_at, fetched_at, raw_data)
+                   VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14::jsonb)
+                   ON CONFLICT (social_account_id, video_id) DO UPDATE SET
+                     title=EXCLUDED.title, cover_url=EXCLUDED.cover_url, share_url=EXCLUDED.share_url,
+                     likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
+                     views=EXCLUDED.views, engagement=EXCLUDED.engagement,
+                     duration_seconds=EXCLUDED.duration_seconds, fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
+                  [auth.userId, acct.id, videoId, videoTitle, coverUrl, shareUrl,
+                   likes, comments, shares, views, engagement, duration, postedAt, JSON.stringify(v)]
+                );
+
+                // Also upsert into generic social_metrics for cross-platform aggregations
                 await pool!.query(
                   `INSERT INTO social_metrics (id, user_id, platform, platform_post_id, social_account_id, likes, comments, shares, impressions, reach, engagement, raw_data, posted_at, fetched_at)
                    VALUES (gen_random_uuid()::text, $1, 'tiktok', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, NOW())
@@ -12900,7 +12954,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                      likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
                      impressions=EXCLUDED.impressions, reach=EXCLUDED.reach, engagement=EXCLUDED.engagement,
                      raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
-                  [auth.userId, videoId, acct.id, 
+                  [auth.userId, videoId, acct.id,
                    likes, comments, shares, views, views, engagement,
                    JSON.stringify(v), postedAt]
                 );
@@ -12911,6 +12965,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             console.error('TikTok video fetch error:', vidErr.message);
             // Don't block sync on video fetch failure
           }
+        } else if (platform === 'linkedin') {
           const tokenData = acct.token_data || {};
           const personUrn = tokenData.personUrn || tokenData.urn || tokenData.sub;
           if (personUrn) {
@@ -13263,6 +13318,205 @@ app.get('/api/analytics/social/comparison', async (req: Request, res: Response) 
   } catch (err) {
     console.error('Comparison analytics error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch comparison analytics' });
+  }
+});
+
+// ─── TikTok-specific analytics routes ────────────────────────────────────────
+
+// POST /api/social/tiktok/sync — manual sync of TikTok profile + video data
+app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const accountRes = await pool.query(
+      `SELECT id, account_id, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
+       FROM social_accounts WHERE user_id=$1 AND platform='tiktok' AND connected=true`,
+      [auth.userId]
+    );
+    if (accountRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No connected TikTok account found' });
+    }
+
+    let synced = 0;
+    const errors: string[] = [];
+
+    for (const acct of accountRes.rows as any[]) {
+      let token = '';
+      if (acct.access_token_encrypted) {
+        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+      }
+      if (!token) token = String(acct.access_token || '').trim();
+      if (!token) { errors.push('No access token available'); continue; }
+
+      // ── Profile sync ───────────────────────────────────────────────────────
+      try {
+        const userResp = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
+          headers: { Authorization: `Bearer ${token}` },
+          params: {
+            fields: 'open_id,display_name,username,bio_description,is_verified,' +
+                    'follower_count,following_count,likes_count,video_count',
+          },
+          validateStatus: () => true, timeout: 15000,
+        });
+        const errCode = userResp.data?.error?.code;
+        const errMsg  = userResp.data?.error?.message;
+        if (userResp.status !== 200 || (errCode && errCode !== 'ok')) {
+          errors.push(errMsg || errCode || `HTTP ${userResp.status}`);
+        } else if (userResp.data?.data?.user) {
+          const u = userResp.data.data.user;
+          await pool.query(
+            `INSERT INTO social_profile_stats
+               (id, user_id, social_account_id, platform,
+                followers, following, posts_count, total_likes,
+                bio, is_verified, raw_response, synced_at)
+             VALUES (gen_random_uuid()::text, $1, $2, 'tiktok', $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+             ON CONFLICT (social_account_id) DO UPDATE SET
+               followers=EXCLUDED.followers, following=EXCLUDED.following,
+               posts_count=EXCLUDED.posts_count, total_likes=EXCLUDED.total_likes,
+               bio=EXCLUDED.bio, is_verified=EXCLUDED.is_verified,
+               raw_response=EXCLUDED.raw_response, synced_at=NOW()`,
+            [auth.userId, acct.id,
+             Number(u.follower_count ?? 0), Number(u.following_count ?? 0),
+             Number(u.video_count ?? 0), Number(u.likes_count ?? 0),
+             typeof u.bio_description === 'string' ? u.bio_description : null,
+             Boolean(u.is_verified ?? false), JSON.stringify(u)]
+          );
+          const followers = Number(u.follower_count ?? 0);
+          if (followers > 0) {
+            await pool.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`, [followers, acct.id]);
+          }
+          synced++;
+        }
+      } catch (profileErr: any) {
+        errors.push(`Profile sync failed: ${profileErr.message}`);
+      }
+
+      // ── Video insights sync ────────────────────────────────────────────────
+      try {
+        const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
+          headers: { Authorization: `Bearer ${token}` },
+          params: {
+            fields: 'id,title,cover_image_url,share_url,create_time,duration,like_count,comment_count,share_count,view_count',
+            max_count: 100,
+          },
+          validateStatus: () => true, timeout: 15000,
+        });
+        const vidErrCode = videosResp.data?.error?.code;
+        if (videosResp.status === 200 && !vidErrCode) {
+          const videos: any[] = videosResp.data?.data?.videos || [];
+          for (const v of videos) {
+            if (!v.id) continue;
+            const likes = Number(v.like_count || 0);
+            const comments = Number(v.comment_count || 0);
+            const shares = Number(v.share_count || 0);
+            const views = Number(v.view_count || 0);
+            const engagement = likes + comments + shares;
+            await pool.query(
+              `INSERT INTO tiktok_video_insights
+                 (id, user_id, social_account_id, video_id, title, cover_url, share_url,
+                  likes, comments, shares, views, engagement, duration_seconds, posted_at, fetched_at, raw_data)
+               VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14::jsonb)
+               ON CONFLICT (social_account_id, video_id) DO UPDATE SET
+                 title=EXCLUDED.title, cover_url=EXCLUDED.cover_url, share_url=EXCLUDED.share_url,
+                 likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
+                 views=EXCLUDED.views, engagement=EXCLUDED.engagement,
+                 duration_seconds=EXCLUDED.duration_seconds, fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
+              [auth.userId, acct.id, String(v.id),
+               typeof v.title === 'string' ? v.title.slice(0, 500) : null,
+               typeof v.cover_image_url === 'string' ? v.cover_image_url : null,
+               typeof v.share_url === 'string' ? v.share_url : null,
+               likes, comments, shares, views, engagement,
+               Number(v.duration || 0),
+               v.create_time ? new Date(v.create_time * 1000).toISOString() : null,
+               JSON.stringify(v)]
+            );
+            synced++;
+          }
+        } else if (vidErrCode && vidErrCode !== 'ok') {
+          errors.push(`Video sync: ${videosResp.data?.error?.message || vidErrCode}`);
+        }
+      } catch (vidErr: any) {
+        errors.push(`Video sync failed: ${vidErr.message}`);
+      }
+    }
+
+    return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+  } catch (err) {
+    console.error('TikTok sync error:', err);
+    return res.status(500).json({ success: false, error: 'TikTok sync failed' });
+  }
+});
+
+// GET /api/social/tiktok/videos — paginated video insights for the authenticated user
+app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const days = Math.min(365, Math.max(1, parseInt(q.days || '30', 10)));
+    const limit = Math.min(100, Math.max(1, parseInt(q.limit || '50', 10)));
+    const offset = Math.max(0, parseInt(q.offset || '0', 10));
+    const accountId = q.account_id ? String(q.account_id) : null;
+
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const params: any[] = [auth.userId, since.toISOString()];
+    let accountFilter = '';
+    if (accountId) {
+      params.push(accountId);
+      accountFilter = `AND tvi.social_account_id = $${params.length}`;
+    }
+    params.push(limit, offset);
+
+    const videosRes = await pool.query(
+      `SELECT tvi.*, sa.account_name, sa.handle
+       FROM tiktok_video_insights tvi
+       JOIN social_accounts sa ON sa.id = tvi.social_account_id
+       WHERE tvi.user_id = $1
+         AND (tvi.posted_at >= $2 OR tvi.posted_at IS NULL)
+         ${accountFilter}
+       ORDER BY COALESCE(tvi.posted_at, tvi.fetched_at) DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM tiktok_video_insights tvi
+       WHERE tvi.user_id = $1 AND (tvi.posted_at >= $2 OR tvi.posted_at IS NULL) ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const summaryRes = await pool.query(
+      `SELECT
+         COUNT(*) AS total_videos,
+         COALESCE(SUM(likes), 0) AS total_likes,
+         COALESCE(SUM(comments), 0) AS total_comments,
+         COALESCE(SUM(shares), 0) AS total_shares,
+         COALESCE(SUM(views), 0) AS total_views,
+         COALESCE(SUM(engagement), 0) AS total_engagement,
+         CASE WHEN COALESCE(SUM(views), 0) > 0
+              THEN ROUND((SUM(engagement)::numeric / NULLIF(SUM(views), 0)) * 100, 2)
+              ELSE 0 END AS avg_engagement_rate
+       FROM tiktok_video_insights tvi
+       WHERE tvi.user_id = $1 AND (tvi.posted_at >= $2 OR tvi.posted_at IS NULL) ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    return res.json({
+      success: true,
+      videos: videosRes.rows,
+      total: parseInt(countRes.rows[0]?.count || '0', 10),
+      summary: summaryRes.rows[0] || {},
+      days,
+    });
+  } catch (err) {
+    console.error('TikTok videos error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch TikTok videos' });
   }
 });
 

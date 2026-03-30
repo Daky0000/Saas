@@ -38,6 +38,7 @@ export type SocialAccount = {
   total_shares: number;
   posts_synced: number;
   engagement_rate: number;
+  is_verified: boolean;
 };
 
 export type AccountDashboard = {
