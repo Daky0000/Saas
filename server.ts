@@ -10384,19 +10384,12 @@ async function refreshTikTokAccessToken(refreshToken: string) {
 }
 
 // Fetch TikTok user profile with graceful scope fallback.
-// Tries full fields (user.info.stats) first; if TikTok returns a scope error
-// falls back progressively to narrower field sets so we always get at least
-// display_name, and as many stats as the token permits.
+// Fetch TikTok user profile using two independent requests so a missing
+// user.info.stats scope never blocks the basic profile from being saved.
+// Call 1 (always): basic identity fields — always works with user.info.basic
+// Call 2 (optional): stats fields — silently skipped if scope not approved
 async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scopeLimited: boolean }> {
-  // Attempt order: all stats → stats-only → basic with follower → basic only
-  const fieldSets = [
-    'open_id,display_name,username,bio_description,is_verified,follower_count,following_count,likes_count,video_count',
-    'open_id,display_name,username,follower_count,following_count,likes_count,video_count',
-    'open_id,display_name,username,bio_description,is_verified,follower_count',
-    'open_id,display_name,username,bio_description,is_verified',
-  ];
-
-  const tryFetch = (fields: string) =>
+  const ttGet = (fields: string) =>
     axios.get('https://open.tiktokapis.com/v2/user/info/', {
       headers: { Authorization: `Bearer ${token}` },
       params: { fields },
@@ -10404,18 +10397,34 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
       timeout: 15000,
     });
 
-  let lastErr = '';
-  for (let i = 0; i < fieldSets.length; i++) {
-    const resp = await tryFetch(fieldSets[i]);
-    const errCode = resp.data?.error?.code;
-    if (resp.status === 200 && (!errCode || errCode === 'ok') && resp.data?.data?.user) {
-      // scopeLimited = true if we had to fall back past the first (full) attempt
-      return { user: resp.data.data.user, scopeLimited: i > 0 };
+  // ── Call 1: identity fields (user.info.basic) — required ──────────────────
+  const basicResp = await ttGet('open_id,display_name,username,bio_description,is_verified');
+  const basicErr  = basicResp.data?.error?.code;
+  if (basicResp.status !== 200 || (basicErr && basicErr !== 'ok') || !basicResp.data?.data?.user) {
+    const msg = basicResp.data?.error?.message || basicErr || `HTTP ${basicResp.status}`;
+    throw new Error(msg || 'TikTok user info unavailable');
+  }
+  const user: any = { ...basicResp.data.data.user };
+
+  // ── Call 2: stats fields (user.info.stats) — optional ────────────────────
+  // TikTok hard-rejects the whole request if stats scope isn't approved,
+  // so we ask for stats separately and silently ignore any error.
+  try {
+    const statsResp = await ttGet('follower_count,following_count,likes_count,video_count');
+    const statsErr  = statsResp.data?.error?.code;
+    if (statsResp.status === 200 && (!statsErr || statsErr === 'ok') && statsResp.data?.data?.user) {
+      const s = statsResp.data.data.user;
+      if (s.follower_count  != null) user.follower_count  = s.follower_count;
+      if (s.following_count != null) user.following_count = s.following_count;
+      if (s.likes_count     != null) user.likes_count     = s.likes_count;
+      if (s.video_count     != null) user.video_count     = s.video_count;
     }
-    lastErr = resp.data?.error?.message || errCode || `HTTP ${resp.status}`;
+  } catch {
+    // stats scope not available — ignore, basic profile is still saved
   }
 
-  throw new Error(lastErr || 'TikTok user info unavailable');
+  const hasStats = user.follower_count != null;
+  return { user, scopeLimited: !hasStats };
 }
 
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
