@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Users, TrendingUp, Eye, MessageSquare, Heart, MessageCircle, Share2 } from 'lucide-react';
+import { Loader2, Users, TrendingUp, Eye, MessageSquare, Heart, MessageCircle } from 'lucide-react';
 import {
   ComposedChart,
   Bar,
@@ -84,32 +84,30 @@ function AccountSnapshot({ account, days }: { account: SocialAccount; days: numb
           {account.bio && (
             <div className="mt-1 text-xs text-slate-400 leading-relaxed max-w-lg line-clamp-2">{account.bio}</div>
           )}
-          {/* Profile-level stats row */}
+          {/* Profile-level stats row — sourced from data.account (live dashboard values) */}
           <div className="mt-2 flex flex-wrap gap-4 text-xs text-slate-500">
             {Number(data.account.followers) > 0 && (
               <span><span className="font-bold text-slate-800">{formatCompactNumber(data.account.followers)}</span> followers</span>
             )}
-            {Number(account.following_count) > 0 && (
-              <span><span className="font-bold text-slate-800">{formatCompactNumber(account.following_count)}</span> following</span>
+            {Number(data.account.following_count) > 0 && (
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(data.account.following_count)}</span> following</span>
             )}
-            {Number(account.video_count) > 0 && (
-              <span><span className="font-bold text-slate-800">{formatCompactNumber(account.video_count)}</span> posts</span>
+            {Number(data.account.video_count) > 0 && (
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(data.account.video_count)}</span> posts</span>
             )}
-            {Number(account.total_likes_count) > 0 && (
-              <span><span className="font-bold text-slate-800">{formatCompactNumber(account.total_likes_count)}</span> total likes</span>
+            {Number(data.account.total_likes_count) > 0 && (
+              <span><span className="font-bold text-slate-800">{formatCompactNumber(data.account.total_likes_count)}</span> total likes</span>
             )}
           </div>
         </div>
       </div>
 
       {/* KPI pills */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <MetricPill label="Reach" value={formatCompactNumber(s.total_reach)} icon={<Eye size={16} />} />
-        <MetricPill label="Impressions" value={formatCompactNumber(s.total_impressions)} icon={<TrendingUp size={16} />} />
-        <MetricPill label="Engagement" value={formatPercent(s.engagement_rate)} icon={<TrendingUp size={16} />} />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <MetricPill label="Followers" value={Number(data.account.followers) > 0 ? formatCompactNumber(data.account.followers) : '—'} icon={<Users size={16} />} />
+        <MetricPill label="Engagement Rate" value={formatPercent(s.engagement_rate)} icon={<TrendingUp size={16} />} />
         <MetricPill label="Likes" value={formatCompactNumber(s.total_likes)} icon={<Heart size={16} />} />
         <MetricPill label="Comments" value={formatCompactNumber(s.total_comments)} icon={<MessageCircle size={16} />} />
-        <MetricPill label="Posts" value={formatCompactNumber(s.posts_count)} icon={<Share2 size={16} />} />
       </div>
 
       {/* Trend chart */}
