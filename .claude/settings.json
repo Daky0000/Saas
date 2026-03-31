@@ -38,7 +38,12 @@
       "Read(//d/Saas/**)",
       "Bash(grep -n \"} else if \\(platform === ''linkedin''\\)\" d:/Saas/server.ts)",
       "Bash(psql --version)",
-      "Bash(pg_dump --version)"
+      "Bash(pg_dump --version)",
+      "Bash(find /d/Saas/src -name apiBase*)",
+      "Bash(git ls-tree:*)",
+      "WebFetch(domain:marketing.dakyworld.com)",
+      "WebFetch(domain:contentflow-api-production.up.railway.app)",
+      "Bash(grep -r \"VITE_API\\\\|API_BASE\" d:/Saas/.env*)"
     ],
     "additionalDirectories": [
       "d:\\skills\\user\\db-cleanup"

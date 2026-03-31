@@ -13802,7 +13802,7 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
     );
 
     if (!integrations.length) {
-      return res.status(404).json({ success: false, error: 'No TikTok integration found' });
+      return res.json({ followers: 0 });
     }
 
     const { rows: metrics } = await pool.query(
