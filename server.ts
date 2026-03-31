@@ -12819,7 +12819,53 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
 
       try {
         if (platform === 'facebook') {
-          const feedResp = await axios.get(`https://graph.facebook.com/v19.0/${acct.account_id || 'me'}/posts`, {
+          const fbPageId = acct.account_id || 'me';
+
+          // ── Fetch page profile (followers, post count, bio) ───────────────────
+          try {
+            const pageResp = await axios.get(`https://graph.facebook.com/v19.0/${fbPageId}`, {
+              params: {
+                access_token: token,
+                fields: 'id,name,about,fan_count,followers_count,posts.summary(total_count).limit(0)',
+              },
+              validateStatus: () => true, timeout: 10000,
+            });
+            if (pageResp.status === 200 && pageResp.data) {
+              const pd = pageResp.data;
+              const followers  = parseInt(String(pd.fan_count ?? pd.followers_count ?? 0)) || 0;
+              const postsCount = parseInt(String(pd.posts?.summary?.total_count ?? 0)) || 0;
+              const bio        = typeof pd.about === 'string' && pd.about.trim() ? pd.about.trim() : null;
+              const pageName   = typeof pd.name  === 'string' && pd.name.trim()  ? pd.name.trim()  : null;
+              console.log('[Facebook sync] page:', pageName, 'followers:', followers, 'posts:', postsCount);
+              await pool!.query(
+                `INSERT INTO social_profile_stats
+                   (id, user_id, social_account_id, platform,
+                    followers, posts_count, bio, raw_response, synced_at)
+                 VALUES (gen_random_uuid()::text, $1, $2, 'facebook',
+                         $3, $4, $5, $6::jsonb, NOW())
+                 ON CONFLICT (social_account_id) DO UPDATE SET
+                   followers   = CASE WHEN EXCLUDED.followers   > 0 THEN EXCLUDED.followers   ELSE social_profile_stats.followers   END,
+                   posts_count = CASE WHEN EXCLUDED.posts_count > 0 THEN EXCLUDED.posts_count ELSE social_profile_stats.posts_count END,
+                   bio         = COALESCE(EXCLUDED.bio, social_profile_stats.bio),
+                   raw_response= EXCLUDED.raw_response,
+                   synced_at   = NOW()`,
+                [auth.userId, acct.id, followers, postsCount, bio, JSON.stringify(pd)]
+              );
+              await pool!.query(
+                `UPDATE social_accounts SET
+                   account_name = COALESCE($1, account_name),
+                   followers    = CASE WHEN $2 > 0 THEN $2 ELSE followers END
+                 WHERE id = $3`,
+                [pageName, followers, acct.id]
+              );
+              synced++;
+            }
+          } catch (profileErr: any) {
+            errors.push(`facebook profile: ${profileErr.message}`);
+          }
+
+          // ── Fetch post metrics ────────────────────────────────────────────────
+          const feedResp = await axios.get(`https://graph.facebook.com/v19.0/${fbPageId}/posts`, {
             params: { access_token: token, fields: 'id,message,created_time,full_picture', limit: 25 },
             validateStatus: () => true, timeout: 15000,
           });
@@ -12850,14 +12896,6 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                 );
                 synced++;
               } catch { /* skip individual post errors */ }
-            }
-            const pageResp = await axios.get(`https://graph.facebook.com/v19.0/${acct.account_id || 'me'}`, {
-              params: { access_token: token, fields: 'fan_count,followers_count' },
-              validateStatus: () => true, timeout: 10000,
-            });
-            if (pageResp.status === 200 && (pageResp.data?.fan_count || pageResp.data?.followers_count)) {
-              await pool!.query(`UPDATE social_accounts SET followers=$1 WHERE id=$2`,
-                [pageResp.data.fan_count || pageResp.data.followers_count, acct.id]);
             }
           }
         } else if (platform === 'twitter' || platform === 'x') {
