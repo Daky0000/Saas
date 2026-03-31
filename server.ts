@@ -13789,7 +13789,7 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    if (!pool) return res.json({ followers: null, hasData: false });
 
     const { rows: integrations } = await pool.query(
       `SELECT ui.id as id, ui.account_id
@@ -13802,7 +13802,7 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
     );
 
     if (!integrations.length) {
-      return res.json({ followers: 0 });
+      return res.json({ followers: null, hasData: false });
     }
 
     const { rows: metrics } = await pool.query(
@@ -13815,13 +13815,13 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
     );
 
     if (!metrics.length) {
-      return res.json({ followers: 0 });
+      return res.json({ followers: null, hasData: false });
     }
 
-    return res.json({ followers: metrics[0].followers || 0 });
+    return res.json({ followers: metrics[0].followers || 0, hasData: true });
   } catch (err) {
     console.error('TikTok followers error:', err);
-    return res.status(500).json({ success: false, error: 'Failed to fetch TikTok followers' });
+    return res.json({ followers: null, hasData: false });
   }
 });
 
