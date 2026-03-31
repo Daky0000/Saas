@@ -80,4 +80,8 @@ export const tiktokAnalyticsService = {
     if (options.accountId) params.set('account_id', options.accountId);
     return apiFetch(`/api/social/tiktok/videos?${params.toString()}`);
   },
+
+  async getFollowers(): Promise<{ followers: number }> {
+    return apiFetch('/api/social/tiktok/followers');
+  },
 };
