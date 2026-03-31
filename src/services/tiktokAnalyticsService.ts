@@ -63,6 +63,11 @@ export type TikTokSyncResult = {
   errors?: string[];
 };
 
+export type TikTokFollowersResponse = {
+  followers: number | null;
+  hasData: boolean;
+};
+
 export const tiktokAnalyticsService = {
   async sync(): Promise<TikTokSyncResult> {
     const result = await apiFetch<{ success: boolean; synced: number; errors?: string[] }>(
@@ -81,7 +86,7 @@ export const tiktokAnalyticsService = {
     return apiFetch(`/api/social/tiktok/videos?${params.toString()}`);
   },
 
-  async getFollowers(): Promise<{ followers: number }> {
+  async getFollowers(): Promise<TikTokFollowersResponse> {
     return apiFetch('/api/social/tiktok/followers');
   },
 };
