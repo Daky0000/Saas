@@ -28,6 +28,7 @@ export default function TikTokAnalytics({ days }: Props) {
   const [videos, setVideos] = useState<TikTokVideo[]>([]);
   const [summary, setSummary] = useState<TikTokVideoSummary | null>(null);
   const [followers, setFollowers] = useState<number | null>(null);
+  const [followersHasData, setFollowersHasData] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -44,6 +45,7 @@ export default function TikTokAnalytics({ days }: Props) {
       setVideos(videosResult.videos);
       setSummary(videosResult.summary);
       setFollowers(followersResult.followers);
+      setFollowersHasData(followersResult.hasData ?? false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load TikTok data');
     } finally {
@@ -134,11 +136,9 @@ export default function TikTokAnalytics({ days }: Props) {
       )}
 
       {/* Followers Snapshot */}
-      {followers !== null && (
-        <div className="grid gap-3">
-          <StatCard label="Followers" value={formatCompactNumber(followers)} icon={<Users size={16} />} />
-        </div>
-      )}
+      <div className="grid gap-3">
+        <StatCard label="Followers" value={followersHasData && followers !== null ? formatCompactNumber(followers) : '–'} icon={<Users size={16} />} />
+      </div>
 
       {/* Summary KPIs */}
       {summary && (
