@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, RefreshCcw, Eye, Heart, MessageCircle, Share2, TrendingUp, Play } from 'lucide-react';
+import { Loader2, RefreshCcw, Eye, Heart, MessageCircle, Share2, TrendingUp, Play, Users } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -27,6 +27,7 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
 export default function TikTokAnalytics({ days }: Props) {
   const [videos, setVideos] = useState<TikTokVideo[]>([]);
   const [summary, setSummary] = useState<TikTokVideoSummary | null>(null);
+  const [followers, setFollowers] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -36,9 +37,13 @@ export default function TikTokAnalytics({ days }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const result = await tiktokAnalyticsService.getVideos({ days, limit: 50 });
-      setVideos(result.videos);
-      setSummary(result.summary);
+      const [videosResult, followersResult] = await Promise.all([
+        tiktokAnalyticsService.getVideos({ days, limit: 50 }),
+        tiktokAnalyticsService.getFollowers(),
+      ]);
+      setVideos(videosResult.videos);
+      setSummary(videosResult.summary);
+      setFollowers(followersResult.followers);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load TikTok data');
     } finally {
@@ -125,6 +130,13 @@ export default function TikTokAnalytics({ days }: Props) {
           ) : (
             <><span className="font-semibold">Sync successful!</span> {syncResult.synced} items updated.</>
           )}
+        </div>
+      )}
+
+      {/* Followers Snapshot */}
+      {followers !== null && (
+        <div className="grid gap-3">
+          <StatCard label="Followers" value={formatCompactNumber(followers)} icon={<Users size={16} />} />
         </div>
       )}
 

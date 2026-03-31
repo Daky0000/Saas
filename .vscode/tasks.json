@@ -7,6 +7,13 @@
 			"command": "npm run dev",
 			"isBackground": true,
 			"problemMatcher": []
+		},
+		{
+			"label": "Start Development",
+			"type": "shell",
+			"command": "npm run dev",
+			"isBackground": true,
+			"group": "test"
 		}
 	]
 }

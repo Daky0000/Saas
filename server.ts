@@ -13782,6 +13782,47 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/social/tiktok/followers — get current follower count for authenticated user
+app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const { rows: integrations } = await pool.query(
+      `SELECT ui.id as id, ui.account_id
+       FROM user_integrations ui
+       WHERE ui.user_id = $1 AND ui.integration_id = (
+         SELECT id FROM integrations WHERE slug = 'tiktok' LIMIT 1
+       )
+       LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, error: 'No TikTok integration found' });
+    }
+
+    const { rows: metrics } = await pool.query(
+      `SELECT followers, updated_at
+       FROM account_metrics
+       WHERE user_integration_id = $1 AND platform = 'tiktok'
+       ORDER BY date DESC
+       LIMIT 1`,
+      [integrations[0].id]
+    );
+
+    if (!metrics.length) {
+      return res.json({ followers: 0 });
+    }
+
+    return res.json({ followers: metrics[0].followers || 0 });
+  } catch (err) {
+    console.error('TikTok followers error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch TikTok followers' });
+  }
+});
+
 // ─── End Analytics & Insights Engine ─────────────────────────────────────────
 
 // ─── Campaign & Funnel Builder ────────────────────────────────────────────────
