@@ -1,4 +1,4 @@
-import axios, { AxiosResponse } from 'axios';
+import axios from 'axios';
 import FormData from 'form-data';
 import type {
   AnalyticsResult,
@@ -50,7 +50,7 @@ function parseXError(data: any, httpStatus: number): { message: string; code?: n
   const title: string  = data?.title  || firstErr.title  || '';
   const reason: string = data?.reason || firstErr.reason || '';
 
-  // "client-not-enrolled" → app not inside a Project in the developer portal
+  // "client-not-enrolled" �?app not inside a Project in the developer portal
   if (reason === 'client-not-enrolled' || String(detail).includes('client-not-enrolled')) {
     return {
       message: 'X app is not attached to a Project. In the X Developer Portal, move your app inside a Project, then reconnect your X account.',
@@ -67,7 +67,7 @@ function parseXError(data: any, httpStatus: number): { message: string; code?: n
     135: 'Timestamp out of bounds. Check server time.',
     185: 'Daily post limit reached for this X account.',
     186: 'Tweet text is too long (max 280 characters).',
-    187: 'Duplicate tweet — this exact text was posted recently.',
+    187: 'Duplicate tweet �?this exact text was posted recently.',
     215: 'Bad authentication data.',
     226: 'Tweet flagged as automated. Vary your content.',
     261: 'App does not have write permission. Enable "Read and Write" in the X Developer Portal.',
@@ -94,7 +94,7 @@ async function pollMediaStatus(
   log: (msg: string) => void
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 30; attempt++) {
-    const statusResp: AxiosResponse = await axios.get(MEDIA_V2_STATUS, {
+    const statusResp: any = await axios.get(MEDIA_V2_STATUS, {
       params: { media_id: mediaId, command: 'STATUS' },
       headers: authHeader,
       validateStatus: () => true,
@@ -123,13 +123,13 @@ async function uploadV2(
   const useChunked = totalBytes > CHUNK_SIZE || mimeType.startsWith('video/') || mimeType === 'image/gif';
   log(`[X] v2 upload (${Math.round(totalBytes / 1024)} KB, ${mimeType}, chunked=${useChunked})`);
 
-  // INIT — first chunk (or full file if ≤ CHUNK_SIZE)
+  // INIT �?first chunk (or full file if �?CHUNK_SIZE)
   if (!useChunked) {
     const uploadForm = new FormData();
     uploadForm.append('media', buffer, { filename: 'upload', contentType: mimeType });
     uploadForm.append('media_category', mediaCategory);
 
-    const uploadResp: AxiosResponse = await axios.post(MEDIA_V2_UPLOAD, uploadForm, {
+    const uploadResp: any = await axios.post(MEDIA_V2_UPLOAD, uploadForm, {
       headers: { ...authHeader, ...uploadForm.getHeaders() },
       validateStatus: () => true,
       timeout: 60_000,
@@ -142,7 +142,7 @@ async function uploadV2(
     return uploadedMediaId ? { mediaId: uploadedMediaId } : { error: 'No media id in upload response' };
   }
 
-  const initResp: AxiosResponse = await axios.post(
+  const initResp: any = await axios.post(
     MEDIA_V2_INITIALIZE,
     {
       media_category: mediaCategory,
@@ -163,7 +163,7 @@ async function uploadV2(
   if (!mediaId) return { error: 'No media id in initialize response' };
   log(`[X] INITIALIZE OK, id=${mediaId}`);
 
-  // APPEND — remaining chunks (if file > CHUNK_SIZE)
+  // APPEND �?remaining chunks (if file > CHUNK_SIZE)
   let segmentIndex = 0;
   for (let offset = 0; offset < totalBytes; offset += CHUNK_SIZE) {
     const chunk = buffer.subarray(offset, offset + CHUNK_SIZE);
@@ -171,7 +171,7 @@ async function uploadV2(
     appendForm.append('media', chunk, { filename: `seg_${segmentIndex}`, contentType: mimeType });
     appendForm.append('segment_index', String(segmentIndex));
 
-    const appendResp: AxiosResponse = await axios.post(MEDIA_V2_APPEND(mediaId), appendForm, {
+    const appendResp: any = await axios.post(MEDIA_V2_APPEND(mediaId), appendForm, {
       headers: { ...authHeader, ...appendForm.getHeaders() },
       validateStatus: () => true,
       timeout: 120_000,
@@ -184,7 +184,7 @@ async function uploadV2(
     segmentIndex++;
   }
 
-  const finalResp: AxiosResponse = await axios.post(MEDIA_V2_FINALIZE(mediaId), null, {
+  const finalResp: any = await axios.post(MEDIA_V2_FINALIZE(mediaId), null, {
     headers: authHeader,
     validateStatus: () => true,
     timeout: 15_000,
@@ -205,7 +205,7 @@ async function uploadV2(
   return { mediaId };
 }
 
-/** Upload via legacy v1.1 endpoint — fallback when media.write scope is absent. */
+/** Upload via legacy v1.1 endpoint �?fallback when media.write scope is absent. */
 async function uploadV1(
   buffer: Buffer,
   mimeType: string,
@@ -222,7 +222,7 @@ async function uploadV1(
     const form = new FormData();
     form.append('media', buffer, { filename: 'upload', contentType: mimeType });
     form.append('media_category', mediaCategory);
-    const resp: AxiosResponse = await axios.post(MEDIA_V1_UPLOAD, form, {
+    const resp: any = await axios.post(MEDIA_V1_UPLOAD, form, {
       headers: { ...authHeader, ...form.getHeaders() },
       validateStatus: () => true,
       timeout: 60_000,
@@ -236,7 +236,7 @@ async function uploadV1(
   const initParams = new URLSearchParams({
     command: 'INIT', total_bytes: String(totalBytes), media_type: mimeType, media_category: mediaCategory,
   });
-  const initResp: AxiosResponse = await axios.post(MEDIA_V1_UPLOAD, initParams.toString(), {
+  const initResp: any = await axios.post(MEDIA_V1_UPLOAD, initParams.toString(), {
     headers: { ...authHeader, 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true, timeout: 15_000,
   });
@@ -253,7 +253,7 @@ async function uploadV1(
     appendForm.append('media_id', mediaId);
     appendForm.append('segment_index', String(seg));
     appendForm.append('media', chunk, { filename: `seg_${seg}`, contentType: mimeType });
-    const appendResp: AxiosResponse = await axios.post(MEDIA_V1_UPLOAD, appendForm, {
+    const appendResp: any = await axios.post(MEDIA_V1_UPLOAD, appendForm, {
       headers: { ...authHeader, ...appendForm.getHeaders() },
       validateStatus: () => true, timeout: 120_000,
     });
@@ -263,7 +263,7 @@ async function uploadV1(
 
   // FINALIZE
   const finalParams = new URLSearchParams({ command: 'FINALIZE', media_id: mediaId });
-  const finalResp: AxiosResponse = await axios.post(MEDIA_V1_UPLOAD, finalParams.toString(), {
+  const finalResp: any = await axios.post(MEDIA_V1_UPLOAD, finalParams.toString(), {
     headers: { ...authHeader, 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true, timeout: 15_000,
   });
@@ -275,7 +275,7 @@ async function uploadV1(
     let waitSecs: number = fd.processing_info.check_after_secs ?? 3;
     for (let i = 0; i < 30; i++) {
       await wait(waitSecs * 1000);
-      const statusResp: AxiosResponse = await axios.get(MEDIA_V1_UPLOAD, {
+      const statusResp: any = await axios.get(MEDIA_V1_UPLOAD, {
         params: { command: 'STATUS', media_id: mediaId },
         headers: authHeader, validateStatus: () => true, timeout: 15_000,
       });
@@ -302,7 +302,7 @@ async function uploadMediaItem(
   let buffer: Buffer;
   let mimeType: string;
   try {
-    const fetchResp: AxiosResponse = await axios.get(url, {
+    const fetchResp: any = await axios.get(url, {
       responseType: 'arraybuffer', validateStatus: () => true, timeout: 60_000,
     });
     if (fetchResp.status >= 400) { log(`[X] Failed to fetch media (${fetchResp.status})`); return null; }
@@ -403,7 +403,7 @@ export class TwitterXPlatform implements SocialPlatform {
       const text = String(post?.content?.text || '').trim().slice(0, TWITTER_MAX_TEXT);
       const body: Record<string, any> = { text };
 
-      // Media upload (non-fatal — tweet goes out as text-only if all uploads fail)
+      // Media upload (non-fatal �?tweet goes out as text-only if all uploads fail)
       const mediaItems = Array.isArray(post.media) ? post.media.slice(0, 4) : [];
       if (mediaItems.length > 0) {
         log(`[X] Uploading ${mediaItems.length} media item(s)…`);
@@ -416,16 +416,16 @@ export class TwitterXPlatform implements SocialPlatform {
           body.media = { media_ids: mediaIds };
           log(`[X] Attached media_ids: ${mediaIds.join(', ')}`);
         } else {
-          log('[X] All media uploads failed — posting text-only');
+          log('[X] All media uploads failed �?posting text-only');
         }
       }
 
-      log(`[X] POST /2/tweets — "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`);
+      log(`[X] POST /2/tweets: "${text.slice(0, 60)}${text.length > 60 ? '...' : ''}"`);
 
       // Up to 2 attempts for transient errors
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          const resp: AxiosResponse = await axios.post(TWEET_API, body, {
+          const resp: any = await axios.post(TWEET_API, body, {
             headers: { Authorization: `Bearer ${ctx.accessToken}`, 'Content-Type': 'application/json' },
             validateStatus: () => true,
             timeout: 20_000,
@@ -441,7 +441,7 @@ export class TwitterXPlatform implements SocialPlatform {
             const { message, retryable } = parseXError(resp.data, resp.status);
             log(`[X] Failed (${resp.status}): ${message}`);
             if (retryable && attempt < 2 && TRANSIENT_STATUSES.has(resp.status)) {
-              log('[X] Transient error — retrying in 2s');
+              log('[X] Transient error �?retrying in 2s');
               await wait(2000);
               continue;
             }
@@ -450,13 +450,13 @@ export class TwitterXPlatform implements SocialPlatform {
 
           helpers.incrementGlobalWriteCount?.();
           const tweetId: string = (resp.data as any)?.data?.id || '';
-          log(`[X] Published — id=${tweetId}`);
+          log(`[X] Published �?id=${tweetId}`);
           return { status: 'published', platformPostId: tweetId, raw: { ...(resp.data as any), rateLimit } };
 
         } catch (err: any) {
           const { retryable, message } = this.handleError(err);
           if (retryable && attempt < 2 && TRANSIENT_STATUSES.has(Number(err?.response?.status))) {
-            log(`[X] Request error (attempt ${attempt}): ${message} — retrying in 2s`);
+            log(`[X] Request error (attempt ${attempt}): ${message} �?retrying in 2s`);
             await wait(2000);
             continue;
           }
@@ -473,7 +473,7 @@ export class TwitterXPlatform implements SocialPlatform {
 
   async getPostAnalytics(postId: string, ctx: PlatformContext): Promise<AnalyticsResult> {
     try {
-      const resp: AxiosResponse = await axios.get(
+      const resp: any = await axios.get(
         `${X_API_BASE}/2/tweets/${encodeURIComponent(postId)}`,
         {
           params: { 'tweet.fields': 'public_metrics,non_public_metrics,organic_metrics,created_at' },
@@ -514,7 +514,7 @@ export class TwitterXPlatform implements SocialPlatform {
         refresh_token: ctx.refreshToken,
       });
 
-      const resp: AxiosResponse = await axios.post(OAUTH_TOKEN_URL, body.toString(), {
+      const resp: any = await axios.post(OAUTH_TOKEN_URL, body.toString(), {
         auth:            clientSecret ? { username: clientId, password: clientSecret } : undefined,
         headers:         { 'Content-Type': 'application/x-www-form-urlencoded' },
         validateStatus:  () => true,
@@ -531,3 +531,4 @@ export class TwitterXPlatform implements SocialPlatform {
     }
   }
 }
+
