@@ -282,7 +282,9 @@ const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
 const allowedOrigins = new Set([
   process.env.VITE_APP_URL || 'http://localhost:3000',
   'http://localhost:3000',
+  'http://localhost:3001',
   'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
   'https://marketing.dakyworld.com',
   'https://daky0000.github.io',
   'https://contentflow-api-production.up.railway.app',
