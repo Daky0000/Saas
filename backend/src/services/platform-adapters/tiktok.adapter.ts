@@ -7,7 +7,7 @@ export class TikTokAdapter {
     try {
       const resp = await axios.get(`${TIKTOK_API_BASE}/user/info/`, {
         params: {
-          fields: "open_id,union_id,avatar_url,display_name,username",
+          fields: "open_id,union_id,avatar_url,display_name,username,follower_count,following_count,likes_count",
         },
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -17,9 +17,9 @@ export class TikTokAdapter {
       const user = resp.data?.data?.user || {};
       return {
         username: user.username || user.display_name || "",
-        followers: 0, // TikTok doesn't provide follower count via this endpoint
-        followings: 0,
-        total_likes: 0,
+        followers: user.follower_count || 0,
+        followings: user.following_count || 0,
+        total_likes: user.likes_count || 0,
         bio: null,
         verified: false,
         raw: user,

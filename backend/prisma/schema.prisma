@@ -285,6 +285,36 @@ model PlatformMonthlyMetrics {
   @@index([userId])
 }
 
+// ============= ACCOUNT METRICS (Followers, Engagement Rate) =============
+
+model AccountMetrics {
+  id String @id @default(cuid())
+
+  userIntegration   UserIntegration @relation(fields: [userIntegrationId], references: [id], onDelete: Cascade)
+  userIntegrationId String
+
+  platform String // 'tiktok', 'instagram', etc
+  
+  // Follower history
+  followers       Int @default(0)
+  followings      Int @default(0)
+  totalLikes      Int @default(0)
+  
+  // Account level engagement
+  avgEngagementRate Float @default(0.0)
+  
+  // Snapshot date
+  date DateTime
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userIntegrationId, platform, date])
+  @@index([userIntegrationId])
+  @@index([platform])
+  @@index([date])
+}
+
 // ============= INTEGRATIONS (Admin Setup) =============
 
 model Integration {
