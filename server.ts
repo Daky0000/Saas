@@ -5946,7 +5946,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // tweet.write is sufficient for posting tweets and uploading media via the v1.1 media upload endpoint.
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
-  tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
+  tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
 
@@ -10559,8 +10559,12 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
       timeout: 15000,
     });
 
-  // ── Call 1: identity fields (user.info.basic) — required ──────────────────
-  const basicResp = await ttGet('open_id,display_name,username,bio_description,is_verified');
+  // ── Call 1: user.info.basic fields only — always required ─────────────────
+  // IMPORTANT: only request fields covered by user.info.basic here.
+  // TikTok rejects the entire request if any field requires a scope the token
+  // doesn't have. Fields like username/bio_description/is_verified need
+  // user.info.profile and must NOT be mixed into this call.
+  const basicResp = await ttGet('open_id,display_name');
   const basicErr  = basicResp.data?.error?.code;
   if (basicResp.status !== 200 || (basicErr && basicErr !== 'ok') || !basicResp.data?.data?.user) {
     const msg = basicResp.data?.error?.message || basicErr || `HTTP ${basicResp.status}`;
@@ -10568,7 +10572,22 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
   }
   const user: any = { ...basicResp.data.data.user };
 
-  // ── Call 2: stats fields (user.info.stats) — optional ────────────────────
+  // ── Call 2: user.info.profile fields — optional ───────────────────────────
+  // username, bio_description, is_verified require the user.info.profile scope.
+  try {
+    const profileResp = await ttGet('username,bio_description,is_verified');
+    const profileErr  = profileResp.data?.error?.code;
+    if (profileResp.status === 200 && (!profileErr || profileErr === 'ok') && profileResp.data?.data?.user) {
+      const p = profileResp.data.data.user;
+      if (p.username        != null) user.username        = p.username;
+      if (p.bio_description != null) user.bio_description = p.bio_description;
+      if (p.is_verified     != null) user.is_verified     = p.is_verified;
+    }
+  } catch (profileErr: any) {
+    console.log('[TikTok profile] user.info.profile exception:', profileErr?.message);
+  }
+
+  // ── Call 3: user.info.stats fields — optional ─────────────────────────────
   // TikTok hard-rejects the whole request if stats scope isn't approved,
   // so we ask for stats separately and silently ignore any error.
   try {
