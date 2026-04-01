@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, RefreshCcw, Eye, Heart, MessageCircle, Share2, TrendingUp, Play, Users, UserCheck, BadgeCheck } from 'lucide-react';
+import { Loader2, RefreshCcw, Eye, Heart, MessageCircle, Share2, TrendingUp, Play, Users, UserCheck, BadgeCheck, Clock, ExternalLink } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -211,93 +211,115 @@ export default function TikTokAnalytics({ days }: Props) {
             </div>
           )}
 
-          {/* Videos table */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6">
-            <div className="text-base font-bold text-slate-950">All Videos</div>
-            <div className="text-xs text-slate-500 mt-1">Ranked by engagement</div>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.18em] text-slate-400">
-                  <tr>
-                    <th className="pb-3 text-left font-semibold">Video</th>
-                    <th className="pb-3 text-right font-semibold">Views</th>
-                    <th className="pb-3 text-right font-semibold">Likes</th>
-                    <th className="pb-3 text-right font-semibold">Comments</th>
-                    <th className="pb-3 text-right font-semibold">Shares</th>
-                    <th className="pb-3 text-right font-semibold">Eng. Rate</th>
-                    <th className="pb-3 text-right font-semibold">Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...videos]
-                    .sort((a, b) => Number(b.engagement) - Number(a.engagement))
-                    .map((video) => {
-                      const engRate = Number(video.views) > 0
-                        ? (Number(video.engagement) / Number(video.views)) * 100
-                        : 0;
-                      return (
-                        <tr key={video.video_id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="py-2.5 pr-4 max-w-[240px]">
-                            <div className="flex items-center gap-2.5">
-                              {video.cover_url ? (
-                                <img
-                                  src={video.cover_url}
-                                  alt=""
-                                  className="h-9 w-6 rounded object-cover flex-shrink-0 bg-slate-100"
-                                />
-                              ) : (
-                                <div className="h-9 w-6 rounded bg-slate-100 flex-shrink-0 flex items-center justify-center">
-                                  <Play size={10} className="text-slate-400" />
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <div className="truncate font-medium text-slate-900 max-w-[180px]">
-                                  {video.title || `Video ${video.video_id.slice(0, 8)}`}
-                                </div>
-                                {video.video_description && (
-                                  <div className="truncate text-xs text-slate-400 max-w-[180px]" title={video.video_description}>
-                                    {video.video_description}
-                                  </div>
-                                )}
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  {video.share_url && (
-                                    <a
-                                      href={video.share_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-xs text-[#5b6cf9] hover:underline"
-                                    >
-                                      View
-                                    </a>
-                                  )}
-                                  {video.embed_link && (
-                                    <a
-                                      href={video.embed_link}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-xs text-slate-400 hover:underline"
-                                    >
-                                      Embed
-                                    </a>
-                                  )}
-                                  {video.height && video.width ? (
-                                    <span className="text-xs text-slate-300">{video.width}×{video.height}</span>
-                                  ) : null}
-                                </div>
-                              </div>
+          {/* Per-video analytics cards */}
+          <div>
+            <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Videos · {videos.length} synced
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[...videos]
+                .sort((a, b) => Number(b.views) - Number(a.views))
+                .map((video) => {
+                  const engRate = Number(video.views) > 0
+                    ? (Number(video.engagement) / Number(video.views)) * 100
+                    : 0;
+                  const durationMin = video.duration_seconds
+                    ? `${Math.floor(video.duration_seconds / 60)}:${String(video.duration_seconds % 60).padStart(2, '0')}`
+                    : null;
+                  return (
+                    <div key={video.video_id} className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                      {/* Thumbnail */}
+                      <div className="relative bg-slate-100 aspect-[9/5] overflow-hidden">
+                        {video.cover_url ? (
+                          <img src={video.cover_url} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Play size={28} className="text-slate-300" />
+                          </div>
+                        )}
+                        {durationMin && (
+                          <span className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-xs font-medium text-white flex items-center gap-1">
+                            <Clock size={10} /> {durationMin}
+                          </span>
+                        )}
+                        {video.width && video.height ? (
+                          <span className="absolute top-2 left-2 rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] text-white/80">
+                            {video.width}×{video.height}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-4 space-y-3">
+                        {/* Title + description */}
+                        <div>
+                          <div className="font-semibold text-sm text-slate-900 leading-snug line-clamp-2">
+                            {video.title || `Video ${video.video_id.slice(0, 8)}`}
+                          </div>
+                          {video.video_description && (
+                            <div className="mt-1 text-xs text-slate-400 line-clamp-2">{video.video_description}</div>
+                          )}
+                        </div>
+
+                        {/* Metrics grid */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">
+                              <Eye size={10} /> Views
                             </div>
-                          </td>
-                          <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(video.views)}</td>
-                          <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(video.likes)}</td>
-                          <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(video.comments)}</td>
-                          <td className="py-2.5 pr-4 text-right text-slate-600">{formatCompactNumber(video.shares)}</td>
-                          <td className="py-2.5 pr-4 text-right font-semibold text-slate-900">{formatPercent(engRate)}</td>
-                          <td className="py-2.5 text-right text-slate-400">{formatShortDate(video.posted_at)}</td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
+                            <div className="text-base font-black text-slate-900">{formatCompactNumber(video.views)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">
+                              <TrendingUp size={10} /> Eng. Rate
+                            </div>
+                            <div className="text-base font-black text-slate-900">{formatPercent(engRate)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">
+                              <Heart size={10} /> Likes
+                            </div>
+                            <div className="text-base font-black text-slate-900">{formatCompactNumber(video.likes)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">
+                              <MessageCircle size={10} /> Comments
+                            </div>
+                            <div className="text-base font-black text-slate-900">{formatCompactNumber(video.comments)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">
+                              <Share2 size={10} /> Shares
+                            </div>
+                            <div className="text-base font-black text-slate-900">{formatCompactNumber(video.shares)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">Posted</div>
+                            <div className="text-sm font-semibold text-slate-700">{formatShortDate(video.posted_at)}</div>
+                          </div>
+                        </div>
+
+                        {/* Links */}
+                        {(video.share_url || video.embed_link) && (
+                          <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
+                            {video.share_url && (
+                              <a href={video.share_url} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-[#5b6cf9] hover:underline">
+                                <ExternalLink size={11} /> View on TikTok
+                              </a>
+                            )}
+                            {video.embed_link && (
+                              <a href={video.embed_link} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-slate-400 hover:underline">
+                                Embed
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           </div>
         </>
