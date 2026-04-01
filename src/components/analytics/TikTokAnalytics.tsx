@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, RefreshCcw, Eye, Heart, MessageCircle, Share2, TrendingUp, Play, Users } from 'lucide-react';
+import { Loader2, RefreshCcw, Eye, Heart, MessageCircle, Share2, TrendingUp, Play, Users, UserCheck, BadgeCheck } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { tiktokAnalyticsService, type TikTokVideo, type TikTokVideoSummary } from '../../services/tiktokAnalyticsService';
+import { tiktokAnalyticsService, type TikTokVideo, type TikTokVideoSummary, type TikTokFollowersResponse } from '../../services/tiktokAnalyticsService';
 import { formatCompactNumber, formatPercent, formatShortDate } from './analyticsUtils';
 
 type Props = {
@@ -24,11 +24,12 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
   );
 }
 
+const fmt = (val: number | null) => val !== null ? formatCompactNumber(val) : '–';
+
 export default function TikTokAnalytics({ days }: Props) {
   const [videos, setVideos] = useState<TikTokVideo[]>([]);
   const [summary, setSummary] = useState<TikTokVideoSummary | null>(null);
-  const [followers, setFollowers] = useState<number | null>(null);
-  const [followersHasData, setFollowersHasData] = useState(false);
+  const [profile, setProfile] = useState<TikTokFollowersResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -38,14 +39,13 @@ export default function TikTokAnalytics({ days }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [videosResult, followersResult] = await Promise.all([
+      const [videosResult, profileResult] = await Promise.all([
         tiktokAnalyticsService.getVideos({ days, limit: 50 }),
         tiktokAnalyticsService.getFollowers(),
       ]);
       setVideos(videosResult.videos);
       setSummary(videosResult.summary);
-      setFollowers(followersResult.followers);
-      setFollowersHasData(followersResult.hasData ?? false);
+      setProfile(profileResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load TikTok data');
     } finally {
@@ -102,7 +102,7 @@ export default function TikTokAnalytics({ days }: Props) {
       {/* Header row */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-base font-bold text-slate-950">TikTok Video Insights</div>
+          <div className="text-base font-bold text-slate-950">TikTok Analytics</div>
           <div className="text-xs text-slate-500 mt-0.5">Last {days} days · {videos.length} videos synced</div>
         </div>
         <button
@@ -135,20 +135,49 @@ export default function TikTokAnalytics({ days }: Props) {
         </div>
       )}
 
-      {/* Followers Snapshot */}
-      <div className="grid gap-3">
-        <StatCard label="Followers" value={followersHasData && followers !== null ? formatCompactNumber(followers) : '–'} icon={<Users size={16} />} />
+      {/* Profile snapshot — account-level stats from social_profile_stats */}
+      <div>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Account</div>
+        {profile?.display_name && (
+          <div className="mb-3 flex items-center gap-2">
+            <span className="text-sm font-bold text-slate-900">{profile.display_name}</span>
+            {profile.handle && <span className="text-sm text-slate-400">@{profile.handle}</span>}
+            {profile.is_verified && <BadgeCheck size={15} className="text-[#5b6cf9]" />}
+          </div>
+        )}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard label="Followers"   value={fmt(profile?.followers   ?? null)} icon={<Users size={16} />} />
+          <StatCard label="Following"   value={fmt(profile?.following   ?? null)} icon={<UserCheck size={16} />} />
+          <StatCard label="Total Likes" value={fmt(profile?.total_likes ?? null)} icon={<Heart size={16} />} />
+          <StatCard label="Videos Posted" value={fmt(profile?.posts_count ?? null)} icon={<Play size={16} />} />
+        </div>
+        {profile?.bio && (
+          <div className="mt-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 text-sm text-slate-600">{profile.bio}</div>
+        )}
+        {profile?.synced_at && (
+          <div className="mt-1.5 text-xs text-slate-400">
+            Last synced {new Date(profile.synced_at).toLocaleString()}
+          </div>
+        )}
+        {!profile?.hasData && (
+          <div className="mt-2 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
+            No profile data yet — click <span className="font-semibold">Sync TikTok</span> to pull your account stats.
+          </div>
+        )}
       </div>
 
-      {/* Summary KPIs */}
+      {/* Video summary KPIs */}
       {summary && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          <StatCard label="Videos" value={formatCompactNumber(summary.total_videos)} icon={<Play size={16} />} />
-          <StatCard label="Total Views" value={formatCompactNumber(summary.total_views)} icon={<Eye size={16} />} />
-          <StatCard label="Total Likes" value={formatCompactNumber(summary.total_likes)} icon={<Heart size={16} />} />
-          <StatCard label="Comments" value={formatCompactNumber(summary.total_comments)} icon={<MessageCircle size={16} />} />
-          <StatCard label="Shares" value={formatCompactNumber(summary.total_shares)} icon={<Share2 size={16} />} />
-          <StatCard label="Avg Eng. Rate" value={formatPercent(summary.avg_engagement_rate)} icon={<TrendingUp size={16} />} />
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Video Performance · Last {days} days</div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <StatCard label="Videos" value={formatCompactNumber(summary.total_videos)} icon={<Play size={16} />} />
+            <StatCard label="Total Views" value={formatCompactNumber(summary.total_views)} icon={<Eye size={16} />} />
+            <StatCard label="Total Likes" value={formatCompactNumber(summary.total_likes)} icon={<Heart size={16} />} />
+            <StatCard label="Comments" value={formatCompactNumber(summary.total_comments)} icon={<MessageCircle size={16} />} />
+            <StatCard label="Shares" value={formatCompactNumber(summary.total_shares)} icon={<Share2 size={16} />} />
+            <StatCard label="Avg Eng. Rate" value={formatPercent(summary.avg_engagement_rate)} icon={<TrendingUp size={16} />} />
+          </div>
         </div>
       )}
 
