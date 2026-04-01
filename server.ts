@@ -13177,54 +13177,87 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
             errors.push(`tiktok: ${profileErr.message}`);
           }
 
-          // ── Fetch TikTok videos and metrics (skip if video.list scope missing) ─
+          // ── Fetch TikTok videos and metrics ───────────────────────────────────
+          // video/list is POST, cursor-based, max 20/page, all fields in one call.
           try {
-            const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
-              headers: { Authorization: `Bearer ${token}` },
-              params: {
-                fields: 'id,title,cover_image_url,share_url,create_time,duration,like_count,comment_count,share_count,view_count',
-                max_count: 100,
-              },
-              validateStatus: () => true,
-              timeout: 15000,
-            });
+            const TT_VIDEO_FIELDS = 'id,title,cover_image_url,share_url,video_description,create_time,duration,height,width,embed_html,embed_link,like_count,comment_count,share_count,view_count';
+            let ttCursor: number | undefined;
+            let ttHasMore = true;
+            let ttPage = 0;
+            const TT_MAX_PAGES = 10;
 
-            const vidErr = videosResp.data?.error?.code;
-            // Silently skip if video.list scope not granted — don't surface as error
-            if (vidErr && vidErr !== 'ok') {
-              console.log(`TikTok video.list scope not available (${vidErr}) — skipping video sync`);
-            } else if (videosResp.status === 200 && !vidErr) {
+            while (ttHasMore && ttPage < TT_MAX_PAGES) {
+              const ttBody: Record<string, any> = { max_count: 20 };
+              if (ttCursor !== undefined) ttBody.cursor = ttCursor;
+
+              const videosResp = await axios.post(
+                'https://open.tiktokapis.com/v2/video/list/',
+                ttBody,
+                {
+                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  params: { fields: TT_VIDEO_FIELDS },
+                  validateStatus: () => true,
+                  timeout: 15000,
+                }
+              );
+
+              const vidErrCode = videosResp.data?.error?.code;
+              if (vidErrCode && vidErrCode !== 'ok') {
+                if (ttPage === 0) console.log(`TikTok video.list scope not available (${vidErrCode}) — skipping`);
+                break;
+              }
+              if (videosResp.status !== 200) break;
+
               const videos: any[] = videosResp.data?.data?.videos || [];
+              ttHasMore = videosResp.data?.data?.has_more === true;
+              ttCursor  = videosResp.data?.data?.cursor;
+              ttPage++;
+
               for (const v of videos) {
                 if (!v.id) continue;
-                const videoId = String(v.id);
-                const likes = Number(v.like_count || 0);
-                const comments = Number(v.comment_count || 0);
-                const shares = Number(v.share_count || 0);
-                const views = Number(v.view_count || 0);
+                const videoId    = String(v.id);
+                const likes      = Number(v.like_count    ?? 0);
+                const comments   = Number(v.comment_count ?? 0);
+                const shares     = Number(v.share_count   ?? 0);
+                const views      = Number(v.view_count    ?? 0);
                 const engagement = likes + comments + shares;
-                const duration = Number(v.duration || 0);
-                const postedAt = v.create_time ? new Date(v.create_time * 1000).toISOString() : null;
-                const videoTitle = typeof v.title === 'string' ? v.title.slice(0, 500) : null;
-                const coverUrl = typeof v.cover_image_url === 'string' ? v.cover_image_url : null;
-                const shareUrl = typeof v.share_url === 'string' ? v.share_url : null;
+                const duration   = Number(v.duration ?? 0);
+                const postedAt   = v.create_time ? new Date(v.create_time * 1000).toISOString() : null;
 
-                // Upsert into dedicated tiktok_video_insights table
                 await pool!.query(
                   `INSERT INTO tiktok_video_insights
                      (id, user_id, social_account_id, video_id, title, cover_url, share_url,
-                      likes, comments, shares, views, engagement, duration_seconds, posted_at, fetched_at, raw_data)
-                   VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14::jsonb)
+                      likes, comments, shares, views, engagement, duration_seconds, posted_at,
+                      video_description, embed_html, embed_link, height, width,
+                      fetched_at, raw_data)
+                   VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6,
+                           $7, $8, $9, $10, $11, $12, $13,
+                           $14, $15, $16, $17, $18,
+                           NOW(), $19::jsonb)
                    ON CONFLICT (social_account_id, video_id) DO UPDATE SET
                      title=EXCLUDED.title, cover_url=EXCLUDED.cover_url, share_url=EXCLUDED.share_url,
                      likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
                      views=EXCLUDED.views, engagement=EXCLUDED.engagement,
-                     duration_seconds=EXCLUDED.duration_seconds, fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
-                  [auth.userId, acct.id, videoId, videoTitle, coverUrl, shareUrl,
-                   likes, comments, shares, views, engagement, duration, postedAt, JSON.stringify(v)]
+                     duration_seconds=EXCLUDED.duration_seconds,
+                     video_description=EXCLUDED.video_description,
+                     embed_html=EXCLUDED.embed_html, embed_link=EXCLUDED.embed_link,
+                     height=EXCLUDED.height, width=EXCLUDED.width,
+                     fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
+                  [
+                    auth.userId, acct.id, videoId,
+                    typeof v.title === 'string' ? v.title.slice(0, 500) : null,
+                    typeof v.cover_image_url === 'string' ? v.cover_image_url : null,
+                    typeof v.share_url === 'string' ? v.share_url : null,
+                    likes, comments, shares, views, engagement, duration, postedAt,
+                    typeof v.video_description === 'string' ? v.video_description.slice(0, 2000) : null,
+                    typeof v.embed_html === 'string' ? v.embed_html : null,
+                    typeof v.embed_link === 'string' ? v.embed_link : null,
+                    Number(v.height ?? 0), Number(v.width ?? 0),
+                    JSON.stringify(v),
+                  ]
                 );
 
-                // Also upsert into generic social_metrics for cross-platform aggregations
+                // Also keep social_metrics for cross-platform aggregations
                 await pool!.query(
                   `INSERT INTO social_metrics (id, user_id, platform, platform_post_id, social_account_id, likes, comments, shares, impressions, reach, engagement, raw_data, posted_at, fetched_at)
                    VALUES (gen_random_uuid()::text, $1, 'tiktok', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, NOW())
@@ -13232,16 +13265,15 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                      likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
                      impressions=EXCLUDED.impressions, reach=EXCLUDED.reach, engagement=EXCLUDED.engagement,
                      raw_data=EXCLUDED.raw_data, fetched_at=NOW()`,
-                  [auth.userId, videoId, acct.id,
-                   likes, comments, shares, views, views, engagement,
-                   JSON.stringify(v), postedAt]
+                  [auth.userId, videoId, acct.id, likes, comments, shares, views, views, engagement, JSON.stringify(v), postedAt]
                 );
                 synced++;
               }
+
+              if (!ttHasMore || ttCursor === undefined) break;
             }
           } catch (vidErr: any) {
             console.error('TikTok video fetch error:', vidErr.message);
-            // Don't block sync on video fetch failure
           }
         } else if (platform === 'linkedin') {
           const tokenData = acct.token_data || {};
@@ -13683,74 +13715,54 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
       }
 
       // ── Video insights sync ────────────────────────────────────────────────
-      // Step 1: video/list — get IDs + metrics (like/comment/share/view counts)
-      // Step 2: video/query — enrich each video with description, embed, dimensions
-      //         and refresh cover_image_url (TikTok CDN URLs expire)
+      // video/list is a POST endpoint (not GET). All fields — including
+      // video_description, embed_html, embed_link, height, width — are
+      // available directly. No separate video/query call needed.
+      // Pagination: cursor-based, max 20/page, loop until has_more = false.
+      // cover_image_url has a 6-hour CDN TTL — always update on sync.
       try {
-        const listResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
-          headers: { Authorization: `Bearer ${token}` },
-          params: {
-            fields: 'id,title,cover_image_url,share_url,create_time,duration,like_count,comment_count,share_count,view_count',
-            max_count: 20,
-          },
-          validateStatus: () => true, timeout: 15000,
-        });
-        const listErrCode = listResp.data?.error?.code;
-        if (listErrCode && listErrCode !== 'ok') {
-          console.log(`TikTok video.list scope not available (${listErrCode}) — skipping video sync`);
-        } else if (listResp.status === 200 && (!listErrCode || listErrCode === 'ok')) {
-          const listVideos: any[] = listResp.data?.data?.videos || [];
+        const VIDEO_FIELDS = 'id,title,cover_image_url,share_url,video_description,create_time,duration,height,width,embed_html,embed_link,like_count,comment_count,share_count,view_count';
+        let cursor: number | undefined;
+        let hasMore = true;
+        let pageCount = 0;
+        const MAX_PAGES = 10; // safety cap — 10 pages × 20 = 200 videos
 
-          // Build enrichment map from video/query (batches of 20 — API max)
-          const enrichMap = new Map<string, any>();
-          const ids = listVideos.map((v: any) => String(v.id)).filter(Boolean);
-          for (let i = 0; i < ids.length; i += 20) {
-            const batch = ids.slice(i, i + 20);
-            try {
-              const qResp = await axios.post(
-                'https://open.tiktokapis.com/v2/video/query/',
-                { filters: { video_ids: batch } },
-                {
-                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                  params: { fields: 'id,title,cover_image_url,share_url,create_time,duration,height,width,video_description,embed_html,embed_link,like_count,comment_count,share_count,view_count' },
-                  validateStatus: () => true, timeout: 15000,
-                }
-              );
-              const qErr = qResp.data?.error?.code;
-              if (qResp.status === 200 && (!qErr || qErr === 'ok')) {
-                for (const qv of (qResp.data?.data?.videos || [])) {
-                  if (qv.id) enrichMap.set(String(qv.id), qv);
-                }
-              } else {
-                console.log(`[TikTok video/query] error: ${qErr} — proceeding with list data only`);
-              }
-            } catch (qErr: any) {
-              console.log(`[TikTok video/query] exception: ${qErr?.message} — proceeding with list data only`);
+        while (hasMore && pageCount < MAX_PAGES) {
+          const body: Record<string, any> = { max_count: 20 };
+          if (cursor !== undefined) body.cursor = cursor;
+
+          const listResp = await axios.post(
+            'https://open.tiktokapis.com/v2/video/list/',
+            body,
+            {
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              params: { fields: VIDEO_FIELDS },
+              validateStatus: () => true,
+              timeout: 15000,
             }
-          }
+          );
 
-          for (const v of listVideos) {
+          const listErrCode = listResp.data?.error?.code;
+          if (listErrCode && listErrCode !== 'ok') {
+            if (pageCount === 0) {
+              console.log(`TikTok video.list scope not available (${listErrCode}) — skipping video sync`);
+            }
+            break;
+          }
+          if (listResp.status !== 200) break;
+
+          const pageVideos: any[] = listResp.data?.data?.videos || [];
+          hasMore = listResp.data?.data?.has_more === true;
+          cursor  = listResp.data?.data?.cursor;
+          pageCount++;
+
+          for (const v of pageVideos) {
             if (!v.id) continue;
-            const rich = enrichMap.get(String(v.id)) || {};
-            // Prefer enriched values; fall back to list values
-            const likes    = Number(rich.like_count    ?? v.like_count    ?? 0);
-            const comments = Number(rich.comment_count ?? v.comment_count ?? 0);
-            const shares   = Number(rich.share_count   ?? v.share_count   ?? 0);
-            const views    = Number(rich.view_count    ?? v.view_count    ?? 0);
+            const likes    = Number(v.like_count    ?? 0);
+            const comments = Number(v.comment_count ?? 0);
+            const shares   = Number(v.share_count   ?? 0);
+            const views    = Number(v.view_count    ?? 0);
             const engagement = likes + comments + shares;
-            const coverUrl = typeof (rich.cover_image_url ?? v.cover_image_url) === 'string'
-              ? (rich.cover_image_url ?? v.cover_image_url) : null;
-            const shareUrl = typeof (rich.share_url ?? v.share_url) === 'string'
-              ? (rich.share_url ?? v.share_url) : null;
-            const title    = typeof (rich.title ?? v.title) === 'string'
-              ? (rich.title ?? v.title).slice(0, 500) : null;
-            const desc     = typeof rich.video_description === 'string' ? rich.video_description.slice(0, 2000) : null;
-            const embedHtml = typeof rich.embed_html === 'string' ? rich.embed_html : null;
-            const embedLink = typeof rich.embed_link === 'string' ? rich.embed_link : null;
-            const height   = Number(rich.height   ?? 0);
-            const width    = Number(rich.width    ?? 0);
-            const duration = Number(rich.duration ?? v.duration ?? 0);
-            const createTime = (rich.create_time ?? v.create_time);
 
             await pool!.query(
               `INSERT INTO tiktok_video_insights
@@ -13763,23 +13775,43 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
                        $14, $15, $16, $17, $18,
                        NOW(), $19::jsonb)
                ON CONFLICT (social_account_id, video_id) DO UPDATE SET
-                 title=EXCLUDED.title, cover_url=EXCLUDED.cover_url, share_url=EXCLUDED.share_url,
-                 likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
-                 views=EXCLUDED.views, engagement=EXCLUDED.engagement,
-                 duration_seconds=EXCLUDED.duration_seconds,
-                 video_description=EXCLUDED.video_description,
-                 embed_html=EXCLUDED.embed_html, embed_link=EXCLUDED.embed_link,
-                 height=EXCLUDED.height, width=EXCLUDED.width,
-                 fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
-              [auth.userId, acct.id, String(v.id),
-               title, coverUrl, shareUrl,
-               likes, comments, shares, views, engagement, duration,
-               createTime ? new Date(createTime * 1000).toISOString() : null,
-               desc, embedHtml, embedLink, height, width,
-               JSON.stringify({ ...v, ...rich })]
+                 title             = EXCLUDED.title,
+                 cover_url         = EXCLUDED.cover_url,
+                 share_url         = EXCLUDED.share_url,
+                 likes             = EXCLUDED.likes,
+                 comments          = EXCLUDED.comments,
+                 shares            = EXCLUDED.shares,
+                 views             = EXCLUDED.views,
+                 engagement        = EXCLUDED.engagement,
+                 duration_seconds  = EXCLUDED.duration_seconds,
+                 video_description = EXCLUDED.video_description,
+                 embed_html        = EXCLUDED.embed_html,
+                 embed_link        = EXCLUDED.embed_link,
+                 height            = EXCLUDED.height,
+                 width             = EXCLUDED.width,
+                 fetched_at        = NOW(),
+                 raw_data          = EXCLUDED.raw_data`,
+              [
+                auth.userId, acct.id, String(v.id),
+                typeof v.title === 'string' ? v.title.slice(0, 500) : null,
+                typeof v.cover_image_url === 'string' ? v.cover_image_url : null,
+                typeof v.share_url === 'string' ? v.share_url : null,
+                likes, comments, shares, views, engagement,
+                Number(v.duration ?? 0),
+                v.create_time ? new Date(v.create_time * 1000).toISOString() : null,
+                typeof v.video_description === 'string' ? v.video_description.slice(0, 2000) : null,
+                typeof v.embed_html === 'string' ? v.embed_html : null,
+                typeof v.embed_link === 'string' ? v.embed_link : null,
+                Number(v.height ?? 0),
+                Number(v.width  ?? 0),
+                JSON.stringify(v),
+              ]
             );
             synced++;
           }
+
+          // No more results or no cursor to continue
+          if (!hasMore || cursor === undefined) break;
         }
       } catch (vidErr: any) {
         errors.push(`Video sync failed: ${vidErr.message}`);
