@@ -21,6 +21,7 @@ import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.ts';
 // import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
 import { LinkedInPlatform } from './backend/platforms/linkedin.ts';
 import { TwitterXPlatform } from './backend/platforms/twitter_x.ts';
+import { TikTokAdapter } from './backend/src/services/platform-adapters/tiktok.adapter.ts';
 import type { PostObject } from './backend/platforms/types.ts';
 // import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
 import path from 'path';
@@ -13791,34 +13792,34 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
     if (!auth) return;
     if (!pool) return res.json({ followers: null, hasData: false });
 
-    const { rows: integrations } = await pool.query(
-      `SELECT ui.id as id, ui.account_id
-       FROM user_integrations ui
-       WHERE ui.user_id = $1 AND ui.integration_id = (
-         SELECT id FROM integrations WHERE slug = 'tiktok' LIMIT 1
-       )
+    // TikTok is connected via OAuth → stored in social_accounts.
+    // The sync writes follower counts to social_profile_stats (primary) and
+    // social_accounts.followers (secondary). Read from there, not user_integrations.
+    const { rows: accounts } = await pool.query(
+      `SELECT sa.id, sa.followers,
+              sps.followers AS sps_followers, sps.synced_at
+       FROM social_accounts sa
+       LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
+       WHERE sa.user_id = $1
+         AND sa.connected = true
+         AND (sa.platform = 'tiktok' OR sa.platform ILIKE 'tiktok')
+       ORDER BY sps.synced_at DESC NULLS LAST
        LIMIT 1`,
       [auth.userId]
     );
 
-    if (!integrations.length) {
+    if (!accounts.length) {
       return res.json({ followers: null, hasData: false });
     }
 
-    const { rows: metrics } = await pool.query(
-      `SELECT followers, updated_at
-       FROM account_metrics
-       WHERE user_integration_id = $1 AND platform = 'tiktok'
-       ORDER BY date DESC
-       LIMIT 1`,
-      [integrations[0].id]
-    );
-
-    if (!metrics.length) {
-      return res.json({ followers: null, hasData: false });
+    const row = accounts[0];
+    // Prefer the profile-stats snapshot; fall back to the social_accounts column
+    const followers = row.sps_followers ?? row.followers ?? null;
+    if (followers !== null) {
+      return res.json({ followers: Number(followers), hasData: true });
     }
 
-    return res.json({ followers: metrics[0].followers || 0, hasData: true });
+    return res.json({ followers: null, hasData: false });
   } catch (err) {
     console.error('TikTok followers error:', err);
     return res.json({ followers: null, hasData: false });
