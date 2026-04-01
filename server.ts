@@ -13804,7 +13804,7 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/social/tiktok/followers — get current follower count for authenticated user
+// GET /api/social/tiktok/followers — get full profile snapshot for authenticated user
 app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -13812,11 +13812,12 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
     if (!pool) return res.json({ followers: null, hasData: false });
 
     // TikTok is connected via OAuth → stored in social_accounts.
-    // The sync writes follower counts to social_profile_stats (primary) and
-    // social_accounts.followers (secondary). Read from there, not user_integrations.
+    // The sync writes all profile stats to social_profile_stats.
     const { rows: accounts } = await pool.query(
-      `SELECT sa.id, sa.followers,
-              sps.followers AS sps_followers, sps.synced_at
+      `SELECT
+         sa.id, sa.account_name, sa.handle, sa.followers AS sa_followers,
+         sps.followers, sps.following, sps.posts_count,
+         sps.total_likes, sps.bio, sps.is_verified, sps.synced_at
        FROM social_accounts sa
        LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
        WHERE sa.user_id = $1
@@ -13832,13 +13833,21 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
     }
 
     const row = accounts[0];
-    // Prefer the profile-stats snapshot; fall back to the social_accounts column
-    const followers = row.sps_followers ?? row.followers ?? null;
-    if (followers !== null) {
-      return res.json({ followers: Number(followers), hasData: true });
-    }
+    const followers = row.followers ?? row.sa_followers ?? null;
+    const hasData = followers !== null || row.following !== null || row.posts_count !== null;
 
-    return res.json({ followers: null, hasData: false });
+    return res.json({
+      hasData,
+      followers:    followers    !== null ? Number(followers)         : null,
+      following:    row.following    !== null ? Number(row.following)    : null,
+      posts_count:  row.posts_count  !== null ? Number(row.posts_count)  : null,
+      total_likes:  row.total_likes  !== null ? Number(row.total_likes)  : null,
+      bio:          row.bio          ?? null,
+      is_verified:  row.is_verified  ?? null,
+      display_name: row.account_name ?? null,
+      handle:       row.handle       ?? null,
+      synced_at:    row.synced_at    ?? null,
+    });
   } catch (err) {
     console.error('TikTok followers error:', err);
     return res.json({ followers: null, hasData: false });

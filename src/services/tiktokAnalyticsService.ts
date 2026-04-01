@@ -64,8 +64,16 @@ export type TikTokSyncResult = {
 };
 
 export type TikTokFollowersResponse = {
-  followers: number | null;
   hasData: boolean;
+  followers:    number | null;
+  following:    number | null;
+  posts_count:  number | null;
+  total_likes:  number | null;
+  bio:          string | null;
+  is_verified:  boolean | null;
+  display_name: string | null;
+  handle:       string | null;
+  synced_at:    string | null;
 };
 
 export const tiktokAnalyticsService = {
