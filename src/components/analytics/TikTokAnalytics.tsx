@@ -254,16 +254,36 @@ export default function TikTokAnalytics({ days }: Props) {
                                 <div className="truncate font-medium text-slate-900 max-w-[180px]">
                                   {video.title || `Video ${video.video_id.slice(0, 8)}`}
                                 </div>
-                                {video.share_url && (
-                                  <a
-                                    href={video.share_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-blue-500 hover:underline"
-                                  >
-                                    View on TikTok
-                                  </a>
+                                {video.video_description && (
+                                  <div className="truncate text-xs text-slate-400 max-w-[180px]" title={video.video_description}>
+                                    {video.video_description}
+                                  </div>
                                 )}
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {video.share_url && (
+                                    <a
+                                      href={video.share_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-[#5b6cf9] hover:underline"
+                                    >
+                                      View
+                                    </a>
+                                  )}
+                                  {video.embed_link && (
+                                    <a
+                                      href={video.embed_link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-slate-400 hover:underline"
+                                    >
+                                      Embed
+                                    </a>
+                                  )}
+                                  {video.height && video.width ? (
+                                    <span className="text-xs text-slate-300">{video.width}×{video.height}</span>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
                           </td>

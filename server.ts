@@ -1151,6 +1151,12 @@ async function ensureDatabase() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS tvi_user_idx ON tiktok_video_insights (user_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS tvi_account_idx ON tiktok_video_insights (social_account_id);`).catch(() => undefined);
+  // Migrate: add enriched fields from video/query API
+  await pool.query(`ALTER TABLE tiktok_video_insights ADD COLUMN IF NOT EXISTS video_description TEXT`).catch(() => undefined);
+  await pool.query(`ALTER TABLE tiktok_video_insights ADD COLUMN IF NOT EXISTS embed_html TEXT`).catch(() => undefined);
+  await pool.query(`ALTER TABLE tiktok_video_insights ADD COLUMN IF NOT EXISTS embed_link TEXT`).catch(() => undefined);
+  await pool.query(`ALTER TABLE tiktok_video_insights ADD COLUMN IF NOT EXISTS height INTEGER DEFAULT 0`).catch(() => undefined);
+  await pool.query(`ALTER TABLE tiktok_video_insights ADD COLUMN IF NOT EXISTS width INTEGER DEFAULT 0`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS insights_cache (
@@ -13676,47 +13682,101 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
         errors.push(`Profile sync failed: ${profileErr.message}`);
       }
 
-      // ── Video insights sync (skip silently if video.list scope missing) ───
+      // ── Video insights sync ────────────────────────────────────────────────
+      // Step 1: video/list — get IDs + metrics (like/comment/share/view counts)
+      // Step 2: video/query — enrich each video with description, embed, dimensions
+      //         and refresh cover_image_url (TikTok CDN URLs expire)
       try {
-        const videosResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
+        const listResp = await axios.get('https://open.tiktokapis.com/v2/video/list/', {
           headers: { Authorization: `Bearer ${token}` },
           params: {
             fields: 'id,title,cover_image_url,share_url,create_time,duration,like_count,comment_count,share_count,view_count',
-            max_count: 100,
+            max_count: 20,
           },
           validateStatus: () => true, timeout: 15000,
         });
-        const vidErrCode = videosResp.data?.error?.code;
-        if (vidErrCode && vidErrCode !== 'ok') {
-          // video.list scope not granted — skip without surfacing as user-facing error
-          console.log(`TikTok video.list scope not available (${vidErrCode}) — skipping`);
-        } else if (videosResp.status === 200 && !vidErrCode) {
-          const videos: any[] = videosResp.data?.data?.videos || [];
-          for (const v of videos) {
+        const listErrCode = listResp.data?.error?.code;
+        if (listErrCode && listErrCode !== 'ok') {
+          console.log(`TikTok video.list scope not available (${listErrCode}) — skipping video sync`);
+        } else if (listResp.status === 200 && (!listErrCode || listErrCode === 'ok')) {
+          const listVideos: any[] = listResp.data?.data?.videos || [];
+
+          // Build enrichment map from video/query (batches of 20 — API max)
+          const enrichMap = new Map<string, any>();
+          const ids = listVideos.map((v: any) => String(v.id)).filter(Boolean);
+          for (let i = 0; i < ids.length; i += 20) {
+            const batch = ids.slice(i, i + 20);
+            try {
+              const qResp = await axios.post(
+                'https://open.tiktokapis.com/v2/video/query/',
+                { filters: { video_ids: batch } },
+                {
+                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  params: { fields: 'id,title,cover_image_url,share_url,create_time,duration,height,width,video_description,embed_html,embed_link,like_count,comment_count,share_count,view_count' },
+                  validateStatus: () => true, timeout: 15000,
+                }
+              );
+              const qErr = qResp.data?.error?.code;
+              if (qResp.status === 200 && (!qErr || qErr === 'ok')) {
+                for (const qv of (qResp.data?.data?.videos || [])) {
+                  if (qv.id) enrichMap.set(String(qv.id), qv);
+                }
+              } else {
+                console.log(`[TikTok video/query] error: ${qErr} — proceeding with list data only`);
+              }
+            } catch (qErr: any) {
+              console.log(`[TikTok video/query] exception: ${qErr?.message} — proceeding with list data only`);
+            }
+          }
+
+          for (const v of listVideos) {
             if (!v.id) continue;
-            const likes = Number(v.like_count || 0);
-            const comments = Number(v.comment_count || 0);
-            const shares = Number(v.share_count || 0);
-            const views = Number(v.view_count || 0);
+            const rich = enrichMap.get(String(v.id)) || {};
+            // Prefer enriched values; fall back to list values
+            const likes    = Number(rich.like_count    ?? v.like_count    ?? 0);
+            const comments = Number(rich.comment_count ?? v.comment_count ?? 0);
+            const shares   = Number(rich.share_count   ?? v.share_count   ?? 0);
+            const views    = Number(rich.view_count    ?? v.view_count    ?? 0);
             const engagement = likes + comments + shares;
-            await pool.query(
+            const coverUrl = typeof (rich.cover_image_url ?? v.cover_image_url) === 'string'
+              ? (rich.cover_image_url ?? v.cover_image_url) : null;
+            const shareUrl = typeof (rich.share_url ?? v.share_url) === 'string'
+              ? (rich.share_url ?? v.share_url) : null;
+            const title    = typeof (rich.title ?? v.title) === 'string'
+              ? (rich.title ?? v.title).slice(0, 500) : null;
+            const desc     = typeof rich.video_description === 'string' ? rich.video_description.slice(0, 2000) : null;
+            const embedHtml = typeof rich.embed_html === 'string' ? rich.embed_html : null;
+            const embedLink = typeof rich.embed_link === 'string' ? rich.embed_link : null;
+            const height   = Number(rich.height   ?? 0);
+            const width    = Number(rich.width    ?? 0);
+            const duration = Number(rich.duration ?? v.duration ?? 0);
+            const createTime = (rich.create_time ?? v.create_time);
+
+            await pool!.query(
               `INSERT INTO tiktok_video_insights
                  (id, user_id, social_account_id, video_id, title, cover_url, share_url,
-                  likes, comments, shares, views, engagement, duration_seconds, posted_at, fetched_at, raw_data)
-               VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14::jsonb)
+                  likes, comments, shares, views, engagement, duration_seconds, posted_at,
+                  video_description, embed_html, embed_link, height, width,
+                  fetched_at, raw_data)
+               VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6,
+                       $7, $8, $9, $10, $11, $12, $13,
+                       $14, $15, $16, $17, $18,
+                       NOW(), $19::jsonb)
                ON CONFLICT (social_account_id, video_id) DO UPDATE SET
                  title=EXCLUDED.title, cover_url=EXCLUDED.cover_url, share_url=EXCLUDED.share_url,
                  likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
                  views=EXCLUDED.views, engagement=EXCLUDED.engagement,
-                 duration_seconds=EXCLUDED.duration_seconds, fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
+                 duration_seconds=EXCLUDED.duration_seconds,
+                 video_description=EXCLUDED.video_description,
+                 embed_html=EXCLUDED.embed_html, embed_link=EXCLUDED.embed_link,
+                 height=EXCLUDED.height, width=EXCLUDED.width,
+                 fetched_at=NOW(), raw_data=EXCLUDED.raw_data`,
               [auth.userId, acct.id, String(v.id),
-               typeof v.title === 'string' ? v.title.slice(0, 500) : null,
-               typeof v.cover_image_url === 'string' ? v.cover_image_url : null,
-               typeof v.share_url === 'string' ? v.share_url : null,
-               likes, comments, shares, views, engagement,
-               Number(v.duration || 0),
-               v.create_time ? new Date(v.create_time * 1000).toISOString() : null,
-               JSON.stringify(v)]
+               title, coverUrl, shareUrl,
+               likes, comments, shares, views, engagement, duration,
+               createTime ? new Date(createTime * 1000).toISOString() : null,
+               desc, embedHtml, embedLink, height, width,
+               JSON.stringify({ ...v, ...rich })]
             );
             synced++;
           }
