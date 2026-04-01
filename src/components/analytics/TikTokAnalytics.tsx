@@ -103,7 +103,7 @@ export default function TikTokAnalytics({ days }: Props) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="text-base font-bold text-slate-950">TikTok Analytics</div>
-          <div className="text-xs text-slate-500 mt-0.5">Last {days} days · {videos.length} videos synced</div>
+          <div className="text-xs text-slate-500 mt-0.5">{videos.length} videos synced</div>
         </div>
         <button
           type="button"
@@ -169,7 +169,7 @@ export default function TikTokAnalytics({ days }: Props) {
       {/* Video summary KPIs */}
       {summary && (
         <div>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Video Performance · Last {days} days</div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Video Performance · All time</div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatCard label="Videos" value={formatCompactNumber(summary.total_videos)} icon={<Play size={16} />} />
             <StatCard label="Total Views" value={formatCompactNumber(summary.total_views)} icon={<Eye size={16} />} />

@@ -13825,7 +13825,9 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/social/tiktok/videos — paginated video insights for the authenticated user
+// GET /api/social/tiktok/videos — all synced video insights for the authenticated user
+// No days filter — returns all videos ever synced, sorted by posted_at DESC.
+// The `days` param (if provided) is used only to label the summary, not to filter.
 app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -13834,14 +13836,11 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
 
     const q = req.query as any;
     const days = Math.min(365, Math.max(1, parseInt(q.days || '30', 10)));
-    const limit = Math.min(100, Math.max(1, parseInt(q.limit || '50', 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(q.limit || '100', 10)));
     const offset = Math.max(0, parseInt(q.offset || '0', 10));
     const accountId = q.account_id ? String(q.account_id) : null;
 
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-
-    const params: any[] = [auth.userId, since.toISOString()];
+    const params: any[] = [auth.userId];
     let accountFilter = '';
     if (accountId) {
       params.push(accountId);
@@ -13854,7 +13853,6 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
        FROM tiktok_video_insights tvi
        JOIN social_accounts sa ON sa.id = tvi.social_account_id
        WHERE tvi.user_id = $1
-         AND (tvi.posted_at >= $2 OR tvi.posted_at IS NULL)
          ${accountFilter}
        ORDER BY COALESCE(tvi.posted_at, tvi.fetched_at) DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -13863,7 +13861,7 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
 
     const countRes = await pool.query(
       `SELECT COUNT(*) FROM tiktok_video_insights tvi
-       WHERE tvi.user_id = $1 AND (tvi.posted_at >= $2 OR tvi.posted_at IS NULL) ${accountFilter}`,
+       WHERE tvi.user_id = $1 ${accountFilter}`,
       params.slice(0, params.length - 2)
     );
 
@@ -13879,7 +13877,7 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
               THEN ROUND((SUM(engagement)::numeric / NULLIF(SUM(views), 0)) * 100, 2)
               ELSE 0 END AS avg_engagement_rate
        FROM tiktok_video_insights tvi
-       WHERE tvi.user_id = $1 AND (tvi.posted_at >= $2 OR tvi.posted_at IS NULL) ${accountFilter}`,
+       WHERE tvi.user_id = $1 ${accountFilter}`,
       params.slice(0, params.length - 2)
     );
 
