@@ -38,6 +38,12 @@ export type TikTokVideo = {
   fetched_at: string;
   account_name: string | null;
   handle: string | null;
+  // Enriched via video/query API
+  video_description: string | null;
+  embed_html: string | null;
+  embed_link: string | null;
+  height: number | null;
+  width: number | null;
 };
 
 export type TikTokVideoSummary = {
