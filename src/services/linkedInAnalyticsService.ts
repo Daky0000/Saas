@@ -60,6 +60,53 @@ export type LinkedInProfileResponse = {
   synced_at: string | null;
 };
 
+// Company Page types
+export type LinkedInCompanyPost = {
+  id: string;
+  user_id: string;
+  social_account_id: string;
+  post_id: string;
+  organization_id: string;
+  text: string | null;
+  media_type: string | null;
+  impressions: number;
+  likes: number;
+  comments: number;
+  reposts: number;
+  clicks: number;
+  engagement_rate: number;
+  created_at: string | null;
+  fetched_at: string;
+  account_name: string | null;
+};
+
+export type LinkedInCompanyPostSummary = {
+  total_posts: number;
+  total_impressions: number;
+  total_likes: number;
+  total_comments: number;
+  total_clicks: number;
+  avg_engagement_rate: number;
+};
+
+export type LinkedInCompanyPostsResponse = {
+  success: boolean;
+  posts: LinkedInCompanyPost[];
+  total: number;
+  summary: LinkedInCompanyPostSummary;
+};
+
+export type LinkedInCompanyStatsResponse = {
+  hasData: boolean;
+  organization_id: string;
+  organization_name: string | null;
+  follower_count: number;
+  posts_created: number;
+  engagement_rate: number;
+  logo_url: string | null;
+  synced_at: string | null;
+};
+
 export const linkedInAnalyticsService = {
   async sync(): Promise<LinkedInSyncResult> {
     const result = await apiFetch<{ success: boolean; synced: number; errors?: string[] }>(
@@ -79,4 +126,27 @@ export const linkedInAnalyticsService = {
     if (options.offset) params.set('offset', String(options.offset));
     return apiFetch(`/api/social/linkedin/posts?${params.toString()}`);
   },
+
+  async syncCompany(organizationId: string): Promise<LinkedInSyncResult> {
+    const result = await apiFetch<{ success: boolean; synced: number; errors?: string[] }>(
+      '/api/social/linkedin/company-sync',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationId }) }
+    );
+    return { synced: result.synced, errors: result.errors };
+  },
+
+  async getCompanyStats(organizationId: string): Promise<LinkedInCompanyStatsResponse> {
+    const params = new URLSearchParams();
+    params.set('organization_id', organizationId);
+    return apiFetch(`/api/social/linkedin/company-stats?${params.toString()}`);
+  },
+
+  async getCompanyPosts(organizationId: string, options: { limit?: number; offset?: number } = {}): Promise<LinkedInCompanyPostsResponse> {
+    const params = new URLSearchParams();
+    params.set('organization_id', organizationId);
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.offset) params.set('offset', String(options.offset));
+    return apiFetch(`/api/social/linkedin/company-posts?${params.toString()}`);
+  },
 };
+

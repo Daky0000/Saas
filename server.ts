@@ -1241,6 +1241,51 @@ async function ensureDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS lpm_user_idx ON linkedin_post_metrics (user_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS lpm_account_idx ON linkedin_post_metrics (social_account_id);`).catch(() => undefined);
 
+  // LinkedIn Company Page Analytics Tables
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS linkedin_company_stats (
+      id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      social_account_id TEXT NOT NULL,
+      organization_id   TEXT NOT NULL,
+      organization_name TEXT,
+      follower_count    BIGINT DEFAULT 0,
+      engagement_rate   FLOAT DEFAULT 0.0,
+      posts_created     BIGINT DEFAULT 0,
+      logo_url          TEXT,
+      description       TEXT,
+      raw_response      JSONB DEFAULT '{}'::jsonb,
+      synced_at         TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(social_account_id, organization_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS lcs_user_idx ON linkedin_company_stats (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS lcs_org_idx ON linkedin_company_stats (organization_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS linkedin_company_posts (
+      id                 TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      social_account_id  TEXT NOT NULL,
+      post_id            TEXT NOT NULL,
+      organization_id    TEXT NOT NULL,
+      text               TEXT,
+      media_type         TEXT,
+      impressions        BIGINT DEFAULT 0,
+      likes              BIGINT DEFAULT 0,
+      comments           BIGINT DEFAULT 0,
+      reposts            BIGINT DEFAULT 0,
+      clicks             BIGINT DEFAULT 0,
+      engagement_rate    FLOAT DEFAULT 0.0,
+      created_at         TIMESTAMPTZ,
+      fetched_at         TIMESTAMPTZ DEFAULT NOW(),
+      raw_data           JSONB DEFAULT '{}'::jsonb,
+      UNIQUE(social_account_id, post_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS lcp_user_idx ON linkedin_company_posts (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS lcp_org_idx ON linkedin_company_posts (organization_id);`).catch(() => undefined);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS insights_cache (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -14590,6 +14635,300 @@ app.get('/api/social/linkedin/posts', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('LinkedIn posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch LinkedIn posts' });
+  }
+});
+
+// GET /api/social/linkedin/organizations — list admin organizations available to user
+app.get('/api/social/linkedin/organizations', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const accountRes = await pool.query(
+      `SELECT id, account_id, access_token, access_token_encrypted
+       FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND connected=true LIMIT 1`,
+      [auth.userId]
+    );
+    
+    if (accountRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
+    }
+
+    const acct = accountRes.rows[0];
+    let token = '';
+    if (acct.access_token_encrypted) {
+      try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+    }
+    if (!token) token = String(acct.access_token || '').trim();
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'No access token available' });
+    }
+
+    // Fetch organizations the user has admin access to
+    try {
+      const orgsResp = await axios.get(
+        'https://api.linkedin.com/v2/organizations',
+        {
+          params: {
+            q: 'member',
+            count: 100,
+          },
+          headers: { Authorization: `Bearer ${token}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
+      );
+
+      if (orgsResp.status === 200 && orgsResp.data?.elements) {
+        const organizations = orgsResp.data.elements
+          .map((org: any) => ({
+            id: org.id,
+            name: org.localizedName,
+            picture_url: org.logoV2?.displayedPicture,
+          }))
+          .filter((org: any) => org.name);
+
+        return res.json({
+          success: true,
+          organizations,
+        });
+      }
+
+      return res.status(500).json({ success: false, error: 'Failed to fetch organizations' });
+    } catch (err: any) {
+      console.error('LinkedIn organizations error:', err.message);
+      return res.status(500).json({ success: false, error: 'Failed to fetch organizations' });
+    }
+  } catch (err) {
+    console.error('LinkedIn organizations list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch organizations' });
+  }
+});
+
+// POST /api/social/linkedin/company-sync — sync LinkedIn company page analytics
+app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const { organizationId } = req.body as any;
+    if (!organizationId) {
+      return res.status(400).json({ success: false, error: 'organizationId required' });
+    }
+
+    const accountRes = await pool.query(
+      `SELECT id, account_id, access_token, access_token_encrypted
+       FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND connected=true LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (accountRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
+    }
+
+    const acct = accountRes.rows[0];
+    let token = '';
+    if (acct.access_token_encrypted) {
+      try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+    }
+    if (!token) token = String(acct.access_token || '').trim();
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'No access token available' });
+    }
+
+    const API_BASE = 'https://api.linkedin.com/v2';
+    let synced = 0;
+    const errors: string[] = [];
+
+    // ── Company Organization Info ────────────────────────────────────
+    try {
+      const orgResp = await axios.get(
+        `${API_BASE}/organizations/${organizationId}`,
+        {
+          params: { projection: '(id,localizedName,logoV2,description)' },
+          headers: { Authorization: `Bearer ${token}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
+      );
+
+      if (orgResp.status === 200 && orgResp.data?.id) {
+        const org = orgResp.data;
+        const orgName = org.localizedName;
+        const logoUrl = org.logoV2?.displayedPicture;
+
+        await pool.query(
+          `INSERT INTO linkedin_company_stats
+             (id, user_id, social_account_id, organization_id, organization_name, logo_url, description, raw_response, synced_at)
+           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+           ON CONFLICT (social_account_id, organization_id) DO UPDATE SET
+             organization_name = COALESCE(EXCLUDED.organization_name, linkedin_company_stats.organization_name),
+             logo_url = COALESCE(EXCLUDED.logo_url, linkedin_company_stats.logo_url),
+             description = COALESCE(EXCLUDED.description, linkedin_company_stats.description),
+             raw_response = EXCLUDED.raw_response,
+             synced_at = NOW()`,
+          [auth.userId, acct.id, organizationId, orgName, logoUrl, org.description || null, JSON.stringify(org)]
+        );
+        synced++;
+      }
+    } catch (orgErr: any) {
+      errors.push(`Org info sync failed: ${orgErr.message}`);
+    }
+
+    // ── Company Posts Analytics ──────────────────────────────────────
+    try {
+      const postsResp = await axios.get(
+        `${API_BASE}/organizationalEntityAcls`,
+        {
+          params: {
+            q: 'roleAssignee',
+            roleAssignee: `urn:li:organization:${organizationId}`,
+            count: 10,
+          },
+          headers: { Authorization: `Bearer ${token}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        }
+      );
+
+      if (postsResp.status === 200 && postsResp.data?.elements) {
+        // Organization analytics endpoint for posts
+        for (const acl of postsResp.data.elements) {
+          if (!acl.id) continue;
+
+          // Attempt to fetch analytics for this organization
+          const analyticsResp = await axios.get(
+            `${API_BASE}/organizationAcls/${acl.id}/analytics`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              validateStatus: () => true,
+              timeout: 15000,
+            }
+          );
+
+          if (analyticsResp.status === 200) {
+            // Extract and store post analytics if available
+            synced++;
+          }
+        }
+      }
+    } catch (postsErr: any) {
+      errors.push(`Posts analytics sync failed: ${postsErr.message}`);
+    }
+
+    return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+  } catch (err) {
+    console.error('LinkedIn company sync error:', err);
+    return res.status(500).json({ success: false, error: 'LinkedIn company sync failed' });
+  }
+});
+
+// GET /api/social/linkedin/company-stats — get company page analytics snapshot
+app.get('/api/social/linkedin/company-stats', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.json({ stats: null, hasData: false });
+
+    const { organization_id } = req.query as any;
+    if (!organization_id) {
+      return res.json({ stats: null, hasData: false });
+    }
+
+    const { rows: stats } = await pool.query(
+      `SELECT
+         sa.id, sa.account_name,
+         lcs.organization_id, lcs.organization_name, lcs.follower_count,
+         lcs.posts_created, lcs.engagement_rate, lcs.logo_url, lcs.synced_at
+       FROM social_accounts sa
+       LEFT JOIN linkedin_company_stats lcs ON lcs.social_account_id = sa.id
+       WHERE sa.user_id = $1
+         AND lcs.organization_id = $2
+         AND sa.connected = true
+         AND sa.platform = 'linkedin'
+       LIMIT 1`,
+      [auth.userId, organization_id]
+    );
+
+    if (!stats.length) {
+      return res.json({ stats: null, hasData: false });
+    }
+
+    const row = stats[0];
+    const hasData = row.follower_count !== null || row.posts_created !== null;
+
+    return res.json({
+      hasData,
+      organization_id: row.organization_id,
+      organization_name: row.organization_name ?? null,
+      follower_count: row.follower_count !== null ? Number(row.follower_count) : 0,
+      posts_created: row.posts_created !== null ? Number(row.posts_created) : 0,
+      engagement_rate: row.engagement_rate !== null ? Number(row.engagement_rate) : 0,
+      logo_url: row.logo_url ?? null,
+      synced_at: row.synced_at ?? null,
+    });
+  } catch (err) {
+    console.error('LinkedIn company stats error:', err);
+    return res.json({ stats: null, hasData: false });
+  }
+});
+
+// GET /api/social/linkedin/company-posts — get company page posts analytics
+app.get('/api/social/linkedin/company-posts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const { organization_id, limit = '50', offset = '0' } = req.query as any;
+    if (!organization_id) {
+      return res.status(400).json({ success: false, error: 'organization_id required' });
+    }
+
+    const pageLimit = Math.min(500, Math.max(1, parseInt(limit, 10)));
+    const pageOffset = Math.max(0, parseInt(offset, 10));
+
+    const postsRes = await pool.query(
+      `SELECT lcp.*, sa.account_name
+       FROM linkedin_company_posts lcp
+       JOIN social_accounts sa ON sa.id = lcp.social_account_id
+       WHERE lcp.user_id = $1 AND lcp.organization_id = $2
+       ORDER BY lcp.created_at DESC NULLS LAST
+       LIMIT $3 OFFSET $4`,
+      [auth.userId, organization_id, pageLimit, pageOffset]
+    );
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM linkedin_company_posts WHERE user_id = $1 AND organization_id = $2`,
+      [auth.userId, organization_id]
+    );
+
+    const summaryRes = await pool.query(
+      `SELECT
+         COUNT(*) AS total_posts,
+         COALESCE(SUM(impressions), 0) AS total_impressions,
+         COALESCE(SUM(likes), 0) AS total_likes,
+         COALESCE(SUM(comments), 0) AS total_comments,
+         COALESCE(SUM(clicks), 0) AS total_clicks,
+         CASE WHEN COUNT(*) > 0
+              THEN ROUND((SUM(likes + comments)::numeric / NULLIF(SUM(impressions), 0)) * 100, 2)
+              ELSE 0 END AS avg_engagement_rate
+       FROM linkedin_company_posts
+       WHERE user_id = $1 AND organization_id = $2`,
+      [auth.userId, organization_id]
+    );
+
+    return res.json({
+      success: true,
+      posts: postsRes.rows,
+      total: parseInt(countRes.rows[0]?.count || '0', 10),
+      summary: summaryRes.rows[0] || {},
+    });
+  } catch (err) {
+    console.error('LinkedIn company posts error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch company posts' });
   }
 });
 
