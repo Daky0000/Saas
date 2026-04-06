@@ -361,4 +361,33 @@ export const integrationService = {
     if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to disconnect Mailchimp') };
     return { success: true };
   },
+
+  async listLinkedInOrganizations(): Promise<{
+    success: boolean;
+    organizations?: Array<{ id: string; name: string; picture_url?: string | null }>;
+    error?: string;
+  }> {
+    const response = await fetchApiJson<{ success: boolean; organizations?: Array<{ id: string; name: string; picture_url?: string | null }> }>(
+      '/api/social/linkedin/organizations',
+      { headers: authHeaders() },
+      'Failed to load LinkedIn organizations'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load LinkedIn organizations') };
+    return { success: true, organizations: response.payload?.organizations || [] };
+  },
+
+  async connectLinkedInCompany(organizationId: string): Promise<{ success: boolean; error?: string }> {
+    const response = await fetchApiJson(
+      '/api/social/linkedin/company-sync',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ organizationId }),
+      },
+      'Failed to connect LinkedIn company page'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to connect LinkedIn company page') };
+    return { success: true };
+  },
 };
+

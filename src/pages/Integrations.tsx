@@ -17,6 +17,7 @@ type ModalState =
   | { type: 'facebook-select'; accountType: 'page' | 'group' }
   | { type: 'instagram' }
   | { type: 'linkedin' }
+  | { type: 'linkedin-select' }
   | { type: 'pinterest' }
   | { type: 'mailchimp' };
 
@@ -116,6 +117,11 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [linkedInLoading, setLinkedInLoading] = useState(false);
   const [linkedInWarning, setLinkedInWarning] = useState<string | null>(null);
   const liReturnHandled = useRef(false);
+
+  // LinkedIn company pages
+  const [linkedInOrganizations, setLinkedInOrganizations] = useState<Array<{ id: string; name: string; picture_url?: string | null }>>([]);
+  const [linkedInOrgLoading, setLinkedInOrgLoading] = useState(false);
+  const [linkedInSelectedOrgs, setLinkedInSelectedOrgs] = useState<string[]>([]);
 
   // Pinterest boards
   const [pinBoards, setPinBoards] = useState<Array<{ id: string; name: string }>>([]);
@@ -276,6 +282,39 @@ export default function Integrations({ onNavigateSettings }: Props) {
       setLinkedInLoading(false);
     }
   }, []);
+
+  const openLinkedInCompanySelect = useCallback(async () => {
+    setModal({ type: 'linkedin-select' });
+    setLinkedInOrgLoading(true);
+    setLinkedInSelectedOrgs([]);
+    try {
+      const res = await integrationService.listLinkedInOrganizations();
+      if (!res.success) throw new Error(res.error || 'Failed to load LinkedIn organizations');
+      setLinkedInOrganizations(res.organizations || []);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to load LinkedIn organizations');
+      setLinkedInOrganizations([]);
+    } finally {
+      setLinkedInOrgLoading(false);
+    }
+  }, []);
+
+  const handleLinkedInOrgConnect = async () => {
+    if (linkedInSelectedOrgs.length === 0) return;
+    setBusy('linkedin-company');
+    try {
+      for (const orgId of linkedInSelectedOrgs) {
+        const res = await integrationService.connectLinkedInCompany(orgId);
+        if (!res.success) throw new Error(res.error || 'Failed to connect company page');
+      }
+      setModal({ type: 'none' });
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to connect company pages');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     if (!linkedInConnected || liReturnHandled.current) return;
@@ -602,15 +641,26 @@ export default function Integrations({ onNavigateSettings }: Props) {
         ) : null}
 
         {slug === 'linkedin' ? (
-          <button
-            type="button"
-            onClick={() => void openLinkedInTargets()}
-            disabled={!item.connected}
-            className={SECONDARY_ACTION}
-            title={!item.connected ? 'Connect LinkedIn first' : ''}
-          >
-            <Settings2 size={16} /> Manage
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => void openLinkedInTargets()}
+              disabled={!item.connected}
+              className={SECONDARY_ACTION}
+              title={!item.connected ? 'Connect LinkedIn first' : ''}
+            >
+              <Settings2 size={16} /> Manage Profile
+            </button>
+            <button
+              type="button"
+              onClick={() => void openLinkedInCompanySelect()}
+              disabled={!item.connected}
+              className={SECONDARY_ACTION}
+              title={!item.connected ? 'Connect LinkedIn first' : ''}
+            >
+              <Settings2 size={16} /> Connect Company Pages
+            </button>
+          </>
         ) : null}
 
       </Card>
@@ -749,6 +799,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       ? 'Instagram (Business accounts)'
                       : modal.type === 'linkedin'
                         ? 'LinkedIn targets'
+                      : modal.type === 'linkedin-select'
+                      ? 'Select LinkedIn Company Pages'
                       : modal.type === 'pinterest'
                       ? 'Pinterest boards'
                       : modal.type === 'mailchimp'
@@ -1130,6 +1182,77 @@ export default function Integrations({ onNavigateSettings }: Props) {
                           ))}
                         </div>
                       )}
+                    </>
+                  )}
+                </div>
+              ) : null}
+
+              {modal.type === 'linkedin-select' ? (
+                <div className="space-y-3">
+                  {linkedInOrgLoading ? (
+                    <div className="flex items-center justify-center py-10">
+                      <Loader2 size={22} className="animate-spin text-slate-400" />
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs text-slate-500">
+                        Select the company pages you admin to enable full analytics tracking, including impressions, engagement, and audience insights.
+                      </p>
+
+                      {linkedInOrganizations.length === 0 ? (
+                        <div className="text-sm text-slate-500">
+                          No organization pages found. Ensure you have admin access to a LinkedIn Company Page.
+                        </div>
+                      ) : (
+                        <div className="grid gap-2">
+                          {linkedInOrganizations.map((org) => {
+                            const isSelected = linkedInSelectedOrgs.includes(org.id);
+                            return (
+                              <button
+                                key={org.id}
+                                type="button"
+                                onClick={() => {
+                                  setLinkedInSelectedOrgs((prev) =>
+                                    isSelected ? prev.filter((id) => id !== org.id) : [...prev, org.id]
+                                  );
+                                }}
+                                className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition ${
+                                  isSelected ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  {org.picture_url && (
+                                    <img src={org.picture_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-slate-900">{org.name}</div>
+                                    <div className="text-xs text-slate-500">LinkedIn Company Page</div>
+                                  </div>
+                                </div>
+                                <input type="checkbox" checked={isSelected} readOnly className="shrink-0" />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+                        <button
+                          type="button"
+                          onClick={() => setModal({ type: 'none' })}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleLinkedInOrgConnect()}
+                          disabled={busy === 'linkedin-company' || linkedInSelectedOrgs.length === 0}
+                          className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                        >
+                          {busy === 'linkedin-company' ? 'Connecting...' : 'Connect Pages'}
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
