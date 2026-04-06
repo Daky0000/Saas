@@ -73,6 +73,25 @@ export type FacebookStatsResponse = {
   synced_at: string | null;
 };
 
+export type FacebookAccount = {
+  id: string;
+  account_id: string;
+  name: string;
+  type: 'page' | 'group';
+  followers?: number;
+  likes?: number;
+  members?: number;
+  picture_url?: string;
+};
+
+export type FacebookAccountsResponse = {
+  success: boolean;
+  pages: FacebookAccount[];
+  groups: FacebookAccount[];
+  total_pages: number;
+  total_groups: number;
+};
+
 export const facebookAnalyticsService = {
   async sync(): Promise<FacebookSyncResult> {
     const result = await apiFetch<{ success: boolean; synced: number; errors?: string[] }>(
@@ -80,6 +99,10 @@ export const facebookAnalyticsService = {
       { method: 'POST', headers: { 'Content-Type': 'application/json' } }
     );
     return { synced: result.synced, errors: result.errors };
+  },
+
+  async getAccounts(): Promise<FacebookAccountsResponse> {
+    return apiFetch('/api/social/facebook/accounts');
   },
 
   async getPosts(options: { days?: number; limit?: number; offset?: number; accountId?: string } = {}): Promise<FacebookPostsResponse> {
