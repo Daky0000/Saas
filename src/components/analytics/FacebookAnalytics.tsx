@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, RefreshCcw, Heart, MessageCircle, Share2, TrendingUp, Users, ExternalLink } from 'lucide-react';
+import { Loader2, RefreshCcw, Heart, MessageCircle, Share2, TrendingUp, Users, ExternalLink, ChevronDown } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { facebookAnalyticsService, type FacebookPost, type FacebookPostSummary, type FacebookStatsResponse } from '../../services/facebookAnalyticsService';
+import { facebookAnalyticsService, type FacebookPost, type FacebookPostSummary, type FacebookStatsResponse, type FacebookAccount } from '../../services/facebookAnalyticsService';
 import { formatCompactNumber, formatPercent, formatShortDate } from './analyticsUtils';
 
 type Props = {
   days: number;
 };
+
+type SubTab = 'pages' | 'groups';
 
 function StatCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
@@ -27,31 +29,50 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
 const fmt = (val: number | null) => val !== null ? formatCompactNumber(val) : '–';
 
 export default function FacebookAnalytics({ days }: Props) {
+  const [subTab, setSubTab] = useState<SubTab>('pages');
+  const [accounts, setAccounts] = useState<{ pages: FacebookAccount[]; groups: FacebookAccount[] }>({ pages: [], groups: [] });
+  const [selectedAccount, setSelectedAccount] = useState<FacebookAccount | null>(null);
   const [posts, setPosts] = useState<FacebookPost[]>([]);
   const [summary, setSummary] = useState<FacebookPostSummary | null>(null);
   const [stats, setStats] = useState<FacebookStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ synced: number; errors?: string[] } | null>(null);
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false);
 
+  // Load accounts and select first one
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        const result = await facebookAnalyticsService.getAccounts();
+        setAccounts(result);
+        const toSelect = subTab === 'pages' ? result.pages[0] : result.groups[0];
+        setSelectedAccount(toSelect || null);
+      } catch (err) {
+        console.error('Failed to load accounts:', err);
+      }
+    };
+    loadAccounts();
+  }, [subTab]);
+
+  // Load data for selected account
   const fetchData = useCallback(async () => {
+    if (!selectedAccount) return;
     setLoading(true);
-    setError(null);
     try {
       const [postsResult, statsResult] = await Promise.all([
-        facebookAnalyticsService.getPosts({ days, limit: 50 }),
+        facebookAnalyticsService.getPosts({ days, limit: 50, accountId: selectedAccount.account_id }),
         facebookAnalyticsService.getStats(),
       ]);
       setPosts(postsResult.posts);
       setSummary(postsResult.summary);
       setStats(statsResult);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load Facebook data');
+      console.error('Failed to load Facebook data:', err);
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, [days, selectedAccount]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -61,6 +82,9 @@ export default function FacebookAnalytics({ days }: Props) {
     try {
       const result = await facebookAnalyticsService.sync();
       setSyncResult(result);
+      // Reload accounts list
+      const accountsResult = await facebookAnalyticsService.getAccounts();
+      setAccounts(accountsResult);
       await fetchData();
     } catch (err) {
       setSyncResult({ synced: 0, errors: [err instanceof Error ? err.message : 'Sync failed'] });
@@ -69,21 +93,25 @@ export default function FacebookAnalytics({ days }: Props) {
     }
   };
 
-  if (loading) {
+  if (loading && !selectedAccount) {
     return (
       <div className="flex items-center justify-center py-20 text-slate-400">
-        <Loader2 size={20} className="animate-spin mr-2" /> Loading Facebook analytics…
+        <Loader2 size={20} className="animate-spin mr-2" /> Loading Facebook accounts…
       </div>
     );
   }
 
-  if (error) {
+  if (accounts.pages.length === 0 && accounts.groups.length === 0) {
     return (
-      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+        <MessageCircle size={32} className="mx-auto mb-3 text-slate-300" />
+        <div className="font-semibold text-slate-700">No Facebook pages or groups connected</div>
+        <div className="mt-1 text-xs">Connect a Facebook page or group to view analytics here.</div>
+      </div>
     );
   }
 
-  // Chart data — top 10 by engagement for the bar chart
+  const currentAccounts = subTab === 'pages' ? accounts.pages : accounts.groups;
   const chartData = [...posts]
     .sort((a, b) => Number(b.engagement) - Number(a.engagement))
     .slice(0, 10)
@@ -116,6 +144,75 @@ export default function FacebookAnalytics({ days }: Props) {
         </button>
       </div>
 
+      {/* Sub-tabs: Pages & Groups */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { id: 'pages' as SubTab, label: `Pages (${accounts.pages.length})` },
+          { id: 'groups' as SubTab, label: `Groups (${accounts.groups.length})` },
+        ] as const).map((tab) => {
+          const isActive = subTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSubTab(tab.id)}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+                isActive ? 'bg-slate-900 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Account Selector */}
+      <div className="relative">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 mb-2">
+          {subTab === 'pages' ? 'Select Page' : 'Select Group'}
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-900 hover:bg-slate-50 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3">
+              {selectedAccount?.picture_url && (
+                <img src={selectedAccount.picture_url} alt="" className="h-6 w-6 rounded-full object-cover" />
+              )}
+              <span>{selectedAccount?.name || 'Select an account'}</span>
+            </div>
+            <ChevronDown size={16} className={`transition ${showAccountDropdown ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showAccountDropdown && (
+            <div className="absolute top-full left-0 right-0 mt-2 rounded-2xl border border-slate-200 bg-white shadow-lg z-10">
+              {currentAccounts.map((account) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAccount(account);
+                    setShowAccountDropdown(false);
+                  }}
+                  className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100 last:border-b-0"
+                >
+                  {account.picture_url && (
+                    <img src={account.picture_url} alt="" className="h-6 w-6 rounded-full object-cover" />
+                  )}
+                  <div className="flex-1">
+                    <div className="font-semibold text-slate-900">{account.name}</div>
+                    <div className="text-xs text-slate-400">
+                      {subTab === 'pages' ? `${fmt(account.followers ?? null)} followers` : `${fmt(account.members ?? null)} members`}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Sync result banner */}
       {syncResult && (
         <div className={`rounded-2xl border px-4 py-3 text-sm ${
@@ -135,34 +232,34 @@ export default function FacebookAnalytics({ days }: Props) {
         </div>
       )}
 
-      {/* Page stats snapshot */}
+      {/* Page/Group info snapshot */}
       <div>
-        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Page</div>
-        {stats?.account_name && (
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+          {subTab === 'pages' ? 'Page' : 'Group'} Info
+        </div>
+        {selectedAccount && (
           <div className="mb-3 flex items-center gap-3">
-            {stats.picture_url && (
-              <img src={stats.picture_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+            {selectedAccount.picture_url && (
+              <img src={selectedAccount.picture_url} alt="" className="h-10 w-10 rounded-full object-cover" />
             )}
-            <span className="text-sm font-bold text-slate-900">{stats.account_name}</span>
+            <span className="text-sm font-bold text-slate-900">{selectedAccount.name}</span>
           </div>
         )}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Followers" value={fmt(stats?.followers ?? null)} icon={<Users size={16} />} />
-          <StatCard label="Page Likes" value={fmt(stats?.page_likes ?? null)} icon={<Heart size={16} />} />
+          <StatCard 
+            label={subTab === 'pages' ? 'Followers' : 'Members'} 
+            value={fmt(subTab === 'pages' ? (selectedAccount?.followers ?? null) : (selectedAccount?.members ?? null))} 
+            icon={<Users size={16} />} 
+          />
+          {subTab === 'pages' && (
+            <StatCard label="Page Likes" value={fmt(selectedAccount?.likes ?? null)} icon={<Heart size={16} />} />
+          )}
           <StatCard label="Posts" value={fmt(stats?.posts_count ?? null)} icon={<MessageCircle size={16} />} />
           <StatCard label="Engagement Rate" value={stats && stats.engagement_rate !== null ? formatPercent(stats.engagement_rate) : '–'} icon={<TrendingUp size={16} />} />
         </div>
-        {stats?.bio && (
-          <div className="mt-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 text-sm text-slate-600">{stats.bio}</div>
-        )}
         {stats?.synced_at && (
           <div className="mt-1.5 text-xs text-slate-400">
             Last synced {new Date(stats.synced_at).toLocaleString()}
-          </div>
-        )}
-        {!stats?.hasData && (
-          <div className="mt-2 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
-            No page data yet — click <span className="font-semibold">Sync Facebook</span> to pull your page stats.
           </div>
         )}
       </div>

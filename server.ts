@@ -14282,6 +14282,58 @@ app.get('/api/social/facebook/stats', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/social/facebook/accounts — list all connected Facebook pages and groups
+app.get('/api/social/facebook/accounts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const { rows: accounts } = await pool.query(
+      `SELECT 
+         sa.id, sa.account_id, sa.account_name, sa.account_type,
+         sa.followers, sa.profile_image, sa.handle,
+         fps.followers as page_followers, fps.page_likes
+       FROM social_accounts sa
+       LEFT JOIN facebook_page_stats fps ON fps.social_account_id = sa.id
+       WHERE sa.user_id = $1
+         AND sa.platform = 'facebook'
+         AND sa.connected = true
+       ORDER BY sa.account_type DESC, sa.account_name ASC`,
+      [auth.userId]
+    );
+
+    const pages = accounts.filter((a: any) => a.account_type === 'page');
+    const groups = accounts.filter((a: any) => a.account_type === 'group');
+
+    return res.json({
+      success: true,
+      pages: pages.map((p: any) => ({
+        id: p.id,
+        account_id: p.account_id,
+        name: p.account_name,
+        type: p.account_type,
+        followers: p.page_followers || p.followers || 0,
+        likes: p.page_likes || 0,
+        picture_url: p.profile_image,
+      })),
+      groups: groups.map((g: any) => ({
+        id: g.id,
+        account_id: g.account_id,
+        name: g.account_name,
+        type: g.account_type,
+        members: g.followers || 0,
+        picture_url: g.profile_image,
+      })),
+      total_pages: pages.length,
+      total_groups: groups.length,
+    });
+  } catch (err) {
+    console.error('Facebook accounts error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Facebook accounts' });
+  }
+});
+
 // ─── End Analytics & Insights Engine ─────────────────────────────────────────
 
 // ─── Campaign & Funnel Builder ────────────────────────────────────────────────
