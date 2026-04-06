@@ -8,6 +8,7 @@
     "dev:frontend": "node scripts/use-source-index.mjs && vite",
     "dev:api": "ts-node server.ts",
     "start": "tsx server.ts",
+    "build:server": "esbuild server.ts --bundle --platform=node --format=esm --outfile=.railway-build/server.mjs",
     "prebuild": "node scripts/clean-temp.mjs",
     "build": "node scripts/use-source-index.mjs && tsc && vite build && node scripts/sync-pages.mjs",
     "build:dist": "node scripts/use-source-index.mjs && tsc && vite build",

@@ -58,6 +58,7 @@ Old design/
 tmp_find_bom.py
 tmp_preview_server.cjs
 tmp_preview_server.js
+.railway-build/
 
 # Dependencies and local logs
 node_modules/
