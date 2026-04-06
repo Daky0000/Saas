@@ -14540,7 +14540,7 @@ app.post('/api/social/linkedin/sync', async (req: Request, res: Response) => {
         const profileResp = await axios.get(
           `${API_BASE}/me`,
           {
-            headers: { Authorization: \`Bearer \${token}\` },
+            headers: { Authorization: `Bearer ${token}` },
             validateStatus: () => true,
             timeout: 15000,
           }
@@ -14567,28 +14567,28 @@ app.post('/api/social/linkedin/sync', async (req: Request, res: Response) => {
           );
 
           // Update account name
-          const displayName = \`\${firstName} \${lastName}\`.trim();
+          const displayName = `${firstName} ${lastName}`.trim();
           await pool.query(
-            \`UPDATE social_accounts SET account_name = \$1 WHERE id = \$2\`,
+            `UPDATE social_accounts SET account_name = \$1 WHERE id = \$2`,
             [displayName, acct.id]
           );
           synced++;
         }
       } catch (profileErr: any) {
-        errors.push(\`Profile sync failed: \${profileErr.message}\`);
+        errors.push(`Profile sync failed: ${profileErr.message}`);
       }
 
       // ── Posts Sync (UGC Posts) ────────────────────────────────────────────
       try {
         const postsResp = await axios.get(
-          \`\${API_BASE}/ugcPosts\`,
+          `${API_BASE}/ugcPosts`,
           {
             params: {
               q: 'authors',
-              authors: \`urn:li:person:\${acct.account_id}\`,
+              authors: `urn:li:person:${acct.account_id}`,
               count: 100,
             },
-            headers: { Authorization: \`Bearer \${token}\` },
+            headers: { Authorization: `Bearer ${token}` },
             validateStatus: () => true,
             timeout: 15000,
           }
@@ -14601,19 +14601,19 @@ app.post('/api/social/linkedin/sync', async (req: Request, res: Response) => {
             const createdAt = post.created?.time ? new Date(post.created.time).toISOString() : null;
 
             await pool.query(
-              \`INSERT INTO linkedin_post_metrics
+              `INSERT INTO linkedin_post_metrics
                  (id, user_id, social_account_id, post_id, text, post_url, media_type, created_at, fetched_at, raw_data)
-               VALUES (gen_random_uuid()::text, \$1, \$2, \$3, \$4, \$5, \$6, \$7, NOW(), \$8::jsonb)
-               ON CONFLICT (social_account_id, post_id) DO UPDATE SET
-                 text = EXCLUDED.text,
-                 post_url = EXCLUDED.post_url,
-                 media_type = EXCLUDED.media_type,
-                 fetched_at = NOW(),
-                 raw_data = EXCLUDED.raw_data\`,
+                VALUES (gen_random_uuid()::text, \$1, \$2, \$3, \$4, \$5, \$6, \$7, NOW(), \$8::jsonb)
+                ON CONFLICT (social_account_id, post_id) DO UPDATE SET
+                  text = EXCLUDED.text,
+                  post_url = EXCLUDED.post_url,
+                  media_type = EXCLUDED.media_type,
+                  fetched_at = NOW(),
+                  raw_data = EXCLUDED.raw_data`,
               [
                 auth.userId, acct.id, String(post.id),
                 post.specificContent?.com?.linkedin?.ugcPost?.content?.com?.linkedin?.ugcPost?.shareCommentary?.text?.slice(0, 5000) || null,
-                \`https://www.linkedin.com/feed/update/\${post.id}\` || null,
+                `https://www.linkedin.com/feed/update/${post.id}` || null,
                 post.specificContent?.com?.linkedin?.ugcPost?.content?.media?.length > 0 ? 'media' : 'text',
                 createdAt,
                 JSON.stringify(post),
@@ -14623,7 +14623,7 @@ app.post('/api/social/linkedin/sync', async (req: Request, res: Response) => {
           }
         }
       } catch (postsErr: any) {
-        errors.push(\`Posts sync failed: \${postsErr.message}\`);
+        errors.push(`Posts sync failed: ${postsErr.message}`);
       }
     }
 
@@ -14642,7 +14642,7 @@ app.get('/api/social/linkedin/profile', async (req: Request, res: Response) => {
     if (!pool) return res.json({ profile: null, hasData: false });
 
     const { rows: profile } = await pool.query(
-      \`SELECT
+      `SELECT
          sa.id, sa.account_name, sa.handle, sa.followers,
          lps.first_name, lps.last_name, lps.headline, lps.connections_count, 
          lps.profile_picture_url, lps.synced_at
@@ -14652,7 +14652,7 @@ app.get('/api/social/linkedin/profile', async (req: Request, res: Response) => {
          AND sa.connected = true
          AND sa.platform = 'linkedin'
        ORDER BY lps.synced_at DESC NULLS LAST
-       LIMIT 1\`,
+       LIMIT 1`,
       [auth.userId]
     );
 
@@ -14691,25 +14691,25 @@ app.get('/api/social/linkedin/posts', async (req: Request, res: Response) => {
     const offset = Math.max(0, parseInt(q.offset || '0', 10));
 
     const postsRes = await pool.query(
-      \`SELECT lpm.*, sa.account_name
+      `SELECT lpm.*, sa.account_name
        FROM linkedin_post_metrics lpm
        JOIN social_accounts sa ON sa.id = lpm.social_account_id
        WHERE lpm.user_id = \$1
        ORDER BY COALESCE(lpm.created_at, lpm.fetched_at) DESC
-       LIMIT \$2 OFFSET \$3\`,
+       LIMIT \$2 OFFSET \$3`,
       [auth.userId, limit, offset]
     );
 
     const countRes = await pool.query(
-      \`SELECT COUNT(*) FROM linkedin_post_metrics WHERE user_id = \$1\`,
+      `SELECT COUNT(*) FROM linkedin_post_metrics WHERE user_id = \$1`,
       [auth.userId]
     );
 
     const summaryRes = await pool.query(
-      \`SELECT
+      `SELECT
          COUNT(*) AS total_posts
        FROM linkedin_post_metrics
-       WHERE user_id = \$1\`,
+       WHERE user_id = \$1`,
       [auth.userId]
     );
 
@@ -15805,7 +15805,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
