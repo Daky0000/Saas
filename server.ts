@@ -9345,22 +9345,42 @@ app.post('/api/v1/social/linkedin/token-refresh', async (req: Request, res: Resp
   try {
     const conn = await getPublishableSocialConnection(user.userId, 'linkedin');
     if (!conn) return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
-    const refreshToken = String(conn.token_data?.refresh_token || '').trim();
+    const refreshToken = String(conn.refresh_token || conn.token_data?.refresh_token || '').trim();
     if (!refreshToken) return res.status(400).json({ success: false, error: 'No refresh token stored — reconnect LinkedIn' });
 
     const refreshed = await refreshLinkedInAccessToken(refreshToken);
     const newToken = String(refreshed?.access_token || '').trim();
     if (!newToken) return res.status(400).json({ success: false, error: 'LinkedIn token refresh returned no token' });
+    const nextRefreshToken = String(refreshed?.refresh_token || refreshToken || '').trim() || null;
 
     const expiresAt = refreshed?.expires_in
       ? new Date(Date.now() + Number(refreshed.expires_in) * 1000).toISOString()
       : null;
+    const accessTokenEncrypted = encryptIntegrationSecret(newToken);
+    const refreshTokenEncrypted = nextRefreshToken ? encryptIntegrationSecret(nextRefreshToken) : null;
     await pool.query(
       `UPDATE social_accounts
-       SET access_token=$1, token_expires_at=$2, needs_reapproval=false, updated_at=NOW()
-       WHERE user_id=$3 AND LOWER(platform)='linkedin'`,
-      [newToken, expiresAt, user.userId]
+       SET access_token=$1,
+           refresh_token=$2,
+           access_token_encrypted=$3,
+           refresh_token_encrypted=$4,
+           token_expires_at=$5,
+           expires_at=$5,
+           needs_reapproval=false,
+           token_data = COALESCE(token_data, '{}'::jsonb) || $6::jsonb
+       WHERE user_id=$7 AND LOWER(platform)='linkedin'`,
+      [null, null, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, JSON.stringify(refreshed || {}), user.userId]
     );
+    await upsertUserIntegration({
+      userId: user.userId,
+      integrationSlug: 'linkedin',
+      accessTokenEncrypted,
+      refreshTokenEncrypted,
+      tokenExpiry: expiresAt,
+      accountId: conn.account_id ?? null,
+      accountName: conn.account_name ?? null,
+      status: 'connected',
+    });
     return res.json({ success: true, message: 'LinkedIn access token refreshed', expiresAt });
   } catch (err) {
     console.error('LinkedIn token refresh error:', err);
@@ -10601,6 +10621,7 @@ function startTokenHealthMonitor() {
 type PublishableSocialConnection = {
   platform: string;
   access_token: string;
+  refresh_token?: string | null;
   token_data: any;
   account_id?: string | null;
   account_name?: string | null;
@@ -10612,6 +10633,53 @@ function computeExpiresAtIso(expiresInSeconds: unknown): string | null {
   const seconds = Number(expiresInSeconds);
   if (!Number.isFinite(seconds) || seconds <= 0) return null;
   return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+function decodeStoredIntegrationSecret(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    return decryptIntegrationSecret(raw);
+  } catch {
+    return '';
+  }
+}
+
+async function getUserIntegrationTokenFallback(userId: string, platformId: string) {
+  if (!pool) return null;
+  const integration = await getIntegrationRowBySlug(platformId);
+  if (!integration) return null;
+
+  const result = await pool.query(
+    `SELECT access_token, refresh_token, token_expiry, account_id, account_name, status
+     FROM user_integrations
+     WHERE user_id=$1 AND integration_id=$2
+     LIMIT 1`,
+    [userId, integration.id]
+  );
+  const row = result.rows[0] as
+    | {
+        access_token: string | null;
+        refresh_token: string | null;
+        token_expiry: string | null;
+        account_id: string | null;
+        account_name: string | null;
+        status: string | null;
+      }
+    | undefined;
+  if (!row || String(row.status || '').toLowerCase() === 'disconnected') return null;
+
+  const accessToken = decodeStoredIntegrationSecret(row.access_token);
+  const refreshToken = decodeStoredIntegrationSecret(row.refresh_token);
+  if (!accessToken && !refreshToken) return null;
+
+  return {
+    accessToken,
+    refreshToken,
+    tokenExpiry: row.token_expiry || null,
+    accountId: row.account_id || null,
+    accountName: row.account_name || null,
+  };
 }
 
 async function refreshTwitterAccessToken(refreshToken: string) {
@@ -10747,15 +10815,24 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
   if (!pool) return null;
   const rows = await pool.query(
-    `SELECT platform, account_id, account_name, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data, expires_at, token_expires_at, needs_reapproval
+    `SELECT platform, account_type, account_id, account_name, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data, expires_at, token_expires_at, needs_reapproval, connected_at, created_at
      FROM social_accounts
-     WHERE user_id=$1 AND connected=true AND (COALESCE(access_token,'') <> '' OR COALESCE(access_token_encrypted,'') <> '')
-       AND (account_type = 'profile' OR account_type IS NULL)`,
-    [userId]
+     WHERE user_id=$1
+       AND connected=true
+       AND LOWER(platform)=LOWER($2)
+       AND (account_type = 'profile' OR account_type IS NULL)
+     ORDER BY
+       CASE WHEN account_type = 'profile' THEN 0 ELSE 1 END,
+       CASE WHEN needs_reapproval THEN 1 ELSE 0 END,
+       CASE WHEN COALESCE(access_token_encrypted,'') <> '' OR COALESCE(access_token,'') <> '' THEN 0 ELSE 1 END,
+       COALESCE(connected_at, created_at) DESC,
+       created_at DESC`,
+    [userId, platformId]
   );
-  const match = rows.rows.find((r: any) => normalizePlatformId(r.platform) === platformId) as
+  const match = rows.rows[0] as
     | {
         platform: string;
+        account_type: string | null;
         account_id: string | null;
         account_name: string | null;
         access_token: string | null;
@@ -10766,58 +10843,63 @@ async function getPublishableSocialConnection(userId: string, platformId: string
         expires_at: string | null;
         token_expires_at: string | null;
         needs_reapproval: boolean | null;
+        connected_at: string | null;
+        created_at: string | null;
       }
     | undefined;
-  if (!match) return null;
 
-  let decryptedAccess = '';
-  if (match.access_token_encrypted) {
-    try {
-      decryptedAccess = decryptIntegrationSecret(match.access_token_encrypted);
-    } catch {
-      decryptedAccess = '';
-    }
-  }
-  let decryptedRefresh = '';
-  if (match.refresh_token_encrypted) {
-    try {
-      decryptedRefresh = decryptIntegrationSecret(match.refresh_token_encrypted);
-    } catch {
-      decryptedRefresh = '';
-    }
-  }
+  const integrationFallback = await getUserIntegrationTokenFallback(userId, platformId);
+  if (!match && !integrationFallback) return null;
 
-  const accessToken = String(decryptedAccess || match.access_token || '').trim();
-  const refreshToken = String(decryptedRefresh || match.refresh_token || '').trim();
-  const tokenData = match.token_data || {};
+  const decryptedAccess = decodeStoredIntegrationSecret(match?.access_token_encrypted);
+  const decryptedRefresh = decodeStoredIntegrationSecret(match?.refresh_token_encrypted);
 
-  if (match.needs_reapproval) {
+  const accessToken = String(
+    decryptedAccess ||
+    match?.access_token ||
+    integrationFallback?.accessToken ||
+    ''
+  ).trim();
+  const refreshToken = String(
+    decryptedRefresh ||
+    match?.refresh_token ||
+    integrationFallback?.refreshToken ||
+    ''
+  ).trim();
+  const tokenData = {
+    ...(match?.token_data || {}),
+    ...(refreshToken ? { refresh_token: refreshToken } : {}),
+  };
+  const rawExpiry = match?.token_expires_at || match?.expires_at || integrationFallback?.tokenExpiry || null;
+  const expiresAtMs = rawExpiry ? new Date(rawExpiry).getTime() : NaN;
+  const hasUsableToken = Boolean(accessToken) && (!Number.isFinite(expiresAtMs) || expiresAtMs > Date.now());
+
+  if (match?.needs_reapproval && !hasUsableToken) {
     return {
       platform: match.platform,
       access_token: '',
+      refresh_token: refreshToken || null,
       token_data: tokenData,
-      account_id: match.account_id,
-      account_name: match.account_name,
+      account_id: match.account_id || integrationFallback?.accountId || null,
+      account_name: match.account_name || integrationFallback?.accountName || null,
       needs_reapproval: true,
-      token_expires_at: match.token_expires_at || match.expires_at,
+      token_expires_at: rawExpiry,
     };
   }
-
-  const rawExpiry = match.token_expires_at || match.expires_at;
-  const expiresAtMs = rawExpiry ? new Date(rawExpiry).getTime() : NaN;
   const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const supportsTokenRefresh = platformId === 'twitter' || platformId === 'linkedin' || platformId === 'tiktok';
+  const supportsTokenRefresh = platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken);
   const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
   const shouldRefreshSoon =
     supportsTokenRefresh && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
 
   if (!Number.isFinite(expiresAtMs) || (!supportsTokenRefresh && !isExpired) || (supportsTokenRefresh && !shouldRefreshSoon)) {
     return {
-      platform: match.platform,
+      platform: match?.platform || platformId,
       access_token: accessToken,
+      refresh_token: refreshToken || null,
       token_data: tokenData,
-      account_id: match.account_id,
-      account_name: match.account_name,
+      account_id: match?.account_id || integrationFallback?.accountId || null,
+      account_name: match?.account_name || integrationFallback?.accountName || null,
       needs_reapproval: false,
       token_expires_at: rawExpiry,
     };
@@ -10831,11 +10913,12 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       disconnect: false,
     });
     return {
-      platform: match.platform,
+      platform: match?.platform || platformId,
       access_token: '',
+      refresh_token: refreshToken || null,
       token_data: tokenData,
-      account_id: match.account_id,
-      account_name: match.account_name,
+      account_id: match?.account_id || integrationFallback?.accountId || null,
+      account_name: match?.account_name || integrationFallback?.accountName || null,
       needs_reapproval: true,
       token_expires_at: rawExpiry,
     };
@@ -10849,11 +10932,12 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       disconnect: false,
     });
     return {
-      platform: match.platform,
+      platform: match?.platform || platformId,
       access_token: '',
+      refresh_token: null,
       token_data: tokenData,
-      account_id: match.account_id,
-      account_name: match.account_name,
+      account_id: match?.account_id || integrationFallback?.accountId || null,
+      account_name: match?.account_name || integrationFallback?.accountName || null,
       needs_reapproval: true,
       token_expires_at: rawExpiry,
     };
@@ -10876,11 +10960,12 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       disconnect: false,
     });
     return {
-      platform: match.platform,
+      platform: match?.platform || platformId,
       access_token: '',
+      refresh_token: refreshToken || null,
       token_data: tokenData,
-      account_id: match.account_id,
-      account_name: match.account_name,
+      account_id: match?.account_id || integrationFallback?.accountId || null,
+      account_name: match?.account_name || integrationFallback?.accountName || null,
       needs_reapproval: true,
       token_expires_at: rawExpiry,
     };
@@ -10906,7 +10991,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
              needs_reapproval=false,
              token_data = COALESCE(token_data, '{}'::jsonb) || $8::jsonb
          WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`,
-        [userId, match.platform, null, null, nextAccessEncrypted, nextRefreshEncrypted, nextExpiresAt, JSON.stringify(refreshed || {})]
+        [userId, match?.platform || platformId, null, null, nextAccessEncrypted, nextRefreshEncrypted, nextExpiresAt, JSON.stringify(refreshed || {})]
       );
       await upsertUserIntegration({
         userId,
@@ -10914,8 +10999,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
         accessTokenEncrypted: nextAccessEncrypted,
         refreshTokenEncrypted: nextRefreshEncrypted,
         tokenExpiry: nextExpiresAt,
-        accountId: match.account_id ?? null,
-        accountName: match.account_name ?? null,
+        accountId: match?.account_id ?? integrationFallback?.accountId ?? null,
+        accountName: match?.account_name ?? integrationFallback?.accountName ?? null,
         status: 'connected',
       });
       await logIntegrationEvent({
@@ -10929,22 +11014,24 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       // ignore persistence issues; still return refreshed token for this request
     }
     return {
-      platform: match.platform,
+      platform: match?.platform || platformId,
       access_token: nextAccess,
+      refresh_token: nextRefresh,
       token_data: mergedTokenData,
-      account_id: match.account_id,
-      account_name: match.account_name,
+      account_id: match?.account_id || integrationFallback?.accountId || null,
+      account_name: match?.account_name || integrationFallback?.accountName || null,
       needs_reapproval: false,
       token_expires_at: nextExpiresAt,
     };
   }
 
   return {
-    platform: match.platform,
+    platform: match?.platform || platformId,
     access_token: '',
+    refresh_token: refreshToken || null,
     token_data: tokenData,
-    account_id: match.account_id,
-    account_name: match.account_name,
+    account_id: match?.account_id || integrationFallback?.accountId || null,
+    account_name: match?.account_name || integrationFallback?.accountName || null,
     needs_reapproval: true,
     token_expires_at: rawExpiry,
   };
@@ -15718,10 +15805,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
-
 
 
 
