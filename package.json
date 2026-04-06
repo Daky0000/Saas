@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:frontend": "node scripts/use-source-index.mjs && vite",
