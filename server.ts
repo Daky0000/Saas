@@ -11037,6 +11037,41 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   };
 }
 
+async function getLinkedInAuthContext(userId: string): Promise<{
+  accessToken: string;
+  socialAccountId: string | null;
+  hasConnection: boolean;
+}> {
+  const conn = await getPublishableSocialConnection(userId, 'linkedin');
+  const preferredAccountId = String(conn?.account_id || '').trim();
+  let socialAccountId: string | null = null;
+
+  if (pool) {
+    const accountRes = await pool.query(
+      `SELECT id
+       FROM social_accounts
+       WHERE user_id=$1
+         AND platform='linkedin'
+         AND connected=true
+       ORDER BY
+         CASE WHEN account_type='profile' OR account_type IS NULL THEN 0 ELSE 1 END,
+         CASE WHEN $2 <> '' AND account_id=$2 THEN 0 ELSE 1 END,
+         CASE WHEN COALESCE(access_token_encrypted, '') <> '' OR COALESCE(access_token, '') <> '' THEN 0 ELSE 1 END,
+         COALESCE(connected_at, created_at) DESC,
+         created_at DESC
+       LIMIT 1`,
+      [userId, preferredAccountId]
+    );
+    socialAccountId = accountRes.rows[0]?.id ? String(accountRes.rows[0].id) : null;
+  }
+
+  return {
+    accessToken: String(conn?.access_token || '').trim(),
+    socialAccountId,
+    hasConnection: Boolean(conn || socialAccountId),
+  };
+}
+
 async function getUserSettingValue(userId: string, key: string): Promise<any | null> {
   if (!pool) return null;
   try {
@@ -14732,24 +14767,13 @@ app.get('/api/social/linkedin/organizations', async (req: Request, res: Response
     if (!auth) return;
     if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
 
-    const accountRes = await pool.query(
-      `SELECT id, account_id, access_token, access_token_encrypted
-       FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND connected=true LIMIT 1`,
-      [auth.userId]
-    );
-    
-    if (accountRes.rows.length === 0) {
+    const linkedInAuth = await getLinkedInAuthContext(auth.userId);
+    if (!linkedInAuth.hasConnection) {
       return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
     }
-
-    const acct = accountRes.rows[0];
-    let token = '';
-    if (acct.access_token_encrypted) {
-      try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
-    }
-    if (!token) token = String(acct.access_token || '').trim();
+    const token = linkedInAuth.accessToken;
     if (!token) {
-      return res.status(401).json({ success: false, error: 'No access token available' });
+      return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
     }
 
     // Fetch organizations the user has admin access to
@@ -14805,24 +14829,13 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
       return res.status(400).json({ success: false, error: 'organizationId required' });
     }
 
-    const accountRes = await pool.query(
-      `SELECT id, account_id, access_token, access_token_encrypted
-       FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND connected=true LIMIT 1`,
-      [auth.userId]
-    );
-
-    if (accountRes.rows.length === 0) {
+    const linkedInAuth = await getLinkedInAuthContext(auth.userId);
+    if (!linkedInAuth.hasConnection || !linkedInAuth.socialAccountId) {
       return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
     }
-
-    const acct = accountRes.rows[0];
-    let token = '';
-    if (acct.access_token_encrypted) {
-      try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
-    }
-    if (!token) token = String(acct.access_token || '').trim();
+    const token = linkedInAuth.accessToken;
     if (!token) {
-      return res.status(401).json({ success: false, error: 'No access token available' });
+      return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
     }
 
     const API_BASE = 'https://api.linkedin.com/v2';
@@ -14856,7 +14869,7 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
              description = COALESCE(EXCLUDED.description, linkedin_company_stats.description),
              raw_response = EXCLUDED.raw_response,
              synced_at = NOW()`,
-          [auth.userId, acct.id, organizationId, orgName, logoUrl, org.description || null, JSON.stringify(org)]
+          [auth.userId, linkedInAuth.socialAccountId, organizationId, orgName, logoUrl, org.description || null, JSON.stringify(org)]
         );
         synced++;
       }
@@ -15805,7 +15818,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
