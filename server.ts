@@ -9269,65 +9269,14 @@ app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
       },
     ];
 
-    let warning: string | null = null;
-    const aclResp = await axios.get(
-      'https://api.linkedin.com/v2/organizationAcls',
-      {
-        params: {
-          q: 'roleAssignee',
-          roleAssignee: `urn:li:person:${personId}`,
-          state: 'APPROVED',
-        },
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'X-Restli-Protocol-Version': '2.0.0',
-        },
-        validateStatus: () => true,
-        timeout: 15000,
-      }
-    );
-    const aclData: any = aclResp.data || {};
-    if (aclResp.status >= 400) {
-      // Any error (403 = no org scope, 400 = invalid params for scope) means the token
-      // doesn't have organization permissions. Silently skip — standard "Share on LinkedIn"
-      // apps don't include org scopes, so this is expected and not an error to surface.
-    } else {
-      const organizationIds = Array.from(
-        new Set(
-          (Array.isArray(aclData?.elements) ? aclData.elements : [])
-            .map((row: any) => String(row?.organization || '').trim())
-            .filter(Boolean)
-            .map((urn: string) => {
-              const match = urn.match(/organization:(\d+)/i);
-              return match?.[1] || '';
-            })
-            .filter(Boolean)
-        )
-      );
-
-      for (const organizationId of organizationIds) {
-        const orgResp = await axios.get(`https://api.linkedin.com/rest/organizations/${encodeURIComponent(organizationId)}`, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'X-Restli-Protocol-Version': '2.0.0',
-            'LinkedIn-Version': '202511',
-          },
-          validateStatus: () => true,
-          timeout: 15000,
-        });
-        const orgData: any = orgResp.data || {};
-        if (orgResp.status >= 400) {
-          warning = warning || orgData?.message || `LinkedIn organization lookup failed (${orgResp.status})`;
-          continue;
-        }
-        const localizedName = String(orgData?.localizedName || orgData?.name || '').trim();
-        targets.push({
-          id: organizationId,
-          name: localizedName || `LinkedIn Page ${organizationId}`,
-          accountType: 'page',
-          saved: savedKeys.has(`page:${organizationId}`),
-        });
-      }
+    const { organizations: adminOrganizations, warning } = await listLinkedInAdminOrganizations(accessToken, personId);
+    for (const organization of adminOrganizations) {
+      targets.push({
+        id: organization.id,
+        name: organization.name,
+        accountType: 'page',
+        saved: savedKeys.has(`page:${organization.id}`),
+      });
     }
 
     return res.json({ success: true, targets, warning });
@@ -11130,25 +11079,56 @@ async function listLinkedInAdminOrganizations(accessToken: string, personId: str
   organizations: Array<{ id: string; name: string; picture_url?: string | null }>;
   warning: string | null;
 }> {
-  const aclResp = await axios.get(
-    'https://api.linkedin.com/v2/organizationAcls',
+  const aclRequests = [
     {
-      params: {
-        q: 'roleAssignee',
-        roleAssignee: `urn:li:person:${personId}`,
-        state: 'APPROVED',
+      url: 'https://api.linkedin.com/rest/organizationAcls',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0',
+        'LinkedIn-Version': '202511',
       },
+    },
+    {
+      url: 'https://api.linkedin.com/v2/organizationAcls',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'X-Restli-Protocol-Version': '2.0.0',
       },
-      validateStatus: () => true,
-      timeout: 15000,
+    },
+  ];
+
+  let aclData: any = {};
+  let aclStatus = 0;
+  let aclWarning: string | null = null;
+
+  for (const request of aclRequests) {
+    const aclResp = await axios.get(
+      request.url,
+      {
+        params: {
+          q: 'roleAssignee',
+          roleAssignee: `urn:li:person:${personId}`,
+          state: 'APPROVED',
+        },
+        headers: request.headers,
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+    aclStatus = aclResp.status;
+    aclData = aclResp.data || {};
+    if (aclResp.status < 400) {
+      break;
     }
-  );
-  const aclData: any = aclResp.data || {};
-  if (aclResp.status >= 400) {
-    return { organizations: [], warning: null };
+
+    aclWarning = aclData?.message || `LinkedIn organization ACL lookup failed (${aclResp.status})`;
+    if (![404, 410, 426].includes(aclResp.status)) {
+      break;
+    }
+  }
+
+  if (aclStatus >= 400) {
+    return { organizations: [], warning: aclWarning };
   }
 
   const organizationIds = Array.from(
@@ -15938,8 +15918,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
 
 
 
