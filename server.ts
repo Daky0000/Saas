@@ -3341,6 +3341,259 @@ async function getOAuthStateRow(state: string): Promise<{ user_id: string; platf
   return result.rows[0] ?? null;
 }
 
+const LINKEDIN_DEFAULT_OAUTH_SCOPES = [
+  'r_liteprofile',
+  'r_emailaddress',
+  'w_member_social',
+  'r_organization_admin',
+  'rw_organization_admin',
+  'r_organization_social',
+  'w_organization_social',
+];
+
+const LINKEDIN_ORG_ADMIN_SCOPE_OPTIONS = ['r_organization_admin', 'rw_organization_admin'];
+
+function getLinkedInOAuthScopeString(): string {
+  return String(process.env.LINKEDIN_OAUTH_SCOPES || LINKEDIN_DEFAULT_OAUTH_SCOPES.join(' ')).trim();
+}
+
+function parseLinkedInScopeList(value: unknown): string[] {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  return Array.from(new Set(decoded.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean)));
+}
+
+function getLinkedInScopeSet(tokenData: any): Set<string> {
+  const fromString = parseLinkedInScopeList(tokenData?.scope);
+  const fromArray = Array.isArray(tokenData?.scopes)
+    ? tokenData.scopes.map((scope: unknown) => String(scope || '').trim()).filter(Boolean)
+    : [];
+  return new Set([...fromString, ...fromArray]);
+}
+
+function hasAnyLinkedInScope(tokenData: any, scopes: string[]): boolean {
+  const granted = getLinkedInScopeSet(tokenData);
+  return scopes.some((scope) => granted.has(scope));
+}
+
+function hasAllLinkedInScopes(tokenData: any, scopes: string[]): boolean {
+  const granted = getLinkedInScopeSet(tokenData);
+  return scopes.every((scope) => granted.has(scope));
+}
+
+function getLinkedInOrganizationScopeError(
+  tokenData: any,
+  options?: { requireSocialRead?: boolean; requireSocialWrite?: boolean },
+): string | null {
+  const granted = getLinkedInScopeSet(tokenData);
+  if (granted.size === 0) return null;
+
+  if (!LINKEDIN_ORG_ADMIN_SCOPE_OPTIONS.some((scope) => granted.has(scope))) {
+    return 'LinkedIn connection is missing organization admin scopes — reconnect LinkedIn and approve company page access';
+  }
+  if (options?.requireSocialRead && !granted.has('r_organization_social')) {
+    return 'LinkedIn connection is missing r_organization_social — reconnect LinkedIn to load company page analytics';
+  }
+  if (options?.requireSocialWrite && !granted.has('w_organization_social')) {
+    return 'LinkedIn connection is missing w_organization_social — reconnect LinkedIn to publish to company pages';
+  }
+  return null;
+}
+
+function shouldEnableLinkedInExtendedLogin(): boolean {
+  const raw = String(process.env.LINKEDIN_ENABLE_EXTENDED_LOGIN || 'true').trim().toLowerCase();
+  return raw !== '0' && raw !== 'false' && raw !== 'no' && raw !== 'off';
+}
+
+function computeIsoFromUnixTimestamp(seconds: unknown): string | null {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return new Date(value * 1000).toISOString();
+}
+
+function computeIsoFromTtlSeconds(seconds: unknown): string | null {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return new Date(Date.now() + value * 1000).toISOString();
+}
+
+async function getLinkedInOAuthCredentials(req?: Request): Promise<{
+  clientId: string;
+  redirectUri: string;
+  clientSecrets: string[];
+}> {
+  const cfg = await getPlatformConfig('linkedin');
+  const clientId = String(cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || process.env.LINKEDIN_CLIENT_ID || '').trim();
+  const redirectUri = resolveOAuthRedirectUri('linkedin', cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI || process.env.LINKEDIN_REDIRECT_URI, req);
+  const clientSecrets = Array.from(
+    new Set(
+      [
+        cfg.clientSecret,
+        process.env.LINKEDIN_CLIENT_SECRET,
+        process.env.LINKEDIN_CLIENT_SECRET_PREVIOUS,
+        process.env.LINKEDIN_CLIENT_SECRET_ALT,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (!clientId || !redirectUri || clientSecrets.length === 0) {
+    throw new Error('LinkedIn client credentials not configured');
+  }
+
+  return { clientId, redirectUri, clientSecrets };
+}
+
+function shouldRetryLinkedInSecret(status: number, payload: any): boolean {
+  const errorCode = String(payload?.error || payload?.code || '').trim().toLowerCase();
+  return status === 401 || errorCode === 'invalid_client' || errorCode === 'unauthorized_client';
+}
+
+async function postLinkedInOAuthForm(
+  baseParams: Record<string, string>,
+  credentials: { clientId: string; redirectUri: string; clientSecrets: string[] },
+): Promise<any> {
+  let lastResponse: any = null;
+
+  for (let index = 0; index < credentials.clientSecrets.length; index += 1) {
+    const clientSecret = credentials.clientSecrets[index];
+    const body = new URLSearchParams({
+      ...baseParams,
+      client_id: credentials.clientId,
+      client_secret: clientSecret,
+      redirect_uri: credentials.redirectUri,
+    });
+    const response = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', body.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+
+    if (response.status < 400) return response;
+
+    lastResponse = response;
+    if (index === credentials.clientSecrets.length - 1 || !shouldRetryLinkedInSecret(response.status, response.data)) {
+      return response;
+    }
+  }
+
+  return lastResponse;
+}
+
+async function introspectLinkedInAccessToken(accessToken: string, req?: Request): Promise<any | null> {
+  const token = String(accessToken || '').trim();
+  if (!token) return null;
+
+  try {
+    const credentials = await getLinkedInOAuthCredentials(req);
+    let lastResponse: any = null;
+
+    for (let index = 0; index < credentials.clientSecrets.length; index += 1) {
+      const body = new URLSearchParams({
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecrets[index],
+        token,
+      });
+      const response = await axios.post('https://www.linkedin.com/oauth/v2/introspectToken', body.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+
+      if (response.status < 400) return response.data || null;
+
+      lastResponse = response;
+      if (index === credentials.clientSecrets.length - 1 || !shouldRetryLinkedInSecret(response.status, response.data)) {
+        break;
+      }
+    }
+
+    return lastResponse?.data || null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeLinkedInTokenMetadata(tokenData: any, introspection?: any) {
+  const next = tokenData && typeof tokenData === 'object' ? { ...tokenData } : {};
+  const scopes = parseLinkedInScopeList(next?.scope || introspection?.scope);
+  if (scopes.length > 0) {
+    next.scope = scopes.join(' ');
+    next.scopes = scopes;
+  }
+
+  if (typeof introspection?.active === 'boolean') next.access_token_active = introspection.active;
+  if (introspection?.status) next.access_token_status = String(introspection.status);
+  if (introspection?.authorized_at != null) next.access_token_authorized_at = Number(introspection.authorized_at);
+  if (introspection?.created_at != null) next.access_token_created_at = Number(introspection.created_at);
+  if (introspection?.expires_at != null) {
+    next.access_token_expires_at_unix = Number(introspection.expires_at);
+    const accessTokenExpiresAt = computeIsoFromUnixTimestamp(introspection.expires_at);
+    if (accessTokenExpiresAt) next.access_token_expires_at = accessTokenExpiresAt;
+  }
+
+  const refreshTokenExpiresAt = computeIsoFromTtlSeconds(next?.refresh_token_expires_in);
+  if (refreshTokenExpiresAt) next.refresh_token_expires_at = refreshTokenExpiresAt;
+
+  return next;
+}
+
+async function enrichLinkedInTokenData(tokenData: any, req?: Request) {
+  const accessToken = String(tokenData?.access_token || '').trim();
+  let enriched = tokenData && typeof tokenData === 'object' ? { ...tokenData } : {};
+
+  if (accessToken) {
+    const introspection = await introspectLinkedInAccessToken(accessToken, req);
+    enriched = mergeLinkedInTokenMetadata(enriched, introspection);
+
+    try {
+      // Primary: /v2/me (works with r_liteprofile — standard "Share on LinkedIn" scope)
+      // Fallback: /v2/userinfo (OpenID Connect, for apps with openid/profile scopes)
+      let linkedInId = '';
+      let fullName = '';
+      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (meResp.status < 400) {
+        const meData: any = meResp.data || {};
+        linkedInId = String(meData?.id || '').trim();
+        fullName = [String(meData?.localizedFirstName || ''), String(meData?.localizedLastName || '')].filter(Boolean).join(' ').trim();
+      }
+      if (!linkedInId) {
+        const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (userinfoResp.status < 400) {
+          const userData: any = userinfoResp.data || {};
+          linkedInId = String(userData?.sub || '').trim();
+          fullName = fullName || String(userData?.name || '').trim() || [String(userData?.given_name || ''), String(userData?.family_name || '')].filter(Boolean).join(' ').trim();
+        }
+      }
+      if (linkedInId) {
+        enriched.user_id = linkedInId;
+        enriched.id = linkedInId;
+        enriched.sub = linkedInId;
+      }
+      if (fullName) enriched.name = fullName;
+    } catch {
+      // best-effort enrichment; token can still be stored without profile data
+    }
+  }
+
+  return enriched;
+}
+
 async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?: string, req?: Request) {
   switch ((platformId || '').trim().toLowerCase()) {
     case 'instagram':
@@ -3468,61 +3721,20 @@ async function exchangeTwitterCode(code: string, codeVerifier?: string, req?: Re
 }
 
 async function exchangeLinkedInCode(code: string, req?: Request) {
-  const cfg = await getPlatformConfig('linkedin');
-  const data = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code,
-    redirect_uri: resolveOAuthRedirectUri('linkedin', cfg.redirectUri || process.env.VITE_LINKEDIN_REDIRECT_URI, req),
-    client_id: cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '',
-    client_secret: cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '',
-  });
-  const response = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', data.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    validateStatus: () => true,
-    timeout: 15000,
-  });
+  const credentials = await getLinkedInOAuthCredentials(req);
+  const response = await postLinkedInOAuthForm(
+    {
+      grant_type: 'authorization_code',
+      code,
+    },
+    credentials
+  );
   if (response.status >= 400) {
     const errBody: any = response.data || {};
     const detail = errBody?.error_description || errBody?.error || '';
     throw new Error(`LinkedIn token exchange failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
-  const tokenData: any = response.data || {};
-  const accessToken = String(tokenData?.access_token || '').trim();
-  if (accessToken) {
-    try {
-      // Primary: /v2/me (works with r_liteprofile — standard "Share on LinkedIn" scope)
-      // Fallback: /v2/userinfo (OpenID Connect, for apps with openid/profile scopes)
-      let linkedInId = '';
-      let fullName = '';
-      const meResp = await axios.get('https://api.linkedin.com/v2/me', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        validateStatus: () => true,
-        timeout: 15000,
-      });
-      if (meResp.status < 400) {
-        const meData: any = meResp.data || {};
-        linkedInId = String(meData?.id || '').trim();
-        fullName = [String(meData?.localizedFirstName || ''), String(meData?.localizedLastName || '')].filter(Boolean).join(' ').trim();
-      }
-      if (!linkedInId) {
-        const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          validateStatus: () => true,
-          timeout: 15000,
-        });
-        if (userinfoResp.status < 400) {
-          const ud: any = userinfoResp.data || {};
-          linkedInId = String(ud?.sub || '').trim();
-          fullName = fullName || String(ud?.name || '').trim() || [String(ud?.given_name || ''), String(ud?.family_name || '')].filter(Boolean).join(' ').trim();
-        }
-      }
-      if (linkedInId) { tokenData.user_id = linkedInId; tokenData.id = linkedInId; tokenData.sub = linkedInId; }
-      if (fullName) tokenData.name = fullName;
-    } catch {
-      // best-effort enrichment; token can still be stored without profile data
-    }
-  }
-  return tokenData;
+  return enrichLinkedInTokenData(response.data || {}, req);
 }
 
 async function exchangeFacebookCode(code: string, redirectUriOverride?: string) {
@@ -3747,9 +3959,11 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   const handle =
     normalizedTokenData?.username || accountId || normalizedTokenData?.handle || `${platformId}_account`;
   const followers = Number(normalizedTokenData?.followers || normalizedTokenData?.followers_count || 0);
-  const expiresAt = normalizedTokenData?.expires_in
-    ? new Date(Date.now() + Number(normalizedTokenData.expires_in) * 1000).toISOString()
-    : null;
+  const expiresAt =
+    (platformId === 'linkedin' && String(normalizedTokenData?.access_token_expires_at || '').trim()) ||
+    (normalizedTokenData?.expires_in
+      ? new Date(Date.now() + Number(normalizedTokenData.expires_in) * 1000).toISOString()
+      : null);
   const tokenExpiresAt = expiresAt;
 
   const platRow = await dbQuery<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', [platformId]).catch(() => ({ rows: [] } as any));
@@ -6077,7 +6291,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // a narrower or broader scope set can override this via LINKEDIN_OAUTH_SCOPES.
   linkedin:  {
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
-    scopes: (process.env.LINKEDIN_OAUTH_SCOPES || 'r_liteprofile r_emailaddress w_member_social r_organization_admin rw_organization_admin r_organization_social w_organization_social').trim(),
+    scopes: getLinkedInOAuthScopeString(),
     idField: 'clientId',
   },
   // media.write is NOT a standard OAuth 2.0 scope — requesting it causes Twitter to reject the auth URL entirely.
@@ -6159,6 +6373,10 @@ function resolveOAuthRedirectUri(platform: string, redirectUri?: string, req?: R
       }
       params.set('code_challenge', challenge);
       params.set('code_challenge_method', method || 'S256');
+    }
+
+    if (platform === 'linkedin' && shouldEnableLinkedInExtendedLogin()) {
+      params.set('enable_extended_login', 'true');
     }
 
     if (platform === 'tiktok') {
@@ -9273,6 +9491,11 @@ app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
       },
     ];
 
+    const organizationScopeError = getLinkedInOrganizationScopeError(conn?.token_data);
+    if (organizationScopeError) {
+      return res.json({ success: true, targets, warning: organizationScopeError });
+    }
+
     const { organizations: adminOrganizations, warning } = await listLinkedInAdminOrganizations(accessToken, personId);
     for (const organization of adminOrganizations) {
       targets.push({
@@ -9301,14 +9524,12 @@ app.post('/api/v1/social/linkedin/token-refresh', async (req: Request, res: Resp
     const refreshToken = String(conn.refresh_token || conn.token_data?.refresh_token || '').trim();
     if (!refreshToken) return res.status(400).json({ success: false, error: 'No refresh token stored — reconnect LinkedIn' });
 
-    const refreshed = await refreshLinkedInAccessToken(refreshToken);
+    const refreshed = await refreshLinkedInAccessToken(refreshToken, req);
     const newToken = String(refreshed?.access_token || '').trim();
     if (!newToken) return res.status(400).json({ success: false, error: 'LinkedIn token refresh returned no token' });
     const nextRefreshToken = String(refreshed?.refresh_token || refreshToken || '').trim() || null;
 
-    const expiresAt = refreshed?.expires_in
-      ? new Date(Date.now() + Number(refreshed.expires_in) * 1000).toISOString()
-      : null;
+    const expiresAt = String(refreshed?.access_token_expires_at || '').trim() || computeIsoFromTtlSeconds(refreshed?.expires_in);
     const accessTokenEncrypted = encryptIntegrationSecret(newToken);
     const refreshTokenEncrypted = nextRefreshToken ? encryptIntegrationSecret(nextRefreshToken) : null;
     await pool.query(
@@ -9396,6 +9617,8 @@ app.get('/api/v1/social/linkedin/org-analytics', async (req: Request, res: Respo
     const conn = await getPublishableSocialConnection(user.userId, 'linkedin');
     const accessToken = String(conn?.access_token || '').trim();
     if (!accessToken) return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
+    const organizationScopeError = getLinkedInOrganizationScopeError(conn?.token_data, { requireSocialRead: true });
+    if (organizationScopeError) return res.status(400).json({ success: false, error: organizationScopeError });
 
     // Get org ID from query or stored page accounts
     let orgId = String((req.query as any)?.orgId || '').trim();
@@ -10677,25 +10900,17 @@ async function refreshTwitterAccessToken(refreshToken: string) {
   return resp.data;
 }
 
-async function refreshLinkedInAccessToken(refreshToken: string) {
-  const cfg = await getPlatformConfig('linkedin');
-  const clientId = (cfg.clientId || process.env.VITE_LINKEDIN_CLIENT_ID || '').trim();
-  const clientSecret = (cfg.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '').trim();
-  if (!clientId || !clientSecret) throw new Error('LinkedIn client credentials not configured');
-
-  const data = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
-  });
-  const resp = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', data.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    validateStatus: () => true,
-    timeout: 15000,
-  });
+async function refreshLinkedInAccessToken(refreshToken: string, req?: Request) {
+  const credentials = await getLinkedInOAuthCredentials(req);
+  const resp = await postLinkedInOAuthForm(
+    {
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    },
+    credentials
+  );
   if (resp.status >= 400) throw new Error(`LinkedIn token refresh failed (${resp.status})`);
-  return resp.data;
+  return enrichLinkedInTokenData(resp.data || {}, req);
 }
 
 async function refreshTikTokAccessToken(refreshToken: string) {
@@ -10838,11 +11053,72 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     integrationFallback?.refreshToken ||
     ''
   ).trim();
-  const tokenData = {
+  let tokenData = {
     ...(match?.token_data || {}),
     ...(refreshToken ? { refresh_token: refreshToken } : {}),
   };
-  const rawExpiry = match?.token_expires_at || match?.expires_at || integrationFallback?.tokenExpiry || null;
+  let rawExpiry =
+    match?.token_expires_at ||
+    match?.expires_at ||
+    String(tokenData?.access_token_expires_at || '').trim() ||
+    integrationFallback?.tokenExpiry ||
+    null;
+
+  if (platformId === 'linkedin' && accessToken) {
+    const needsMetadataHydration =
+      getLinkedInScopeSet(tokenData).size === 0 ||
+      !String(tokenData?.access_token_expires_at || '').trim() ||
+      (refreshToken && !String(tokenData?.refresh_token_expires_at || '').trim());
+
+    if (needsMetadataHydration) {
+      try {
+        const enrichedTokenData = await enrichLinkedInTokenData(
+          {
+            ...tokenData,
+            access_token: accessToken,
+            ...(refreshToken ? { refresh_token: refreshToken } : {}),
+          }
+        );
+        const enrichedExpiry =
+          String(enrichedTokenData?.access_token_expires_at || '').trim() ||
+          rawExpiry;
+
+        tokenData = enrichedTokenData;
+        rawExpiry = enrichedExpiry;
+
+        await pool.query(
+          `UPDATE social_accounts
+           SET token_data = COALESCE(token_data, '{}'::jsonb) || $3::jsonb,
+               expires_at = COALESCE($4, expires_at),
+               token_expires_at = COALESCE($4, token_expires_at)
+           WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`,
+          [userId, platformId, JSON.stringify(enrichedTokenData || {}), enrichedExpiry]
+        );
+
+        if (enrichedTokenData?.access_token_active === false) {
+          await markSocialAccountNeedsReapproval({
+            platformId,
+            userId,
+            reason: 'token_inactive',
+            disconnect: false,
+          });
+          return {
+            platform: match?.platform || platformId,
+            access_token: '',
+            refresh_token: refreshToken || null,
+            token_data: enrichedTokenData,
+            account_id: match?.account_id || integrationFallback?.accountId || null,
+            account_name: match?.account_name || integrationFallback?.accountName || null,
+            needs_reapproval: true,
+            token_expires_at: enrichedExpiry,
+          };
+        }
+      } catch {
+        // Metadata hydration is best-effort; keep the token usable if LinkedIn inspection fails.
+      }
+    }
+  }
+
   const expiresAtMs = rawExpiry ? new Date(rawExpiry).getTime() : NaN;
   const hasUsableToken = Boolean(accessToken) && (!Number.isFinite(expiresAtMs) || expiresAtMs > Date.now());
 
@@ -10858,6 +11134,31 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       token_expires_at: rawExpiry,
     };
   }
+
+  const linkedInRefreshExpiry =
+    platformId === 'linkedin'
+      ? String(tokenData?.refresh_token_expires_at || '').trim()
+      : '';
+  const linkedInRefreshExpiryMs = linkedInRefreshExpiry ? new Date(linkedInRefreshExpiry).getTime() : NaN;
+  if (platformId === 'linkedin' && refreshToken && Number.isFinite(linkedInRefreshExpiryMs) && linkedInRefreshExpiryMs <= Date.now()) {
+    await markSocialAccountNeedsReapproval({
+      platformId,
+      userId,
+      reason: 'refresh_token_expired',
+      disconnect: false,
+    });
+    return {
+      platform: match?.platform || platformId,
+      access_token: '',
+      refresh_token: refreshToken || null,
+      token_data: tokenData,
+      account_id: match?.account_id || integrationFallback?.accountId || null,
+      account_name: match?.account_name || integrationFallback?.accountName || null,
+      needs_reapproval: true,
+      token_expires_at: rawExpiry,
+    };
+  }
+
   const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
   const supportsTokenRefresh = platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken);
   const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
@@ -10945,7 +11246,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
 
   const nextAccess = String(refreshed?.access_token || '').trim();
   const nextRefresh = String(refreshed?.refresh_token || refreshToken || '').trim() || null;
-  const nextExpiresAt = computeExpiresAtIso(refreshed?.expires_in) || rawExpiry;
+  const nextExpiresAt = String(refreshed?.access_token_expires_at || '').trim() || computeExpiresAtIso(refreshed?.expires_in) || rawExpiry;
   const mergedTokenData = { ...(tokenData || {}), ...(refreshed || {}) };
 
   if (nextAccess) {
@@ -15120,6 +15421,10 @@ app.get('/api/social/linkedin/organizations', async (req: Request, res: Response
     if (!token) {
       return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
     }
+    const organizationScopeError = getLinkedInOrganizationScopeError(linkedInAuth.tokenData);
+    if (organizationScopeError) {
+      return res.status(400).json({ success: false, error: organizationScopeError });
+    }
 
     try {
       const { personId } = await resolveLinkedInProfileIdentity(token, {
@@ -15162,6 +15467,10 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
     const token = linkedInAuth.accessToken;
     if (!token) {
       return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
+    }
+    const organizationScopeError = getLinkedInOrganizationScopeError(linkedInAuth.tokenData, { requireSocialRead: true });
+    if (organizationScopeError) {
+      return res.status(400).json({ success: false, error: organizationScopeError });
     }
 
     let synced = 0;
@@ -16201,19 +16510,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
