@@ -11596,7 +11596,7 @@ async function resolveLinkedInProfileIdentity(accessToken: string, fallback?: {
 
 async function listLinkedInAdminOrganizations(
   accessToken: string,
-  personId: string,
+  _personId: string,
   options?: { allowedRoles?: string[] },
 ): Promise<{
   organizations: Array<{ id: string; name: string; picture_url?: string | null; roles?: string[] }>;
@@ -11627,14 +11627,9 @@ async function listLinkedInAdminOrganizations(
     const request = aclRequests[requestIndex];
     const params: Record<string, string | number> = {
       q: 'roleAssignee',
-      roleAssignee: `urn:li:person:${personId}`,
-      state: 'APPROVED',
       count,
       start,
     };
-    if (allowedRoles.size === 1) {
-      params.role = Array.from(allowedRoles)[0];
-    }
 
     const aclResp = await axios.get(
       request.url,
@@ -11649,7 +11644,7 @@ async function listLinkedInAdminOrganizations(
 
     if (aclResp.status >= 400) {
       aclWarning = aclData?.message || `LinkedIn organization ACL lookup failed (${aclResp.status})`;
-      if (requestIndex === 0 && [404, 410, 426].includes(aclResp.status)) {
+      if (requestIndex === 0 && [400, 401, 404, 410, 426].includes(aclResp.status)) {
         requestIndex += 1;
         start = 0;
         continue;
@@ -11659,6 +11654,8 @@ async function listLinkedInAdminOrganizations(
 
     const elements = Array.isArray(aclData?.elements) ? aclData.elements : [];
     for (const row of elements) {
+      const state = String(row?.state || '').trim().toUpperCase();
+      if (state && state !== 'APPROVED') continue;
       const role = String(row?.role || '').trim().toUpperCase();
       if (allowedRoles.size > 0 && role && !allowedRoles.has(role)) continue;
       const organizationId = parseLinkedInOrganizationId(row?.organizationTarget || row?.organization);
@@ -15436,7 +15433,9 @@ app.get('/api/social/linkedin/organizations', async (req: Request, res: Response
         return res.status(400).json({ success: false, error: 'Unable to resolve your LinkedIn profile id' });
       }
 
-      const { organizations } = await listLinkedInAdminOrganizations(token, personId, { allowedRoles: ['ADMINISTRATOR'] });
+      const { organizations } = await listLinkedInAdminOrganizations(token, personId, {
+        allowedRoles: ['ADMINISTRATOR', 'CONTENT_ADMINISTRATOR', 'ANALYST', 'CURATOR'],
+      });
       return res.json({ success: true, organizations });
     } catch (err: any) {
       console.error('LinkedIn organizations error:', err.message);
@@ -16510,6 +16509,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
