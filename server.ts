@@ -11041,6 +11041,9 @@ async function getLinkedInAuthContext(userId: string): Promise<{
   accessToken: string;
   socialAccountId: string | null;
   hasConnection: boolean;
+  accountId: string | null;
+  accountName: string | null;
+  tokenData: any;
 }> {
   const conn = await getPublishableSocialConnection(userId, 'linkedin');
   const preferredAccountId = String(conn?.account_id || '').trim();
@@ -11069,7 +11072,139 @@ async function getLinkedInAuthContext(userId: string): Promise<{
     accessToken: String(conn?.access_token || '').trim(),
     socialAccountId,
     hasConnection: Boolean(conn || socialAccountId),
+    accountId: conn?.account_id || null,
+    accountName: conn?.account_name || null,
+    tokenData: conn?.token_data || {},
   };
+}
+
+async function resolveLinkedInProfileIdentity(accessToken: string, fallback?: {
+  accountId?: string | null;
+  accountName?: string | null;
+  tokenData?: any;
+}): Promise<{ personId: string; profileName: string }> {
+  let personId =
+    String(fallback?.accountId || '').trim() ||
+    String(fallback?.tokenData?.sub || fallback?.tokenData?.user_id || fallback?.tokenData?.id || '').trim();
+  let profileName = String(fallback?.accountName || fallback?.tokenData?.name || '').trim();
+
+  if (!personId || !profileName) {
+    const meResp = await axios.get('https://api.linkedin.com/v2/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    if (meResp.status < 400) {
+      const meData: any = meResp.data || {};
+      personId = personId || String(meData?.id || '').trim();
+      profileName = profileName ||
+        [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+    }
+    if (!personId) {
+      const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (userinfoResp.status >= 400) {
+        throw new Error('LinkedIn profile lookup failed — please reconnect');
+      }
+      const userData: any = userinfoResp.data || {};
+      personId = String(userData?.sub || '').trim();
+      profileName = profileName ||
+        String(userData?.name || '').trim() ||
+        [String(userData?.given_name || '').trim(), String(userData?.family_name || '').trim()]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+    }
+  }
+
+  return { personId, profileName };
+}
+
+async function listLinkedInAdminOrganizations(accessToken: string, personId: string): Promise<{
+  organizations: Array<{ id: string; name: string; picture_url?: string | null }>;
+  warning: string | null;
+}> {
+  const aclResp = await axios.get(
+    'https://api.linkedin.com/v2/organizationAcls',
+    {
+      params: {
+        q: 'roleAssignee',
+        roleAssignee: `urn:li:person:${personId}`,
+        state: 'APPROVED',
+      },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0',
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    }
+  );
+  const aclData: any = aclResp.data || {};
+  if (aclResp.status >= 400) {
+    return { organizations: [], warning: null };
+  }
+
+  const organizationIds = Array.from(
+    new Set(
+      (Array.isArray(aclData?.elements) ? aclData.elements : [])
+        .map((row: any) => String(row?.organization || '').trim())
+        .filter(Boolean)
+        .map((urn: string) => {
+          const match = urn.match(/organization:(\d+)/i);
+          return match?.[1] || '';
+        })
+        .filter(Boolean)
+    )
+  );
+
+  const organizations: Array<{ id: string; name: string; picture_url?: string | null }> = [];
+  let warning: string | null = null;
+
+  for (const organizationId of organizationIds) {
+    const orgResp = await axios.get(`https://api.linkedin.com/rest/organizations/${encodeURIComponent(organizationId)}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0',
+        'LinkedIn-Version': '202511',
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const orgData: any = orgResp.data || {};
+    if (orgResp.status >= 400) {
+      warning = warning || orgData?.message || `LinkedIn organization lookup failed (${orgResp.status})`;
+      continue;
+    }
+
+    const localizedName = String(orgData?.localizedName || orgData?.name || '').trim();
+    organizations.push({
+      id: organizationId,
+      name: localizedName || `LinkedIn Page ${organizationId}`,
+      picture_url: orgData?.logoV2?.displayedPicture || null,
+    });
+  }
+
+  return { organizations, warning };
+}
+
+function extractLinkedInOrganizationDescription(org: any): string | null {
+  const direct = String(org?.description || '').trim();
+  if (direct) return direct;
+
+  const localized = org?.description?.localized;
+  if (localized && typeof localized === 'object') {
+    const first = Object.values(localized).find((value) => typeof value === 'string' && String(value).trim());
+    if (typeof first === 'string' && first.trim()) return first.trim();
+  }
+
+  return null;
 }
 
 async function getUserSettingValue(userId: string, key: string): Promise<any | null> {
@@ -14776,40 +14911,21 @@ app.get('/api/social/linkedin/organizations', async (req: Request, res: Response
       return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
     }
 
-    // Fetch organizations the user has admin access to
     try {
-      const orgsResp = await axios.get(
-        'https://api.linkedin.com/v2/organizations',
-        {
-          params: {
-            q: 'member',
-            count: 100,
-          },
-          headers: { Authorization: `Bearer ${token}` },
-          validateStatus: () => true,
-          timeout: 15000,
-        }
-      );
-
-      if (orgsResp.status === 200 && orgsResp.data?.elements) {
-        const organizations = orgsResp.data.elements
-          .map((org: any) => ({
-            id: org.id,
-            name: org.localizedName,
-            picture_url: org.logoV2?.displayedPicture,
-          }))
-          .filter((org: any) => org.name);
-
-        return res.json({
-          success: true,
-          organizations,
-        });
+      const { personId } = await resolveLinkedInProfileIdentity(token, {
+        accountId: linkedInAuth.accountId,
+        accountName: linkedInAuth.accountName,
+        tokenData: linkedInAuth.tokenData,
+      });
+      if (!personId) {
+        return res.status(400).json({ success: false, error: 'Unable to resolve your LinkedIn profile id' });
       }
 
-      return res.status(500).json({ success: false, error: 'Failed to fetch organizations' });
+      const { organizations } = await listLinkedInAdminOrganizations(token, personId);
+      return res.json({ success: true, organizations });
     } catch (err: any) {
       console.error('LinkedIn organizations error:', err.message);
-      return res.status(500).json({ success: false, error: 'Failed to fetch organizations' });
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch organizations' });
     }
   } catch (err) {
     console.error('LinkedIn organizations list error:', err);
@@ -14845,10 +14961,13 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
     // ── Company Organization Info ────────────────────────────────────
     try {
       const orgResp = await axios.get(
-        `${API_BASE}/organizations/${organizationId}`,
+        `https://api.linkedin.com/rest/organizations/${encodeURIComponent(organizationId)}`,
         {
-          params: { projection: '(id,localizedName,logoV2,description)' },
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Restli-Protocol-Version': '2.0.0',
+            'LinkedIn-Version': '202511',
+          },
           validateStatus: () => true,
           timeout: 15000,
         }
@@ -14856,8 +14975,9 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
 
       if (orgResp.status === 200 && orgResp.data?.id) {
         const org = orgResp.data;
-        const orgName = org.localizedName;
+        const orgName = String(org?.localizedName || org?.name || '').trim() || `LinkedIn Page ${organizationId}`;
         const logoUrl = org.logoV2?.displayedPicture;
+        const description = extractLinkedInOrganizationDescription(org);
 
         await pool.query(
           `INSERT INTO linkedin_company_stats
@@ -14869,7 +14989,7 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
              description = COALESCE(EXCLUDED.description, linkedin_company_stats.description),
              raw_response = EXCLUDED.raw_response,
              synced_at = NOW()`,
-          [auth.userId, linkedInAuth.socialAccountId, organizationId, orgName, logoUrl, org.description || null, JSON.stringify(org)]
+          [auth.userId, linkedInAuth.socialAccountId, organizationId, orgName, logoUrl, description, JSON.stringify(org)]
         );
         synced++;
       }
@@ -15818,7 +15938,6 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
 
 
 
