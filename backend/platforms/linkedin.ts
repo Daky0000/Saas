@@ -13,6 +13,8 @@ type LinkedInHelpers = {
   resolveAuthorUrn?: (ctx: PlatformContext) => Promise<string | null>;
   clientId?: string;
   clientSecret?: string;
+  clientSecrets?: string[];
+  redirectUri?: string;
 };
 
 const LINKEDIN_API = 'https://api.linkedin.com';
@@ -32,6 +34,27 @@ function restHeaders(accessToken: string, contentType = 'application/json'): Rec
   };
   if (contentType) headers['Content-Type'] = contentType;
   return headers;
+}
+
+function getLinkedInClientSecrets(helpers: LinkedInHelpers): string[] {
+  return Array.from(
+    new Set(
+      [
+        ...(Array.isArray(helpers.clientSecrets) ? helpers.clientSecrets : []),
+        helpers.clientSecret,
+        process.env.LINKEDIN_CLIENT_SECRET,
+        process.env.LINKEDIN_CLIENT_SECRET_PREVIOUS,
+        process.env.LINKEDIN_CLIENT_SECRET_ALT,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function shouldRetryLinkedInSecret(status: number, payload: any): boolean {
+  const errorCode = String(payload?.error || payload?.code || '').trim().toLowerCase();
+  return status === 401 || errorCode === 'invalid_client' || errorCode === 'unauthorized_client';
 }
 
 function buildBasePost(authorUrn: string, commentary: string) {
@@ -466,27 +489,36 @@ export class LinkedInPlatform implements SocialPlatform {
   async refreshToken(ctx: PlatformContext): Promise<TokenRefreshResult> {
     try {
       const helpers = (ctx.helpers || {}) as LinkedInHelpers;
-      const clientId = helpers.clientId || process.env.LINKEDIN_CLIENT_ID || process.env.VITE_LINKEDIN_CLIENT_ID || '';
-      const clientSecret = helpers.clientSecret || process.env.LINKEDIN_CLIENT_SECRET || '';
-      if (!clientId || !clientSecret) return { ok: false, error: 'LinkedIn credentials not configured.' };
+      const clientId = String(helpers.clientId || process.env.LINKEDIN_CLIENT_ID || process.env.VITE_LINKEDIN_CLIENT_ID || '').trim();
+      const redirectUri = String(helpers.redirectUri || process.env.LINKEDIN_REDIRECT_URI || process.env.VITE_LINKEDIN_REDIRECT_URI || '').trim();
+      const clientSecrets = getLinkedInClientSecrets(helpers);
+      if (!clientId || !redirectUri || clientSecrets.length === 0) return { ok: false, error: 'LinkedIn credentials not configured.' };
       if (!ctx.refreshToken) return { ok: false, error: 'No LinkedIn refresh token available.' };
 
-      const resp = await axios.post(
-        'https://www.linkedin.com/oauth/v2/accessToken',
-        new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: ctx.refreshToken,
-          client_id: clientId,
-          client_secret: clientSecret,
-        }).toString(),
-        {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          validateStatus: () => true,
-          timeout: 15000,
-        },
-      );
-      const data: any = resp.data || {};
-      if (resp.status >= 400 || !data.access_token) {
+      let finalResponse: any = null;
+      for (let index = 0; index < clientSecrets.length; index += 1) {
+        const resp = await axios.post(
+          'https://www.linkedin.com/oauth/v2/accessToken',
+          new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: ctx.refreshToken,
+            client_id: clientId,
+            client_secret: clientSecrets[index],
+            redirect_uri: redirectUri,
+          }).toString(),
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            validateStatus: () => true,
+            timeout: 15000,
+          },
+        );
+        finalResponse = resp;
+        if (resp.status < 400) break;
+        if (index === clientSecrets.length - 1 || !shouldRetryLinkedInSecret(resp.status, resp.data)) break;
+      }
+
+      const data: any = finalResponse?.data || {};
+      if (!finalResponse || finalResponse.status >= 400 || !data.access_token) {
         return { ok: false, error: data?.error_description || data?.message || 'LinkedIn refresh failed.' };
       }
 
