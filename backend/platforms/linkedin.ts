@@ -15,23 +15,59 @@ type LinkedInHelpers = {
   clientSecret?: string;
 };
 
+const LINKEDIN_API = 'https://api.linkedin.com';
+const LINKEDIN_MARKETING_VERSION = String(process.env.LINKEDIN_API_VERSION || '202603').trim() || '202603';
 const LINKEDIN_MAX_TEXT = 3000;
 const LINKEDIN_MAX_TITLE = 200;
-const LINKEDIN_API = 'https://api.linkedin.com';
+const LINKEDIN_MAX_IMAGES = 9;
 
 const isRetryableStatus = (status?: number) =>
   status === 429 || (typeof status === 'number' && status >= 500);
 
-/** Fetch image bytes from an HTTPS URL or decode a base64 data: URI inline. */
-async function fetchImageBuffer(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
+function restHeaders(accessToken: string, contentType = 'application/json'): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    'X-Restli-Protocol-Version': '2.0.0',
+    'LinkedIn-Version': LINKEDIN_MARKETING_VERSION,
+  };
+  if (contentType) headers['Content-Type'] = contentType;
+  return headers;
+}
+
+function buildBasePost(authorUrn: string, commentary: string) {
+  return {
+    author: authorUrn,
+    commentary,
+    visibility: 'PUBLIC',
+    distribution: {
+      feedDistribution: 'MAIN_FEED',
+      targetEntities: [],
+      thirdPartyDistributionChannels: [],
+    },
+    lifecycleState: 'PUBLISHED',
+    isReshareDisabledByAuthor: false,
+  };
+}
+
+function extractResponseEntityId(response: any): string {
+  const headerValue = response?.headers?.['x-restli-id'];
+  if (typeof headerValue === 'string' && headerValue.trim()) return headerValue.trim();
+  if (Array.isArray(headerValue) && typeof headerValue[0] === 'string' && headerValue[0].trim()) {
+    return headerValue[0].trim();
+  }
+  return String(response?.data?.id || '').trim();
+}
+
+async function fetchMediaBuffer(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
   if (url.startsWith('data:')) {
-    const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
-    if (!match) throw new Error('Invalid base64 image data URL');
+    const match = url.match(/^data:([^;]+);base64,(.+)$/s);
+    if (!match) throw new Error('Invalid LinkedIn media data URL');
     return { buffer: Buffer.from(match[2], 'base64'), mimeType: match[1] };
   }
-  const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
-  const ct = String(resp.headers['content-type'] || '').split(';')[0].trim() || 'image/jpeg';
-  return { buffer: Buffer.from(resp.data), mimeType: ct };
+
+  const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 120000 });
+  const mimeType = String(resp.headers['content-type'] || '').split(';')[0].trim() || 'application/octet-stream';
+  return { buffer: Buffer.from(resp.data), mimeType };
 }
 
 export class LinkedInPlatform implements SocialPlatform {
@@ -40,11 +76,11 @@ export class LinkedInPlatform implements SocialPlatform {
 
   handleError(error: any): { retryable: boolean; message: string } {
     const status = error?.response?.status;
-    const msg =
+    const message =
       error?.response?.data?.message ||
       error?.response?.data?.error_description ||
       (error instanceof Error ? error.message : 'LinkedIn error');
-    return { retryable: isRetryableStatus(status), message: msg };
+    return { retryable: isRetryableStatus(status), message };
   }
 
   validate(post: PostObject): ValidationResult {
@@ -57,14 +93,19 @@ export class LinkedInPlatform implements SocialPlatform {
     if (title && title.length > LINKEDIN_MAX_TITLE) {
       return { ok: false, error: `LinkedIn title exceeds max ${LINKEDIN_MAX_TITLE} characters.` };
     }
+
     const media = Array.isArray(post.media) ? post.media : [];
-    if (media.length > 9) return { ok: false, error: 'LinkedIn supports up to 9 images per post.' };
+    if (media.length > LINKEDIN_MAX_IMAGES) {
+      return { ok: false, error: `LinkedIn supports up to ${LINKEDIN_MAX_IMAGES} media items per post.` };
+    }
+
     for (const item of media) {
       const mime = String(item?.mimeType || '').toLowerCase();
       if (mime && !mime.startsWith('image/') && !mime.startsWith('video/')) {
-        return { ok: false, error: 'LinkedIn supports images and videos only.' };
+        return { ok: false, error: 'LinkedIn currently supports images and videos in this app.' };
       }
     }
+
     return { ok: true };
   }
 
@@ -72,33 +113,38 @@ export class LinkedInPlatform implements SocialPlatform {
     try {
       const authorUrn = await this._resolveAuthorUrn(ctx);
       if (!authorUrn) return { status: 'failed', error: 'LinkedIn author URN could not be resolved.' };
-      const text = String(post?.content?.text || '').trim();
+
+      const commentary = String(post?.content?.text || '').trim();
       const link = String(post?.content?.link || '').trim();
+      const title = String(post?.content?.title || '').trim();
       const media = Array.isArray(post.media) ? post.media : [];
-      if (media.length === 0) return await this._postText(authorUrn, text, link || undefined, ctx);
+
+      if (media.length === 0) {
+        return await this._postTextOrArticle(authorUrn, commentary, title, link || undefined, ctx);
+      }
+
       if (media.length === 1) {
         const mime = String(media[0]?.mimeType || '').toLowerCase();
         if (mime.startsWith('video/') || media[0]?.type === 'video') {
-          return await this._postVideo(authorUrn, media[0], text, ctx);
+          return await this._postVideo(authorUrn, media[0], commentary, title, ctx);
         }
-        return await this._postImage(authorUrn, media[0], text, ctx);
+        return await this._postImage(authorUrn, media[0], commentary, title, ctx);
       }
-      return await this._postMultiImage(authorUrn, media, text, ctx);
-    } catch (err) {
-      const { retryable, message } = this.handleError(err);
+
+      return await this._postMultiImage(authorUrn, media, commentary, title, ctx);
+    } catch (error) {
+      const { retryable, message } = this.handleError(error);
       return { status: 'failed', error: message, retryable };
     }
   }
 
   private async _resolveAuthorUrn(ctx: PlatformContext): Promise<string | null> {
-    // 1. Fastest: cached sub/user_id in token_data
-    const cached = String(ctx.tokenData?.sub || ctx.tokenData?.user_id || ctx.tokenData?.id || '').trim();
-    if (cached) return `urn:li:person:${cached}`;
+    const cachedId = String(ctx.tokenData?.sub || ctx.tokenData?.user_id || ctx.tokenData?.id || '').trim();
+    if (cachedId) return `urn:li:person:${cachedId}`;
 
     const helpers = (ctx.helpers || {}) as LinkedInHelpers;
     if (helpers.resolveAuthorUrn) return helpers.resolveAuthorUrn(ctx);
 
-    // 2. Primary: /v2/me (r_liteprofile — standard "Share on LinkedIn" scope)
     const meResp = await axios.get(`${LINKEDIN_API}/v2/me`, {
       headers: { Authorization: `Bearer ${ctx.accessToken}` },
       validateStatus: () => true,
@@ -109,7 +155,6 @@ export class LinkedInPlatform implements SocialPlatform {
       if (id) return `urn:li:person:${id}`;
     }
 
-    // 3. Fallback: /v2/userinfo (OpenID Connect, for apps with openid/profile scopes)
     const userinfoResp = await axios.get(`${LINKEDIN_API}/v2/userinfo`, {
       headers: { Authorization: `Bearer ${ctx.accessToken}` },
       validateStatus: () => true,
@@ -120,247 +165,303 @@ export class LinkedInPlatform implements SocialPlatform {
     return sub ? `urn:li:person:${sub}` : null;
   }
 
-  // ── Text / link post ─────────────────────────────────────────────────────────
+  private async _createRestPost(body: Record<string, any>, ctx: PlatformContext): Promise<PlatformPostResult> {
+    const resp = await axios.post(`${LINKEDIN_API}/rest/posts`, body, {
+      headers: restHeaders(ctx.accessToken),
+      validateStatus: () => true,
+      timeout: 20000,
+    });
+    if (resp.status >= 400) {
+      const error: any = resp.data || {};
+      return {
+        status: 'failed',
+        error: error?.message || `LinkedIn post failed (${resp.status})`,
+        retryable: isRetryableStatus(resp.status),
+        raw: error,
+      };
+    }
 
-  private async _postText(
+    return {
+      status: 'published',
+      platformPostId: extractResponseEntityId(resp),
+      raw: resp.data,
+    };
+  }
+
+  private async _postTextOrArticle(
     authorUrn: string,
-    text: string,
+    commentary: string,
+    title: string,
     link: string | undefined,
     ctx: PlatformContext,
   ): Promise<PlatformPostResult> {
-    const body: any = {
-      author: authorUrn,
-      lifecycleState: 'PUBLISHED',
-      specificContent: {
-        'com.linkedin.ugc.ShareContent': {
-          shareCommentary: { text },
-          shareMediaCategory: link ? 'ARTICLE' : 'NONE',
-          ...(link ? { media: [{ status: 'READY', originalUrl: link }] } : {}),
+    const body: Record<string, any> = buildBasePost(authorUrn, commentary);
+    if (link) {
+      body.content = {
+        article: {
+          source: link,
+          title: title || link,
+          description: commentary.slice(0, 200),
         },
-      },
-      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
-    };
-    const resp = await axios.post(`${LINKEDIN_API}/v2/ugcPosts`, body, {
-      headers: this._ugcHeaders(ctx.accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (resp.status >= 400) {
-      const e: any = resp.data || {};
-      return { status: 'failed', error: e?.message || `LinkedIn error ${resp.status}`, retryable: isRetryableStatus(resp.status), raw: e };
+      };
     }
-    return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
+    return this._createRestPost(body, ctx);
   }
 
-  // ── Image upload (UGC Assets API — compatible with /v2/ugcPosts) ─────────────
-  // Uses POST /v2/assets?action=registerUpload which returns urn:li:digitalmediaAsset:...
-  // This is the correct approach for the "Share on LinkedIn" product.
-
-  private async _registerAssetUpload(
-    ownerUrn: string,
-    recipe: 'feedshare-image' | 'feedshare-video',
-    ctx: PlatformContext,
-  ): Promise<{ uploadUrl: string; assetUrn: string } | null> {
+  private async _initializeImageUpload(ownerUrn: string, ctx: PlatformContext): Promise<{ imageUrn: string; uploadUrl: string } | null> {
     const resp = await axios.post(
-      `${LINKEDIN_API}/v2/assets?action=registerUpload`,
+      `${LINKEDIN_API}/rest/images?action=initializeUpload`,
       {
-        registerUploadRequest: {
-          recipes: [`urn:li:digitalmediaRecipe:${recipe}`],
+        initializeUploadRequest: {
           owner: ownerUrn,
-          serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }],
         },
       },
       {
-        headers: {
-          Authorization: `Bearer ${ctx.accessToken}`,
-          'Content-Type': 'application/json',
-          'X-Restli-Protocol-Version': '2.0.0',
-        },
+        headers: restHeaders(ctx.accessToken),
         validateStatus: () => true,
         timeout: 15000,
       },
     );
-    const data: any = resp.data || {};
-    const uploadUrl = String(
-      data?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl || ''
-    ).trim();
-    const assetUrn = String(data?.value?.asset || '').trim();
-    if (!uploadUrl || !assetUrn) return null;
-    return { uploadUrl, assetUrn };
+    if (resp.status >= 400) return null;
+
+    const value: any = (resp.data as any)?.value || resp.data || {};
+    const imageUrn = String(value?.image || value?.id || '').trim();
+    const uploadUrl = String(value?.uploadUrl || '').trim();
+    if (!imageUrn || !uploadUrl) return null;
+    return { imageUrn, uploadUrl };
   }
 
-  private async _uploadAssetBuffer(
+  private async _initializeVideoUpload(
+    ownerUrn: string,
+    fileSizeBytes: number,
+    ctx: PlatformContext,
+  ): Promise<{ videoUrn: string; uploadToken: string; uploadInstructions: Array<{ firstByte: number; lastByte: number; uploadUrl: string }> } | null> {
+    const resp = await axios.post(
+      `${LINKEDIN_API}/rest/videos?action=initializeUpload`,
+      {
+        initializeUploadRequest: {
+          owner: ownerUrn,
+          fileSizeBytes,
+          uploadCaptions: false,
+          uploadThumbnail: false,
+        },
+      },
+      {
+        headers: restHeaders(ctx.accessToken),
+        validateStatus: () => true,
+        timeout: 15000,
+      },
+    );
+    if (resp.status >= 400) return null;
+
+    const value: any = (resp.data as any)?.value || resp.data || {};
+    const uploadInstructions = Array.isArray(value?.uploadInstructions) ? value.uploadInstructions : [];
+    const videoUrn = String(value?.video || '').trim();
+    const uploadToken = String(value?.uploadToken || '').trim();
+    if (!videoUrn || !uploadToken || uploadInstructions.length === 0) return null;
+
+    return {
+      videoUrn,
+      uploadToken,
+      uploadInstructions: uploadInstructions
+        .map((instruction: any) => ({
+          firstByte: Number(instruction?.firstByte ?? 0),
+          lastByte: Number(instruction?.lastByte ?? -1),
+          uploadUrl: String(instruction?.uploadUrl || '').trim(),
+        }))
+        .filter((instruction: any) => instruction.uploadUrl && instruction.lastByte >= instruction.firstByte),
+    };
+  }
+
+  private async _uploadBinary(
     uploadUrl: string,
     buffer: Buffer,
     mimeType: string,
-    ctx: PlatformContext,
-  ): Promise<boolean> {
+    accessToken: string,
+  ): Promise<{ ok: boolean; partId?: string }> {
     const resp = await axios.put(uploadUrl, buffer, {
       headers: {
-        Authorization: `Bearer ${ctx.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': mimeType,
+        'Content-Length': String(buffer.length),
       },
       validateStatus: () => true,
-      timeout: 60000,
+      timeout: 120000,
       maxBodyLength: Infinity,
     });
+    const rawPartId = resp.headers?.etag || resp.headers?.ETag;
+    const partId = typeof rawPartId === 'string' ? rawPartId.replace(/^"+|"+$/g, '') : undefined;
+    return { ok: resp.status < 400, partId };
+  }
+
+  private async _finalizeVideoUpload(
+    videoUrn: string,
+    uploadToken: string,
+    uploadedPartIds: string[],
+    ctx: PlatformContext,
+  ): Promise<boolean> {
+    const resp = await axios.post(
+      `${LINKEDIN_API}/rest/videos?action=finalizeUpload`,
+      {
+        finalizeUploadRequest: {
+          video: videoUrn,
+          uploadToken,
+          uploadedPartIds,
+        },
+      },
+      {
+        headers: restHeaders(ctx.accessToken),
+        validateStatus: () => true,
+        timeout: 20000,
+      },
+    );
     return resp.status < 400;
   }
 
-  private async _postImage(authorUrn: string, item: any, text: string, ctx: PlatformContext): Promise<PlatformPostResult> {
-    const init = await this._registerAssetUpload(authorUrn, 'feedshare-image', ctx);
-    if (!init) return { status: 'failed', error: 'LinkedIn image upload initialization failed.' };
+  private async _postImage(
+    authorUrn: string,
+    item: any,
+    commentary: string,
+    title: string,
+    ctx: PlatformContext,
+  ): Promise<PlatformPostResult> {
+    const initialized = await this._initializeImageUpload(authorUrn, ctx);
+    if (!initialized) return { status: 'failed', error: 'LinkedIn image upload initialization failed.' };
 
-    let buffer: Buffer;
+    let mediaBuffer: Buffer;
     let mimeType: string;
     try {
-      ({ buffer, mimeType } = await fetchImageBuffer(item.url));
-    } catch (err) {
-      return { status: 'failed', error: `Could not load image for LinkedIn: ${err instanceof Error ? err.message : 'fetch error'}` };
+      ({ buffer: mediaBuffer, mimeType } = await fetchMediaBuffer(item.url));
+    } catch (error) {
+      return { status: 'failed', error: `Could not load image for LinkedIn: ${error instanceof Error ? error.message : 'fetch error'}` };
     }
 
-    const uploaded = await this._uploadAssetBuffer(init.uploadUrl, buffer, mimeType, ctx);
-    if (!uploaded) return { status: 'failed', error: 'LinkedIn image binary upload failed.' };
+    const uploadResult = await this._uploadBinary(initialized.uploadUrl, mediaBuffer, mimeType, ctx.accessToken);
+    if (!uploadResult.ok) return { status: 'failed', error: 'LinkedIn image binary upload failed.' };
 
-    const body = {
-      author: authorUrn,
-      lifecycleState: 'PUBLISHED',
-      specificContent: {
-        'com.linkedin.ugc.ShareContent': {
-          shareCommentary: { text },
-          shareMediaCategory: 'IMAGE',
-          media: [{ status: 'READY', media: init.assetUrn }],
+    return this._createRestPost(
+      {
+        ...buildBasePost(authorUrn, commentary),
+        content: {
+          media: {
+            id: initialized.imageUrn,
+            ...(title ? { title } : {}),
+          },
         },
       },
-      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
-    };
-    const resp = await axios.post(`${LINKEDIN_API}/v2/ugcPosts`, body, {
-      headers: this._ugcHeaders(ctx.accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (resp.status >= 400) {
-      const e: any = resp.data || {};
-      return { status: 'failed', error: e?.message || `LinkedIn image post failed (${resp.status})`, retryable: isRetryableStatus(resp.status) };
-    }
-    return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
+      ctx,
+    );
   }
 
-  private async _postMultiImage(authorUrn: string, media: any[], text: string, ctx: PlatformContext): Promise<PlatformPostResult> {
-    const assetUrns: string[] = [];
+  private async _postMultiImage(
+    authorUrn: string,
+    media: any[],
+    commentary: string,
+    title: string,
+    ctx: PlatformContext,
+  ): Promise<PlatformPostResult> {
+    const uploadedImages: Array<{ id: string; altText?: string }> = [];
+
     for (const item of media) {
-      const init = await this._registerAssetUpload(authorUrn, 'feedshare-image', ctx);
-      if (!init) continue;
+      const initialized = await this._initializeImageUpload(authorUrn, ctx);
+      if (!initialized) continue;
+
       try {
-        const { buffer, mimeType } = await fetchImageBuffer(item.url);
-        const ok = await this._uploadAssetBuffer(init.uploadUrl, buffer, mimeType, ctx);
-        if (ok) assetUrns.push(init.assetUrn);
+        const { buffer, mimeType } = await fetchMediaBuffer(item.url);
+        const uploadResult = await this._uploadBinary(initialized.uploadUrl, buffer, mimeType, ctx.accessToken);
+        if (uploadResult.ok) {
+          uploadedImages.push({
+            id: initialized.imageUrn,
+            ...(title ? { altText: title } : {}),
+          });
+        }
       } catch {
-        // skip failed images; publish with whatever succeeded
+        // Ignore failed media items and publish with the successful uploads.
       }
     }
-    if (!assetUrns.length) return { status: 'failed', error: 'No LinkedIn images uploaded successfully.' };
 
-    const body = {
-      author: authorUrn,
-      lifecycleState: 'PUBLISHED',
-      specificContent: {
-        'com.linkedin.ugc.ShareContent': {
-          shareCommentary: { text },
-          shareMediaCategory: 'IMAGE',
-          media: assetUrns.map(urn => ({ status: 'READY', media: urn })),
+    if (uploadedImages.length === 0) {
+      return { status: 'failed', error: 'No LinkedIn images uploaded successfully.' };
+    }
+
+    return this._createRestPost(
+      {
+        ...buildBasePost(authorUrn, commentary),
+        content: {
+          multiImage: {
+            images: uploadedImages,
+          },
         },
       },
-      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
-    };
-    const resp = await axios.post(`${LINKEDIN_API}/v2/ugcPosts`, body, {
-      headers: this._ugcHeaders(ctx.accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (resp.status >= 400) {
-      const e: any = resp.data || {};
-      return { status: 'failed', error: e?.message || `LinkedIn multi-image failed (${resp.status})`, retryable: isRetryableStatus(resp.status) };
-    }
-    return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
+      ctx,
+    );
   }
 
-  // ── Video upload (UGC Assets API — compatible with /v2/ugcPosts) ─────────────
-  // Uses POST /v2/assets?action=registerUpload with feedshare-video recipe.
-
-  private async _postVideo(authorUrn: string, item: any, text: string, ctx: PlatformContext): Promise<PlatformPostResult> {
+  private async _postVideo(
+    authorUrn: string,
+    item: any,
+    commentary: string,
+    title: string,
+    ctx: PlatformContext,
+  ): Promise<PlatformPostResult> {
     let videoBuffer: Buffer;
     try {
-      const resp = await axios.get(item.url, { responseType: 'arraybuffer', timeout: 120000 });
-      videoBuffer = Buffer.from(resp.data);
-    } catch (err) {
-      return { status: 'failed', error: `Could not load video for LinkedIn: ${err instanceof Error ? err.message : 'fetch error'}` };
+      ({ buffer: videoBuffer } = await fetchMediaBuffer(item.url));
+    } catch (error) {
+      return { status: 'failed', error: `Could not load video for LinkedIn: ${error instanceof Error ? error.message : 'fetch error'}` };
     }
 
-    const init = await this._registerAssetUpload(authorUrn, 'feedshare-video', ctx);
-    if (!init) return { status: 'failed', error: 'LinkedIn video upload initialization failed.' };
+    const initialized = await this._initializeVideoUpload(authorUrn, videoBuffer.length, ctx);
+    if (!initialized) return { status: 'failed', error: 'LinkedIn video upload initialization failed.' };
 
-    const uploaded = await this._uploadAssetBuffer(init.uploadUrl, videoBuffer, 'video/mp4', ctx);
-    if (!uploaded) return { status: 'failed', error: 'LinkedIn video binary upload failed.' };
+    const uploadedPartIds: string[] = [];
+    for (const instruction of initialized.uploadInstructions) {
+      const chunk = videoBuffer.subarray(instruction.firstByte, instruction.lastByte + 1);
+      const uploadResult = await this._uploadBinary(instruction.uploadUrl, chunk, 'video/mp4', ctx.accessToken);
+      if (!uploadResult.ok) {
+        return { status: 'failed', error: 'LinkedIn video binary upload failed.' };
+      }
+      if (uploadResult.partId) uploadedPartIds.push(uploadResult.partId);
+    }
 
-    const body = {
-      author: authorUrn,
-      lifecycleState: 'PUBLISHED',
-      specificContent: {
-        'com.linkedin.ugc.ShareContent': {
-          shareCommentary: { text },
-          shareMediaCategory: 'VIDEO',
-          media: [{ status: 'READY', media: init.assetUrn }],
+    const finalized = await this._finalizeVideoUpload(initialized.videoUrn, initialized.uploadToken, uploadedPartIds, ctx);
+    if (!finalized) return { status: 'failed', error: 'LinkedIn video finalize upload failed.' };
+
+    return this._createRestPost(
+      {
+        ...buildBasePost(authorUrn, commentary),
+        content: {
+          media: {
+            id: initialized.videoUrn,
+            title: title || 'Video',
+          },
         },
       },
-      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
-    };
-    const resp = await axios.post(`${LINKEDIN_API}/v2/ugcPosts`, body, {
-      headers: this._ugcHeaders(ctx.accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (resp.status >= 400) {
-      const e: any = resp.data || {};
-      return { status: 'failed', error: e?.message || `LinkedIn video post failed (${resp.status})`, retryable: isRetryableStatus(resp.status) };
-    }
-    return { status: 'published', platformPostId: String((resp.data as any)?.id || ''), raw: resp.data };
+      ctx,
+    );
   }
-
-  // ── Analytics ───────────────────────────────────────────────────────────────
 
   async getPostAnalytics(postId: string, ctx: PlatformContext): Promise<AnalyticsResult> {
     try {
-      const encodedId = encodeURIComponent(postId);
-      const [actionsResp, statsResp] = await Promise.all([
-        axios.get(`${LINKEDIN_API}/v2/socialActions/${encodedId}`, {
-          headers: { Authorization: `Bearer ${ctx.accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' },
+      const metadataResp = await axios.get(
+        `https://api.linkedin.com/rest/socialMetadata/${encodeURIComponent(postId)}`,
+        {
+          headers: restHeaders(ctx.accessToken, ''),
           validateStatus: () => true,
           timeout: 15000,
-        }),
-        axios.get(`${LINKEDIN_API}/v2/organizationalEntityShareStatistics`, {
-          params: { q: 'organizationalEntity&organizationalEntity', ugcPost: encodedId },
-          headers: { Authorization: `Bearer ${ctx.accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' },
-          validateStatus: () => true,
-          timeout: 15000,
-        }),
-      ]);
-      const actions: any = actionsResp.data || {};
-      const stats: any = statsResp.data?.elements?.[0]?.totalShareStatistics || {};
+        },
+      );
+      const metadata: any = metadataResp.status < 400 ? metadataResp.data || {} : {};
       return {
-        likes: actions?.likesSummary?.totalLikes,
-        comments: actions?.commentsSummary?.totalFirstLevelComments,
-        shares: stats.shareCount,
-        impressions: stats.impressionCount,
-        clicks: stats.clickCount,
-        raw: { actions, stats },
+        likes: Object.values(metadata?.reactionSummaries || {}).reduce((sum: number, value: any) => sum + Number(value?.count || 0), 0),
+        comments: Number(metadata?.commentSummary?.count || metadata?.commentSummary?.totalCount || 0),
+        shares: Number(metadata?.repostSummary?.count || metadata?.repostSummary?.totalCount || 0),
+        raw: metadata,
       };
-    } catch (err) {
-      return { raw: { error: err instanceof Error ? err.message : 'Analytics fetch failed' } };
+    } catch (error) {
+      return { raw: { error: error instanceof Error ? error.message : 'Analytics fetch failed' } };
     }
   }
-
-  // ── Token refresh ───────────────────────────────────────────────────────────
 
   async refreshToken(ctx: PlatformContext): Promise<TokenRefreshResult> {
     try {
@@ -378,31 +479,25 @@ export class LinkedInPlatform implements SocialPlatform {
           client_id: clientId,
           client_secret: clientSecret,
         }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true, timeout: 15000 },
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          validateStatus: () => true,
+          timeout: 15000,
+        },
       );
       const data: any = resp.data || {};
       if (resp.status >= 400 || !data.access_token) {
         return { ok: false, error: data?.error_description || data?.message || 'LinkedIn refresh failed.' };
       }
-      const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : undefined;
+
       return {
         ok: true,
         accessToken: data.access_token,
         refreshToken: data.refresh_token || ctx.refreshToken,
-        expiresAt,
+        expiresAt: data.expires_in ? new Date(Date.now() + Number(data.expires_in) * 1000) : undefined,
       };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'LinkedIn refresh failed.' };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'LinkedIn refresh failed.' };
     }
-  }
-
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-
-  private _ugcHeaders(accessToken: string): Record<string, string> {
-    return {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      'X-Restli-Protocol-Version': '2.0.0',
-    };
   }
 }
