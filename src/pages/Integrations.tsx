@@ -147,6 +147,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
   // Pinterest boards
   const [pinBoards, setPinBoards] = useState<Array<{ id: string; name: string }>>([]);
   const [pinLoading, setPinLoading] = useState(false);
+  const pinReturnHandled = useRef(false);
 
   // Mailchimp
   const [mcApiKey, setMcApiKey] = useState('');
@@ -204,6 +205,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
   );
   const linkedInConnected = useMemo(
     () => items.some((item) => item.slug === 'linkedin' && item.connected),
+    [items]
+  );
+  const pinterestConnected = useMemo(
+    () => items.some((item) => item.slug === 'pinterest' && item.connected),
     [items]
   );
 
@@ -386,7 +391,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
     window.history.replaceState({}, '', nextUrl);
   }, [facebookConnected, openInstagramTargets]);
 
-  const openPinterestBoards = async () => {
+  const openPinterestBoards = useCallback(async () => {
     setModal({ type: 'pinterest' });
     setPinLoading(true);
     try {
@@ -399,7 +404,19 @@ export default function Integrations({ onNavigateSettings }: Props) {
     } finally {
       setPinLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!pinterestConnected || pinReturnHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('pinConnected') !== '1') return;
+    pinReturnHandled.current = true;
+    void openPinterestBoards();
+    params.delete('pinConnected');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [openPinterestBoards, pinterestConnected]);
 
   const toggleFacebookSelection = (id: string, disabled?: boolean) => {
     if (disabled) return;
@@ -654,7 +671,18 @@ export default function Integrations({ onNavigateSettings }: Props) {
           <>
             <button
               type="button"
-              onClick={() => (slug === 'facebook' ? openFacebookType() : void startOAuth(slug, slug === 'linkedin' ? '/integrations?liConnected=1' : '/integrations'))}
+              onClick={() =>
+                slug === 'facebook'
+                  ? openFacebookType()
+                  : void startOAuth(
+                      slug,
+                      slug === 'linkedin'
+                        ? '/integrations?liConnected=1'
+                        : slug === 'pinterest'
+                          ? '/integrations?pinConnected=1'
+                          : '/integrations'
+                    )
+              }
               disabled={!canConnect || busy === slug}
               className={PRIMARY_ACTION}
             >
