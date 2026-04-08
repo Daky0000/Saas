@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, Sparkles, Sliders, RefreshCw, AlertCircle, CheckCheck, Clock, Loader2 } from 'lucide-react';
 import ScheduleCalendar from '../components/calendar/ScheduleCalendar';
+import SocialTemplatesTab from '../components/automation/SocialTemplatesTab';
 import { API_BASE_URL } from '../utils/apiBase';
 
 type PublishLog = {
@@ -274,45 +275,7 @@ export default function PostAutomation() {
 
       {activeTab === 'log' ? <LogTab /> : null}
 
-      {activeTab === 'social' ? (
-        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-fuchsia-600 text-white">
-                  <Sparkles size={18} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-slate-900">Social Templates</div>
-                  <div className="text-xs text-slate-500">Save reusable layouts for repeatable publishing.</div>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3 text-sm text-slate-600">
-                {[
-                  'Create a template from a high-performing post.',
-                  'Save default hashtags per network.',
-                  'Apply brand voice notes so every post stays on tone.',
-                ].map((item) => (
-                  <div key={item} className="flex items-start gap-2">
-                    <CheckCircle2 size={16} className="text-emerald-500 mt-0.5" />
-                    <span>{item}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="text-sm font-bold text-slate-900">Template tip</div>
-              <p className="mt-2 text-sm text-slate-500">
-                Pair each template with a scheduling window so new posts auto-inherit the right timing.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {activeTab === 'social' ? <SocialTemplatesTab /> : null}
     </div>
   );
 }

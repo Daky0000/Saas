@@ -850,6 +850,45 @@ async function ensureDatabase() {
     );
   `);
 
+  // Social Templates: per-user per-platform template settings + share frequency tracking
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_template_settings (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      content_source TEXT NOT NULL DEFAULT 'EXCERPT',
+      template_string TEXT NOT NULL DEFAULT '{title}\n\n{content}\n\n{url}\n\n{tags}',
+      status_limit INTEGER NOT NULL DEFAULT 280,
+      max_status_limit INTEGER NOT NULL DEFAULT 280,
+      share_limit_per_post INTEGER NOT NULL DEFAULT 0,
+      add_categories_as_tags BOOLEAN NOT NULL DEFAULT false,
+      remove_css BOOLEAN NOT NULL DEFAULT false,
+      show_thumbnail BOOLEAN NOT NULL DEFAULT false,
+      add_image_link BOOLEAN NOT NULL DEFAULT false,
+      content_type TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (user_id, platform)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS social_template_settings_user_idx ON social_template_settings (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS post_share_counts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      post_id TEXT NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL,
+      share_count INTEGER NOT NULL DEFAULT 0,
+      last_shared_at TIMESTAMPTZ,
+      UNIQUE (user_id, post_id, platform)
+    );
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS post_share_counts_user_post_platform_idx ON post_share_counts (user_id, post_id, platform);`
+  ).catch(() => undefined);
+
   // Social Automation v2: per-post settings + targets + logs
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_post_settings (
@@ -8978,6 +9017,149 @@ app.get('/api/v1/posts/:postId/social-settings', async (req: Request, res: Respo
   }
 });
 
+// ── Social Templates (Automation → Social Templates tab) ──────────────────────
+
+// GET /api/social-templates/:platform — fetch per-platform template settings for current user
+app.get('/api/social-templates/:platform', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const platformId = normalizePlatformId(req.params.platform);
+    const defaults = getSocialTemplateDefaults(platformId);
+    if (!defaults) return res.status(404).json({ success: false, error: 'Unknown platform' });
+
+    const { rows } = await pool.query(
+      `SELECT content_source, template_string, status_limit, max_status_limit, share_limit_per_post,
+              add_categories_as_tags, remove_css, show_thumbnail, add_image_link, content_type, enabled
+       FROM social_template_settings
+       WHERE user_id=$1 AND platform=$2
+       LIMIT 1`,
+      [auth.userId, platformId]
+    );
+
+    const settings = rows.length
+      ? mergeSocialTemplateSettings(platformId, rows[0])
+      : defaults;
+
+    return res.json({ success: true, settings });
+  } catch (err) {
+    console.error('social templates get error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load social template settings' });
+  }
+});
+
+// PUT /api/social-templates/:platform — upsert per-platform template settings for current user
+app.put('/api/social-templates/:platform', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const platformId = normalizePlatformId(req.params.platform);
+    const defaults = getSocialTemplateDefaults(platformId);
+    if (!defaults) return res.status(404).json({ success: false, error: 'Unknown platform' });
+
+    const next = mergeSocialTemplateSettings(platformId, req.body);
+    if (!next.template_string.trim()) {
+      return res.status(400).json({ success: false, error: 'template_string is required' });
+    }
+
+    const id = randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO social_template_settings
+        (id, user_id, platform, content_source, template_string, status_limit, max_status_limit,
+         share_limit_per_post, add_categories_as_tags, remove_css, show_thumbnail, add_image_link,
+         content_type, enabled, updated_at)
+       VALUES
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+       ON CONFLICT (user_id, platform) DO UPDATE SET
+         content_source = EXCLUDED.content_source,
+         template_string = EXCLUDED.template_string,
+         status_limit = EXCLUDED.status_limit,
+         max_status_limit = EXCLUDED.max_status_limit,
+         share_limit_per_post = EXCLUDED.share_limit_per_post,
+         add_categories_as_tags = EXCLUDED.add_categories_as_tags,
+         remove_css = EXCLUDED.remove_css,
+         show_thumbnail = EXCLUDED.show_thumbnail,
+         add_image_link = EXCLUDED.add_image_link,
+         content_type = EXCLUDED.content_type,
+         enabled = EXCLUDED.enabled,
+         updated_at = NOW()
+       RETURNING content_source, template_string, status_limit, max_status_limit, share_limit_per_post,
+                 add_categories_as_tags, remove_css, show_thumbnail, add_image_link, content_type, enabled`,
+      [
+        id,
+        auth.userId,
+        platformId,
+        next.content_source,
+        next.template_string,
+        next.status_limit,
+        next.max_status_limit,
+        next.share_limit_per_post,
+        next.add_categories_as_tags,
+        next.remove_css,
+        next.show_thumbnail,
+        next.add_image_link,
+        next.content_type,
+        next.enabled,
+      ]
+    );
+
+    const settings = rows.length ? mergeSocialTemplateSettings(platformId, rows[0]) : next;
+    return res.json({ success: true, settings });
+  } catch (err) {
+    console.error('social templates save error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to save social template settings' });
+  }
+});
+
+// POST /api/social-templates/:platform/preview — preview rendered template for a post (uses unsaved draft settings if provided)
+app.post('/api/social-templates/:platform/preview', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const platformId = normalizePlatformId(req.params.platform);
+    const defaults = getSocialTemplateDefaults(platformId);
+    if (!defaults) return res.status(404).json({ success: false, error: 'Unknown platform' });
+
+    const postId = String((req.body as any)?.postId || '').trim();
+    if (!postId) return res.status(400).json({ success: false, error: 'postId is required' });
+
+    const { rows } = await pool.query(
+      `SELECT p.*, c.name AS category_name,
+        ARRAY(
+          SELECT t.name
+          FROM blog_tags t
+          JOIN blog_post_tags pt ON pt.tag_id=t.id
+          WHERE pt.post_id=p.id
+        ) AS tag_names
+       FROM blog_posts p
+       LEFT JOIN blog_categories c ON c.id=p.category_id
+       WHERE p.id=$1 AND p.user_id=$2
+       LIMIT 1`,
+      [postId, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+    const post = rows[0];
+    const draft = (req.body as any)?.settings;
+    const settings = draft
+      ? mergeSocialTemplateSettings(platformId, draft)
+      : await loadSocialTemplateSettings(auth.userId, platformId);
+    if (!settings) return res.status(404).json({ success: false, error: 'Unknown platform' });
+
+    const preview = renderSocialTemplatePreview(post, settings);
+    return res.json({ success: true, ...preview });
+  } catch (err) {
+    console.error('social templates preview error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to generate preview' });
+  }
+});
+
 // DELETE /api/admin/platform-configs/:platform — reset config + disable (admin only)
 app.delete('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
   try {
@@ -11584,6 +11766,335 @@ function buildPostUrl(post: Record<string, any>): string {
   const slug = String(post.slug || '').trim();
   if (!slug) return base;
   return `${base}/blog/${encodeURIComponent(slug)}`;
+}
+
+type SocialTemplateContentSource = 'EXCERPT' | 'CONTENT';
+type SocialTemplateFacebookContentType = 'STATUS' | 'LINK' | 'STATUS_PLUS_LINK';
+
+type SocialTemplateSettings = {
+  platform: string;
+  content_source: SocialTemplateContentSource;
+  template_string: string;
+  status_limit: number;
+  max_status_limit: number;
+  share_limit_per_post: number;
+  add_categories_as_tags: boolean;
+  remove_css: boolean;
+  show_thumbnail: boolean;
+  add_image_link: boolean;
+  content_type: SocialTemplateFacebookContentType | null;
+  enabled: boolean;
+};
+
+const SOCIAL_TEMPLATE_DEFAULTS: Record<string, SocialTemplateSettings> = {
+  facebook: {
+    platform: 'facebook',
+    content_source: 'EXCERPT',
+    template_string: '{title}\n\n{content}\n\n{url}\n\n{tags}',
+    status_limit: 5000,
+    max_status_limit: 63206,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: false,
+    show_thumbnail: false,
+    add_image_link: false,
+    content_type: 'STATUS_PLUS_LINK',
+    enabled: true,
+  },
+  twitter: {
+    platform: 'twitter',
+    content_source: 'EXCERPT',
+    template_string: '{title} {url} {tags}',
+    status_limit: 280,
+    max_status_limit: 280,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: false,
+    show_thumbnail: true,
+    add_image_link: false,
+    content_type: null,
+    enabled: true,
+  },
+  instagram: {
+    platform: 'instagram',
+    content_source: 'EXCERPT',
+    template_string: '{title}\n\n{content}\n\n{tags}',
+    status_limit: 2200,
+    max_status_limit: 2200,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: true,
+    show_thumbnail: false,
+    add_image_link: false,
+    content_type: null,
+    enabled: true,
+  },
+  linkedin: {
+    platform: 'linkedin',
+    content_source: 'EXCERPT',
+    template_string: '{title}\n\n{content}\n\n{url}\n\n{tags}',
+    status_limit: 3000,
+    max_status_limit: 3000,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: false,
+    show_thumbnail: false,
+    add_image_link: false,
+    content_type: null,
+    enabled: true,
+  },
+  pinterest: {
+    platform: 'pinterest',
+    content_source: 'EXCERPT',
+    template_string: '{title}: {url} {tags}',
+    status_limit: 500,
+    max_status_limit: 500,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: true,
+    show_thumbnail: false,
+    add_image_link: true,
+    content_type: null,
+    enabled: true,
+  },
+  threads: {
+    platform: 'threads',
+    content_source: 'EXCERPT',
+    template_string: '{title} {url} {tags}',
+    status_limit: 500,
+    max_status_limit: 500,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: true,
+    show_thumbnail: false,
+    add_image_link: false,
+    content_type: null,
+    enabled: true,
+  },
+  tiktok: {
+    platform: 'tiktok',
+    content_source: 'EXCERPT',
+    template_string: '{title}\n\n{content}\n\n{tags}',
+    status_limit: 2200,
+    max_status_limit: 2200,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: true,
+    show_thumbnail: false,
+    add_image_link: false,
+    content_type: null,
+    enabled: true,
+  },
+  wordpress: {
+    platform: 'wordpress',
+    content_source: 'EXCERPT',
+    template_string: '{title}\n\n{content}\n\n{url}',
+    status_limit: 5000,
+    max_status_limit: 10000,
+    share_limit_per_post: 0,
+    add_categories_as_tags: false,
+    remove_css: true,
+    show_thumbnail: false,
+    add_image_link: false,
+    content_type: null,
+    enabled: true,
+  },
+};
+
+function getSocialTemplateDefaults(platformId: string): SocialTemplateSettings | null {
+  const normalized = normalizePlatformId(platformId);
+  const defaults = SOCIAL_TEMPLATE_DEFAULTS[normalized];
+  if (!defaults) return null;
+  return { ...defaults };
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+function parseFacebookContentType(
+  value: unknown
+): SocialTemplateFacebookContentType | null {
+  const candidate = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+  if (
+    candidate === 'STATUS' ||
+    candidate === 'LINK' ||
+    candidate === 'STATUS_PLUS_LINK'
+  ) {
+    return candidate as SocialTemplateFacebookContentType;
+  }
+  return null;
+}
+
+function mergeSocialTemplateSettings(platformId: string, input: any): SocialTemplateSettings {
+  const defaults = getSocialTemplateDefaults(platformId);
+  if (!defaults) {
+    throw new Error(`Unsupported platform: ${platformId}`);
+  }
+
+  const content_source: SocialTemplateContentSource =
+    input?.content_source === 'CONTENT' ? 'CONTENT' : 'EXCERPT';
+  const template_string =
+    typeof input?.template_string === 'string'
+      ? String(input.template_string)
+      : defaults.template_string;
+
+  const status_limit = clampInt(
+    input?.status_limit,
+    defaults.status_limit,
+    1,
+    defaults.max_status_limit
+  );
+
+  const share_limit_per_post = clampInt(
+    input?.share_limit_per_post,
+    defaults.share_limit_per_post,
+    0,
+    1_000_000
+  );
+
+  const add_categories_as_tags =
+    typeof input?.add_categories_as_tags === 'boolean'
+      ? input.add_categories_as_tags
+      : defaults.add_categories_as_tags;
+
+  const remove_css =
+    typeof input?.remove_css === 'boolean' ? input.remove_css : defaults.remove_css;
+
+  const show_thumbnail =
+    typeof input?.show_thumbnail === 'boolean'
+      ? input.show_thumbnail
+      : defaults.show_thumbnail;
+
+  const add_image_link =
+    typeof input?.add_image_link === 'boolean'
+      ? input.add_image_link
+      : defaults.add_image_link;
+
+  const enabled =
+    typeof input?.enabled === 'boolean' ? input.enabled : defaults.enabled;
+
+  const content_type =
+    platformId === 'facebook'
+      ? parseFacebookContentType(input?.content_type) ?? defaults.content_type
+      : null;
+
+  return {
+    platform: defaults.platform,
+    content_source,
+    template_string,
+    status_limit,
+    max_status_limit: defaults.max_status_limit,
+    share_limit_per_post,
+    add_categories_as_tags,
+    remove_css,
+    show_thumbnail,
+    add_image_link,
+    content_type,
+    enabled,
+  };
+}
+
+async function loadSocialTemplateSettings(userId: string, platformId: string): Promise<SocialTemplateSettings | null> {
+  if (!pool) return null;
+  const defaults = getSocialTemplateDefaults(platformId);
+  if (!defaults) return null;
+
+  const { rows } = await pool.query(
+    `SELECT content_source, template_string, status_limit, max_status_limit, share_limit_per_post,
+            add_categories_as_tags, remove_css, show_thumbnail, add_image_link, content_type, enabled
+     FROM social_template_settings
+     WHERE user_id=$1 AND platform=$2
+     LIMIT 1`,
+    [userId, defaults.platform]
+  );
+
+  if (!rows.length) return defaults;
+  return mergeSocialTemplateSettings(platformId, rows[0]);
+}
+
+function stripHtmlContent(html: string) {
+  if (!html) return '';
+  const stripped = String(html)
+    // Remove script/style blocks entirely
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    // Replace tags with spaces so words don't glue together
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return decodeHtmlEntities(stripped);
+}
+
+function safeTruncateToLimit(text: string, limit: number): { text: string; truncated: boolean; originalLength: number } {
+  const original = String(text || '');
+  const originalLength = original.length;
+  const max = Math.max(0, Math.floor(limit));
+
+  if (originalLength <= max) return { text: original, truncated: false, originalLength };
+  if (max === 0) return { text: '', truncated: true, originalLength };
+  if (max <= 3) {
+    let slice = original.slice(0, max);
+    const last = slice.charCodeAt(slice.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) slice = slice.slice(0, -1);
+    return { text: slice, truncated: true, originalLength };
+  }
+
+  let slice = original.slice(0, max - 3);
+  const last = slice.charCodeAt(slice.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) slice = slice.slice(0, -1);
+  return { text: `${slice}...`, truncated: true, originalLength };
+}
+
+function renderSocialTemplatePreview(post: Record<string, any>, settings: SocialTemplateSettings) {
+  const title = String(post?.title || '').trim();
+  const url = buildPostUrl(post || {});
+
+  let contentText = '';
+  if (settings.content_source === 'CONTENT') {
+    contentText = String(post?.content || '');
+  } else {
+    contentText = String(post?.excerpt || '');
+    if (!contentText && post?.content) {
+      contentText = String(post.content).slice(0, 160);
+    }
+  }
+
+  const cleanContent = settings.remove_css ? stripHtmlContent(contentText) : contentText;
+
+  const tagsList: string[] = [];
+  if (settings.add_categories_as_tags) {
+    const category = String(post?.category_name || '').trim();
+    if (category) tagsList.push(category);
+    if (Array.isArray(post?.tag_names)) tagsList.push(...post.tag_names.map((t: any) => String(t || '').trim()).filter(Boolean));
+  }
+  const tags = settings.add_categories_as_tags ? toHashtags(tagsList) : '';
+
+  const raw = String(settings.template_string || '')
+    .replace(/{title}/g, title)
+    .replace(/{content}/g, cleanContent)
+    .replace(/{url}/g, url)
+    .replace(/{tags}/g, tags)
+    .trim();
+
+  const truncated = safeTruncateToLimit(raw, settings.status_limit);
+  const warning = truncated.truncated ? `Exceeded ${settings.status_limit} characters; preview truncated.` : null;
+
+  return {
+    rendered: truncated.text,
+    characterCount: truncated.text.length,
+    originalCharacterCount: truncated.originalLength,
+    limit: settings.status_limit,
+    warning,
+    truncated: truncated.truncated,
+  };
 }
 
 const PLATFORM_RATE_LIMITS: Record<string, { max: number; perMs: number }> = {
