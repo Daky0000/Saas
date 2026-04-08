@@ -130,6 +130,7 @@ export default function SocialTemplateSettingsPanel({
             Use placeholders: <span className="font-mono">{'{title}'}</span>,{' '}
             <span className="font-mono">{'{content}'}</span>,{' '}
             <span className="font-mono">{'{url}'}</span>,{' '}
+            <span className="font-mono">{'{featured_image}'}</span>,{' '}
             <span className="font-mono">{'{tags}'}</span>
           </div>
         </div>
@@ -197,9 +198,9 @@ export default function SocialTemplateSettingsPanel({
             <div className="text-sm font-semibold text-slate-800">Content Source</div>
             <HelpCircle size={14} className="text-slate-400" />
           </div>
-          <div className="space-y-2 text-sm">
+          <div className="flex flex-wrap gap-4 text-sm">
             {(['EXCERPT', 'CONTENT'] as const).map((value) => (
-              <label key={value} className="flex items-center gap-2">
+              <label key={value} className="inline-flex items-center gap-2">
                 <input
                   type="radio"
                   name="contentSource"
@@ -220,7 +221,7 @@ export default function SocialTemplateSettingsPanel({
           onChange={(e) => update('template_string', e.target.value)}
           rows={6}
           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-slate-400"
-          placeholder="{title}\n\n{content}\n\n{url}\n\n{tags}"
+          placeholder="{title}\n\n{content}\n\n{url}\n\n{featured_image}\n\n{tags}"
         />
       </div>
 

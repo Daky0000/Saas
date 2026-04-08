@@ -81,7 +81,11 @@ export default function SocialTemplatesTab() {
         <div className="mt-4 space-y-2 text-sm text-slate-600">
           <div className="flex items-start gap-2">
             <CheckCircle2 size={16} className="text-emerald-500 mt-0.5" />
-            <span>Use placeholders like <span className="font-mono">{'{title}'}</span> and <span className="font-mono">{'{url}'}</span>.</span>
+            <span>
+              Use placeholders like <span className="font-mono">{'{title}'}</span>,{' '}
+              <span className="font-mono">{'{url}'}</span>, and{' '}
+              <span className="font-mono">{'{featured_image}'}</span>.
+            </span>
           </div>
           <div className="flex items-start gap-2">
             <CheckCircle2 size={16} className="text-emerald-500 mt-0.5" />
