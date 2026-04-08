@@ -18,7 +18,6 @@ type ModalState =
   | { type: 'instagram' }
   | { type: 'linkedin' }
   | { type: 'linkedin-select' }
-  | { type: 'pinterest' }
   | { type: 'mailchimp' };
 
 const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
@@ -144,11 +143,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [linkedInOrgLoading, setLinkedInOrgLoading] = useState(false);
   const [linkedInSelectedOrgs, setLinkedInSelectedOrgs] = useState<string[]>([]);
 
-  // Pinterest boards
-  const [pinBoards, setPinBoards] = useState<Array<{ id: string; name: string }>>([]);
-  const [pinLoading, setPinLoading] = useState(false);
-  const pinReturnHandled = useRef(false);
-
   // Mailchimp
   const [mcApiKey, setMcApiKey] = useState('');
   const [mcServerPrefix, setMcServerPrefix] = useState('');
@@ -205,10 +199,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
   );
   const linkedInConnected = useMemo(
     () => items.some((item) => item.slug === 'linkedin' && item.connected),
-    [items]
-  );
-  const pinterestConnected = useMemo(
-    () => items.some((item) => item.slug === 'pinterest' && item.connected),
     [items]
   );
 
@@ -391,32 +381,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
     window.history.replaceState({}, '', nextUrl);
   }, [facebookConnected, openInstagramTargets]);
 
-  const openPinterestBoards = useCallback(async () => {
-    setModal({ type: 'pinterest' });
-    setPinLoading(true);
-    try {
-      const res = await integrationService.listPinterestBoards();
-      if (!res.success) throw new Error(res.error || 'Failed to load boards');
-      setPinBoards(res.boards || []);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to load boards');
-      setPinBoards([]);
-    } finally {
-      setPinLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!pinterestConnected || pinReturnHandled.current) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('pinConnected') !== '1') return;
-    pinReturnHandled.current = true;
-    void openPinterestBoards();
-    params.delete('pinConnected');
-    const nextQuery = params.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
-    window.history.replaceState({}, '', nextUrl);
-  }, [openPinterestBoards, pinterestConnected]);
 
   const toggleFacebookSelection = (id: string, disabled?: boolean) => {
     if (disabled) return;
@@ -629,10 +593,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
               ? 'Publish images via Instagram Graph API (Business/Creator account linked to a Facebook Page).'
               : slug === 'linkedin'
                 ? 'Publish posts to your profile or LinkedIn Pages you administer.'
-                : slug === 'twitter'
+                  : slug === 'twitter'
                   ? 'Publish tweets with X API v2 (supports token refresh).'
                   : slug === 'pinterest'
-                    ? 'Create Pins on selected boards using the Pinterest API.'
+                    ? 'Publish Pins and pull profile + board performance analytics.'
                     : 'Connect using OAuth.'
         }
         statusLabel={statusLabel}
@@ -678,9 +642,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       slug,
                       slug === 'linkedin'
                         ? '/integrations?liConnected=1'
-                        : slug === 'pinterest'
-                          ? '/integrations?pinConnected=1'
-                          : '/integrations'
+                        : '/integrations'
                     )
               }
               disabled={!canConnect || busy === slug}
@@ -709,18 +671,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
             disabled={!item.connected}
             className={SECONDARY_ACTION}
             title={!item.connected ? 'Connect Facebook first' : ''}
-          >
-            <Settings2 size={16} /> Manage
-          </button>
-        ) : null}
-
-        {slug === 'pinterest' ? (
-          <button
-            type="button"
-            onClick={() => void openPinterestBoards()}
-            disabled={!item.connected}
-            className={SECONDARY_ACTION}
-            title={!item.connected ? 'Connect Pinterest first' : ''}
           >
             <Settings2 size={16} /> Manage
           </button>
@@ -887,8 +837,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         ? 'LinkedIn targets'
                       : modal.type === 'linkedin-select'
                       ? 'Select LinkedIn Company Pages'
-                      : modal.type === 'pinterest'
-                      ? 'Pinterest boards'
                       : modal.type === 'mailchimp'
                         ? 'Mailchimp'
                         : 'Integration'}
@@ -1420,53 +1368,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         </button>
                       </div>
                     </>
-                  )}
-                </div>
-              ) : null}
-
-              {modal.type === 'pinterest' ? (
-                <div className="space-y-3">
-                  {pinLoading ? (
-                    <div className="flex items-center justify-center py-10">
-                      <Loader2 size={22} className="animate-spin text-slate-400" />
-                    </div>
-                  ) : pinBoards.length === 0 ? (
-                    <div className="text-sm text-slate-500">No boards found.</div>
-                  ) : (
-                    <div className="grid gap-2">
-                      {pinBoards.map((b) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={async () => {
-                            setBusy(`pin-${b.id}`);
-                            try {
-                              const res = await integrationService.saveSocialTarget({
-                                platform: 'pinterest',
-                                account_type: 'board',
-                                account_id: b.id,
-                                account_name: b.name,
-                              });
-                              if (!res.success) throw new Error(res.error || 'Failed to save board');
-                              alert('Board saved.');
-                              await load();
-                              setModal({ type: 'none' });
-                            } catch (e) {
-                              alert(e instanceof Error ? e.message : 'Failed to save board');
-                            } finally {
-                              setBusy(null);
-                            }
-                          }}
-                          className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left hover:bg-slate-50"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{b.name}</div>
-                            <div className="text-xs text-slate-500">{b.id}</div>
-                          </div>
-                          <span className="text-xs font-semibold text-slate-600">Save</span>
-                        </button>
-                      ))}
-                    </div>
                   )}
                 </div>
               ) : null}

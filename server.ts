@@ -4131,7 +4131,8 @@ function formatSocialAccountLabel(
   }
 
   if (platformId === 'pinterest') {
-    return name ? `Board: ${name}` : (id ? `Board: ${id}` : 'Board');
+    if (type === 'board') return name ? `Board: ${name}` : (id ? `Board: ${id}` : 'Board');
+    return name ? `Profile: ${name}` : 'Profile';
   }
 
   if (platformId === 'wordpress') {
@@ -13194,6 +13195,20 @@ async function publishToplatform(
         : undefined;
 
       let boardId = destination?.type === 'board' ? String(destination.id || '').trim() || null : null;
+
+      // Preferred: user-configured default board (set from Analytics -> Pinterest)
+      if (!boardId) {
+        try {
+          const defaultBoardSetting = await getUserSettingValue(userId, 'pinterest.default_board');
+          const obj = safeJsonObject(defaultBoardSetting);
+          const savedBoardId = String(obj?.id || obj?.board_id || '').trim();
+          if (savedBoardId) boardId = savedBoardId;
+        } catch {
+          // ignore
+        }
+      }
+
+      // Back-compat: previously saved boards (Integrations -> Pinterest -> Manage)
       if (!boardId && pool) {
         const boardRows = await pool.query(
           `SELECT account_id
@@ -13205,7 +13220,48 @@ async function publishToplatform(
         );
         boardId = boardRows.rows[0]?.account_id ? String(boardRows.rows[0].account_id).trim() : null;
       }
-      if (!boardId) return { status: 'failed', error: 'Select a Pinterest board under Integrations -> Pinterest -> Manage.' };
+
+      // Last resort: pick the first available board from the Pinterest API (and store it as default)
+      if (!boardId) {
+        try {
+          const boardsResp = await axios.get('https://api.pinterest.com/v5/boards', {
+            headers: { Authorization: `Bearer ${access_token}` },
+            params: { page_size: 1 },
+            validateStatus: () => true,
+            timeout: 15000,
+          });
+          const boardsData: any = boardsResp.data || {};
+          if (boardsResp.status < 400) {
+            const first = Array.isArray(boardsData?.items) ? boardsData.items[0] : null;
+            const firstId = first?.id ? String(first.id).trim() : '';
+            const firstName = first?.name ? String(first.name).trim() : '';
+            if (firstId) {
+              boardId = firstId;
+              if (pool) {
+                await pool
+                  .query(
+                    `INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
+                     VALUES ($1, 'pinterest.default_board', $2::jsonb, NOW(), NOW())
+                     ON CONFLICT (user_id, key) DO UPDATE SET
+                       value = EXCLUDED.value,
+                       updated_at = NOW()`,
+                    [userId, JSON.stringify({ id: firstId, name: firstName || null })]
+                  )
+                  .catch(() => undefined);
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!boardId) {
+        return {
+          status: 'failed',
+          error: 'No Pinterest board selected. Pick a default board in Analytics → Pinterest, or create a board on Pinterest first.',
+        };
+      }
 
       const pinBody: any = {
         board_id: boardId,
@@ -16113,7 +16169,7 @@ app.post('/api/social/pinterest/sync', async (req: Request, res: Response) => {
       userId: auth.userId,
       account: accountRes.rows[0],
       days: 30,
-      maxPins: 100,
+      maxPins: 250,
     });
 
     return res.json({
@@ -16238,14 +16294,20 @@ app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
     const limit = Math.min(200, Math.max(1, parseInt(q.limit || '100', 10)));
     const offset = Math.max(0, parseInt(q.offset || '0', 10));
     const accountId = q.account_id ? String(q.account_id).trim() : '';
+    const boardId = q.board_id ? String(q.board_id).trim() : '';
     const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     const params: any[] = [auth.userId, sinceDate];
-    let accountFilter = '';
+    let extraFilter = '';
     if (accountId) {
       params.push(accountId);
-      accountFilter = `AND sm.social_account_id = $${params.length}`;
+      extraFilter += `AND sm.social_account_id = $${params.length}\n`;
     }
+    if (boardId) {
+      params.push(boardId);
+      extraFilter += `AND (sm.raw_data->'pin'->>'board_id') = $${params.length}\n`;
+    }
+    const baseParams = params.slice();
     params.push(limit, offset);
 
     const pinsRes = await pool.query(
@@ -16255,7 +16317,7 @@ app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
        WHERE sm.user_id = $1
          AND sm.platform = 'pinterest'
          AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
-         ${accountFilter}
+         ${extraFilter}
        ORDER BY COALESCE(sm.posted_at, sm.fetched_at) DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
@@ -16267,8 +16329,8 @@ app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
        WHERE sm.user_id = $1
          AND sm.platform = 'pinterest'
          AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
-         ${accountFilter}`,
-      params.slice(0, params.length - 2)
+         ${extraFilter}`,
+      baseParams
     );
 
     const summaryRes = await pool.query(
@@ -16294,8 +16356,8 @@ app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
        WHERE sm.user_id = $1
          AND sm.platform = 'pinterest'
          AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
-         ${accountFilter}`,
-      params.slice(0, params.length - 2)
+         ${extraFilter}`,
+      baseParams
     );
 
     const pins = pinsRes.rows.map((row: any) => {
@@ -16347,6 +16409,69 @@ app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Pinterest pins error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest pins' });
+  }
+});
+
+// GET /api/social/pinterest/boards-performance — aggregated board performance from synced pins
+app.get('/api/social/pinterest/boards-performance', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const days = Math.min(365, Math.max(1, parseInt(q.days || '90', 10)));
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const { rows } = await pool.query(
+      `SELECT
+         COALESCE(sm.raw_data->'pin'->>'board_id', '') AS board_id,
+         MAX(sa_board.account_name) AS board_name,
+         COUNT(*)::int AS total_pins,
+         COALESCE(SUM(sm.impressions), 0) AS total_impressions,
+         COALESCE(SUM(sm.clicks), 0) AS total_outbound_clicks,
+         COALESCE(SUM(sm.saves), 0) AS total_saves,
+         COALESCE(SUM(sm.likes), 0) AS total_reactions,
+         COALESCE(SUM(sm.comments), 0) AS total_comments,
+         COALESCE(SUM(sm.engagement), 0) AS total_engagement,
+         MAX(COALESCE(sm.posted_at, sm.fetched_at)) AS last_activity,
+         CASE WHEN COALESCE(SUM(sm.impressions), 0) > 0
+              THEN ROUND((SUM(sm.engagement)::numeric / NULLIF(SUM(sm.impressions), 0)) * 100, 2)
+              ELSE 0 END AS engagement_rate
+       FROM social_metrics sm
+       LEFT JOIN social_accounts sa_board
+         ON sa_board.user_id = sm.user_id
+        AND sa_board.platform = 'pinterest'
+        AND sa_board.account_type = 'board'
+        AND sa_board.account_id = (sm.raw_data->'pin'->>'board_id')
+       WHERE sm.user_id = $1
+         AND sm.platform = 'pinterest'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         AND COALESCE(sm.raw_data->'pin'->>'board_id', '') <> ''
+       GROUP BY board_id
+       ORDER BY COALESCE(SUM(sm.impressions), 0) DESC, COALESCE(SUM(sm.engagement), 0) DESC, COUNT(*) DESC
+       LIMIT 200`,
+      [auth.userId, sinceDate]
+    );
+
+    const boards = rows.map((row: any) => ({
+      board_id: String(row.board_id || '').trim(),
+      board_name: row.board_name ? String(row.board_name) : null,
+      total_pins: Number(row.total_pins || 0),
+      total_impressions: Number(row.total_impressions || 0),
+      total_outbound_clicks: Number(row.total_outbound_clicks || 0),
+      total_saves: Number(row.total_saves || 0),
+      total_reactions: Number(row.total_reactions || 0),
+      total_comments: Number(row.total_comments || 0),
+      total_engagement: Number(row.total_engagement || 0),
+      engagement_rate: Number(row.engagement_rate || 0),
+      last_activity: row.last_activity ? new Date(row.last_activity).toISOString() : null,
+    })).filter((b: any) => b.board_id);
+
+    return res.json({ success: true, boards, days });
+  } catch (err) {
+    console.error('Pinterest boards performance error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest board performance' });
   }
 });
 
