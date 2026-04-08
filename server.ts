@@ -3840,8 +3840,11 @@ async function exchangeThreadsCode(code: string) {
     throw new Error(`Threads token exchange failed (${tokenRes.status})`);
   }
 
-  const shortLived = (tokenRes.data as any)?.access_token;
-  if (!shortLived) return tokenRes.data;
+  const tokenData: any = tokenRes.data || {};
+  const shortLived = String(tokenData?.access_token || '').trim();
+  if (!shortLived) return tokenData;
+
+  let finalTokenData: any = tokenData;
 
   // Best-effort: exchange short-lived token for long-lived token.
   try {
@@ -3857,18 +3860,50 @@ async function exchangeThreadsCode(code: string) {
     });
 
     if (longRes.status < 400 && (longRes.data as any)?.access_token) {
-      return {
-        ...(tokenRes.data || {}),
+      finalTokenData = {
+        ...(tokenData || {}),
         ...(longRes.data || {}),
         short_lived_access_token: shortLived,
-        access_token: (longRes.data as any).access_token,
+        access_token: String((longRes.data as any).access_token || '').trim() || shortLived,
       };
     }
   } catch {
-    // ignore - return short-lived token if exchange fails
+    // ignore - keep short-lived token if exchange fails
+    finalTokenData = tokenData;
   }
 
-  return tokenRes.data;
+  // Best-effort enrichment: store id/username/picture/bio so the integration UI and analytics are nicer.
+  const accessToken = String(finalTokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://graph.threads.net/v1.0/me', {
+        params: {
+          fields: 'id,username,name,is_verified,threads_profile_picture_url,threads_biography',
+          access_token: accessToken,
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (meResp.status < 400) {
+        const me: any = meResp.data || {};
+        const meId = me?.id ? String(me.id).trim() : '';
+        if (meId) {
+          finalTokenData.user_id = meId;
+          finalTokenData.id = meId;
+          finalTokenData.sub = meId;
+        }
+        if (me?.username) finalTokenData.username = String(me.username);
+        if (me?.name) finalTokenData.name = String(me.name);
+        if (me?.is_verified !== undefined) finalTokenData.is_verified = Boolean(me.is_verified);
+        if (me?.threads_profile_picture_url) finalTokenData.avatar_url = String(me.threads_profile_picture_url);
+        if (me?.threads_biography) finalTokenData.about = String(me.threads_biography);
+      }
+    } catch {
+      // ignore — token is still valid even if enrichment fails
+    }
+  }
+
+  return finalTokenData;
 }
 
 async function exchangeTikTokCode(code: string, codeVerifier?: string) {
@@ -6727,6 +6762,295 @@ async function syncInstagramAnalyticsAccount(params: {
   return { synced, errors };
 }
 
+async function syncThreadsAnalyticsAccount(params: {
+  userId: string;
+  account: any;
+  days?: number;
+  maxPosts?: number;
+}): Promise<{ synced: number; errors: string[] }> {
+  const { userId, account } = params;
+  const days = Math.max(1, Number(params.days || 30));
+  const maxPosts = Math.max(1, Math.min(200, Number(params.maxPosts || 50)));
+
+  const errors: string[] = [];
+  let synced = 0;
+
+  if (!pool) return { synced, errors: ['DB not ready'] };
+
+  let accessToken = decodeStoredIntegrationSecret(account?.access_token_encrypted);
+  if (!accessToken) accessToken = String(account?.access_token || '').trim();
+  if (!accessToken) return { synced, errors: ['Threads access token missing or expired — reconnect Threads.'] };
+
+  const threadsBase = 'https://graph.threads.net/v1.0';
+  const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const sinceMs = sinceDate.getTime();
+
+  const extractMetric = (insightsResp: any, name: string) => {
+    const data = Array.isArray(insightsResp?.data) ? insightsResp.data : [];
+    const match = data.find((m: any) => String(m?.name || '').toLowerCase() === name.toLowerCase());
+    const values = Array.isArray(match?.values) ? match.values : [];
+    if (values.length === 0) return 0;
+    const raw = values[values.length - 1]?.value;
+    const num = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '0'));
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  // ── Profile + account insights ──────────────────────────────────────────
+  let profile: any = null;
+  try {
+    const meResp = await axios.get(`${threadsBase}/me`, {
+      params: {
+        fields: 'id,username,name,is_verified,threads_profile_picture_url,threads_biography',
+        access_token: accessToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const meData: any = meResp.data || {};
+    if (meResp.status >= 400) {
+      const msg = meData?.error?.message || `Threads profile lookup failed (${meResp.status})`;
+      errors.push(msg);
+    } else {
+      profile = meData;
+    }
+  } catch (err: any) {
+    errors.push(`Threads profile lookup failed: ${err?.message || 'Failed'}`);
+  }
+
+  let accountInsights: any = null;
+  try {
+    const insResp = await axios.get(`${threadsBase}/me/threads_insights`, {
+      params: {
+        metric: 'views,likes,replies,reposts,quotes,clicks,followers_count',
+        access_token: accessToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const insData: any = insResp.data || {};
+    if (insResp.status === 403) {
+      errors.push('Threads insights scope not granted (threads_manage_insights) — reconnect Threads to enable analytics.');
+    } else if (insResp.status >= 400) {
+      const msg = insData?.error?.message || `Threads account insights failed (${insResp.status})`;
+      errors.push(msg);
+    } else {
+      accountInsights = insData;
+    }
+  } catch (err: any) {
+    errors.push(`Threads account insights failed: ${err?.message || 'Failed'}`);
+  }
+
+  const followers = Math.round(extractMetric(accountInsights, 'followers_count'));
+  const totalLikes = Math.round(extractMetric(accountInsights, 'likes'));
+
+  // ── Posts sync ──────────────────────────────────────────────────────────
+  let postsSynced = 0;
+  try {
+    const fields =
+      'id,media_product_type,media_type,media_url,gif_url,permalink,username,text,timestamp,shortcode,thumbnail_url,children,is_quote_post,quoted_post,reposted_post,has_replies,alt_text,link_attachment_url,location_id,topic_tag,is_verified,profile_picture_url';
+    const metricList = 'views,likes,replies,reposts,quotes,shares';
+
+    let after: string | null = null;
+    let fetched = 0;
+    let page = 0;
+    const MAX_PAGES = 10;
+
+    while (fetched < maxPosts && page < MAX_PAGES) {
+      const pageSize = Math.min(50, Math.max(1, maxPosts - fetched));
+      const listResp = await axios.get(`${threadsBase}/me/threads`, {
+        params: {
+          fields,
+          limit: pageSize,
+          ...(after ? { after } : {}),
+          access_token: accessToken,
+        },
+        validateStatus: () => true,
+        timeout: 20000,
+      });
+      const listData: any = listResp.data || {};
+      if (listResp.status >= 400) {
+        const msg = listData?.error?.message || `Threads posts fetch failed (${listResp.status})`;
+        errors.push(msg);
+        break;
+      }
+
+      const items: any[] =
+        Array.isArray(listData?.data) ? listData.data :
+        Array.isArray(listData?.items) ? listData.items :
+        [];
+
+      if (items.length === 0) break;
+
+      let hitOldPost = false;
+      for (const post of items) {
+        if (fetched >= maxPosts) break;
+        const threadId = String(post?.id || '').trim();
+        if (!threadId) continue;
+
+        let postedAt: string | null = null;
+        let postedAtMs = NaN;
+        try {
+          const dt = post?.timestamp ? new Date(post.timestamp) : null;
+          postedAt = dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : null;
+          postedAtMs = dt ? dt.getTime() : NaN;
+        } catch {
+          postedAt = null;
+          postedAtMs = NaN;
+        }
+
+        if (Number.isFinite(postedAtMs) && postedAtMs < sinceMs) {
+          hitOldPost = true;
+          break;
+        }
+
+        let insights: any = null;
+        try {
+          const insResp = await axios.get(`${threadsBase}/${encodeURIComponent(threadId)}/insights`, {
+            params: { metric: metricList, access_token: accessToken },
+            validateStatus: () => true,
+            timeout: 15000,
+          });
+          const insData: any = insResp.data || {};
+          if (insResp.status >= 400) {
+            const msg = insData?.error?.message || `Threads post insights failed (${insResp.status})`;
+            errors.push(msg);
+          } else {
+            insights = insData;
+          }
+        } catch (err: any) {
+          errors.push(`Threads post insights failed: ${err?.message || 'Failed'}`);
+        }
+
+        const views = Math.round(extractMetric(insights, 'views'));
+        const likes = Math.round(extractMetric(insights, 'likes'));
+        const replies = Math.round(extractMetric(insights, 'replies'));
+        const reposts = Math.round(extractMetric(insights, 'reposts'));
+        const quotes = Math.round(extractMetric(insights, 'quotes'));
+        const shares = Math.round(extractMetric(insights, 'shares'));
+        const engagement = likes + replies + reposts + quotes + shares;
+
+        const raw = {
+          post: {
+            id: threadId,
+            text: post?.text ?? null,
+            permalink: post?.permalink ?? null,
+            timestamp: post?.timestamp ?? null,
+            media_type: post?.media_type ?? null,
+            media_url: post?.media_url ?? null,
+            thumbnail_url: post?.thumbnail_url ?? null,
+            username: post?.username ?? null,
+            shortcode: post?.shortcode ?? null,
+            children: post?.children ?? null,
+            is_quote_post: post?.is_quote_post ?? null,
+            quoted_post: post?.quoted_post ?? null,
+            reposted_post: post?.reposted_post ?? null,
+            has_replies: post?.has_replies ?? null,
+            link_attachment_url: post?.link_attachment_url ?? null,
+          },
+          metrics: { views, likes, replies, reposts, quotes, shares },
+          insights: insights?.data ?? null,
+        };
+
+        await pool.query(
+          `INSERT INTO social_metrics
+             (id, user_id, platform, platform_post_id, social_account_id,
+              likes, comments, shares, impressions, reach, engagement,
+              raw_data, posted_at, fetched_at)
+           VALUES (gen_random_uuid()::text, $1, 'threads', $2, $3,
+                   $4, $5, $6, $7, $8, $9,
+                   $10::jsonb, $11, NOW())
+           ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+             social_account_id = EXCLUDED.social_account_id,
+             likes       = EXCLUDED.likes,
+             comments    = EXCLUDED.comments,
+             shares      = EXCLUDED.shares,
+             impressions = EXCLUDED.impressions,
+             reach       = EXCLUDED.reach,
+             engagement  = EXCLUDED.engagement,
+             raw_data    = EXCLUDED.raw_data,
+             posted_at   = COALESCE(EXCLUDED.posted_at, social_metrics.posted_at),
+             fetched_at  = NOW()`,
+          [userId, threadId, account.id, likes, replies, shares, views, views, engagement, JSON.stringify(raw), postedAt]
+        );
+
+        synced++;
+        postsSynced++;
+        fetched++;
+      }
+
+      after =
+        (listData?.paging?.cursors?.after ? String(listData.paging.cursors.after) : null) ||
+        (listData?.paging?.after ? String(listData.paging.after) : null) ||
+        null;
+
+      if (hitOldPost || !after) break;
+      page++;
+    }
+  } catch (err: any) {
+    errors.push(`Threads posts sync failed: ${err?.message || 'Failed'}`);
+  }
+
+  // ── Persist profile snapshot ────────────────────────────────────────────
+  try {
+    const bio = typeof profile?.threads_biography === 'string' ? profile.threads_biography : (typeof profile?.about === 'string' ? profile.about : null);
+    const isVerified = profile?.is_verified === true;
+    const handle = typeof profile?.username === 'string' ? profile.username : null;
+    const accountName = String(profile?.name || profile?.username || account?.account_name || '').trim() || null;
+    const profileImage =
+      typeof profile?.threads_profile_picture_url === 'string'
+        ? profile.threads_profile_picture_url
+        : typeof profile?.profile_picture_url === 'string'
+          ? profile.profile_picture_url
+          : null;
+    const accountId = profile?.id ? String(profile.id).trim() : null;
+
+    await pool.query(
+      `INSERT INTO social_profile_stats
+         (id, user_id, social_account_id, platform,
+          followers, following, posts_count, total_likes,
+          bio, is_verified, raw_response, synced_at)
+       VALUES (gen_random_uuid()::text, $1, $2, 'threads',
+               $3, 0, $4, $5,
+               $6, $7, $8::jsonb, NOW())
+       ON CONFLICT (social_account_id) DO UPDATE SET
+         followers   = CASE WHEN EXCLUDED.followers > 0 THEN EXCLUDED.followers ELSE social_profile_stats.followers END,
+         posts_count = CASE WHEN EXCLUDED.posts_count > 0 THEN EXCLUDED.posts_count ELSE social_profile_stats.posts_count END,
+         total_likes = CASE WHEN EXCLUDED.total_likes > 0 THEN EXCLUDED.total_likes ELSE social_profile_stats.total_likes END,
+         bio         = COALESCE(EXCLUDED.bio, social_profile_stats.bio),
+         is_verified = EXCLUDED.is_verified,
+         raw_response= EXCLUDED.raw_response,
+         synced_at   = NOW()`,
+      [
+        userId,
+        account.id,
+        followers,
+        postsSynced,
+        totalLikes,
+        bio,
+        isVerified,
+        JSON.stringify({ profile, insights: accountInsights }),
+      ]
+    );
+
+    await pool.query(
+      `UPDATE social_accounts SET
+         account_id    = COALESCE($1, account_id),
+         account_name  = COALESCE($2, account_name),
+         handle        = COALESCE($3, handle),
+         profile_image = COALESCE($4, profile_image),
+         followers     = CASE WHEN $5 > 0 THEN $5 ELSE followers END
+       WHERE id = $6`,
+      [accountId, accountName, handle, profileImage, followers, account.id]
+    );
+
+    synced++;
+  } catch (err: any) {
+    errors.push(`Threads profile sync failed: ${err?.message || 'Failed'}`);
+  }
+
+  return { synced, errors };
+}
+
 async function syncPinterestAnalyticsAccount(params: {
   userId: string;
   account: any;
@@ -6968,7 +7292,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
-  threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
+  threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish,threads_manage_insights', idField: 'appId' },
 };
 
 const DEFAULT_OAUTH_REDIRECTS: Record<string, string> = {
@@ -16472,6 +16796,283 @@ app.get('/api/social/pinterest/boards-performance', async (req: Request, res: Re
   } catch (err) {
     console.error('Pinterest boards performance error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest board performance' });
+  }
+});
+
+// ─── Threads Analytics Endpoints ───────────────────────────────────────────
+
+// POST /api/social/threads/sync — sync Threads profile + post insights
+app.post('/api/social/threads/sync', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const accountRes = await pool.query(
+      `SELECT id, account_id, account_name, handle, followers, profile_image, access_token, access_token_encrypted, token_data
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='threads' AND connected=true AND account_type='profile'
+       ORDER BY connected_at DESC NULLS LAST, created_at DESC NULLS LAST
+       LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (accountRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No connected Threads account found' });
+    }
+
+    const result = await syncThreadsAnalyticsAccount({
+      userId: auth.userId,
+      account: accountRes.rows[0],
+      days: 30,
+      maxPosts: 120,
+    });
+
+    return res.json({
+      success: true,
+      synced: result.synced,
+      errors: result.errors.length > 0 ? result.errors : undefined,
+    });
+  } catch (err) {
+    console.error('Threads sync error:', err);
+    return res.status(500).json({ success: false, error: 'Threads sync failed' });
+  }
+});
+
+// GET /api/social/threads/profile — get Threads profile snapshot for authenticated user
+app.get('/api/social/threads/profile', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) {
+      return res.json({
+        hasData: false,
+        followers: null,
+        posts_count: null,
+        total_likes: null,
+        bio: null,
+        is_verified: null,
+        account_name: null,
+        handle: null,
+        picture_url: null,
+        synced_at: null,
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+         sa.id,
+         sa.account_id,
+         sa.account_name,
+         sa.handle,
+         sa.followers AS sa_followers,
+         sa.profile_image,
+         sa.token_data,
+         sps.followers,
+         sps.posts_count,
+         sps.total_likes,
+         sps.bio,
+         sps.is_verified,
+         sps.raw_response,
+         sps.synced_at
+       FROM social_accounts sa
+       LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
+       WHERE sa.user_id = $1
+         AND sa.platform = 'threads'
+         AND sa.account_type = 'profile'
+         AND sa.connected = true
+       ORDER BY sps.synced_at DESC NULLS LAST, sa.connected_at DESC NULLS LAST
+       LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (!rows.length) {
+      return res.json({
+        hasData: false,
+        followers: null,
+        posts_count: null,
+        total_likes: null,
+        bio: null,
+        is_verified: null,
+        account_name: null,
+        handle: null,
+        picture_url: null,
+        synced_at: null,
+      });
+    }
+
+    const row: any = rows[0];
+    const tokenData = row.token_data || {};
+    const raw = row.raw_response || {};
+    const rawProfile = raw?.profile || {};
+
+    const followers = row.followers ?? row.sa_followers ?? null;
+    const hasData =
+      followers !== null ||
+      row.posts_count !== null ||
+      Boolean(row.account_name) ||
+      Boolean(row.handle);
+
+    const bio =
+      row.bio ??
+      (typeof rawProfile?.threads_biography === 'string' ? rawProfile.threads_biography : null) ??
+      (typeof tokenData?.about === 'string' ? tokenData.about : null) ??
+      null;
+
+    const pictureUrl =
+      row.profile_image ??
+      (typeof rawProfile?.threads_profile_picture_url === 'string' ? rawProfile.threads_profile_picture_url : null) ??
+      (typeof tokenData?.avatar_url === 'string' ? tokenData.avatar_url : null) ??
+      null;
+
+    const handle =
+      row.handle ??
+      (typeof rawProfile?.username === 'string' ? rawProfile.username : null) ??
+      (typeof tokenData?.username === 'string' ? tokenData.username : null) ??
+      null;
+
+    const accountName =
+      row.account_name ??
+      (typeof rawProfile?.name === 'string' ? rawProfile.name : null) ??
+      (typeof tokenData?.name === 'string' ? tokenData.name : null) ??
+      null;
+
+    const isVerified =
+      row.is_verified === true ||
+      rawProfile?.is_verified === true ||
+      tokenData?.is_verified === true;
+
+    return res.json({
+      hasData,
+      followers: followers !== null ? Number(followers) : null,
+      posts_count: row.posts_count !== null ? Number(row.posts_count) : null,
+      total_likes: row.total_likes !== null ? Number(row.total_likes) : null,
+      bio,
+      is_verified: isVerified,
+      account_name: accountName,
+      handle,
+      picture_url: pictureUrl,
+      synced_at: row.synced_at ?? null,
+    });
+  } catch (err) {
+    console.error('Threads profile error:', err);
+    return res.json({ profile: null, hasData: false });
+  }
+});
+
+// GET /api/social/threads/posts — all synced Threads posts for the authenticated user
+app.get('/api/social/threads/posts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const days = Math.min(365, Math.max(1, parseInt(q.days || '30', 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(q.limit || '100', 10)));
+    const offset = Math.max(0, parseInt(q.offset || '0', 10));
+    const accountId = q.account_id ? String(q.account_id).trim() : '';
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const params: any[] = [auth.userId, sinceDate];
+    let accountFilter = '';
+    if (accountId) {
+      params.push(accountId);
+      accountFilter = `AND sm.social_account_id = $${params.length}`;
+    }
+    params.push(limit, offset);
+
+    const postsRes = await pool.query(
+      `SELECT sm.*, sa.account_name, sa.handle
+       FROM social_metrics sm
+       JOIN social_accounts sa ON sa.id = sm.social_account_id
+       WHERE sm.user_id = $1
+         AND sm.platform = 'threads'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}
+       ORDER BY COALESCE(sm.posted_at, sm.fetched_at) DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)
+       FROM social_metrics sm
+       WHERE sm.user_id = $1
+         AND sm.platform = 'threads'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const summaryRes = await pool.query(
+      `SELECT
+         COUNT(*) AS total_posts,
+         COALESCE(SUM(impressions), 0) AS total_views,
+         COALESCE(SUM(likes), 0) AS total_likes,
+         COALESCE(SUM(comments), 0) AS total_replies,
+         COALESCE(SUM(shares), 0) AS total_shares,
+         COALESCE(SUM(engagement), 0) AS total_engagement,
+         COALESCE(SUM(COALESCE(NULLIF(sm.raw_data->'metrics'->>'reposts', '')::numeric, 0)), 0) AS total_reposts,
+         COALESCE(SUM(COALESCE(NULLIF(sm.raw_data->'metrics'->>'quotes', '')::numeric, 0)), 0) AS total_quotes,
+         CASE WHEN COALESCE(SUM(impressions), 0) > 0
+              THEN ROUND((SUM(engagement)::numeric / NULLIF(SUM(impressions), 0)) * 100, 2)
+              ELSE 0 END AS avg_engagement_rate
+       FROM social_metrics sm
+       WHERE sm.user_id = $1
+         AND sm.platform = 'threads'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const posts = postsRes.rows.map((row: any) => {
+      const raw = row.raw_data || {};
+      const post = raw?.post || {};
+      const metrics = raw?.metrics || {};
+      const metricNum = (value: any) => {
+        const n = typeof value === 'number' ? value : parseFloat(String(value ?? '0'));
+        return Number.isFinite(n) ? n : 0;
+      };
+      return {
+        ...row,
+        thread_id: row.platform_post_id,
+        text: typeof post?.text === 'string' ? post.text : null,
+        permalink: typeof post?.permalink === 'string' ? post.permalink : null,
+        username: typeof post?.username === 'string' ? post.username : (row.handle || null),
+        media_type: typeof post?.media_type === 'string' ? post.media_type : null,
+        media_url: typeof post?.media_url === 'string' ? post.media_url : null,
+        thumbnail_url: typeof post?.thumbnail_url === 'string' ? post.thumbnail_url : null,
+        link_attachment_url: typeof post?.link_attachment_url === 'string' ? post.link_attachment_url : null,
+        is_quote_post: post?.is_quote_post === true,
+        has_replies: post?.has_replies === true,
+        views: row.impressions !== null && row.impressions !== undefined ? Number(row.impressions) : metricNum(metrics?.views),
+        replies: row.comments !== null && row.comments !== undefined ? Number(row.comments) : metricNum(metrics?.replies),
+        reposts: metricNum(metrics?.reposts),
+        quotes: metricNum(metrics?.quotes),
+      };
+    });
+
+    return res.json({
+      success: true,
+      posts,
+      total: parseInt(countRes.rows[0]?.count || '0', 10),
+      summary: summaryRes.rows[0] || {
+        total_posts: 0,
+        total_views: 0,
+        total_likes: 0,
+        total_replies: 0,
+        total_shares: 0,
+        total_engagement: 0,
+        total_reposts: 0,
+        total_quotes: 0,
+        avg_engagement_rate: 0,
+      },
+      days,
+    });
+  } catch (err) {
+    console.error('Threads posts error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Threads posts' });
   }
 });
 

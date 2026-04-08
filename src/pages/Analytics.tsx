@@ -21,12 +21,13 @@ import ComparisonView from '../components/analytics/ComparisonView';
 import TikTokAnalytics from '../components/analytics/TikTokAnalytics';
 import FacebookAnalytics from '../components/analytics/FacebookAnalytics';
 import InstagramAnalytics from '../components/analytics/InstagramAnalytics';
+import ThreadsAnalytics from '../components/analytics/ThreadsAnalytics';
 import PinterestAnalytics from '../components/analytics/PinterestAnalytics';
 import LinkedInAnalytics from '../components/analytics/LinkedInAnalytics';
 import type { AnalyticsRangePreset, BlogAnalyticsDashboard, DashboardQuery } from '../services/blogAnalyticsService';
 import { blogAnalyticsService } from '../services/blogAnalyticsService';
 
-type Tab = 'publishing' | 'accounts' | 'tiktok' | 'facebook' | 'instagram' | 'pinterest' | 'linkedin' | 'comparison';
+type Tab = 'publishing' | 'accounts' | 'tiktok' | 'facebook' | 'instagram' | 'threads' | 'pinterest' | 'linkedin' | 'comparison';
 
 const PRESETS: Array<{ value: AnalyticsRangePreset; label: string }> = [
   { value: '7d', label: 'Last 7 days' },
@@ -277,6 +278,7 @@ export default function Analytics() {
           { id: 'tiktok' as Tab, label: 'TikTok' },
           { id: 'facebook' as Tab, label: 'Facebook' },
           { id: 'instagram' as Tab, label: 'Instagram' },
+          { id: 'threads' as Tab, label: 'Threads' },
           { id: 'pinterest' as Tab, label: 'Pinterest' },
           { id: 'linkedin' as Tab, label: 'LinkedIn' },
           { id: 'comparison' as Tab, label: 'Comparison' },
@@ -361,6 +363,10 @@ export default function Analytics() {
       {/* ── LinkedIn tab ────────────────────────────────────────────── */}
       {activeTab === 'instagram' && (
         <InstagramAnalytics days={socialDays} />
+      )}
+
+      {activeTab === 'threads' && (
+        <ThreadsAnalytics days={socialDays} />
       )}
 
       {activeTab === 'pinterest' && (

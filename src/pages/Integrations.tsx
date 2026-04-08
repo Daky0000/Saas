@@ -456,7 +456,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
-    const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest', 'tiktok'].includes(slug);
+    const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest', 'tiktok', 'threads'].includes(slug);
     const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
     const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || item.connection?.handle || '';
     const connectedMeta = item.connected
@@ -597,6 +597,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
                   ? 'Publish tweets with X API v2 (supports token refresh).'
                   : slug === 'pinterest'
                     ? 'Publish Pins and pull profile + board performance analytics.'
+                    : slug === 'threads'
+                      ? 'Publish posts to Threads and sync post insights analytics.'
                     : 'Connect using OAuth.'
         }
         statusLabel={statusLabel}
