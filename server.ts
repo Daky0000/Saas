@@ -12056,6 +12056,19 @@ function safeTruncateToLimit(text: string, limit: number): { text: string; trunc
 function renderSocialTemplatePreview(post: Record<string, any>, settings: SocialTemplateSettings) {
   const title = String(post?.title || '').trim();
   const url = buildPostUrl(post || {});
+  const rawFeaturedImage = String(post?.social_image || post?.featured_image || '').trim();
+  const featuredImage = (() => {
+    if (!rawFeaturedImage) return '';
+    if (/^https?:\/\//i.test(rawFeaturedImage)) return rawFeaturedImage;
+    if (rawFeaturedImage.startsWith('data:')) return rawFeaturedImage;
+    const serverBase = String(
+      process.env.BACKEND_PUBLIC_URL ||
+        process.env.PUBLIC_API_URL ||
+        process.env.VITE_API_BASE_URL ||
+        'https://contentflow-api-production.up.railway.app'
+    ).replace(/\/$/, '');
+    return `${serverBase}${rawFeaturedImage.startsWith('/') ? '' : '/'}${rawFeaturedImage}`;
+  })();
 
   let contentText = '';
   if (settings.content_source === 'CONTENT') {
@@ -12081,6 +12094,7 @@ function renderSocialTemplatePreview(post: Record<string, any>, settings: Social
     .replace(/{title}/g, title)
     .replace(/{content}/g, cleanContent)
     .replace(/{url}/g, url)
+    .replace(/{featured_image}/g, featuredImage)
     .replace(/{tags}/g, tags)
     .trim();
 

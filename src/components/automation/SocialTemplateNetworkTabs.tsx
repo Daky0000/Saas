@@ -39,9 +39,6 @@ export default function SocialTemplateNetworkTabs({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{network.label}</div>
-                <div className={`text-xs ${isActive ? 'text-white/70' : 'text-slate-400'}`}>
-                  Limit: {network.maxStatusLimit.toLocaleString()} chars
-                </div>
               </div>
             </button>
           );
