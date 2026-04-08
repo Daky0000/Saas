@@ -82,6 +82,41 @@ export type PinterestSyncResult = {
   errors?: string[];
 };
 
+export type PinterestBoard = {
+  id: string;
+  name: string;
+};
+
+export type PinterestBoardsResponse = {
+  success: boolean;
+  boards: PinterestBoard[];
+};
+
+export type PinterestBoardPerformance = {
+  board_id: string;
+  board_name: string | null;
+  total_pins: number;
+  total_impressions: number;
+  total_outbound_clicks: number;
+  total_saves: number;
+  total_reactions: number;
+  total_comments: number;
+  total_engagement: number;
+  engagement_rate: number;
+  last_activity: string | null;
+};
+
+export type PinterestBoardsPerformanceResponse = {
+  success: boolean;
+  boards: PinterestBoardPerformance[];
+  days: number;
+};
+
+export type PinterestDefaultBoard = {
+  id: string;
+  name?: string | null;
+};
+
 export type PinterestProfileResponse = {
   hasData: boolean;
   followers: number | null;
@@ -109,15 +144,52 @@ export const pinterestAnalyticsService = {
     return apiFetch('/api/social/pinterest/profile');
   },
 
+  async getBoards(): Promise<PinterestBoardsResponse> {
+    return apiFetch('/api/pinterest/boards');
+  },
+
+  async getBoardsPerformance(days = 90): Promise<PinterestBoardsPerformanceResponse> {
+    const params = new URLSearchParams();
+    params.set('days', String(days));
+    return apiFetch(`/api/social/pinterest/boards-performance?${params.toString()}`);
+  },
+
+  async getDefaultBoard(): Promise<PinterestDefaultBoard | null> {
+    const result = await apiFetch<{ success: boolean; value: any }>(
+      '/api/user-settings/pinterest.default_board'
+    );
+    const value = result?.value;
+    if (!value) return null;
+    if (typeof value === 'string') {
+      const id = value.trim();
+      return id ? { id } : null;
+    }
+    if (typeof value === 'object') {
+      const id = String((value as any)?.id || (value as any)?.board_id || '').trim();
+      if (!id) return null;
+      const nameRaw = (value as any)?.name;
+      const name = typeof nameRaw === 'string' && nameRaw.trim() ? nameRaw.trim() : null;
+      return { id, name };
+    }
+    return null;
+  },
+
+  async setDefaultBoard(board: PinterestDefaultBoard | null): Promise<void> {
+    await apiFetch<{ success: boolean }>(
+      '/api/user-settings/pinterest.default_board',
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: board }) }
+    );
+  },
+
   async getPins(
-    options: { days?: number; limit?: number; offset?: number; accountId?: string } = {}
+    options: { days?: number; limit?: number; offset?: number; accountId?: string; boardId?: string } = {}
   ): Promise<PinterestPinsResponse> {
     const params = new URLSearchParams();
     if (options.days) params.set('days', String(options.days));
     if (options.limit) params.set('limit', String(options.limit));
     if (options.offset) params.set('offset', String(options.offset));
     if (options.accountId) params.set('account_id', options.accountId);
+    if (options.boardId) params.set('board_id', options.boardId);
     return apiFetch(`/api/social/pinterest/pins?${params.toString()}`);
   },
 };
-
