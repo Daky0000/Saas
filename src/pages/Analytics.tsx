@@ -20,11 +20,12 @@ import SocialAccountsOverview from '../components/analytics/SocialAccountsOvervi
 import ComparisonView from '../components/analytics/ComparisonView';
 import TikTokAnalytics from '../components/analytics/TikTokAnalytics';
 import FacebookAnalytics from '../components/analytics/FacebookAnalytics';
+import InstagramAnalytics from '../components/analytics/InstagramAnalytics';
 import LinkedInAnalytics from '../components/analytics/LinkedInAnalytics';
 import type { AnalyticsRangePreset, BlogAnalyticsDashboard, DashboardQuery } from '../services/blogAnalyticsService';
 import { blogAnalyticsService } from '../services/blogAnalyticsService';
 
-type Tab = 'publishing' | 'accounts' | 'tiktok' | 'facebook' | 'linkedin' | 'comparison';
+type Tab = 'publishing' | 'accounts' | 'tiktok' | 'facebook' | 'instagram' | 'linkedin' | 'comparison';
 
 const PRESETS: Array<{ value: AnalyticsRangePreset; label: string }> = [
   { value: '7d', label: 'Last 7 days' },
@@ -274,6 +275,7 @@ export default function Analytics() {
           { id: 'accounts' as Tab, label: 'Social Accounts' },
           { id: 'tiktok' as Tab, label: 'TikTok' },
           { id: 'facebook' as Tab, label: 'Facebook' },
+          { id: 'instagram' as Tab, label: 'Instagram' },
           { id: 'linkedin' as Tab, label: 'LinkedIn' },
           { id: 'comparison' as Tab, label: 'Comparison' },
         ] as const).map((tab) => {
@@ -355,6 +357,10 @@ export default function Analytics() {
       )}
 
       {/* ── LinkedIn tab ────────────────────────────────────────────── */}
+      {activeTab === 'instagram' && (
+        <InstagramAnalytics days={socialDays} />
+      )}
+
       {activeTab === 'linkedin' && (
         <LinkedInAnalytics />
       )}

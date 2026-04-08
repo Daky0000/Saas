@@ -76,8 +76,8 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'appSecret', label: 'App Secret', placeholder: 'Instagram / Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/instagram/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI in your Meta app settings.' },
     ],
-    docsUrl: 'https://developers.facebook.com/docs/instagram-basic-display-api/',
-    redirectHint: 'Use `/auth/instagram/callback` on the backend.',
+    docsUrl: 'https://developers.facebook.com/docs/instagram-platform/',
+    redirectHint: 'Instagram uses the Meta app flow. Keep Facebook and Instagram permissions aligned for publishing and insights.',
   },
   {
     id: 'linkedin',

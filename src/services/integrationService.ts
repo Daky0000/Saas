@@ -273,14 +273,65 @@ export const integrationService = {
     };
   },
 
-  async listInstagramTargets(): Promise<{ success: boolean; targets?: Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }>; error?: string }> {
-    const response = await fetchApiJson<{ targets?: Array<{ pageId: string; pageName: string; instagramId: string | null; instagramUsername: string | null }> }>(
+  async listInstagramTargets(): Promise<{
+    success: boolean;
+    targets?: Array<{
+      pageId: string;
+      pageName: string;
+      pagePicture?: string | null;
+      pageTasks?: string[];
+      instagramId: string | null;
+      instagramUsername: string | null;
+      instagramName?: string | null;
+      instagramAccountType?: string | null;
+      instagramFollowers?: number | null;
+      instagramFollowing?: number | null;
+      instagramMediaCount?: number | null;
+      instagramBio?: string | null;
+      instagramProfilePicture?: string | null;
+      instagramWebsite?: string | null;
+      instagramVerified?: boolean;
+      canPublish?: boolean;
+      canInsights?: boolean;
+    }>;
+    missingPermissions?: string[];
+    warnings?: string[];
+    error?: string;
+  }> {
+    const response = await fetchApiJson<{
+      targets?: Array<{
+        pageId: string;
+        pageName: string;
+        pagePicture?: string | null;
+        pageTasks?: string[];
+        instagramId: string | null;
+        instagramUsername: string | null;
+        instagramName?: string | null;
+        instagramAccountType?: string | null;
+        instagramFollowers?: number | null;
+        instagramFollowing?: number | null;
+        instagramMediaCount?: number | null;
+        instagramBio?: string | null;
+        instagramProfilePicture?: string | null;
+        instagramWebsite?: string | null;
+        instagramVerified?: boolean;
+        canPublish?: boolean;
+        canInsights?: boolean;
+      }>;
+      missingPermissions?: string[];
+      warnings?: string[];
+    }>(
       '/api/instagram/targets',
       { headers: authHeaders() },
       'Failed to load Instagram targets'
     );
     if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load Instagram targets') };
-    return { success: true, targets: response.payload?.targets || [] };
+    return {
+      success: true,
+      targets: response.payload?.targets || [],
+      missingPermissions: response.payload?.missingPermissions || [],
+      warnings: response.payload?.warnings || [],
+    };
   },
 
   async connectInstagram(pageId: string, instagramId: string, instagramUsername?: string | null): Promise<{ success: boolean; error?: string }> {

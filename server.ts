@@ -18,7 +18,7 @@ import {
   timingSafeEqual,
 } from 'crypto';
 import { FacebookPagesPlatform } from './backend/platforms/facebook_pages.ts';
-// import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.js';
+import { InstagramBusinessPlatform } from './backend/platforms/instagram_business.ts';
 import { LinkedInPlatform } from './backend/platforms/linkedin.ts';
 import { TwitterXPlatform } from './backend/platforms/twitter_x.ts';
 import { TikTokAdapter } from './backend/src/services/platform-adapters/tiktok.adapter.ts';
@@ -307,7 +307,7 @@ const TWITTER_AUTOMATION_MAX_ATTEMPTS = 6;
 const TWITTER_AUTOMATION_RETRY_BASE_DELAY_MS = 60_000;
 const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
 const facebookPagesPlatform = new FacebookPagesPlatform();
-// const instagramBusinessPlatform = new InstagramBusinessPlatform();
+const instagramBusinessPlatform = new InstagramBusinessPlatform();
 const linkedInPlatform = new LinkedInPlatform();
 const twitterXPlatform = new TwitterXPlatform();
 
@@ -2977,35 +2977,16 @@ app.get('/api/instagram/targets', async (req: Request, res: Response) => {
     const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
     const accessToken = String(fbConn?.access_token || '').trim();
     if (!accessToken) {
-      return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please connect Facebook first' });
+      return res.status(400).json({ success: false, error: 'Meta access token missing or expired — reconnect Facebook to load Instagram business accounts' });
     }
 
-    const graphBase = 'https://graph.facebook.com/v19.0';
-    const resp = await axios.get(
-      `${graphBase}/me/accounts?fields=id,name,instagram_business_account{id,username}&limit=200&access_token=${encodeURIComponent(accessToken)}`,
-      { validateStatus: () => true, timeout: 15000 }
-    );
-    const data: any = resp.data || {};
-    if (resp.status >= 400) {
-      const msg = data?.error?.message || `Meta API error ${resp.status}`;
-      return res.status(400).json({ success: false, error: msg });
-    }
-
-    const pages = Array.isArray(data?.data) ? data.data : [];
-    const targets = pages
-      .map((p: any) => {
-        const ig = p?.instagram_business_account || null;
-        const igId = ig?.id ? String(ig.id).trim() : '';
-        return {
-          pageId: String(p?.id || '').trim(),
-          pageName: String(p?.name || '').trim(),
-          instagramId: igId || null,
-          instagramUsername: ig?.username ? String(ig.username).trim() : null,
-        };
-      })
-      .filter((t: any) => t.pageId);
-
-    return res.json({ success: true, targets });
+    const result = await listInstagramPageTargets(accessToken);
+    return res.json({
+      success: true,
+      targets: result.targets.map(({ pageAccessToken, ...target }) => target),
+      missingPermissions: result.missingPermissions,
+      warnings: result.warnings,
+    });
   } catch (error) {
     console.error('Instagram targets error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch Instagram targets' });
@@ -3024,71 +3005,79 @@ app.post('/api/instagram/connect', async (req: Request, res: Response) => {
     const igId = String(instagramId || '').trim();
     if (!pid || !igId) return res.status(400).json({ success: false, error: 'pageId and instagramId are required' });
 
-    // Prefer stored Page token if present
-    let pageToken = '';
-    const stored = await pool.query(
-      `SELECT access_token, access_token_encrypted
-       FROM social_accounts
-       WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND account_id=$2 AND connected=true
-       LIMIT 1`,
-      [auth.userId, pid]
-    );
-    const storedRow: any = stored.rows[0] || {};
-    let decrypted = '';
-    if (storedRow?.access_token_encrypted) {
-      try {
-        decrypted = decryptIntegrationSecret(String(storedRow.access_token_encrypted));
-      } catch {
-        decrypted = '';
-      }
+    const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const accessToken = String(fbConn?.access_token || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ success: false, error: 'Meta access token missing or expired — reconnect Facebook before linking Instagram' });
     }
-    pageToken = String(decrypted || storedRow?.access_token || '').trim();
 
+    const targetResult = await listInstagramPageTargets(accessToken);
+    const match = (targetResult.targets || []).find((target: any) => target.pageId === pid);
+    if (!match) {
+      return res.status(400).json({ success: false, error: 'Selected Facebook Page was not found in your Meta account list' });
+    }
+    if (!match.instagramId || match.instagramId !== igId) {
+      return res.status(400).json({ success: false, error: 'Selected page is not linked to the requested Instagram professional account' });
+    }
+
+    const pageToken = String(match.pageAccessToken || '').trim();
     if (!pageToken) {
-      // Fallback: fetch /me/accounts to retrieve the Page access_token
-      const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
-      const accessToken = String(fbConn?.access_token || '').trim();
-      if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
-
-      const graphBase = 'https://graph.facebook.com/v19.0';
-      const pagesResp = await axios.get(
-        `${graphBase}/me/accounts?fields=id,access_token&limit=200&access_token=${encodeURIComponent(accessToken)}`,
-        { validateStatus: () => true, timeout: 15000 }
-      );
-      const pagesData: any = pagesResp.data || {};
-      if (pagesResp.status >= 400) {
-        const msg = pagesData?.error?.message || `Meta API error ${pagesResp.status}`;
-        return res.status(400).json({ success: false, error: msg });
-      }
-      const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
-      const match = pages.find((p: any) => String(p?.id || '').trim() === pid);
-      pageToken = String(match?.access_token || '').trim();
+      return res.status(400).json({ success: false, error: 'Facebook Page access token not available for this Instagram account. Save the Page under Facebook first or reconnect Meta.' });
     }
 
-    if (!pageToken) return res.status(400).json({ success: false, error: 'Facebook Page access token not available. Save a Page under Facebook first.' });
+    const profileResult = await fetchInstagramBusinessProfile(igId, pageToken);
+    const profile = profileResult.profile || {};
+    const displayName = String(profile?.name || profile?.username || instagramUsername || '').trim() || null;
+    const handle = String(profile?.username || instagramUsername || '').trim() || null;
+    const followers = Number(profile?.followers_count ?? 0);
+    const profileImage = typeof profile?.profile_picture_url === 'string' ? profile.profile_picture_url : null;
+    const pageTokenExpiry = fbConn?.token_expires_at || null;
 
     const pageTokenEncrypted = encryptIntegrationSecret(pageToken);
 
     await pool.query(
       `INSERT INTO social_accounts
-        (id, user_id, platform, account_type, account_id, account_name, connected, connected_at, access_token, access_token_encrypted, token_data, created_at)
-       VALUES ($1,$2,'instagram','profile',$3,$4,true,NOW(),$5,$6,$7::jsonb,NOW())
+        (id, user_id, platform, account_type, account_id, account_name, handle, profile_image, followers, connected, connected_at, token_expires_at, access_token, access_token_encrypted, token_data, needs_reapproval, created_at)
+       VALUES ($1,$2,'instagram','profile',$3,$4,$5,$6,$7,true,NOW(),$8,$9,$10,$11::jsonb,false,NOW())
        ON CONFLICT (user_id, platform) WHERE account_type = 'profile' DO UPDATE
          SET account_id=EXCLUDED.account_id,
              account_name=EXCLUDED.account_name,
+             handle=EXCLUDED.handle,
+             profile_image=COALESCE(EXCLUDED.profile_image, social_accounts.profile_image),
+             followers=CASE WHEN EXCLUDED.followers > 0 THEN EXCLUDED.followers ELSE social_accounts.followers END,
              connected=true,
              connected_at=NOW(),
+             token_expires_at=COALESCE(EXCLUDED.token_expires_at, social_accounts.token_expires_at),
              access_token=EXCLUDED.access_token,
              access_token_encrypted=EXCLUDED.access_token_encrypted,
-             token_data=EXCLUDED.token_data`,
+             token_data=EXCLUDED.token_data,
+             needs_reapproval=false`,
       [
         randomUUID(),
         auth.userId,
         igId,
-        String(instagramUsername || '').trim() || null,
+        displayName,
+        handle,
+        profileImage,
+        followers,
+        pageTokenExpiry,
         null,
         pageTokenEncrypted,
-        JSON.stringify({ pageId: pid }),
+        JSON.stringify({
+          pageId: pid,
+          pageName: match.pageName || null,
+          pagePicture: match.pagePicture || null,
+          pageTasks: match.pageTasks || [],
+          instagramUsername: handle,
+          instagramName: displayName,
+          accountType: profile?.account_type || match.instagramAccountType || null,
+          mediaCount: Number(profile?.media_count ?? match.instagramMediaCount ?? 0),
+          website: profile?.website || match.instagramWebsite || null,
+          biography: profile?.biography || match.instagramBio || null,
+          profilePictureUrl: profileImage || match.instagramProfilePicture || null,
+          canPublish: Boolean(match.canPublish),
+          canInsights: Boolean(match.canInsights),
+        }),
       ]
     );
 
@@ -3097,9 +3086,9 @@ app.post('/api/instagram/connect', async (req: Request, res: Response) => {
       integrationSlug: 'instagram',
       accessTokenEncrypted: pageTokenEncrypted,
       refreshTokenEncrypted: null,
-      tokenExpiry: null,
+      tokenExpiry: pageTokenExpiry,
       accountId: igId,
-      accountName: String(instagramUsername || '').trim() || null,
+      accountName: displayName,
       status: 'connected',
     });
 
@@ -3108,7 +3097,7 @@ app.post('/api/instagram/connect', async (req: Request, res: Response) => {
       integrationSlug: 'instagram',
       eventType: 'connection_attempt',
       status: 'success',
-      response: { pageId: pid, instagramId: igId },
+      response: { pageId: pid, instagramId: igId, instagramUsername: handle, pageName: match.pageName || null },
     });
 
     return res.json({ success: true });
@@ -6281,10 +6270,429 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
 
 // ── Integration helpers ────────────────────────────────────────────────────────
 
+const META_GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+
+const META_BASE_SCOPES = [
+  'public_profile',
+  'email',
+  'pages_show_list',
+  'pages_read_engagement',
+  'pages_manage_posts',
+  'pages_manage_metadata',
+  'read_insights',
+];
+
+const META_INSTAGRAM_SCOPES = [
+  'instagram_basic',
+  'instagram_content_publish',
+  'instagram_manage_insights',
+];
+
+const META_PERMISSION_ALIASES: Record<string, string[]> = {
+  instagram_basic: ['instagram_basic', 'instagram_business_basic'],
+  instagram_content_publish: ['instagram_content_publish', 'instagram_business_content_publish'],
+  instagram_manage_insights: ['instagram_manage_insights', 'instagram_business_manage_insights'],
+  pages_show_list: ['pages_show_list'],
+  pages_read_engagement: ['pages_read_engagement'],
+  pages_manage_posts: ['pages_manage_posts'],
+  pages_manage_metadata: ['pages_manage_metadata'],
+  read_insights: ['read_insights'],
+};
+
+const INSTAGRAM_TARGET_REQUIRED_PERMISSIONS = ['pages_show_list', 'instagram_basic'];
+const INSTAGRAM_RECOMMENDED_PERMISSIONS = ['instagram_content_publish', 'instagram_manage_insights'];
+const INSTAGRAM_PROFILE_FIELDS = 'id,username,name,account_type,biography,followers_count,follows_count,media_count,profile_picture_url,website,is_verified';
+const INSTAGRAM_MEDIA_FIELDS = 'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count';
+const META_PAGE_PUBLISH_TASKS = new Set(['CREATE_CONTENT', 'MANAGE']);
+
+function getMetaOAuthScopeString(extraScopes: string[] = []): string {
+  return Array.from(new Set([...META_BASE_SCOPES, ...META_INSTAGRAM_SCOPES, ...extraScopes])).join(',');
+}
+
+function getGrantedMetaPermissionSet(permsData: any): Set<string> {
+  const perms = Array.isArray(permsData?.data) ? permsData.data : [];
+  return new Set(
+    perms
+      .filter((p: any) => String(p?.status || '').toLowerCase() === 'granted')
+      .map((p: any) => String(p?.permission || '').toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function missingMetaPermissions(granted: Set<string>, required: string[]): string[] {
+  return required.filter((permission) => {
+    const aliases = META_PERMISSION_ALIASES[permission] || [permission];
+    return !aliases.some((alias) => granted.has(String(alias).toLowerCase()));
+  });
+}
+
+async function fetchMetaPermissionSet(accessToken: string): Promise<Set<string>> {
+  if (!accessToken) return new Set();
+  try {
+    const permsResp = await axios.get(`${META_GRAPH_BASE}/me/permissions`, {
+      params: { access_token: accessToken },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    if (permsResp.status >= 400) return new Set();
+    return getGrantedMetaPermissionSet(permsResp.data || {});
+  } catch {
+    return new Set();
+  }
+}
+
+function hasInstagramPagePublishAccess(tasks: unknown): boolean {
+  const values = Array.isArray(tasks)
+    ? tasks.map((task) => String(task || '').trim().toUpperCase()).filter(Boolean)
+    : [];
+  return values.some((task) => META_PAGE_PUBLISH_TASKS.has(task));
+}
+
+async function fetchInstagramBusinessProfile(igUserId: string, accessToken: string): Promise<{ profile: any | null; error?: string }> {
+  try {
+    const resp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(igUserId)}`, {
+      params: {
+        fields: INSTAGRAM_PROFILE_FIELDS,
+        access_token: accessToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      return { profile: null, error: data?.error?.message || `Instagram API error ${resp.status}` };
+    }
+    return { profile: data };
+  } catch (error) {
+    return { profile: null, error: error instanceof Error ? error.message : 'Instagram profile lookup failed' };
+  }
+}
+
+async function listInstagramPageTargets(userAccessToken: string): Promise<{
+  targets: any[];
+  missingPermissions: string[];
+  warnings: string[];
+}> {
+  const grantedPermissions = await fetchMetaPermissionSet(userAccessToken);
+  const missingPermissions = missingMetaPermissions(grantedPermissions, INSTAGRAM_TARGET_REQUIRED_PERMISSIONS);
+  const missingRecommended = missingMetaPermissions(grantedPermissions, INSTAGRAM_RECOMMENDED_PERMISSIONS);
+  const warnings: string[] = [];
+
+  if (missingRecommended.length > 0) {
+    warnings.push(
+      `Missing recommended Instagram permissions: ${missingRecommended.join(', ')}. Reconnect Meta/Facebook and approve them to enable Instagram publishing and insights.`
+    );
+  }
+
+  if (missingPermissions.includes('pages_show_list')) {
+    warnings.push('Meta page access is missing `pages_show_list`, so Instagram business accounts cannot be discovered yet.');
+    return { targets: [], missingPermissions, warnings };
+  }
+
+  const pagesResp = await axios.get(`${META_GRAPH_BASE}/me/accounts`, {
+    params: {
+      fields: 'id,name,access_token,tasks,picture.width(128).height(128),instagram_business_account{id,username}',
+      limit: 200,
+      access_token: userAccessToken,
+    },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  const pagesData: any = pagesResp.data || {};
+  if (pagesResp.status >= 400) {
+    throw new Error(pagesData?.error?.message || `Meta API error ${pagesResp.status}`);
+  }
+
+  const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
+  const targets = await Promise.all(
+    pages.map(async (page: any) => {
+      const pageId = String(page?.id || '').trim();
+      const pageName = String(page?.name || '').trim();
+      const pageAccessToken = String(page?.access_token || '').trim();
+      const pageTasks = Array.isArray(page?.tasks)
+        ? page.tasks.map((task: any) => String(task || '').trim()).filter(Boolean)
+        : [];
+      const pagePicture = page?.picture?.data?.url ? String(page.picture.data.url) : null;
+      const ig = page?.instagram_business_account || null;
+      const instagramId = String(ig?.id || '').trim() || null;
+      let profile: any = null;
+
+      if (instagramId && pageAccessToken) {
+        const profileResult = await fetchInstagramBusinessProfile(instagramId, pageAccessToken);
+        profile = profileResult.profile;
+      }
+
+      return {
+        pageId,
+        pageName,
+        pagePicture,
+        pageTasks,
+        pageAccessToken,
+        instagramId,
+        instagramUsername: String(profile?.username || ig?.username || '').trim() || null,
+        instagramName: String(profile?.name || '').trim() || null,
+        instagramAccountType: String(profile?.account_type || '').trim() || null,
+        instagramFollowers: profile?.followers_count !== undefined ? Number(profile.followers_count) : null,
+        instagramFollowing: profile?.follows_count !== undefined ? Number(profile.follows_count) : null,
+        instagramMediaCount: profile?.media_count !== undefined ? Number(profile.media_count) : null,
+        instagramBio: typeof profile?.biography === 'string' ? profile.biography : null,
+        instagramProfilePicture: typeof profile?.profile_picture_url === 'string' ? profile.profile_picture_url : null,
+        instagramWebsite: typeof profile?.website === 'string' ? profile.website : null,
+        instagramVerified: profile?.is_verified === true,
+        canPublish:
+          Boolean(pageAccessToken) &&
+          hasInstagramPagePublishAccess(pageTasks) &&
+          missingMetaPermissions(grantedPermissions, ['instagram_content_publish']).length === 0,
+        canInsights:
+          Boolean(pageAccessToken) &&
+          missingMetaPermissions(grantedPermissions, ['instagram_manage_insights']).length === 0,
+      };
+    })
+  );
+
+  return { targets: targets.filter((target) => target.pageId), missingPermissions, warnings };
+}
+
+async function syncInstagramAnalyticsAccount(params: {
+  userId: string;
+  account: any;
+  days?: number;
+}): Promise<{ synced: number; errors: string[] }> {
+  const { userId, account } = params;
+  const days = Math.max(1, Number(params.days || 30));
+  const errors: string[] = [];
+  let synced = 0;
+
+  let accessToken = decodeStoredIntegrationSecret(account?.access_token_encrypted);
+  if (!accessToken) accessToken = String(account?.access_token || '').trim();
+  const instagramId = String(account?.account_id || '').trim();
+  const accountTokenData = account?.token_data || {};
+
+  if (!accessToken) return { synced, errors: ['Instagram access token missing or expired — reconnect Instagram.'] };
+  if (!instagramId) return { synced, errors: ['Instagram account ID missing from saved connection.'] };
+
+  let profile: any = null;
+  try {
+    const profileResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(instagramId)}`, {
+      params: {
+        fields: INSTAGRAM_PROFILE_FIELDS,
+        access_token: accessToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const profileData: any = profileResp.data || {};
+    if (profileResp.status >= 400) {
+      errors.push(profileData?.error?.message || `Instagram profile lookup failed (${profileResp.status})`);
+    } else {
+      profile = profileData;
+      const followers = Number(profile.followers_count ?? account?.followers ?? 0);
+      const following = Number(profile.follows_count ?? 0);
+      const postsCount = Number(profile.media_count ?? 0);
+      const bio = typeof profile.biography === 'string' ? profile.biography : null;
+      const isVerified = profile.is_verified === true;
+      const displayName = String(profile.name || profile.username || account?.account_name || '').trim() || null;
+      const handle = String(profile.username || account?.handle || '').trim() || null;
+      const profileImage = typeof profile.profile_picture_url === 'string' ? profile.profile_picture_url : null;
+
+      await pool!.query(
+        `INSERT INTO social_profile_stats
+           (id, user_id, social_account_id, platform, followers, following, posts_count, bio, is_verified, raw_response, synced_at)
+         VALUES (gen_random_uuid()::text, $1, $2, 'instagram', $3, $4, $5, $6, $7, $8::jsonb, NOW())
+         ON CONFLICT (social_account_id) DO UPDATE SET
+           followers = CASE WHEN EXCLUDED.followers > 0 THEN EXCLUDED.followers ELSE social_profile_stats.followers END,
+           following = CASE WHEN EXCLUDED.following > 0 THEN EXCLUDED.following ELSE social_profile_stats.following END,
+           posts_count = CASE WHEN EXCLUDED.posts_count > 0 THEN EXCLUDED.posts_count ELSE social_profile_stats.posts_count END,
+           bio = COALESCE(EXCLUDED.bio, social_profile_stats.bio),
+           is_verified = EXCLUDED.is_verified,
+           raw_response = EXCLUDED.raw_response,
+           synced_at = NOW()`,
+        [userId, account.id, followers, following, postsCount, bio, isVerified, JSON.stringify(profile)]
+      );
+
+      await pool!.query(
+        `UPDATE social_accounts
+         SET account_name = COALESCE($1, account_name),
+             handle = COALESCE($2, handle),
+             profile_image = COALESCE($3, profile_image),
+             followers = CASE WHEN $4 > 0 THEN $4 ELSE followers END,
+             token_data = COALESCE(token_data, '{}'::jsonb) || $5::jsonb
+         WHERE id = $6`,
+        [
+          displayName,
+          handle,
+          profileImage,
+          followers,
+          JSON.stringify({
+            instagramUsername: handle,
+            instagramName: displayName,
+            accountType: profile.account_type || null,
+            mediaCount: postsCount,
+            website: profile.website || null,
+            profilePictureUrl: profileImage,
+            pageId: accountTokenData?.pageId || null,
+            pageName: accountTokenData?.pageName || null,
+          }),
+          account.id,
+        ]
+      );
+      synced++;
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : 'Instagram profile sync failed');
+  }
+
+  try {
+    const since = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
+    const until = Math.floor(Date.now() / 1000);
+    const insightsResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(instagramId)}/insights`, {
+      params: {
+        metric: 'impressions,reach,profile_views',
+        period: 'day',
+        since,
+        until,
+        access_token: accessToken,
+      },
+      validateStatus: () => true,
+      timeout: 20000,
+    });
+    const insightsData: any = insightsResp.data || {};
+    if (insightsResp.status < 400 && Array.isArray(insightsData?.data)) {
+      const dateMetrics = new Map<string, Record<string, number>>();
+      for (const metric of insightsData.data) {
+        const metricName = String(metric?.name || '').trim();
+        for (const valueRow of Array.isArray(metric?.values) ? metric.values : []) {
+          const dateKey = String(valueRow?.end_time || valueRow?.endTime || '').slice(0, 10);
+          if (!dateKey) continue;
+          const current = dateMetrics.get(dateKey) || {};
+          current[metricName] = Number(valueRow?.value ?? 0);
+          dateMetrics.set(dateKey, current);
+        }
+      }
+
+      for (const [date, metrics] of dateMetrics.entries()) {
+        await pool!.query(
+          `INSERT INTO account_metrics
+             (id, user_id, platform, social_account_id, date, followers, impressions, reach, profile_views, raw_data)
+           VALUES (gen_random_uuid()::text, $1, 'instagram', $2, $3::date, $4, $5, $6, $7, $8::jsonb)
+           ON CONFLICT (user_id, platform, social_account_id, date) DO UPDATE SET
+             followers = EXCLUDED.followers,
+             impressions = EXCLUDED.impressions,
+             reach = EXCLUDED.reach,
+             profile_views = EXCLUDED.profile_views,
+             raw_data = EXCLUDED.raw_data`,
+          [
+            userId,
+            account.id,
+            date,
+            Number(profile?.followers_count ?? account?.followers ?? 0),
+            Number(metrics.impressions ?? 0),
+            Number(metrics.reach ?? 0),
+            Number(metrics.profile_views ?? 0),
+            JSON.stringify({ metrics, source: insightsData.data }),
+          ]
+        );
+        synced++;
+      }
+    } else if (insightsResp.status >= 400) {
+      const message = insightsData?.error?.message || `Instagram insights lookup failed (${insightsResp.status})`;
+      errors.push(message);
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : 'Instagram account insights sync failed');
+  }
+
+  try {
+    const mediaResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(instagramId)}/media`, {
+      params: {
+        fields: INSTAGRAM_MEDIA_FIELDS,
+        limit: 50,
+        access_token: accessToken,
+      },
+      validateStatus: () => true,
+      timeout: 20000,
+    });
+    const mediaData: any = mediaResp.data || {};
+    if (mediaResp.status >= 400) {
+      errors.push(mediaData?.error?.message || `Instagram media lookup failed (${mediaResp.status})`);
+    } else {
+      const mediaItems: any[] = Array.isArray(mediaData?.data) ? mediaData.data : [];
+      for (const media of mediaItems) {
+        const mediaId = String(media?.id || '').trim();
+        if (!mediaId) continue;
+
+        const analytics = await instagramBusinessPlatform.getPostAnalytics(mediaId, {
+          accessToken,
+          accountId: instagramId,
+          accountName: account?.account_name || profile?.name || profile?.username || null,
+          tokenData: accountTokenData,
+          helpers: { graphBase: META_GRAPH_BASE },
+        });
+
+        const likes = Number(analytics.likes ?? media?.like_count ?? 0);
+        const comments = Number(analytics.comments ?? media?.comments_count ?? 0);
+        const shares = Number(analytics.shares ?? 0);
+        const impressions = Number(analytics.impressions ?? 0);
+        const reach = Number(analytics.reach ?? 0);
+        const saves = Number(analytics.saves ?? 0);
+        const totalInteractions = Number((analytics.raw as any)?.total_interactions ?? 0);
+        const engagement = totalInteractions > 0 ? totalInteractions : likes + comments + shares + saves;
+        const postedAt = media?.timestamp ? new Date(media.timestamp).toISOString() : null;
+
+        await pool!.query(
+          `INSERT INTO social_metrics
+             (id, user_id, platform, platform_post_id, social_account_id, likes, comments, shares, impressions, reach, engagement, saves, raw_data, posted_at, fetched_at)
+           VALUES (gen_random_uuid()::text, $1, 'instagram', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, NOW())
+           ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+             likes = EXCLUDED.likes,
+             comments = EXCLUDED.comments,
+             shares = EXCLUDED.shares,
+             impressions = EXCLUDED.impressions,
+             reach = EXCLUDED.reach,
+             engagement = EXCLUDED.engagement,
+             saves = EXCLUDED.saves,
+             raw_data = EXCLUDED.raw_data,
+             posted_at = COALESCE(EXCLUDED.posted_at, social_metrics.posted_at),
+             fetched_at = NOW()`,
+          [
+            userId,
+            mediaId,
+            account.id,
+            likes,
+            comments,
+            shares,
+            impressions,
+            reach,
+            engagement,
+            saves,
+            JSON.stringify({
+              media,
+              analytics: analytics.raw || null,
+              account: {
+                instagramId,
+                instagramUsername: profile?.username || accountTokenData?.instagramUsername || null,
+                instagramName: profile?.name || accountTokenData?.instagramName || null,
+                pageId: accountTokenData?.pageId || null,
+                pageName: accountTokenData?.pageName || null,
+              },
+            }),
+            postedAt,
+          ]
+        );
+        synced++;
+      }
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : 'Instagram media sync failed');
+  }
+
+  return { synced, errors };
+}
+
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
-  facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: 'public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_metadata,read_insights', idField: 'appId' },
+  facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: getMetaOAuthScopeString(), idField: 'appId' },
   // LinkedIn scopes are space-separated.
   // These defaults align with the LinkedIn Marketing APIs we use for profile posting,
   // organization posting, organization lookup, and organization analytics. Apps that need
@@ -6882,6 +7290,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
       const platform = String(r.platform || '').toLowerCase();
       cfgMap.set(platform, { config: r.config || {}, enabled: Boolean(r.enabled) });
     }
+    const facebookPlatformConfig = cfgMap.get('facebook')?.config || {};
 
     const wpConnRows = await pool.query('SELECT site_url, username, created_at FROM wordpress_connections WHERE user_id=$1 LIMIT 1', [auth.userId]);
     const wpConn = wpConnRows.rows[0] || null;
@@ -6937,6 +7346,12 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
         configured = true;
       } else if (slug === 'mailchimp') {
         configured = true;
+      } else if (slug === 'instagram') {
+        const metaConfig = Object.keys(cfg || {}).length > 0 ? cfg : facebookPlatformConfig;
+        const clientId = String((metaConfig as any).appId || '').trim();
+        const redirectUri = resolveOAuthRedirectUri('facebook', String((facebookPlatformConfig as any).redirectUri || (metaConfig as any).redirectUri || ''), req);
+        const secretValue = String((metaConfig as any).appSecret || (facebookPlatformConfig as any).appSecret || '').trim();
+        configured = Boolean(clientId && redirectUri && secretValue);
       } else {
         const meta = OAUTH_AUTH_URLS[slug];
         if (meta) {
@@ -7009,15 +7424,7 @@ app.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) =
     );
 
     const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
-    const scope = [
-      'public_profile',
-      'email',
-      'pages_show_list',
-      'pages_read_engagement',
-      'pages_manage_posts',
-      'pages_manage_metadata',
-      'read_insights',
-    ].join(',');
+    const scope = getMetaOAuthScopeString();
 
     const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
     oauthUrl.searchParams.set('client_id', clientId);
@@ -12475,32 +12882,46 @@ async function publishToplatform(
         content: { text },
         media: [{ url: featuredImage, type: 'image' }],
       };
-      // const validation = instagramBusinessPlatform.validate(instagramPost);
-      // if (!validation.ok) {
-      //   return { status: 'failed', error: validation.error };
-      // }
+      const validation = instagramBusinessPlatform.validate(instagramPost);
+      if (!validation.ok) {
+        return { status: 'failed', error: validation.error };
+      }
 
       await acquirePlatformSlot('instagram');
-      // const result = await instagramBusinessPlatform.post(instagramPost, {
-      //   accessToken: access_token,
-      //   accountId: conn.account_id,
-      //   accountName: conn.account_name,
-      //   tokenData: token_data,
-      //   helpers: { graphBase: 'https://graph.facebook.com/v19.0' },
-      // });
+      const instagramCfg = await getPlatformConfig('instagram');
+      const facebookCfg = await getPlatformConfig('facebook');
+      const result = await instagramBusinessPlatform.post(instagramPost, {
+        accessToken: access_token,
+        accountId: conn.account_id,
+        accountName: conn.account_name,
+        tokenData: token_data,
+        helpers: {
+          graphBase: META_GRAPH_BASE,
+          appId: String(instagramCfg.appId || facebookCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim() || undefined,
+          appSecret: String(instagramCfg.appSecret || facebookCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim() || undefined,
+        },
+      });
 
-      // if (result.status === 'published') {
-      //   await logIntegrationEvent({
-      //     userId,
-      //     integrationSlug: 'instagram',
-      //     eventType: 'post_published',
-      //     status: 'success',
-      //     response: { platformPostId: result.platformPostId || null },
-      //   });
-      // }
+      if (result.status === 'published') {
+        await logIntegrationEvent({
+          userId,
+          integrationSlug: 'instagram',
+          eventType: 'post_published',
+          status: 'success',
+          response: {
+            platformPostId: result.platformPostId || null,
+            instagramId: conn.account_id || null,
+            pageId: token_data?.pageId || null,
+          },
+        });
+      }
 
-      // return { status: result.status, platformPostId: result.platformPostId, error: result.error, retryable: result.retryable };
-      return { status: 'failed', error: 'Instagram publishing temporarily disabled' };
+      return {
+        status: result.status,
+        platformPostId: result.platformPostId,
+        error: result.error,
+        retryable: result.retryable,
+      };
     }
 
     if (platformId === 'pinterest') {
@@ -14168,6 +14589,14 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
           } catch (vidErr: any) {
             console.error('TikTok video fetch error:', vidErr.message);
           }
+        } else if (platform === 'instagram') {
+          const instagramResult = await syncInstagramAnalyticsAccount({
+            userId: auth.userId,
+            account: acct,
+            days: 30,
+          });
+          synced += instagramResult.synced;
+          errors.push(...instagramResult.errors.map((message) => `instagram: ${message}`));
         } else if (platform === 'linkedin') {
           const tokenData = acct.token_data || {};
           const personUrn = tokenData.personUrn || tokenData.urn || tokenData.sub;
@@ -15179,6 +15608,213 @@ app.get('/api/social/facebook/accounts', async (req: Request, res: Response) => 
   } catch (err) {
     console.error('Facebook accounts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook accounts' });
+  }
+});
+
+// ─── Instagram Analytics Endpoints ────────────────────────────────────────────
+
+// POST /api/social/instagram/sync — sync Instagram profile, insights, and media
+app.post('/api/social/instagram/sync', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const accountRes = await pool.query(
+      `SELECT id, account_id, account_name, handle, followers, profile_image, access_token, access_token_encrypted, token_data
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='instagram' AND connected=true`,
+      [auth.userId]
+    );
+    if (accountRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No connected Instagram account found' });
+    }
+
+    let synced = 0;
+    const errors: string[] = [];
+
+    for (const acct of accountRes.rows as any[]) {
+      const result = await syncInstagramAnalyticsAccount({
+        userId: auth.userId,
+        account: acct,
+        days: 30,
+      });
+      synced += result.synced;
+      errors.push(...result.errors);
+    }
+
+    return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+  } catch (err) {
+    console.error('Instagram sync error:', err);
+    return res.status(500).json({ success: false, error: 'Instagram sync failed' });
+  }
+});
+
+// GET /api/social/instagram/profile — get Instagram profile snapshot for authenticated user
+app.get('/api/social/instagram/profile', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.json({ profile: null, hasData: false });
+
+    const { rows } = await pool.query(
+      `SELECT
+         sa.id,
+         sa.account_name,
+         sa.handle,
+         sa.followers AS sa_followers,
+         sa.profile_image,
+         sa.token_data,
+         sps.followers,
+         sps.following,
+         sps.posts_count,
+         sps.bio,
+         sps.is_verified,
+         sps.synced_at
+       FROM social_accounts sa
+       LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
+       WHERE sa.user_id = $1
+         AND sa.platform = 'instagram'
+         AND sa.connected = true
+       ORDER BY sps.synced_at DESC NULLS LAST, sa.connected_at DESC NULLS LAST
+       LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (!rows.length) {
+      return res.json({ profile: null, hasData: false });
+    }
+
+    const row: any = rows[0];
+    const tokenData = row.token_data || {};
+    const followers = row.followers ?? row.sa_followers ?? null;
+    const hasData = followers !== null || row.posts_count !== null || Boolean(row.account_name);
+
+    return res.json({
+      hasData,
+      followers: followers !== null ? Number(followers) : null,
+      following: row.following !== null ? Number(row.following) : null,
+      posts_count: row.posts_count !== null ? Number(row.posts_count) : null,
+      bio: row.bio ?? null,
+      is_verified: row.is_verified === true,
+      account_name: row.account_name ?? tokenData?.instagramName ?? null,
+      handle: row.handle ?? tokenData?.instagramUsername ?? null,
+      picture_url: row.profile_image ?? tokenData?.profilePictureUrl ?? null,
+      account_type: tokenData?.accountType ?? null,
+      page_name: tokenData?.pageName ?? null,
+      page_id: tokenData?.pageId ?? null,
+      website: tokenData?.website ?? null,
+      synced_at: row.synced_at ?? null,
+    });
+  } catch (err) {
+    console.error('Instagram profile error:', err);
+    return res.json({ profile: null, hasData: false });
+  }
+});
+
+// GET /api/social/instagram/posts — all synced Instagram media for the authenticated user
+app.get('/api/social/instagram/posts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const days = Math.min(365, Math.max(1, parseInt(q.days || '30', 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(q.limit || '100', 10)));
+    const offset = Math.max(0, parseInt(q.offset || '0', 10));
+    const accountId = q.account_id ? String(q.account_id).trim() : '';
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const params: any[] = [auth.userId, sinceDate];
+    let accountFilter = '';
+    if (accountId) {
+      params.push(accountId);
+      accountFilter = `AND sm.social_account_id = $${params.length}`;
+    }
+    params.push(limit, offset);
+
+    const postsRes = await pool.query(
+      `SELECT sm.*, sa.account_name, sa.handle
+       FROM social_metrics sm
+       JOIN social_accounts sa ON sa.id = sm.social_account_id
+       WHERE sm.user_id = $1
+         AND sm.platform = 'instagram'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}
+       ORDER BY COALESCE(sm.posted_at, sm.fetched_at) DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)
+       FROM social_metrics sm
+       WHERE sm.user_id = $1
+         AND sm.platform = 'instagram'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const summaryRes = await pool.query(
+      `SELECT
+         COUNT(*) AS total_posts,
+         COALESCE(SUM(likes), 0) AS total_likes,
+         COALESCE(SUM(comments), 0) AS total_comments,
+         COALESCE(SUM(shares), 0) AS total_shares,
+         COALESCE(SUM(saves), 0) AS total_saves,
+         COALESCE(SUM(impressions), 0) AS total_impressions,
+         COALESCE(SUM(reach), 0) AS total_reach,
+         COALESCE(SUM(engagement), 0) AS total_engagement,
+         CASE WHEN COALESCE(SUM(impressions), 0) > 0
+              THEN ROUND((SUM(engagement)::numeric / NULLIF(SUM(impressions), 0)) * 100, 2)
+              ELSE 0 END AS avg_engagement_rate
+       FROM social_metrics sm
+       WHERE sm.user_id = $1
+         AND sm.platform = 'instagram'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const posts = postsRes.rows.map((row: any) => {
+      const raw = row.raw_data || {};
+      const media = raw?.media || {};
+      const account = raw?.account || {};
+      return {
+        ...row,
+        media_id: row.platform_post_id,
+        caption: media?.caption || null,
+        media_type: media?.media_type || null,
+        media_product_type: media?.media_product_type || null,
+        media_url: media?.media_url || null,
+        thumbnail_url: media?.thumbnail_url || null,
+        permalink: media?.permalink || null,
+        instagram_username: account?.instagramUsername || row.handle || null,
+      };
+    });
+
+    return res.json({
+      success: true,
+      posts,
+      total: parseInt(countRes.rows[0]?.count || '0', 10),
+      summary: summaryRes.rows[0] || {
+        total_posts: 0,
+        total_likes: 0,
+        total_comments: 0,
+        total_shares: 0,
+        total_saves: 0,
+        total_impressions: 0,
+        total_reach: 0,
+        total_engagement: 0,
+        avg_engagement_rate: 0,
+      },
+      days,
+    });
+  } catch (err) {
+    console.error('Instagram posts error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Instagram posts' });
   }
 });
 
