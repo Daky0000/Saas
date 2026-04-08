@@ -52,6 +52,7 @@ export type SocialTemplatePreview = {
   characterCount: number;
   originalCharacterCount: number;
   limit: number;
+  featuredImage: string;
   warning: string | null;
   truncated: boolean;
 };
@@ -95,6 +96,7 @@ export const socialTemplateService = {
       characterCount: Number(data.characterCount ?? 0),
       originalCharacterCount: Number(data.originalCharacterCount ?? 0),
       limit: Number(data.limit ?? 0),
+      featuredImage: typeof (data as any).featuredImage === 'string' ? String((data as any).featuredImage) : '',
       warning: typeof data.warning === 'string' ? data.warning : null,
       truncated: Boolean(data.truncated),
     };

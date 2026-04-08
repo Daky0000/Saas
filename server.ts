@@ -12131,6 +12131,7 @@ async function renderSocialTemplatePreview(userId: string, post: Record<string, 
     characterCount: truncated.text.length,
     originalCharacterCount: truncated.originalLength,
     limit: settings.status_limit,
+    featuredImage,
     warning,
     truncated: truncated.truncated,
   };
