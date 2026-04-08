@@ -9152,7 +9152,7 @@ app.post('/api/social-templates/:platform/preview', async (req: Request, res: Re
       : await loadSocialTemplateSettings(auth.userId, platformId);
     if (!settings) return res.status(404).json({ success: false, error: 'Unknown platform' });
 
-    const preview = renderSocialTemplatePreview(post, settings);
+    const preview = await renderSocialTemplatePreview(auth.userId, post, settings);
     return res.json({ success: true, ...preview });
   } catch (err) {
     console.error('social templates preview error:', err);
@@ -9403,6 +9403,7 @@ function getMediaServerBase(): string {
   return String(
     process.env.BACKEND_PUBLIC_URL ||
     process.env.PUBLIC_API_URL ||
+    process.env.VITE_API_BASE_URL ||
     'https://contentflow-api-production.up.railway.app'
   ).replace(/\/$/, '');
 }
@@ -12053,22 +12054,46 @@ function safeTruncateToLimit(text: string, limit: number): { text: string; trunc
   return { text: `${slice}...`, truncated: true, originalLength };
 }
 
-function renderSocialTemplatePreview(post: Record<string, any>, settings: SocialTemplateSettings) {
+async function resolveBlogPostFeaturedImageUrl(userId: string, post: Record<string, any>): Promise<string> {
+  const postId = String(post?.id || '').trim();
+  const rawSocialImage = String(post?.social_image || '').trim();
+  const rawFeaturedImage = String(post?.featured_image || '').trim();
+  const chosen = rawSocialImage || rawFeaturedImage;
+  if (!chosen) return '';
+
+  if (chosen.startsWith('data:image/')) {
+    if (!hasDatabase() || !postId) return chosen;
+    const sourceField = rawSocialImage ? 'social_image' : 'featured_image';
+    const fileName = sourceField === 'social_image' ? `post-social-${postId}.jpg` : `post-featured-${postId}.jpg`;
+    const tags = sourceField === 'social_image' ? ['post', 'social'] : ['post', 'featured'];
+    try {
+      const ensured = await ensureMediaRecordForSource({
+        userId,
+        sourceTable: 'blog_posts',
+        sourceId: postId,
+        sourceField,
+        url: chosen,
+        fileName,
+        tags,
+        category: 'user',
+      });
+      if (!ensured?.row) return chosen;
+      return buildMediaServeUrl(ensured.row.id, ensured.row.file_name);
+    } catch (err) {
+      console.error('Failed to resolve blog post featured image URL:', err);
+      return chosen;
+    }
+  }
+
+  if (/^https?:\/\//i.test(chosen)) return chosen;
+  const base = getMediaServerBase();
+  return `${base}${chosen.startsWith('/') ? '' : '/'}${chosen}`;
+}
+
+async function renderSocialTemplatePreview(userId: string, post: Record<string, any>, settings: SocialTemplateSettings) {
   const title = String(post?.title || '').trim();
   const url = buildPostUrl(post || {});
-  const rawFeaturedImage = String(post?.social_image || post?.featured_image || '').trim();
-  const featuredImage = (() => {
-    if (!rawFeaturedImage) return '';
-    if (/^https?:\/\//i.test(rawFeaturedImage)) return rawFeaturedImage;
-    if (rawFeaturedImage.startsWith('data:')) return rawFeaturedImage;
-    const serverBase = String(
-      process.env.BACKEND_PUBLIC_URL ||
-        process.env.PUBLIC_API_URL ||
-        process.env.VITE_API_BASE_URL ||
-        'https://contentflow-api-production.up.railway.app'
-    ).replace(/\/$/, '');
-    return `${serverBase}${rawFeaturedImage.startsWith('/') ? '' : '/'}${rawFeaturedImage}`;
-  })();
+  const featuredImage = await resolveBlogPostFeaturedImageUrl(userId, post);
 
   let contentText = '';
   if (settings.content_source === 'CONTENT') {
@@ -13913,22 +13938,7 @@ async function publishToplatform(
     const platformName = PLATFORM_NAMES[platformId] || platformId;
 
     const postUrl = buildPostUrl(post);
-    const rawFeaturedImage = String(post.social_image || post.featured_image || '').trim();
-    // Resolve relative image paths to absolute so external platforms (Facebook, etc.) can fetch them
-    const featuredImage = (() => {
-      if (!rawFeaturedImage) return '';
-      if (/^https?:\/\//i.test(rawFeaturedImage)) return rawFeaturedImage;
-      // Base64 data URL — pass through as-is (handled by platform publishers)
-      if (rawFeaturedImage.startsWith('data:')) return rawFeaturedImage;
-      // Relative URL — prepend the server's public base URL
-      const serverBase = String(
-        process.env.BACKEND_PUBLIC_URL ||
-        process.env.PUBLIC_API_URL ||
-        process.env.VITE_API_BASE_URL ||
-        'https://contentflow-api-production.up.railway.app'
-      ).replace(/\/$/, '');
-      return `${serverBase}${rawFeaturedImage.startsWith('/') ? '' : '/'}${rawFeaturedImage}`;
-    })();
+    const featuredImage = await resolveBlogPostFeaturedImageUrl(userId, post);
 
     let author = '';
     try {
