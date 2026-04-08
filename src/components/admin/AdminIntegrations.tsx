@@ -138,13 +138,13 @@ const PLATFORMS: PlatformDef[] = [
   {
     id: 'threads',
     name: 'Threads',
-    description: 'OAuth credentials for publishing text and photo posts to Threads (Meta Graph API).',
+    description: 'OAuth credentials for publishing posts to Threads and syncing insights (Meta Graph API).',
     icon: '@',
     accentClass: 'bg-black text-white font-black',
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Meta / Threads App ID', type: 'text', helpText: 'From Meta for Developers. Same app can cover Facebook + Instagram + Threads.' },
       { id: 'appSecret', label: 'App Secret', placeholder: 'Meta / Threads App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
-      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/threads/callback', type: 'text', helpText: 'Must match the redirect URI in your Meta app. Required scopes: threads_basic, threads_content_publish.' },
+      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/threads/callback', type: 'text', helpText: 'Must match the redirect URI in your Meta app. Required scopes: threads_basic, threads_content_publish, threads_manage_insights.' },
     ],
     docsUrl: 'https://developers.facebook.com/docs/threads/',
     redirectHint: 'Use `/auth/threads/callback` on the backend.',
