@@ -3627,7 +3627,44 @@ async function exchangePinterestCode(code: string) {
     const msg = (resp.data as any)?.message || (resp.data as any)?.error || `Pinterest token exchange failed (${resp.status})`;
     throw new Error(msg);
   }
-  return resp.data;
+  const tokenData: any = resp.data || {};
+
+  // Best-effort enrichment: store user_id/username/profile_image so the integration UI is nicer
+  // and downstream analytics can work even if token response omits identity fields.
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://api.pinterest.com/v5/user_account', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (meResp.status < 400) {
+        const me: any = meResp.data || {};
+        if (me?.id) {
+          tokenData.user_id = String(me.id);
+          tokenData.id = String(me.id);
+        }
+        if (me?.username) tokenData.username = String(me.username);
+        if (me?.profile_image) tokenData.avatar_url = String(me.profile_image);
+        if (me?.follower_count != null) tokenData.followers_count = me.follower_count;
+        if (me?.following_count != null) tokenData.following_count = me.following_count;
+        if (me?.pin_count != null) tokenData.pin_count = me.pin_count;
+        if (me?.board_count != null) tokenData.board_count = me.board_count;
+        if (me?.monthly_views != null) tokenData.monthly_views = me.monthly_views;
+        if (me?.website_url != null) tokenData.website_url = me.website_url;
+        if (me?.about != null) tokenData.about = me.about;
+        tokenData.name =
+          String(me?.business_name || me?.username || tokenData?.name || '').trim() ||
+          tokenData?.name ||
+          null;
+      }
+    } catch {
+      // Ignore identity enrichment failures; token exchange still succeeds.
+    }
+  }
+
+  return tokenData;
 }
 
 async function exchangeInstagramCode(code: string) {
@@ -6689,6 +6726,229 @@ async function syncInstagramAnalyticsAccount(params: {
   return { synced, errors };
 }
 
+async function syncPinterestAnalyticsAccount(params: {
+  userId: string;
+  account: any;
+  days?: number;
+  maxPins?: number;
+}): Promise<{ synced: number; errors: string[] }> {
+  const { userId, account } = params;
+  const days = Math.max(1, Number(params.days || 30));
+  const maxPins = Math.max(1, Math.min(250, Number(params.maxPins || 50)));
+
+  const errors: string[] = [];
+  let synced = 0;
+
+  if (!pool) return { synced, errors: ['DB not ready'] };
+
+  let accessToken = decodeStoredIntegrationSecret(account?.access_token_encrypted);
+  if (!accessToken) accessToken = String(account?.access_token || '').trim();
+  if (!accessToken) return { synced, errors: ['Pinterest access token missing or expired — reconnect Pinterest.'] };
+
+  const headers = { Authorization: `Bearer ${accessToken}` };
+
+  // ── Profile sync ────────────────────────────────────────────────────────
+  try {
+    const meResp = await axios.get('https://api.pinterest.com/v5/user_account', {
+      headers,
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const me: any = meResp.data || {};
+
+    if (meResp.status === 403) {
+      errors.push('Profile scope not granted (user_accounts:read) — reconnect Pinterest to enable follower and profile stats.');
+    } else if (meResp.status >= 400) {
+      const msg = me?.message || me?.error || `Pinterest profile fetch failed (${meResp.status})`;
+      errors.push(typeof msg === 'string' ? msg : `Pinterest profile fetch failed (${meResp.status})`);
+    } else {
+      const followers = Number(me?.follower_count ?? 0);
+      const following = Number(me?.following_count ?? 0);
+      const pinsCount = Number(me?.pin_count ?? 0);
+      const bio = typeof me?.about === 'string' ? me.about : null;
+      const handle = typeof me?.username === 'string' ? me.username : null;
+      const accountName = String(me?.business_name || me?.username || account?.account_name || '').trim() || null;
+      const profileImage = typeof me?.profile_image === 'string' ? me.profile_image : null;
+      const accountId = me?.id ? String(me.id).trim() : null;
+
+      await pool.query(
+        `INSERT INTO social_profile_stats
+           (id, user_id, social_account_id, platform,
+            followers, following, posts_count, total_likes,
+            bio, is_verified, raw_response, synced_at)
+         VALUES (gen_random_uuid()::text, $1, $2, 'pinterest',
+                 $3, $4, $5, 0,
+                 $6, false, $7::jsonb, NOW())
+         ON CONFLICT (social_account_id) DO UPDATE SET
+           followers   = CASE WHEN EXCLUDED.followers > 0 THEN EXCLUDED.followers ELSE social_profile_stats.followers END,
+           following   = CASE WHEN EXCLUDED.following > 0 THEN EXCLUDED.following ELSE social_profile_stats.following END,
+           posts_count = CASE WHEN EXCLUDED.posts_count > 0 THEN EXCLUDED.posts_count ELSE social_profile_stats.posts_count END,
+           bio         = COALESCE(EXCLUDED.bio, social_profile_stats.bio),
+           raw_response= EXCLUDED.raw_response,
+           synced_at   = NOW()`,
+        [userId, account.id, followers, following, pinsCount, bio, JSON.stringify(me)]
+      );
+
+      await pool.query(
+        `UPDATE social_accounts SET
+           account_id    = COALESCE($1, account_id),
+           account_name  = COALESCE($2, account_name),
+           handle        = COALESCE($3, handle),
+           profile_image = COALESCE($4, profile_image),
+           followers     = CASE WHEN $5 > 0 THEN $5 ELSE followers END
+         WHERE id = $6`,
+        [accountId, accountName, handle, profileImage, followers, account.id]
+      );
+
+      synced++;
+    }
+  } catch (err: any) {
+    errors.push(`Pinterest profile sync failed: ${err?.message || 'Failed'}`);
+  }
+
+  // ── Pins sync ───────────────────────────────────────────────────────────
+  try {
+    const metricNumber = (value: any) => {
+      const num = typeof value === 'number' ? value : parseFloat(String(value || '0'));
+      return Number.isFinite(num) ? num : 0;
+    };
+
+    const pickMetric = (metrics: any, keys: string[]) => {
+      for (const key of keys) {
+        if (metrics && metrics[key] !== undefined && metrics[key] !== null) return metricNumber(metrics[key]);
+      }
+      return 0;
+    };
+
+    let bookmark: string | null = null;
+    let fetchedPins = 0;
+    let page = 0;
+    const MAX_PAGES = 10;
+
+    while (fetchedPins < maxPins && page < MAX_PAGES) {
+      const pageSize = Math.min(250, Math.max(1, maxPins - fetchedPins));
+      const pinsResp = await axios.get('https://api.pinterest.com/v5/pins', {
+        headers,
+        params: {
+          page_size: pageSize,
+          pin_metrics: true,
+          ...(bookmark ? { bookmark } : {}),
+        },
+        validateStatus: () => true,
+        timeout: 20000,
+      });
+      const pinsData: any = pinsResp.data || {};
+
+      if (pinsResp.status >= 400) {
+        const msg = pinsData?.message || pinsData?.error || `Pinterest pins fetch failed (${pinsResp.status})`;
+        errors.push(typeof msg === 'string' ? msg : `Pinterest pins fetch failed (${pinsResp.status})`);
+        break;
+      }
+
+      const items: any[] = Array.isArray(pinsData?.items) ? pinsData.items : [];
+      for (const pin of items) {
+        if (fetchedPins >= maxPins) break;
+        const pinId = String(pin?.id || '').trim();
+        if (!pinId) continue;
+
+        const pinMetrics = pin?.pin_metrics || null;
+        const metricsSource = pinMetrics?.lifetime_metrics ? 'lifetime' : pinMetrics?.['90d'] ? '90d' : null;
+        const metrics =
+          (metricsSource === 'lifetime' ? pinMetrics?.lifetime_metrics : null) ||
+          (metricsSource === '90d' ? pinMetrics?.['90d'] : null) ||
+          {};
+
+        const impressions = pickMetric(metrics, ['impression', 'impressions']);
+        const outboundClicks = pickMetric(metrics, ['clickthrough', 'outbound_click', 'outbound_clicks']);
+        const pinClicks = pickMetric(metrics, ['pin_click', 'pin_clicks']);
+        const saves = pickMetric(metrics, ['save', 'saves']);
+        const reactions = pickMetric(metrics, ['reaction', 'total_reactions']);
+        const comments = pickMetric(metrics, ['comment', 'total_comments']);
+
+        const engagement = saves + pinClicks + reactions + comments;
+
+        let postedAt: string | null = null;
+        try {
+          const dt = pin?.created_at ? new Date(pin.created_at) : null;
+          postedAt = dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : null;
+        } catch {
+          postedAt = null;
+        }
+
+        const raw = {
+          pin: {
+            id: pinId,
+            title: pin?.title ?? null,
+            description: pin?.description ?? null,
+            link: pin?.link ?? null,
+            board_id: pin?.board_id ?? null,
+            board_section_id: pin?.board_section_id ?? null,
+            creative_type: pin?.creative_type ?? null,
+            media: pin?.media ?? null,
+            created_at: pin?.created_at ?? null,
+          },
+          metrics: {
+            impressions,
+            outbound_clicks: outboundClicks,
+            pin_click: pinClicks,
+            saves,
+            reactions,
+            comments,
+            source: metricsSource,
+          },
+        };
+
+        await pool.query(
+          `INSERT INTO social_metrics
+             (id, user_id, platform, platform_post_id, social_account_id,
+              likes, comments, shares, impressions, reach, engagement, clicks, saves,
+              raw_data, posted_at, fetched_at)
+           VALUES (gen_random_uuid()::text, $1, 'pinterest', $2, $3,
+                   $4, $5, 0, $6, $7, $8, $9, $10,
+                   $11::jsonb, $12, NOW())
+           ON CONFLICT (user_id, platform, platform_post_id) DO UPDATE SET
+             social_account_id = EXCLUDED.social_account_id,
+             likes       = EXCLUDED.likes,
+             comments    = EXCLUDED.comments,
+             impressions = EXCLUDED.impressions,
+             reach       = EXCLUDED.reach,
+             engagement  = EXCLUDED.engagement,
+             clicks      = EXCLUDED.clicks,
+             saves       = EXCLUDED.saves,
+             raw_data    = EXCLUDED.raw_data,
+             posted_at   = COALESCE(EXCLUDED.posted_at, social_metrics.posted_at),
+             fetched_at  = NOW()`,
+          [
+            userId,
+            pinId,
+            account.id,
+            Math.round(reactions),
+            Math.round(comments),
+            Math.round(impressions),
+            Math.round(impressions), // Pinterest has no "reach"; use impressions as a reasonable proxy.
+            Math.round(engagement),
+            Math.round(outboundClicks),
+            Math.round(saves),
+            JSON.stringify(raw),
+            postedAt,
+          ]
+        );
+
+        synced++;
+        fetchedPins++;
+      }
+
+      bookmark = pinsData?.bookmark ? String(pinsData.bookmark) : null;
+      if (!bookmark) break;
+      page++;
+    }
+  } catch (err: any) {
+    errors.push(`Pinterest pins sync failed: ${err?.message || 'Failed'}`);
+  }
+
+  return { synced, errors };
+}
+
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
   // Instagram Basic Display OAuth (scopes are comma-separated)
   instagram: { authUrl: 'https://api.instagram.com/oauth/authorize', scopes: 'user_profile,user_media', idField: 'appId' },
@@ -6705,7 +6965,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // media.write is NOT a standard OAuth 2.0 scope — requesting it causes Twitter to reject the auth URL entirely.
   // tweet.write is sufficient for posting tweets and uploading media via the v1.1 media upload endpoint.
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
-  pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write', idField: 'clientId' },
+  pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish', idField: 'appId' },
 };
@@ -14589,6 +14849,15 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
           } catch (vidErr: any) {
             console.error('TikTok video fetch error:', vidErr.message);
           }
+        } else if (platform === 'pinterest') {
+          const pinterestResult = await syncPinterestAnalyticsAccount({
+            userId: auth.userId,
+            account: acct,
+            days: 30,
+            maxPins: 50,
+          });
+          synced += pinterestResult.synced;
+          errors.push(...pinterestResult.errors.map((message) => `pinterest: ${message}`));
         } else if (platform === 'instagram') {
           const instagramResult = await syncInstagramAnalyticsAccount({
             userId: auth.userId,
@@ -15815,6 +16084,269 @@ app.get('/api/social/instagram/posts', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Instagram posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Instagram posts' });
+  }
+});
+
+// ─── Pinterest Analytics Endpoints ───────────────────────────────────────────
+
+// POST /api/social/pinterest/sync — sync Pinterest profile and pins (with metrics)
+app.post('/api/social/pinterest/sync', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const accountRes = await pool.query(
+      `SELECT id, account_id, account_name, handle, followers, profile_image, access_token, access_token_encrypted, token_data
+       FROM social_accounts
+       WHERE user_id=$1 AND platform='pinterest' AND connected=true AND account_type='profile'
+       ORDER BY connected_at DESC NULLS LAST, created_at DESC NULLS LAST
+       LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (accountRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No connected Pinterest account found' });
+    }
+
+    const result = await syncPinterestAnalyticsAccount({
+      userId: auth.userId,
+      account: accountRes.rows[0],
+      days: 30,
+      maxPins: 100,
+    });
+
+    return res.json({
+      success: true,
+      synced: result.synced,
+      errors: result.errors.length > 0 ? result.errors : undefined,
+    });
+  } catch (err) {
+    console.error('Pinterest sync error:', err);
+    return res.status(500).json({ success: false, error: 'Pinterest sync failed' });
+  }
+});
+
+// GET /api/social/pinterest/profile — get Pinterest profile snapshot for authenticated user
+app.get('/api/social/pinterest/profile', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) {
+      return res.json({
+        hasData: false,
+        followers: null,
+        following: null,
+        posts_count: null,
+        bio: null,
+        account_name: null,
+        handle: null,
+        picture_url: null,
+        website: null,
+        monthly_views: null,
+        synced_at: null,
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+         sa.id,
+         sa.account_id,
+         sa.account_name,
+         sa.handle,
+         sa.followers AS sa_followers,
+         sa.profile_image,
+         sps.followers,
+         sps.following,
+         sps.posts_count,
+         sps.bio,
+         sps.raw_response,
+         sps.synced_at
+       FROM social_accounts sa
+       LEFT JOIN social_profile_stats sps ON sps.social_account_id = sa.id
+       WHERE sa.user_id = $1
+         AND sa.platform = 'pinterest'
+         AND sa.account_type = 'profile'
+         AND sa.connected = true
+       ORDER BY sps.synced_at DESC NULLS LAST, sa.connected_at DESC NULLS LAST
+       LIMIT 1`,
+      [auth.userId]
+    );
+
+    if (!rows.length) {
+      return res.json({
+        hasData: false,
+        followers: null,
+        following: null,
+        posts_count: null,
+        bio: null,
+        account_name: null,
+        handle: null,
+        picture_url: null,
+        website: null,
+        monthly_views: null,
+        synced_at: null,
+      });
+    }
+
+    const row: any = rows[0];
+    const raw = row.raw_response || {};
+
+    const followers = row.followers ?? row.sa_followers ?? null;
+    const hasData = followers !== null || row.posts_count !== null || Boolean(row.account_name) || Boolean(row.handle);
+
+    return res.json({
+      hasData,
+      followers: followers !== null ? Number(followers) : null,
+      following: row.following !== null ? Number(row.following) : null,
+      posts_count: row.posts_count !== null ? Number(row.posts_count) : raw?.pin_count != null ? Number(raw.pin_count) : null,
+      bio: row.bio ?? null,
+      account_name: row.account_name ?? raw?.business_name ?? raw?.username ?? null,
+      handle: row.handle ?? raw?.username ?? null,
+      picture_url: row.profile_image ?? raw?.profile_image ?? null,
+      website: raw?.website_url ?? null,
+      monthly_views: raw?.monthly_views != null ? Number(raw.monthly_views) : null,
+      synced_at: row.synced_at ?? null,
+    });
+  } catch (err) {
+    console.error('Pinterest profile error:', err);
+    return res.json({
+      hasData: false,
+      followers: null,
+      following: null,
+      posts_count: null,
+      bio: null,
+      account_name: null,
+      handle: null,
+      picture_url: null,
+      website: null,
+      monthly_views: null,
+      synced_at: null,
+    });
+  }
+});
+
+// GET /api/social/pinterest/pins — all synced Pinterest pins for the authenticated user
+app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const q = req.query as any;
+    const days = Math.min(365, Math.max(1, parseInt(q.days || '90', 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(q.limit || '100', 10)));
+    const offset = Math.max(0, parseInt(q.offset || '0', 10));
+    const accountId = q.account_id ? String(q.account_id).trim() : '';
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const params: any[] = [auth.userId, sinceDate];
+    let accountFilter = '';
+    if (accountId) {
+      params.push(accountId);
+      accountFilter = `AND sm.social_account_id = $${params.length}`;
+    }
+    params.push(limit, offset);
+
+    const pinsRes = await pool.query(
+      `SELECT sm.*, sa.account_name, sa.handle
+       FROM social_metrics sm
+       JOIN social_accounts sa ON sa.id = sm.social_account_id
+       WHERE sm.user_id = $1
+         AND sm.platform = 'pinterest'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}
+       ORDER BY COALESCE(sm.posted_at, sm.fetched_at) DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)
+       FROM social_metrics sm
+       WHERE sm.user_id = $1
+         AND sm.platform = 'pinterest'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const summaryRes = await pool.query(
+      `SELECT
+         COUNT(*) AS total_pins,
+         COALESCE(SUM(impressions), 0) AS total_impressions,
+         COALESCE(SUM(clicks), 0) AS total_outbound_clicks,
+         COALESCE(SUM(saves), 0) AS total_saves,
+         COALESCE(SUM(likes), 0) AS total_reactions,
+         COALESCE(SUM(comments), 0) AS total_comments,
+         COALESCE(SUM(engagement), 0) AS total_engagement,
+         COALESCE(SUM(
+           CASE
+             WHEN (raw_data->'metrics'->>'pin_click') ~ '^\\d+(\\.\\d+)?$'
+             THEN (raw_data->'metrics'->>'pin_click')::numeric
+             ELSE 0
+           END
+         ), 0) AS total_pin_clicks,
+         CASE WHEN COALESCE(SUM(impressions), 0) > 0
+              THEN ROUND((SUM(engagement)::numeric / NULLIF(SUM(impressions), 0)) * 100, 2)
+              ELSE 0 END AS avg_engagement_rate
+       FROM social_metrics sm
+       WHERE sm.user_id = $1
+         AND sm.platform = 'pinterest'
+         AND (sm.posted_at IS NULL OR sm.posted_at >= $2)
+         ${accountFilter}`,
+      params.slice(0, params.length - 2)
+    );
+
+    const pins = pinsRes.rows.map((row: any) => {
+      const raw = row.raw_data || {};
+      const pin = raw?.pin || {};
+      const metrics = raw?.metrics || {};
+      const media = pin?.media || {};
+      const images = media?.images || {};
+
+      const imageUrl =
+        images?.['400x300']?.url ||
+        images?.['150x150']?.url ||
+        images?.['600x']?.url ||
+        null;
+
+      return {
+        ...row,
+        pin_id: row.platform_post_id,
+        title: pin?.title ?? null,
+        description: pin?.description ?? null,
+        link: pin?.link ?? null,
+        board_id: pin?.board_id ?? null,
+        creative_type: pin?.creative_type ?? null,
+        media_url: imageUrl,
+        pin_clicks: metrics?.pin_click ?? null,
+        outbound_clicks: metrics?.outbound_clicks ?? row.clicks ?? null,
+        saves_count: metrics?.saves ?? row.saves ?? null,
+        created_at: row.posted_at ?? pin?.created_at ?? null,
+      };
+    });
+
+    return res.json({
+      success: true,
+      pins,
+      total: parseInt(countRes.rows[0]?.count || '0', 10),
+      summary: summaryRes.rows[0] || {
+        total_pins: 0,
+        total_impressions: 0,
+        total_outbound_clicks: 0,
+        total_saves: 0,
+        total_reactions: 0,
+        total_comments: 0,
+        total_engagement: 0,
+        total_pin_clicks: 0,
+        avg_engagement_rate: 0,
+      },
+      days,
+    });
+  } catch (err) {
+    console.error('Pinterest pins error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest pins' });
   }
 });
 
