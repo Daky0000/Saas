@@ -6858,9 +6858,10 @@ async function syncThreadsAnalyticsAccount(params: {
 
   let accountInsights: any = null;
   try {
+    const metricList = 'views,likes,replies,reposts,quotes,clicks,followers_count';
     const insResp = await axios.get(`${threadsBase}/me/threads_insights`, {
       params: {
-        metric: 'views,likes,replies,reposts,quotes,clicks,followers_count',
+        metric: metricList,
         access_token: accessToken,
       },
       validateStatus: () => true,
@@ -6879,14 +6880,56 @@ async function syncThreadsAnalyticsAccount(params: {
     errors.push(`Threads account insights failed: ${err?.message || 'Failed'}`);
   }
 
+  const followerDemographics: Record<string, any> = {};
+  if (accountInsights) {
+    for (const breakdown of ['country', 'city', 'age', 'gender'] as const) {
+      try {
+        const demoResp = await axios.get(`${threadsBase}/me/threads_insights`, {
+          params: {
+            metric: 'follower_demographics',
+            breakdown,
+            access_token: accessToken,
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const demoData: any = demoResp.data || {};
+        if (demoResp.status === 403) {
+          // Only include the warning once; base insights call already records the scope error.
+          if (!errors.some((e) => e.includes('threads_manage_insights'))) {
+            errors.push('Threads insights scope not granted (threads_manage_insights) — reconnect Threads to enable analytics.');
+          }
+          break;
+        }
+        if (demoResp.status >= 400) {
+          const msg = demoData?.error?.message || `Threads follower demographics failed (${demoResp.status})`;
+          errors.push(msg);
+          continue;
+        }
+        followerDemographics[breakdown] = demoData;
+      } catch (err: any) {
+        errors.push(`Threads follower demographics failed: ${err?.message || 'Failed'}`);
+      }
+    }
+  }
+
   const followers = Math.round(extractMetric(accountInsights, 'followers_count'));
   const totalLikes = Math.round(extractMetric(accountInsights, 'likes'));
+  const accountMetrics = {
+    views: Math.round(extractMetric(accountInsights, 'views')),
+    likes: totalLikes,
+    replies: Math.round(extractMetric(accountInsights, 'replies')),
+    reposts: Math.round(extractMetric(accountInsights, 'reposts')),
+    quotes: Math.round(extractMetric(accountInsights, 'quotes')),
+    clicks: Math.round(extractMetric(accountInsights, 'clicks')),
+    followers_count: followers,
+  };
 
   // ── Posts sync ──────────────────────────────────────────────────────────
   let postsSynced = 0;
   try {
     const fields =
-      'id,media_product_type,media_type,media_url,gif_url,permalink,username,text,timestamp,shortcode,thumbnail_url,children,is_quote_post,quoted_post,reposted_post,has_replies,alt_text,link_attachment_url,location_id,topic_tag,is_verified,profile_picture_url';
+      'id,media_product_type,media_type,media_url,gif_url,permalink,owner,username,text,timestamp,shortcode,thumbnail_url,children,is_quote_post,quoted_post,reposted_post,has_replies,alt_text,link_attachment_url,poll_attachment{option_a,option_b,option_c,option_d,option_a_votes_percentage,option_b_votes_percentage,option_c_votes_percentage,option_d_votes_percentage,expiration_timestamp},location_id,topic_tag,is_verified,profile_picture_url';
     const metricList = 'views,likes,replies,reposts,quotes,shares';
 
     let after: string | null = null;
@@ -6968,14 +7011,23 @@ async function syncThreadsAnalyticsAccount(params: {
         const shares = Math.round(extractMetric(insights, 'shares'));
         const engagement = likes + replies + reposts + quotes + shares;
 
+        const mediaUrl =
+          typeof post?.media_url === 'string'
+            ? post.media_url
+            : typeof post?.gif_url === 'string'
+              ? post.gif_url
+              : null;
+
         const raw = {
           post: {
             id: threadId,
             text: post?.text ?? null,
             permalink: post?.permalink ?? null,
             timestamp: post?.timestamp ?? null,
+            media_product_type: post?.media_product_type ?? null,
             media_type: post?.media_type ?? null,
-            media_url: post?.media_url ?? null,
+            media_url: mediaUrl,
+            gif_url: post?.gif_url ?? null,
             thumbnail_url: post?.thumbnail_url ?? null,
             username: post?.username ?? null,
             shortcode: post?.shortcode ?? null,
@@ -6984,7 +7036,14 @@ async function syncThreadsAnalyticsAccount(params: {
             quoted_post: post?.quoted_post ?? null,
             reposted_post: post?.reposted_post ?? null,
             has_replies: post?.has_replies ?? null,
+            alt_text: post?.alt_text ?? null,
             link_attachment_url: post?.link_attachment_url ?? null,
+            poll_attachment: post?.poll_attachment ?? null,
+            location_id: post?.location_id ?? null,
+            topic_tag: post?.topic_tag ?? null,
+            owner: post?.owner ?? null,
+            is_verified: post?.is_verified ?? null,
+            profile_picture_url: post?.profile_picture_url ?? null,
           },
           metrics: { views, likes, replies, reposts, quotes, shares },
           insights: insights?.data ?? null,
@@ -7067,7 +7126,7 @@ async function syncThreadsAnalyticsAccount(params: {
         totalLikes,
         bio,
         isVerified,
-        JSON.stringify({ profile, insights: accountInsights }),
+        JSON.stringify({ profile, insights: accountInsights, account_metrics: accountMetrics, follower_demographics: followerDemographics }),
       ]
     );
 
@@ -7331,7 +7390,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
-  threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish,threads_manage_insights', idField: 'appId' },
+  threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish,threads_manage_insights,threads_read_replies,threads_manage_replies,threads_location_tagging', idField: 'appId' },
 };
 
 const DEFAULT_OAUTH_REDIRECTS: Record<string, string> = {
@@ -12477,6 +12536,33 @@ async function refreshTikTokAccessToken(refreshToken: string) {
   return resp.data;
 }
 
+async function refreshThreadsAccessToken(accessToken: string) {
+  const token = String(accessToken || '').trim();
+  if (!token) throw new Error('Threads access token missing');
+
+  const resp = await axios.get('https://graph.threads.net/refresh_access_token', {
+    params: {
+      grant_type: 'th_refresh_token',
+      access_token: token,
+    },
+    headers: { Authorization: `Bearer ${token}` },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+
+  const data: any = resp.data || {};
+  if (resp.status >= 400) {
+    const msg =
+      data?.error?.message ||
+      data?.error_description ||
+      data?.error ||
+      `Threads token refresh failed (${resp.status})`;
+    throw new Error(msg);
+  }
+
+  return data;
+}
+
 // Fetch TikTok user profile with graceful scope fallback.
 // Fetch TikTok user profile using two independent requests so a missing
 // user.info.stats scope never blocks the basic profile from being saved.
@@ -12703,12 +12789,17 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   }
 
   const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const supportsTokenRefresh = platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken);
+  const refreshMode: 'none' | 'refresh_token' | 'threads_access_token' =
+    platformId === 'threads'
+      ? 'threads_access_token'
+      : platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken)
+        ? 'refresh_token'
+        : 'none';
   const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
   const shouldRefreshSoon =
-    supportsTokenRefresh && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
+    refreshMode !== 'none' && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
 
-  if (!Number.isFinite(expiresAtMs) || (!supportsTokenRefresh && !isExpired) || (supportsTokenRefresh && !shouldRefreshSoon)) {
+  if (!Number.isFinite(expiresAtMs) || (refreshMode === 'none' && !isExpired) || (refreshMode !== 'none' && !shouldRefreshSoon)) {
     return {
       platform: match?.platform || platformId,
       access_token: accessToken,
@@ -12721,7 +12812,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     };
   }
 
-  if (!supportsTokenRefresh) {
+  if (refreshMode === 'none') {
     await markSocialAccountNeedsReapproval({
       platformId,
       userId,
@@ -12740,7 +12831,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     };
   }
 
-  if (!refreshToken) {
+  if (refreshMode === 'refresh_token' && !refreshToken) {
     await markSocialAccountNeedsReapproval({
       platformId,
       userId,
@@ -12761,7 +12852,9 @@ async function getPublishableSocialConnection(userId: string, platformId: string
 
   let refreshed: any = null;
   try {
-    if (platformId === 'twitter') {
+    if (platformId === 'threads') {
+      refreshed = await refreshThreadsAccessToken(accessToken);
+    } else if (platformId === 'twitter') {
       refreshed = await refreshTwitterAccessToken(refreshToken);
     } else if (platformId === 'linkedin') {
       refreshed = await refreshLinkedInAccessToken(refreshToken);
@@ -17357,9 +17450,14 @@ app.post('/api/social/threads/sync', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'No connected Threads account found' });
     }
 
+    const tokenConn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!tokenConn || tokenConn.needs_reapproval || !tokenConn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
     const result = await syncThreadsAnalyticsAccount({
       userId: auth.userId,
-      account: accountRes.rows[0],
+      account: { ...accountRes.rows[0], access_token: tokenConn.access_token, access_token_encrypted: null },
       days: 30,
       maxPosts: 120,
     });
@@ -17386,6 +17484,12 @@ app.get('/api/social/threads/profile', async (req: Request, res: Response) => {
         followers: null,
         posts_count: null,
         total_likes: null,
+        total_views: null,
+        total_replies: null,
+        total_reposts: null,
+        total_quotes: null,
+        total_clicks: null,
+        follower_demographics: null,
         bio: null,
         is_verified: null,
         account_name: null,
@@ -17428,6 +17532,12 @@ app.get('/api/social/threads/profile', async (req: Request, res: Response) => {
         followers: null,
         posts_count: null,
         total_likes: null,
+        total_views: null,
+        total_replies: null,
+        total_reposts: null,
+        total_quotes: null,
+        total_clicks: null,
+        follower_demographics: null,
         bio: null,
         is_verified: null,
         account_name: null,
@@ -17478,11 +17588,26 @@ app.get('/api/social/threads/profile', async (req: Request, res: Response) => {
       rawProfile?.is_verified === true ||
       tokenData?.is_verified === true;
 
+    const metricNumOrNull = (value: any): number | null => {
+      if (value === null || value === undefined) return null;
+      const n = typeof value === 'number' ? value : parseFloat(String(value));
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const accountMetrics = raw?.account_metrics || {};
+    const followerDemographics = raw?.follower_demographics || null;
+
     return res.json({
       hasData,
       followers: followers !== null ? Number(followers) : null,
       posts_count: row.posts_count !== null ? Number(row.posts_count) : null,
       total_likes: row.total_likes !== null ? Number(row.total_likes) : null,
+      total_views: metricNumOrNull(accountMetrics?.views),
+      total_replies: metricNumOrNull(accountMetrics?.replies),
+      total_reposts: metricNumOrNull(accountMetrics?.reposts),
+      total_quotes: metricNumOrNull(accountMetrics?.quotes),
+      total_clicks: metricNumOrNull(accountMetrics?.clicks),
+      follower_demographics: followerDemographics,
       bio,
       is_verified: isVerified,
       account_name: accountName,
@@ -17492,7 +17617,24 @@ app.get('/api/social/threads/profile', async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Threads profile error:', err);
-    return res.json({ profile: null, hasData: false });
+    return res.json({
+      hasData: false,
+      followers: null,
+      posts_count: null,
+      total_likes: null,
+      total_views: null,
+      total_replies: null,
+      total_reposts: null,
+      total_quotes: null,
+      total_clicks: null,
+      follower_demographics: null,
+      bio: null,
+      is_verified: null,
+      account_name: null,
+      handle: null,
+      picture_url: null,
+      synced_at: null,
+    });
   }
 });
 
@@ -17570,16 +17712,25 @@ app.get('/api/social/threads/posts', async (req: Request, res: Response) => {
         const n = typeof value === 'number' ? value : parseFloat(String(value ?? '0'));
         return Number.isFinite(n) ? n : 0;
       };
+
+      const mediaUrl = typeof post?.media_url === 'string' ? post.media_url : null;
+      const gifUrl = typeof post?.gif_url === 'string' ? post.gif_url : null;
       return {
         ...row,
         thread_id: row.platform_post_id,
         text: typeof post?.text === 'string' ? post.text : null,
         permalink: typeof post?.permalink === 'string' ? post.permalink : null,
         username: typeof post?.username === 'string' ? post.username : (row.handle || null),
+        media_product_type: typeof post?.media_product_type === 'string' ? post.media_product_type : null,
         media_type: typeof post?.media_type === 'string' ? post.media_type : null,
-        media_url: typeof post?.media_url === 'string' ? post.media_url : null,
+        media_url: mediaUrl || gifUrl,
+        gif_url: gifUrl,
         thumbnail_url: typeof post?.thumbnail_url === 'string' ? post.thumbnail_url : null,
+        alt_text: typeof post?.alt_text === 'string' ? post.alt_text : null,
         link_attachment_url: typeof post?.link_attachment_url === 'string' ? post.link_attachment_url : null,
+        poll_attachment: post?.poll_attachment ?? null,
+        location_id: post?.location_id !== undefined && post?.location_id !== null ? String(post.location_id) : null,
+        topic_tag: typeof post?.topic_tag === 'string' ? post.topic_tag : null,
         is_quote_post: post?.is_quote_post === true,
         has_replies: post?.has_replies === true,
         views: row.impressions !== null && row.impressions !== undefined ? Number(row.impressions) : metricNum(metrics?.views),
@@ -17609,6 +17760,300 @@ app.get('/api/social/threads/posts', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Threads posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Threads posts' });
+  }
+});
+
+// GET /api/social/threads/debug-token — inspect the current Threads access token (scopes/expiry)
+app.get('/api/social/threads/debug-token', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!conn || conn.needs_reapproval || !conn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
+    const cfg = await getPlatformConfig('threads');
+    const appId = String(cfg.appId || process.env.VITE_THREADS_APP_ID || process.env.VITE_THREADS_CLIENT_ID || '').trim();
+    const appSecret = String(cfg.appSecret || process.env.THREADS_APP_SECRET || process.env.VITE_THREADS_APP_SECRET || '').trim();
+    const appToken = appId && appSecret ? `${appId}|${appSecret}` : '';
+    if (!appToken) {
+      return res.status(400).json({ success: false, error: 'Threads app credentials not configured by admin' });
+    }
+
+    const resp = await axios.get('https://graph.threads.net/debug_token', {
+      params: {
+        input_token: conn.access_token,
+        access_token: appToken,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.error?.message || `Threads debug_token failed (${resp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Threads debug-token error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to debug Threads token' });
+  }
+});
+
+// GET /api/social/threads/replies?thread_id=... — list top-level replies for a thread
+app.get('/api/social/threads/replies', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const threadId = String((req.query as any).thread_id || '').trim();
+    if (!threadId) return res.status(400).json({ success: false, error: 'thread_id is required' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!conn || conn.needs_reapproval || !conn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
+    const fields =
+      String((req.query as any).fields || '').trim() ||
+      'id,text,timestamp,media_product_type,media_type,media_url,gif_url,permalink,shortcode,thumbnail_url,username,children,is_quote_post,quoted_post,reposted_post,alt_text,link_attachment_url,has_replies,is_reply,is_reply_owned_by_me,root_post,replied_to,hide_status,reply_audience,location_id,topic_tag,is_verified,profile_picture_url,reply_approval_status';
+    const limit = Math.min(100, Math.max(1, parseInt(String((req.query as any).limit || '50'), 10)));
+    const after = String((req.query as any).after || '').trim();
+    const reverseRaw = String((req.query as any).reverse || '').trim().toLowerCase();
+    const reverse = reverseRaw === '1' || reverseRaw === 'true' || reverseRaw === 'yes';
+
+    const threadsBase = 'https://graph.threads.net/v1.0';
+    const resp = await axios.get(`${threadsBase}/${encodeURIComponent(threadId)}/replies`, {
+      params: {
+        fields,
+        limit,
+        reverse,
+        ...(after ? { after } : {}),
+        access_token: conn.access_token,
+      },
+      validateStatus: () => true,
+      timeout: 20000,
+    });
+
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.error?.message || `Threads replies fetch failed (${resp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Threads replies error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Threads replies' });
+  }
+});
+
+// POST /api/social/threads/replies/hide — hide/unhide a reply (top-level)
+app.post('/api/social/threads/replies/hide', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { replyId, hide } = req.body as { replyId?: string; hide?: boolean };
+    const rid = String(replyId || '').trim();
+    if (!rid) return res.status(400).json({ success: false, error: 'replyId is required' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!conn || conn.needs_reapproval || !conn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
+    const threadsBase = 'https://graph.threads.net/v1.0';
+    const resp = await axios.post(
+      `${threadsBase}/${encodeURIComponent(rid)}/manage_reply`,
+      null,
+      {
+        params: {
+          hide: hide === false ? 'false' : 'true',
+          access_token: conn.access_token,
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.error?.message || `Threads manage_reply failed (${resp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Threads manage-reply error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to manage Threads reply' });
+  }
+});
+
+// POST /api/social/threads/replies/respond — create and publish a reply
+app.post('/api/social/threads/replies/respond', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { replyToId, text } = req.body as { replyToId?: string; text?: string };
+    const rid = String(replyToId || '').trim();
+    const bodyText = String(text || '').trim();
+    if (!rid || !bodyText) return res.status(400).json({ success: false, error: 'replyToId and text are required' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!conn || conn.needs_reapproval || !conn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
+    const threadsBase = 'https://graph.threads.net/v1.0';
+    let threadsUserId = String(conn.token_data?.user_id || conn.token_data?.userId || conn.token_data?.id || '').trim();
+    if (!threadsUserId) {
+      const meResp = await axios.get(`${threadsBase}/me`, {
+        params: { fields: 'id', access_token: conn.access_token },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      const meData: any = meResp.data || {};
+      if (meResp.status >= 400) {
+        throw new Error(meData?.error?.message || `Threads profile lookup failed (${meResp.status})`);
+      }
+      threadsUserId = String(meData?.id || '').trim();
+    }
+    if (!threadsUserId) return res.status(400).json({ success: false, error: 'Threads user id not available' });
+
+    const createParams = new URLSearchParams({
+      media_type: 'TEXT',
+      text: bodyText,
+      reply_to_id: rid,
+      access_token: conn.access_token,
+    });
+    const createResp = await axios.post(
+      `${threadsBase}/${encodeURIComponent(threadsUserId)}/threads`,
+      createParams.toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+    const createData: any = createResp.data || {};
+    if (createResp.status >= 400) {
+      const msg = createData?.error?.message || `Threads create reply error ${createResp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const creationId = String(createData?.id || '').trim();
+    if (!creationId) return res.status(400).json({ success: false, error: 'Threads creation id missing' });
+
+    const publishParams = new URLSearchParams({
+      creation_id: creationId,
+      access_token: conn.access_token,
+    });
+    const pubResp = await axios.post(
+      `${threadsBase}/${encodeURIComponent(threadsUserId)}/threads_publish`,
+      publishParams.toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+    const pubData: any = pubResp.data || {};
+    if (pubResp.status >= 400) {
+      const msg = pubData?.error?.message || `Threads publish reply error ${pubResp.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    const platformPostId = String(pubData?.id || '').trim();
+    return res.json({ success: true, platformPostId });
+  } catch (err) {
+    console.error('Threads reply publish error:', err);
+    return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to publish Threads reply' });
+  }
+});
+
+// GET /api/social/threads/locations/search?q=... — search for locations to tag
+app.get('/api/social/threads/locations/search', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const q = String((req.query as any).q || '').trim();
+    if (!q) return res.status(400).json({ success: false, error: 'q is required' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!conn || conn.needs_reapproval || !conn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
+    const latitude = String((req.query as any).latitude || '').trim();
+    const longitude = String((req.query as any).longitude || '').trim();
+    const fields =
+      String((req.query as any).fields || '').trim() ||
+      'id,address,city,country,name,latitude,longitude,postal_code';
+
+    const resp = await axios.get('https://graph.threads.net/location_search', {
+      params: {
+        q,
+        ...(latitude ? { latitude } : {}),
+        ...(longitude ? { longitude } : {}),
+        fields,
+        access_token: conn.access_token,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.error?.message || `Threads location_search failed (${resp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Threads location search error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to search Threads locations' });
+  }
+});
+
+// GET /api/social/threads/locations/:locationId — retrieve a location by id
+app.get('/api/social/threads/locations/:locationId', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const locationId = String(req.params.locationId || '').trim();
+    if (!locationId) return res.status(400).json({ success: false, error: 'locationId is required' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'threads');
+    if (!conn || conn.needs_reapproval || !conn.access_token) {
+      return res.status(400).json({ success: false, error: 'Threads access token missing or expired — reconnect Threads.' });
+    }
+
+    const fields =
+      String((req.query as any).fields || '').trim() ||
+      'id,address,city,country,name,latitude,longitude,postal_code';
+
+    const resp = await axios.get(`https://graph.threads.net/${encodeURIComponent(locationId)}`, {
+      params: { fields, access_token: conn.access_token },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      const msg = data?.error?.message || `Threads location lookup failed (${resp.status})`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Threads location lookup error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch Threads location' });
   }
 });
 

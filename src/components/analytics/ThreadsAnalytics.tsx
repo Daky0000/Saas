@@ -6,6 +6,7 @@ import {
   Heart,
   Loader2,
   MessageCircle,
+  MousePointerClick,
   Quote,
   RefreshCcw,
   Repeat2,
@@ -74,6 +75,25 @@ function metricValue(post: ThreadsPost, key: SortKey) {
     case 'shares': return Number(post.shares || 0);
     default: return Number(post.views || 0);
   }
+}
+
+function extractInsightValueMap(payload: unknown): Record<string, number> | null {
+  const obj: any = payload;
+  const data = Array.isArray(obj?.data) ? obj.data : [];
+  const first = data[0];
+  const values = Array.isArray(first?.values) ? first.values : [];
+  const lastValue = values.length ? values[values.length - 1]?.value : null;
+  if (!lastValue || typeof lastValue !== 'object' || Array.isArray(lastValue)) return null;
+
+  const entries = Object.entries(lastValue as Record<string, unknown>)
+    .map(([key, value]) => {
+      const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''));
+      return Number.isFinite(n) ? [key, n] : null;
+    })
+    .filter(Boolean) as Array<[string, number]>;
+
+  if (entries.length === 0) return null;
+  return Object.fromEntries(entries);
 }
 
 export default function ThreadsAnalytics({ days }: Props) {
@@ -152,6 +172,14 @@ export default function ThreadsAnalytics({ days }: Props) {
       : null;
 
   const hasPosts = (summary?.total_posts ?? posts.length) > 0;
+  const clicks = profile?.total_clicks ?? null;
+  const hasClicks = clicks !== null && clicks !== undefined;
+  const countryCounts = extractInsightValueMap(profile?.follower_demographics?.country);
+  const topCountries = countryCounts
+    ? Object.entries(countryCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -226,16 +254,35 @@ export default function ThreadsAnalytics({ days }: Props) {
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className={`mt-4 grid gap-3 sm:grid-cols-2 ${hasClicks ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
             <StatCard label="Followers" value={fmt(profile?.followers)} icon={<Users size={16} />} />
             <StatCard label="Views" value={fmt(summary?.total_views)} icon={<Eye size={16} />} />
             <StatCard label="Likes" value={fmt(summary?.total_likes)} icon={<Heart size={16} />} />
             <StatCard label="Avg Eng. Rate" value={formatPercent(summary?.avg_engagement_rate)} icon={<TrendingUp size={16} />} />
+            {hasClicks ? (
+              <StatCard label="Clicks" value={fmt(clicks)} icon={<MousePointerClick size={16} />} />
+            ) : null}
           </div>
 
           {summary ? (
             <div className="mt-3 text-xs text-slate-500">
               Last {days} days: {formatCompactNumber(summary.total_replies)} replies, {formatCompactNumber(summary.total_reposts)} reposts, {formatCompactNumber(summary.total_quotes)} quotes, {formatCompactNumber(summary.total_shares)} shares.
+            </div>
+          ) : null}
+
+          {topCountries.length > 0 ? (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Top Countries</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {topCountries.map(([country, count]) => (
+                  <span
+                    key={country}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+                  >
+                    <span className="truncate max-w-[140px]" title={country}>{country}</span> · {formatCompactNumber(count)}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : null}
 
