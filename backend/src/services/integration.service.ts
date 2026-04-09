@@ -110,7 +110,7 @@ export class IntegrationService {
       ],
       twitter: ["tweet.read", "tweet.write", "users.read", "offline.access"],
       linkedin: ["r_liteprofile", "r_emailaddress", "w_member_social"],
-      pinterest: ["boards:read", "pins:read", "pins:write", "user_accounts:read"],
+      pinterest: ["boards:read", "boards:write", "pins:read", "pins:write", "user_accounts:read"],
     };
 
     if (slug === "twitter") {
