@@ -54,6 +54,7 @@ VITE_TWITTER_CLIENT_ID=your_client_id
 VITE_LINKEDIN_CLIENT_ID=your_client_id
 VITE_FACEBOOK_APP_ID=your_app_id
 VITE_TIKTOK_CLIENT_ID=your_client_id
+VITE_THREADS_APP_ID=your_app_id
 ```
 
 ## 🔧 Development Setup

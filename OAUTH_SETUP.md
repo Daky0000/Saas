@@ -36,6 +36,10 @@ VITE_FACEBOOK_REDIRECT_URI=https://yourdomain.com/auth/facebook/callback
 # TikTok
 VITE_TIKTOK_CLIENT_ID=your_client_id
 VITE_TIKTOK_REDIRECT_URI=https://yourdomain.com/auth/tiktok/callback
+
+# Threads
+VITE_THREADS_APP_ID=your_app_id
+VITE_THREADS_REDIRECT_URI=https://yourdomain.com/auth/threads/callback
 ```
 
 ### 2. Build for Production
@@ -62,6 +66,7 @@ TWITTER_CLIENT_SECRET=your_secret
 LINKEDIN_CLIENT_SECRET=your_secret
 FACEBOOK_APP_SECRET=your_secret
 TIKTOK_CLIENT_SECRET=your_secret
+THREADS_APP_SECRET=your_secret
 
 # Database
 DATABASE_URL=your_database_url
