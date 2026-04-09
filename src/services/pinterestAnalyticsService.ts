@@ -92,6 +92,11 @@ export type PinterestBoardsResponse = {
   boards: PinterestBoard[];
 };
 
+export type PinterestCreateBoardResponse = {
+  success: boolean;
+  board: PinterestBoard;
+};
+
 export type PinterestBoardPerformance = {
   board_id: string;
   board_name: string | null;
@@ -146,6 +151,19 @@ export const pinterestAnalyticsService = {
 
   async getBoards(): Promise<PinterestBoardsResponse> {
     return apiFetch('/api/pinterest/boards');
+  },
+
+  async createBoard(payload: {
+    name: string;
+    description?: string;
+    privacy?: 'PUBLIC' | 'SECRET';
+  }): Promise<PinterestBoard> {
+    const result = await apiFetch<PinterestCreateBoardResponse>('/api/pinterest/boards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return result.board;
   },
 
   async getBoardsPerformance(days = 90): Promise<PinterestBoardsPerformanceResponse> {

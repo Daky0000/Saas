@@ -8,6 +8,7 @@ import {
   MessageCircle,
   MousePointerClick,
   Pin,
+  Plus,
   RefreshCcw,
   TrendingUp,
   Users,
@@ -73,6 +74,15 @@ export default function PinterestAnalytics({ days }: Props) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ synced: number; errors?: string[] } | null>(null);
   const [savingDefault, setSavingDefault] = useState(false);
+  const [boardsLoadError, setBoardsLoadError] = useState<string | null>(null);
+
+  const [createBoardOpen, setCreateBoardOpen] = useState(false);
+  const [createBoardName, setCreateBoardName] = useState('');
+  const [createBoardDescription, setCreateBoardDescription] = useState('');
+  const [createBoardSecret, setCreateBoardSecret] = useState(false);
+  const [createBoardSetDefault, setCreateBoardSetDefault] = useState(true);
+  const [createBoardError, setCreateBoardError] = useState<string | null>(null);
+  const [createBoardLoading, setCreateBoardLoading] = useState(false);
 
   const boardNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -136,15 +146,21 @@ export default function PinterestAnalytics({ days }: Props) {
   const fetchOverview = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setBoardsLoadError(null);
     try {
       const [profileResult, pinsResult] = await Promise.all([
         pinterestAnalyticsService.getProfile(),
         pinterestAnalyticsService.getPins({ days, limit: 200 }),
       ]);
 
-      const [perfResult, boardsResult, defaultResult] = await Promise.all([
+      const boardsPromise = pinterestAnalyticsService
+        .getBoards()
+        .then((value) => ({ ok: true as const, value }))
+        .catch((err) => ({ ok: false as const, err }));
+
+      const [perfResult, boardsOutcome, defaultResult] = await Promise.all([
         pinterestAnalyticsService.getBoardsPerformance(days).catch(() => ({ success: true, boards: [], days } as any)),
-        pinterestAnalyticsService.getBoards().catch(() => ({ success: true, boards: [] } as any)),
+        boardsPromise,
         pinterestAnalyticsService.getDefaultBoard().catch(() => null),
       ]);
 
@@ -152,7 +168,13 @@ export default function PinterestAnalytics({ days }: Props) {
       setOverviewPins(pinsResult.pins);
       setOverviewSummary(pinsResult.summary);
       setBoardsPerf(Array.isArray((perfResult as any)?.boards) ? (perfResult as any).boards : []);
-      setBoards(Array.isArray((boardsResult as any)?.boards) ? (boardsResult as any).boards : []);
+      if (boardsOutcome.ok) {
+        setBoards(Array.isArray((boardsOutcome.value as any)?.boards) ? (boardsOutcome.value as any).boards : []);
+      } else {
+        setBoards([]);
+        const message = boardsOutcome.err instanceof Error ? boardsOutcome.err.message : 'Failed to load boards';
+        setBoardsLoadError(message);
+      }
       setDefaultBoard(defaultResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Pinterest analytics');
@@ -217,6 +239,51 @@ export default function PinterestAnalytics({ days }: Props) {
       alert(err instanceof Error ? err.message : 'Failed to save default board');
     } finally {
       setSavingDefault(false);
+    }
+  };
+
+  const openCreateBoard = () => {
+    setCreateBoardName('');
+    setCreateBoardDescription('');
+    setCreateBoardSecret(false);
+    setCreateBoardSetDefault(true);
+    setCreateBoardError(null);
+    setCreateBoardOpen(true);
+  };
+
+  const handleCreateBoard = async () => {
+    const name = createBoardName.trim();
+    if (!name) {
+      setCreateBoardError('Board name is required');
+      return;
+    }
+
+    setCreateBoardLoading(true);
+    setCreateBoardError(null);
+    try {
+      const board = await pinterestAnalyticsService.createBoard({
+        name,
+        description: createBoardDescription.trim() ? createBoardDescription.trim() : undefined,
+        privacy: createBoardSecret ? 'SECRET' : 'PUBLIC',
+      });
+
+      setBoardsLoadError(null);
+
+      const updatedBoards = await pinterestAnalyticsService.getBoards().catch(() => ({ success: true, boards: [] as PinterestBoard[] } as any));
+      setBoards(Array.isArray((updatedBoards as any)?.boards) ? (updatedBoards as any).boards : []);
+
+      setSelectedBoardId(board.id);
+
+      if (createBoardSetDefault) {
+        await pinterestAnalyticsService.setDefaultBoard({ id: board.id, name: board.name });
+        setDefaultBoard({ id: board.id, name: board.name });
+      }
+
+      setCreateBoardOpen(false);
+    } catch (err) {
+      setCreateBoardError(err instanceof Error ? err.message : 'Failed to create board');
+    } finally {
+      setCreateBoardLoading(false);
     }
   };
 
@@ -363,18 +430,27 @@ export default function PinterestAnalytics({ days }: Props) {
             <div className="mt-0.5 text-xs text-slate-500">Switch boards to see how each one performs over the last {days} days.</div>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
-            <select
-              value={selectedBoardId}
-              onChange={(e) => setSelectedBoardId(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-slate-400"
-            >
-              <option value="all">All boards</option>
-              {boardOptions.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}{defaultBoard?.id === b.id ? ' (default)' : ''}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <select
+                value={selectedBoardId}
+                onChange={(e) => setSelectedBoardId(e.target.value)}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-slate-400"
+              >
+                <option value="all">All boards</option>
+                {boardOptions.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}{defaultBoard?.id === b.id ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={openCreateBoard}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Plus size={14} /> New board
+              </button>
+            </div>
 
             {selectedBoardId !== 'all' ? (
               defaultBoard?.id === selectedBoardId ? (
@@ -394,6 +470,19 @@ export default function PinterestAnalytics({ days }: Props) {
             ) : null}
           </div>
         </div>
+
+        {boardsLoadError ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span className="font-semibold">Couldn&apos;t load boards.</span> {boardsLoadError}{' '}
+            <a href="/integrations" className="font-semibold underline">Reconnect Pinterest</a>
+          </div>
+        ) : null}
+
+        {!defaultBoard?.id ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <span className="font-semibold">Tip:</span> Set a default board for publishing (select a board, then click <span className="font-semibold">Set as default board</span>).
+          </div>
+        ) : null}
 
         {selectedBoardId === 'all' ? (
           <div className="mt-5">
@@ -568,6 +657,79 @@ export default function PinterestAnalytics({ days }: Props) {
           )}
         </div>
       </div>
+
+      {createBoardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Create board</h3>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-2">Board name</label>
+                <input
+                  value={createBoardName}
+                  onChange={(e) => setCreateBoardName(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                  placeholder="e.g. Product inspiration"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-2">Description (optional)</label>
+                <textarea
+                  value={createBoardDescription}
+                  onChange={(e) => setCreateBoardDescription(e.target.value)}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                  placeholder="What will you save here?"
+                  rows={3}
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={createBoardSecret}
+                  onChange={(e) => setCreateBoardSecret(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                Secret board
+              </label>
+
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={createBoardSetDefault}
+                  onChange={(e) => setCreateBoardSetDefault(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                Set as default publishing board
+              </label>
+
+              {createBoardError ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{createBoardError}</div>
+              ) : null}
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setCreateBoardOpen(false)}
+                className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                disabled={createBoardLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateBoard()}
+                className="flex-1 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                disabled={createBoardLoading || !createBoardName.trim()}
+              >
+                {createBoardLoading ? 'Creating...' : 'Create board'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3186,6 +3186,57 @@ app.get('/api/pinterest/boards', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/pinterest/boards — create a board for the connected Pinterest user
+app.post('/api/pinterest/boards', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'pinterest');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ success: false, error: 'Pinterest access token missing or expired — please connect Pinterest' });
+    }
+
+    const input = (req.body || {}) as any;
+    const name = typeof input?.name === 'string' ? input.name.trim() : '';
+    const description = typeof input?.description === 'string' ? input.description.trim() : '';
+    const privacyRaw = typeof input?.privacy === 'string' ? input.privacy.trim().toUpperCase() : '';
+    const privacy = privacyRaw === 'SECRET' ? 'SECRET' : 'PUBLIC';
+
+    if (!name) return res.status(400).json({ success: false, error: 'Board name is required' });
+
+    const createBody: any = { name, is_ads_only: false, privacy };
+    if (description) createBody.description = description;
+
+    const resp = await axios.post('https://api.pinterest.com/v5/boards', createBody, {
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    const data: any = resp.data || {};
+    if (resp.status >= 400) {
+      let msg = data?.message || data?.error || `Pinterest API error ${resp.status}`;
+      if (typeof msg === 'string' && msg.includes('boards:write')) {
+        msg = 'Pinterest permission missing: boards:write. Reconnect Pinterest in Integrations, then try again.';
+      }
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    const boardId = String(data?.id || '').trim();
+    const boardName = String(data?.name || '').trim() || name;
+    if (!boardId) {
+      return res.status(500).json({ success: false, error: 'Pinterest returned an invalid board id' });
+    }
+
+    return res.json({ success: true, board: { id: boardId, name: boardName } });
+  } catch (error) {
+    console.error('Pinterest create board error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to create Pinterest board' });
+  }
+});
+
 // Mailchimp (API key)
 app.post('/api/integrations/mailchimp/connect', async (req: Request, res: Response) => {
   try {
@@ -7388,7 +7439,7 @@ const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField
   // media.write is NOT a standard OAuth 2.0 scope — requesting it causes Twitter to reject the auth URL entirely.
   // tweet.write is sufficient for posting tweets and uploading media via the v1.1 media upload endpoint.
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
-  pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
+  pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,boards:write,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish,threads_manage_insights,threads_read_replies,threads_manage_replies,threads_location_tagging', idField: 'appId' },
 };
@@ -14231,7 +14282,10 @@ async function publishToplatform(
       });
       const pinData: any = pinResp.data || {};
       if (pinResp.status >= 400) {
-        const msg = pinData?.message || pinData?.error || `Pinterest API error ${pinResp.status}`;
+        let msg = pinData?.message || pinData?.error || `Pinterest API error ${pinResp.status}`;
+        if (typeof msg === 'string' && msg.includes('boards:write')) {
+          msg = 'Pinterest permission missing: boards:write. Reconnect Pinterest in Integrations, then try again.';
+        }
         return { status: 'failed', error: msg };
       }
       const pinId = String(pinData?.id || '').trim();
