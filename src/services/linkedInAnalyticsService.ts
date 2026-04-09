@@ -107,6 +107,12 @@ export type LinkedInCompanyStatsResponse = {
   synced_at: string | null;
 };
 
+export type LinkedInOrganization = {
+  id: string;
+  name: string;
+  picture_url?: string | null;
+};
+
 export const linkedInAnalyticsService = {
   async sync(): Promise<LinkedInSyncResult> {
     const result = await apiFetch<{ success: boolean; synced: number; errors?: string[] }>(
@@ -114,6 +120,10 @@ export const linkedInAnalyticsService = {
       { method: 'POST', headers: { 'Content-Type': 'application/json' } }
     );
     return { synced: result.synced, errors: result.errors };
+  },
+
+  async listOrganizations(): Promise<{ success: boolean; organizations: LinkedInOrganization[] }> {
+    return apiFetch('/api/social/linkedin/organizations');
   },
 
   async getProfile(): Promise<LinkedInProfileResponse> {
