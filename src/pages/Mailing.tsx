@@ -35,7 +35,10 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 const STATUS_BADGE: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
   scheduled: 'bg-amber-50 text-amber-700',
+  sending: 'bg-blue-50 text-blue-700',
   sent: 'bg-emerald-50 text-emerald-700',
+  partially_failed: 'bg-amber-50 text-amber-700',
+  failed: 'bg-red-50 text-red-600',
   active: 'bg-emerald-50 text-emerald-700',
   paused: 'bg-amber-50 text-amber-700',
 };
@@ -337,6 +340,7 @@ function CampaignsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: '', subject: '', preview_text: '', segment_id: '', content: '' });
   const [saving, setSaving] = useState(false);
+  const [sendingId, setSendingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -361,6 +365,20 @@ function CampaignsTab() {
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this campaign?')) return;
     await mailingService.deleteCampaign(id); await load();
+  };
+
+  const handleSend = async (c: MailingCampaign) => {
+    if (!confirm(`Send "${c.name}" to your subscribed contacts now?`)) return;
+    setSendingId(c.id);
+    try {
+      const result = await mailingService.sendCampaign(c.id);
+      alert(`Queued ${result.queued} email${result.queued === 1 ? '' : 's'}.`);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to send campaign');
+    } finally {
+      setSendingId(null);
+    }
   };
 
   return (
@@ -430,7 +448,17 @@ function CampaignsTab() {
                   </td>
                   <td className="px-4 py-3 text-slate-500">{formatDate(c.created_at)}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => void handleDelete(c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleSend(c)}
+                        disabled={sendingId === c.id || c.status === 'sending' || c.status === 'sent'}
+                        title={c.status === 'sent' ? 'Already sent' : 'Send now'}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+                      >
+                        {sendingId === c.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                      </button>
+                      <button onClick={() => void handleDelete(c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                    </div>
                   </td>
                 </tr>
               ))}

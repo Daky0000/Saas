@@ -160,6 +160,19 @@ const PLATFORMS: PlatformDef[] = [
     redirectHint: 'No OAuth needed — users connect with their own Mailchimp API key in the Integrations page.',
   },
   {
+    id: 'resend',
+    name: 'Resend',
+    description: 'Email delivery provider used to send Mailing campaigns and track opens/clicks via webhooks.',
+    icon: 'R',
+    accentClass: 'bg-rose-600 text-white font-black',
+    fields: [
+      { id: 'apiKey', label: 'API Key', placeholder: 're_xxxxxxxxxxxxx', type: 'password', helpText: 'From Resend dashboard → API Keys. Full access recommended for MVP.' },
+      { id: 'domain', label: 'From address', placeholder: 'noreply@contentflow.app', type: 'text', helpText: 'The email address used in the "From" field (e.g., noreply@yourdomain.com or no-reply@resend.dev).' },
+    ],
+    docsUrl: 'https://resend.com/docs',
+    redirectHint: 'No OAuth needed. After saving, enable it. Webhook URL: /webhooks/resend',
+  },
+  {
     id: 'hubtel',
     name: 'Hubtel (Payments)',
     description: 'Hubtel payment gateway credentials for processing GHS subscription payments.',
@@ -183,6 +196,8 @@ export default function AdminIntegrations() {
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [resendTo, setResendTo] = useState('');
+  const [resendSending, setResendSending] = useState(false);
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [testMessage, setTestMessage] = useState<string | null>(null);
@@ -292,6 +307,25 @@ export default function AdminIntegrations() {
       setTestMessage(e instanceof Error ? e.message : 'Test failed');
     } finally {
       setTesting(null);
+    }
+  };
+
+  const sendResendTestEmail = async () => {
+    setResendSending(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/resend/test-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ to: resendTo }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok || data.success === false) throw new Error(data.error || 'Failed to send test email');
+      alert(data.message || 'Test email sent.');
+      setResendTo('');
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to send test email');
+    } finally {
+      setResendSending(false);
     }
   };
 
@@ -453,6 +487,29 @@ export default function AdminIntegrations() {
                   ))}
                 </div>
               )}
+
+              {activeDef.id === 'resend' ? (
+                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Test email</div>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={resendTo}
+                      onChange={(e) => setResendTo(e.target.value)}
+                      placeholder="you@example.com"
+                      className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void sendResendTestEmail()}
+                      disabled={resendSending || !resendTo.trim()}
+                      className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {resendSending ? <Loader2 size={16} className="animate-spin" /> : 'Send test'}
+                    </button>
+                  </div>
+                  <div className="mt-2 text-[11px] leading-5 text-slate-500">Uses the saved Resend API key + from address.</div>
+                </div>
+              ) : null}
 
               {saveError ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{saveError}</div> : null}
 

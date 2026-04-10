@@ -40,10 +40,12 @@ export type MailingCampaign = {
   content: string;
   segment_id: string | null;
   segment_name: string | null;
-  status: 'draft' | 'scheduled' | 'sent';
+  status: 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed' | 'partially_failed';
   scheduled_at: string | null;
   sent_at: string | null;
   recipient_count: number;
+  sent_count?: number;
+  failed_count?: number;
   created_at: string;
   updated_at: string;
 };
@@ -158,6 +160,13 @@ export const mailingService = {
 
   async deleteCampaign(id: string): Promise<void> {
     await fetch(`${BASE}/campaigns/${id}`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  async sendCampaign(id: string): Promise<{ queued: number }> {
+    const res = await fetch(`${BASE}/campaigns/${id}/send`, { method: 'POST', headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; queued?: number; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to send campaign');
+    return { queued: Number(data.queued || 0) };
   },
 
   // Automations

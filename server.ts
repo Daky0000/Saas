@@ -323,6 +323,10 @@ const WORKFLOW_QUEUE_NAME = 'workflow-automation';
 let workflowQueue: Queue | null = null;
 let workflowWorker: Worker | null = null;
 
+const MAILING_QUEUE_NAME = 'mailing-send';
+let mailingQueue: Queue | null = null;
+let mailingWorker: Worker | null = null;
+
 function isBullMqEnabled() {
   return Boolean(REDIS_URL && REDIS_URL.trim());
 }
@@ -9513,6 +9517,19 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
         if (resp.status === 200) return res.json({ success: true, message: 'Mailchimp credentials valid' });
         return res.json({ success: false, error: 'Invalid Mailchimp API key or server prefix' });
       }
+      case 'resend': {
+        const apiKey = String((cfg as any)?.apiKey || process.env.RESEND_API_KEY || '').trim();
+        const from = String((cfg as any)?.domain || (cfg as any)?.fromEmail || process.env.RESEND_DOMAIN || '').trim();
+        if (!apiKey || !from) return res.json({ success: false, error: 'Missing Resend credentials' });
+
+        const resp = await axios.get('https://api.resend.com/domains', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status >= 200 && resp.status < 300) return res.json({ success: true, message: 'Resend credentials valid' });
+        return res.json({ success: false, error: 'Invalid Resend API key' });
+      }
       case 'chatgpt': {
         const { apiKey } = cfg;
         if (!apiKey) return res.json({ success: false, error: 'Missing OpenAI API key' });
@@ -9570,6 +9587,54 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
   } catch (err) {
     console.error('Platform test error:', err);
     return res.status(500).json({ success: false, error: 'Test failed' });
+  }
+});
+
+// POST /api/admin/resend/test-email — send a test email via Resend (admin only)
+app.post('/api/admin/resend/test-email', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const to = String((req.body as any)?.to || '').trim();
+    if (!to || !to.includes('@')) {
+      return res.status(400).json({ success: false, error: 'Valid "to" email is required' });
+    }
+
+    const cfg = await getPlatformConfig('resend');
+    const apiKey = String((cfg as any)?.apiKey || process.env.RESEND_API_KEY || '').trim();
+    const from = String((cfg as any)?.domain || (cfg as any)?.fromEmail || process.env.RESEND_DOMAIN || '').trim();
+    if (!apiKey || !from) {
+      return res.status(400).json({ success: false, error: 'Resend is not configured' });
+    }
+
+    const html = `
+      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height: 1.5;">
+        <h2 style="margin: 0 0 12px;">Contentflow test email</h2>
+        <p style="margin: 0 0 12px;">If you received this, your Resend integration is working.</p>
+        <p style="margin: 0; color: #64748b; font-size: 12px;">Sent at ${new Date().toISOString()}</p>
+      </div>
+    `;
+
+    const resp = await axios.post(
+      'https://api.resend.com/emails',
+      { from, to, subject: 'Contentflow test email', html },
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
+    );
+
+    if (resp.status >= 200 && resp.status < 300) {
+      return res.json({ success: true, message: `Test email sent to ${to}` });
+    }
+
+    const errMsg = (resp.data as any)?.message || (resp.data as any)?.error || `Resend returned ${resp.status}`;
+    return res.status(400).json({ success: false, error: errMsg });
+  } catch (err) {
+    console.error('Resend test email error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to send test email' });
   }
 });
 
@@ -15118,6 +15183,385 @@ app.use((err: any, req: Request, res: Response, next: Function) => {
   return res.status(status).json({ success: false, error: message });
 });
 
+// ─── Mailing: Email Sending (Resend) ─────────────────────────────────────────
+
+type ResendSendConfig = { apiKey: string; from: string };
+
+function getBackendPublicBaseUrl(): string {
+  const raw = String(process.env.BACKEND_PUBLIC_URL || process.env.PUBLIC_API_URL || process.env.VITE_API_BASE_URL || '').trim();
+  if (raw) return raw.replace(/\/$/, '');
+  return `http://localhost:${PORT}`;
+}
+
+async function getResendSendConfig(): Promise<ResendSendConfig | null> {
+  const envKey = String(process.env.RESEND_API_KEY || '').trim();
+  const envFrom = String(process.env.RESEND_DOMAIN || '').trim();
+  if (envKey && envFrom) {
+    return { apiKey: envKey, from: envFrom };
+  }
+
+  const enabled = await isPlatformEnabled('resend').catch(() => false);
+  if (!enabled) return null;
+
+  const cfg = await getPlatformConfig('resend').catch(() => ({} as any));
+  const apiKey = String((cfg as any)?.apiKey || '').trim();
+  const from = String((cfg as any)?.domain || (cfg as any)?.fromEmail || '').trim();
+  if (!apiKey || !from) return null;
+  return { apiKey, from };
+}
+
+function renderMailingTemplate(template: string, data: Record<string, any>, unsubscribeUrl: string): string {
+  const vars: Record<string, any> = { ...data, unsubscribe_url: unsubscribeUrl, unsubscribeUrl };
+  let html = String(template || '').trim();
+  if (!html) html = '<p>Hello!</p>';
+
+  const rendered = html.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, keyRaw) => {
+    const key = String(keyRaw || '').trim();
+    if (!key) return '';
+    const v = Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : Object.prototype.hasOwnProperty.call(vars, key.toLowerCase()) ? vars[key.toLowerCase()] : undefined;
+    if (v === null || v === undefined) return '';
+    return String(v);
+  });
+
+  const hasUnsubLink = /unsubscribe/i.test(rendered) || /\{\{\s*unsubscribe_url\s*\}\}/i.test(html) || /\{\{\s*unsubscribeUrl\s*\}\}/i.test(html);
+  const withFooter = hasUnsubLink
+    ? rendered
+    : `${rendered}\n<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;" />\n<p style="font-size:12px;color:#64748b;margin:0;">If you’d like to stop receiving these emails, <a href="${unsubscribeUrl}" style="color:#0f172a;">unsubscribe</a>.</p>`;
+
+  if (/<html[\s>]/i.test(withFooter)) return withFooter;
+  return `<!doctype html><html><body>${withFooter}</body></html>`;
+}
+
+async function resendSendEmail(apiKey: string, payload: { from: string; to: string; subject: string; html: string; headers?: Record<string, string> }) {
+  const resp = await axios.post('https://api.resend.com/emails', payload, {
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  const ok = resp.status >= 200 && resp.status < 300;
+  const id = String((resp.data as any)?.id || '').trim();
+  if (!ok || !id) {
+    const msg = String((resp.data as any)?.message || (resp.data as any)?.error || `Resend returned ${resp.status}`);
+    throw new Error(msg);
+  }
+  return { id };
+}
+
+async function ensureMailingQueue() {
+  if (mailingQueue || !isBullMqEnabled() || !pool) return;
+  try {
+    const redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false });
+    mailingQueue = new Queue(MAILING_QUEUE_NAME, {
+      connection: redis as any,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 500 },
+      },
+    });
+
+    mailingWorker = new Worker(
+      MAILING_QUEUE_NAME,
+      async (job) => {
+        if (!pool) return { ok: false, error: 'DB not ready' };
+        const { userId, campaignId } = (job.data || {}) as any;
+        if (!userId || !campaignId) return { ok: false, error: 'Missing job payload' };
+        const result = await sendMailingCampaignNow(String(userId), String(campaignId));
+        return { ok: true, ...result };
+      },
+      { connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }) as any, concurrency: 2 }
+    );
+
+    mailingWorker.on('error', (err) => console.error('[MailingQueue] Worker error:', err));
+  } catch (err) {
+    console.error('[MailingQueue] Init failed:', err);
+    mailingQueue = null;
+    mailingWorker = null;
+  }
+}
+
+async function enqueueMailingCampaignSend(userId: string, campaignId: string): Promise<string | null> {
+  if (!pool) return null;
+  if (!isBullMqEnabled()) {
+    void sendMailingCampaignNow(userId, campaignId).catch((err) => console.error('[Mailing] Inline send error:', err));
+    return null;
+  }
+  await ensureMailingQueue();
+  if (!mailingQueue) {
+    void sendMailingCampaignNow(userId, campaignId).catch((err) => console.error('[Mailing] Inline send error:', err));
+    return null;
+  }
+  try {
+    const job = await mailingQueue.add('mailing-send', { userId, campaignId }, { jobId: `mailing:${campaignId}` });
+    return String(job.id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err || '');
+    if (/Job.*already exists/i.test(msg)) return null;
+    console.error('[MailingQueue] Enqueue error:', err);
+    void sendMailingCampaignNow(userId, campaignId).catch(() => undefined);
+    return null;
+  }
+}
+
+async function sendMailingCampaignNow(userId: string, campaignId: string): Promise<{ total: number; sent: number; failed: number }> {
+  if (!pool) throw new Error('Database not configured');
+
+  const resendCfg = await getResendSendConfig();
+  if (!resendCfg) throw new Error('Resend is not configured. Ask an admin to enable and configure Resend in Admin → Integrations.');
+
+  const campaignRes = await pool.query(
+    'SELECT id, user_id, subject, preview_text, content FROM mailing_campaigns WHERE id=$1 AND user_id=$2 LIMIT 1',
+    [campaignId, userId]
+  );
+  const campaign = campaignRes.rows[0] as any;
+  if (!campaign) throw new Error('Campaign not found');
+
+  // Ensure unsubscribe tokens exist for all contacts (best-effort)
+  await pool
+    .query(
+      `UPDATE mailing_contacts
+       SET unsubscribe_token = COALESCE(unsubscribe_token, gen_random_uuid()::text),
+           updated_at = NOW()
+       WHERE user_id=$1 AND unsubscribe_token IS NULL`,
+      [userId]
+    )
+    .catch(() => undefined);
+
+  const contactsRes = await pool.query(
+    `SELECT id, email, first_name, last_name, unsubscribe_token
+     FROM mailing_contacts
+     WHERE user_id=$1 AND subscribed=true
+     ORDER BY created_at ASC`,
+    [userId]
+  );
+
+  const contacts = (contactsRes.rows as any[]).filter((c) => String(c.email || '').includes('@'));
+  const total = contacts.length;
+  if (total === 0) {
+    await pool
+      .query(`UPDATE mailing_campaigns SET status='failed', updated_at=NOW() WHERE id=$1 AND user_id=$2`, [campaignId, userId])
+      .catch(() => undefined);
+    throw new Error('No subscribed contacts to send to');
+  }
+
+  // Reset counters for idempotency (best-effort)
+  await pool
+    .query(
+      `UPDATE mailing_campaigns
+       SET status='sending', recipient_count=$1, sent_count=0, failed_count=0, sent_at=NULL, updated_at=NOW()
+       WHERE id=$2 AND user_id=$3`,
+      [total, campaignId, userId]
+    )
+    .catch(() => undefined);
+
+  const subject = String(campaign.subject || '').trim();
+  const baseTemplate = String(campaign.content || '');
+  const from = resendCfg.from;
+  const backendBase = getBackendPublicBaseUrl();
+
+  let sent = 0;
+  let failed = 0;
+
+  const concurrency = 5;
+  const executing = new Set<Promise<void>>();
+
+  const sendOne = async (c: any) => {
+    const unsubscribeToken = String(c.unsubscribe_token || '').trim();
+    const unsubscribeUrl = `${backendBase}/unsubscribe?token=${encodeURIComponent(unsubscribeToken)}`;
+    const html = renderMailingTemplate(baseTemplate, { first_name: c.first_name, last_name: c.last_name, email: c.email }, unsubscribeUrl);
+
+    try {
+      const headers: Record<string, string> = {
+        'X-Contentflow-User-Id': String(userId),
+        'X-Contentflow-Campaign-Id': String(campaignId),
+        'X-Contentflow-Contact-Id': String(c.id),
+      };
+      const { id } = await resendSendEmail(resendCfg.apiKey, { from, to: String(c.email), subject, html, headers });
+
+      await pool!.query(
+        `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
+        [randomUUID(), userId, campaignId, c.id, 'sent', JSON.stringify({ provider: 'resend', email_id: id })]
+      ).catch(() => undefined);
+
+      await pool!.query(
+        `UPDATE mailing_campaigns SET sent_count = COALESCE(sent_count,0) + 1, updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [campaignId, userId]
+      ).catch(() => undefined);
+
+      sent += 1;
+    } catch (err) {
+      failed += 1;
+      await pool!.query(
+        `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
+        [randomUUID(), userId, campaignId, c.id, 'failed', JSON.stringify({ provider: 'resend', error: err instanceof Error ? err.message : String(err || '') })]
+      ).catch(() => undefined);
+
+      await pool!.query(
+        `UPDATE mailing_campaigns SET failed_count = COALESCE(failed_count,0) + 1, updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [campaignId, userId]
+      ).catch(() => undefined);
+    }
+  };
+
+  for (const c of contacts) {
+    const p = sendOne(c);
+    executing.add(p);
+    const cleanup = () => executing.delete(p);
+    p.then(cleanup).catch(cleanup);
+
+    if (executing.size >= concurrency) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.allSettled(Array.from(executing));
+
+  const finalStatus = sent === 0 && failed > 0 ? 'failed' : failed > 0 ? 'partially_failed' : 'sent';
+  await pool.query(
+    `UPDATE mailing_campaigns SET status=$1, sent_at=NOW(), updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+    [finalStatus, campaignId, userId]
+  ).catch(() => undefined);
+
+  return { total, sent, failed };
+}
+
+function mapResendEventType(raw: string): string {
+  const t = String(raw || '').toLowerCase();
+  if (t.includes('delivered')) return 'delivered';
+  if (t.includes('opened') || t === 'open') return 'open';
+  if (t.includes('clicked') || t === 'click') return 'click';
+  if (t.includes('bounced') || t.includes('bounce')) return 'bounced';
+  if (t.includes('complain')) return 'complained';
+  return 'unknown';
+}
+
+// POST /webhooks/resend — handle Resend delivery/open/click webhooks (no auth)
+app.post('/webhooks/resend', async (req: Request, res: Response) => {
+  try {
+    if (!pool) return res.status(200).json({ ok: true });
+
+    const body: any = req.body || {};
+    const rawType = String(body?.type || body?.event || body?.name || '').trim();
+    const eventType = mapResendEventType(rawType);
+    if (eventType === 'unknown') return res.status(200).json({ ok: true });
+
+    const data: any = body?.data || body?.payload || body;
+    const emailId = String(data?.email_id || data?.emailId || data?.id || body?.id || '').trim();
+    if (!emailId) return res.status(200).json({ ok: true });
+
+    // Find the original "sent" event to map provider email_id -> user/campaign/contact.
+    const lookup = await pool.query(
+      `SELECT user_id, campaign_id, contact_id
+       FROM mailing_email_events
+       WHERE event_type='sent' AND metadata->>'email_id'=$1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [emailId]
+    );
+    const row = lookup.rows[0] as any;
+    if (!row?.user_id) return res.status(200).json({ ok: true });
+
+    await pool.query(
+      `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
+      [
+        randomUUID(),
+        row.user_id,
+        row.campaign_id || null,
+        row.contact_id || null,
+        eventType,
+        JSON.stringify({ provider: 'resend', email_id: emailId, raw_type: rawType, data }),
+      ]
+    ).catch(() => undefined);
+
+    if (eventType === 'open') {
+      void publishWorkflowEvent('email_opened', {
+        user_id: row.user_id,
+        campaign_id: row.campaign_id || null,
+        contact_id: row.contact_id || null,
+        email_id: emailId,
+        opened_at: new Date().toISOString(),
+      }).catch(() => undefined);
+    }
+    if (eventType === 'click') {
+      void publishWorkflowEvent('email_clicked', {
+        user_id: row.user_id,
+        campaign_id: row.campaign_id || null,
+        contact_id: row.contact_id || null,
+        email_id: emailId,
+        clicked_at: new Date().toISOString(),
+      }).catch(() => undefined);
+    }
+
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('Resend webhook error:', err);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+async function unsubscribeByToken(token: string): Promise<{ userId: string; contactId: string; email: string; unsubscribedAt: string | null } | null> {
+  if (!pool) return null;
+  const t = String(token || '').trim();
+  if (!t) return null;
+
+  const { rows } = await pool.query(
+    `UPDATE mailing_contacts
+     SET subscribed=false,
+         unsubscribed_at=COALESCE(unsubscribed_at, NOW()),
+         updated_at=NOW()
+     WHERE unsubscribe_token=$1
+     RETURNING user_id, id, email, unsubscribed_at`,
+    [t]
+  );
+  const row = rows[0] as any;
+  if (!row) return null;
+
+  void publishWorkflowEvent('contact_unsubscribed', {
+    user_id: row.user_id,
+    contact_id: row.id,
+    email: row.email,
+    subscribed: false,
+    unsubscribed_at: row.unsubscribed_at || null,
+  }).catch(() => undefined);
+
+  return { userId: row.user_id, contactId: row.id, email: row.email, unsubscribedAt: row.unsubscribed_at || null };
+}
+
+// POST /api/mailing/unsubscribe — public endpoint used by unsubscribe links
+app.post('/api/mailing/unsubscribe', async (req: Request, res: Response) => {
+  try {
+    const token = String((req.body as any)?.token || '').trim();
+    const result = await unsubscribeByToken(token);
+    if (!result) return res.status(404).json({ success: false, error: 'Invalid token' });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('unsubscribe error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to unsubscribe' });
+  }
+});
+
+// GET /unsubscribe?token=... — convenience HTML endpoint for email clients
+app.get('/unsubscribe', async (req: Request, res: Response) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    const result = await unsubscribeByToken(token);
+    if (!result) {
+      return res
+        .status(404)
+        .send('<!doctype html><html><body><h2>Unsubscribe</h2><p>Invalid or expired token.</p></body></html>');
+    }
+    return res
+      .status(200)
+      .send('<!doctype html><html><body><h2>Unsubscribed</h2><p>You have been unsubscribed successfully.</p></body></html>');
+  } catch (err) {
+    console.error('unsubscribe page error:', err);
+    return res.status(500).send('<!doctype html><html><body><h2>Error</h2><p>Failed to unsubscribe.</p></body></html>');
+  }
+});
+
 // ─── Mailing API Routes ───────────────────────────────────────────────────────
 
 // GET /api/mailing/contacts
@@ -15148,12 +15592,17 @@ app.post('/api/mailing/contacts', async (req: Request, res: Response) => {
     const { email, first_name, last_name, source, tags, email_marketing_consent } = req.body;
     if (!email || !String(email).includes('@')) return res.status(400).json({ success: false, error: 'Valid email required' });
     const id = randomUUID();
+    const unsubscribeToken = randomUUID();
     const { rows } = await pool!.query(
-      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, email_marketing_consent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (user_id, email) DO UPDATE SET first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, updated_at=NOW()
+      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, email_marketing_consent, unsubscribe_token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (user_id, email) DO UPDATE SET
+         first_name=EXCLUDED.first_name,
+         last_name=EXCLUDED.last_name,
+         unsubscribe_token=COALESCE(mailing_contacts.unsubscribe_token, EXCLUDED.unsubscribe_token),
+         updated_at=NOW()
        RETURNING *`,
-      [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, source || 'manual', !!email_marketing_consent]
+      [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, source || 'manual', !!email_marketing_consent, unsubscribeToken]
     );
     const contact = rows[0];
     if (Array.isArray(tags) && tags.length) {
@@ -15357,6 +15806,67 @@ app.patch('/api/mailing/campaigns/:id', async (req: Request, res: Response) => {
     if (!rows.length) return res.status(404).json({ success: false, error: 'Campaign not found' });
     return res.json({ success: true, campaign: rows[0] });
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update campaign' }); }
+});
+
+// POST /api/mailing/campaigns/:id/send — queue sending via Resend
+app.post('/api/mailing/campaigns/:id/send', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const campaignId = String(req.params.id || '').trim();
+    if (!campaignId) return res.status(400).json({ success: false, error: 'Campaign id required' });
+
+    const campaignRes = await pool.query(
+      `SELECT id, status FROM mailing_campaigns WHERE id=$1 AND user_id=$2 LIMIT 1`,
+      [campaignId, auth.userId]
+    );
+    const campaign = campaignRes.rows[0] as any;
+    if (!campaign) return res.status(404).json({ success: false, error: 'Campaign not found' });
+
+    const currentStatus = String(campaign.status || '').toLowerCase();
+    if (currentStatus === 'sending') return res.status(400).json({ success: false, error: 'Campaign is already sending' });
+    if (currentStatus === 'sent') return res.status(400).json({ success: false, error: 'Campaign already sent' });
+
+    const resendCfg = await getResendSendConfig();
+    if (!resendCfg) {
+      return res.status(400).json({
+        success: false,
+        error: 'Resend is not configured. Ask an admin to enable and configure Resend in Admin → Integrations.',
+      });
+    }
+
+    await pool
+      .query(
+        `UPDATE mailing_contacts
+         SET unsubscribe_token = COALESCE(unsubscribe_token, gen_random_uuid()::text),
+             updated_at=NOW()
+         WHERE user_id=$1 AND unsubscribe_token IS NULL`,
+        [auth.userId]
+      )
+      .catch(() => undefined);
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int as count FROM mailing_contacts WHERE user_id=$1 AND subscribed=true`,
+      [auth.userId]
+    );
+    const total = Number((countRes.rows[0] as any)?.count || 0);
+    if (total === 0) return res.status(400).json({ success: false, error: 'No subscribed contacts to send to' });
+
+    await pool.query(
+      `UPDATE mailing_campaigns
+       SET status='sending', recipient_count=$1, sent_count=0, failed_count=0, sent_at=NULL, updated_at=NOW()
+       WHERE id=$2 AND user_id=$3`,
+      [total, campaignId, auth.userId]
+    ).catch(() => undefined);
+
+    await enqueueMailingCampaignSend(auth.userId, campaignId).catch(() => undefined);
+    return res.json({ success: true, queued: total });
+  } catch (err) {
+    console.error('send mailing campaign error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to send campaign' });
+  }
 });
 
 // DELETE /api/mailing/campaigns/:id
