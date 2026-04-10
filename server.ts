@@ -319,6 +319,10 @@ const CAMPAIGN_QUEUE_NAME = 'campaign-jobs';
 let campaignQueue: Queue | null = null;
 let campaignWorker: Worker | null = null;
 
+const WORKFLOW_QUEUE_NAME = 'workflow-automation';
+let workflowQueue: Queue | null = null;
+let workflowWorker: Worker | null = null;
+
 function isBullMqEnabled() {
   return Boolean(REDIS_URL && REDIS_URL.trim());
 }
@@ -1106,6 +1110,89 @@ async function ensureDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS mailing_email_events_contact_idx ON mailing_email_events (contact_id);`).catch(() => undefined);
 
   // ── End Mailing Module ──────────────────────────────────────────────────────
+
+  // ─── Workflow Automation Module (MVP) ───────────────────────────────────────
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      trigger_type TEXT NOT NULL,
+      trigger_config JSONB DEFAULT '{}'::jsonb,
+      condition_mode TEXT NOT NULL DEFAULT 'AND',
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      last_run_at TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflows_user_idx ON workflows (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflows_trigger_idx ON workflows (user_id, trigger_type);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflow_conditions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      field TEXT NOT NULL,
+      operator TEXT NOT NULL,
+      value JSONB NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflow_conditions_workflow_idx ON workflow_conditions (workflow_id, sort_order);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflow_actions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      action_type TEXT NOT NULL,
+      action_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      delay_seconds INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflow_actions_workflow_idx ON workflow_actions (workflow_id, sort_order);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workflow_id TEXT REFERENCES workflows(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      trigger_type TEXT,
+      trigger_event_id TEXT,
+      trigger_data JSONB DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'queued',
+      error_message TEXT,
+      triggered_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflow_runs_workflow_idx ON workflow_runs (workflow_id, triggered_at);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflow_runs_user_idx ON workflow_runs (user_id, triggered_at);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflow_run_steps (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+      workflow_action_id TEXT REFERENCES workflow_actions(id) ON DELETE SET NULL,
+      action_type TEXT NOT NULL,
+      action_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      delay_seconds INTEGER NOT NULL DEFAULT 0,
+      step_number INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      result_data JSONB,
+      error_message TEXT,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflow_run_steps_run_idx ON workflow_run_steps (workflow_run_id, step_number);`).catch(() => undefined);
+
+  // ── End Workflow Automation Module ──────────────────────────────────────────
 
   // ── Analytics & Insights Engine Tables ──────────────────────────────────────
   await pool.query(`
@@ -1950,6 +2037,7 @@ ensureDatabase()
   .then(() => ensureSeedUsers())
   .then(() => ensureSeedPricingPlans())
   .then(() => startSocialAutomationProcessor())
+  .then(() => startWorkflowScheduler())
   .then(() => startTokenHealthMonitor())
   .catch((err) => {
     dbReady = false;
@@ -3373,6 +3461,14 @@ app.post('/api/posts/:platform/publish', async (req: Request, res: Response) => 
       media,
       hashtags,
     });
+
+    void publishWorkflowEvent('post_published', {
+      user_id: auth.userId,
+      platform: String(platform || '').trim().toLowerCase(),
+      post_id: (result as any)?.postId || null,
+      published_at: new Date().toISOString(),
+      engagement_count: 0,
+    }).catch(() => undefined);
 
     return res.json({ success: true, data: result });
   } catch (error) {
@@ -11189,6 +11285,16 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
     }
   }
   clearCalendarCacheForUser(user.userId);
+
+  void publishWorkflowEvent('post_created', {
+    user_id: user.userId,
+    post_id: id,
+    platform: 'all',
+    title: rows[0]?.title || title || '',
+    status: rows[0]?.status || status || 'draft',
+    created_at: rows[0]?.created_at || new Date().toISOString(),
+  }).catch(() => undefined);
+
   return res.json({ success: true, post: rows[0] });
 });
 
@@ -15058,6 +15164,16 @@ app.post('/api/mailing/contacts', async (req: Request, res: Response) => {
         ).catch(() => undefined);
       }
     }
+
+    if (contact?.subscribed) {
+      void publishWorkflowEvent('contact_subscribed', {
+        user_id: auth.userId,
+        contact_id: contact.id,
+        email: contact.email,
+        subscribed: true,
+        created_at: contact.created_at || new Date().toISOString(),
+      }).catch(() => undefined);
+    }
     return res.json({ success: true, contact });
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create contact' }); }
 });
@@ -15068,6 +15184,9 @@ app.patch('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     const { first_name, last_name, subscribed, email_marketing_consent } = req.body;
+    const prevRes = await pool!.query(`SELECT subscribed, email FROM mailing_contacts WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    const prev = prevRes.rows[0];
+    if (!prev) return res.status(404).json({ success: false, error: 'Contact not found' });
     const { rows } = await pool!.query(
       `UPDATE mailing_contacts SET first_name=$1, last_name=$2, subscribed=$3, email_marketing_consent=$4,
        unsubscribed_at = CASE WHEN $3=false THEN NOW() ELSE NULL END, updated_at=NOW()
@@ -15075,6 +15194,22 @@ app.patch('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
       [first_name || null, last_name || null, subscribed !== false, !!email_marketing_consent, req.params.id, auth.userId]
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+    const updated = rows[0] as any;
+    const prevSubscribed = Boolean(prev.subscribed);
+    const nextSubscribed = Boolean(updated.subscribed);
+    if (prevSubscribed !== nextSubscribed) {
+      const eventType = nextSubscribed ? 'contact_subscribed' : 'contact_unsubscribed';
+      void publishWorkflowEvent(eventType, {
+        user_id: auth.userId,
+        contact_id: updated.id,
+        email: updated.email || prev.email,
+        subscribed: nextSubscribed,
+        unsubscribed_at: updated.unsubscribed_at || null,
+        updated_at: updated.updated_at || new Date().toISOString(),
+      }).catch(() => undefined);
+    }
+
     return res.json({ success: true, contact: rows[0] });
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update contact' }); }
 });
@@ -15318,6 +15453,1049 @@ app.get('/api/mailing/analytics', async (req: Request, res: Response) => {
 });
 
 // ─── End Mailing API Routes ───────────────────────────────────────────────────
+
+// ─── Workflow Automation (MVP) ────────────────────────────────────────────────
+
+type WorkflowConditionMode = 'AND' | 'OR';
+
+type WorkflowConditionInput = {
+  field: string;
+  operator: string;
+  value: any;
+  sort_order?: number;
+};
+
+type WorkflowActionInput = {
+  action_type: string;
+  action_config: any;
+  delay_seconds?: number;
+  sort_order?: number;
+};
+
+const WORKFLOW_TRIGGERS = {
+  post_created: {
+    id: 'post_created',
+    name: 'Post is created',
+    description: 'When a new post draft is created',
+    fields: [{ name: 'platform', type: 'select', options: ['facebook', 'instagram', 'twitter', 'linkedin', 'pinterest', 'all'] }],
+  },
+  post_published: {
+    id: 'post_published',
+    name: 'Post is published',
+    description: 'When a post goes live on a platform',
+    fields: [{ name: 'platform', type: 'select', options: ['facebook', 'instagram', 'twitter', 'linkedin', 'pinterest', 'all'] }],
+  },
+  engagement_threshold: {
+    id: 'engagement_threshold',
+    name: 'Engagement crosses threshold',
+    description: 'When a published post gets X likes/comments/shares',
+    fields: [
+      { name: 'metric', type: 'select', options: ['total_engagement', 'likes', 'comments', 'shares'] },
+      { name: 'min_value', type: 'number', placeholder: '100' },
+      { name: 'platform', type: 'select', options: ['facebook', 'instagram', 'twitter', 'linkedin', 'pinterest'] },
+    ],
+  },
+  campaign_created: {
+    id: 'campaign_created',
+    name: 'Campaign is created',
+    description: 'When a new campaign is set up',
+    fields: [],
+  },
+  email_opened: {
+    id: 'email_opened',
+    name: 'Email is opened',
+    description: 'When recipient opens campaign email',
+    fields: [],
+  },
+  email_clicked: {
+    id: 'email_clicked',
+    name: 'Email link is clicked',
+    description: 'When recipient clicks link in email',
+    fields: [],
+  },
+  contact_subscribed: {
+    id: 'contact_subscribed',
+    name: 'New contact subscribes',
+    description: 'When someone subscribes to email list',
+    fields: [],
+  },
+  contact_unsubscribed: {
+    id: 'contact_unsubscribed',
+    name: 'Contact unsubscribes',
+    description: 'When subscriber opts out of emails',
+    fields: [],
+  },
+  scheduled: {
+    id: 'scheduled',
+    name: 'Scheduled time',
+    description: 'Run on a schedule',
+    fields: [
+      { name: 'schedule', type: 'select', options: ['daily', 'weekly_monday', 'weekly_friday', 'monthly_first', 'monthly_last'] },
+      { name: 'time', type: 'time', placeholder: '09:00' },
+    ],
+  },
+} as const;
+
+const WORKFLOW_ACTIONS = {
+  send_email: {
+    id: 'send_email',
+    name: 'Send email',
+    description: 'Send an email to admin or contact (stubbed in MVP)',
+    fields: [
+      { name: 'to', type: 'select', options: ['admin', 'contact_email', 'post_creator'] },
+      { name: 'subject', type: 'text', placeholder: '{{post_id}} got engagement!' },
+      { name: 'template_id', type: 'text', label: 'Email template id (optional)' },
+      { name: 'variables', type: 'json', label: 'Template variables (optional)' },
+    ],
+  },
+  create_campaign: {
+    id: 'create_campaign',
+    name: 'Create campaign',
+    description: 'Auto-create a campaign (draft)',
+    fields: [
+      { name: 'template_id', type: 'text', label: 'Campaign template id (optional)' },
+      { name: 'channels', type: 'multiselect', options: ['facebook', 'instagram', 'twitter', 'linkedin', 'pinterest', 'email'] },
+      { name: 'name_prefix', type: 'text', placeholder: 'Auto-' },
+    ],
+  },
+  create_post: {
+    id: 'create_post',
+    name: 'Create post (draft)',
+    description: 'Create a new post draft',
+    fields: [
+      { name: 'title', type: 'text', placeholder: 'Auto post: {{campaign_id}}' },
+      { name: 'content', type: 'text', placeholder: 'Generated from workflow...' },
+    ],
+  },
+  tag_contact: {
+    id: 'tag_contact',
+    name: 'Add tag to contact',
+    description: 'Tag the contact in the mailing list',
+    fields: [{ name: 'tags', type: 'text', placeholder: 'high_performer,vip' }],
+  },
+  delay: {
+    id: 'delay',
+    name: 'Delay',
+    description: 'Wait before continuing',
+    fields: [{ name: 'seconds', type: 'number', placeholder: '3600' }],
+  },
+} as const;
+
+function workflowConditionMode(value: any): WorkflowConditionMode {
+  return String(value || '').toUpperCase() === 'OR' ? 'OR' : 'AND';
+}
+
+function getValueAtPath(obj: any, fieldPath: string) {
+  const path = String(fieldPath || '').trim();
+  if (!path) return undefined;
+  const parts = path.split('.').filter(Boolean);
+  let cur: any = obj;
+  for (const part of parts) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = (cur as any)[part];
+  }
+  return cur;
+}
+
+function evaluateWorkflowConditions(conditions: any[], triggerData: any, mode: WorkflowConditionMode): boolean {
+  if (!Array.isArray(conditions) || conditions.length === 0) return true;
+  const results = conditions.map((condition) => {
+    const field = String(condition?.field || '').trim();
+    const operator = String(condition?.operator || '').trim().toLowerCase();
+    const expected = condition?.value;
+    const actual = field ? getValueAtPath(triggerData, field) : undefined;
+
+    switch (operator) {
+      case 'equals':
+      case 'eq':
+        return actual === expected;
+      case 'not_equals':
+      case 'neq':
+        return actual !== expected;
+      case 'gt':
+        return Number(actual) > Number(expected);
+      case 'gte':
+        return Number(actual) >= Number(expected);
+      case 'lt':
+        return Number(actual) < Number(expected);
+      case 'lte':
+        return Number(actual) <= Number(expected);
+      case 'contains':
+        return String(actual ?? '').includes(String(expected ?? ''));
+      case 'in':
+        return Array.isArray(expected) ? expected.includes(actual) : false;
+      default:
+        return false;
+    }
+  });
+
+  return mode === 'OR' ? results.some(Boolean) : results.every(Boolean);
+}
+
+function renderWorkflowTemplate(template: string, data: any) {
+  const str = String(template || '');
+  return str.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key) => {
+    const value = getValueAtPath(data, key);
+    if (value === null || value === undefined) return '';
+    return String(value);
+  });
+}
+
+async function ensureWorkflowQueue() {
+  if (workflowQueue || !isBullMqEnabled() || !pool) return;
+  try {
+    const redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false });
+    workflowQueue = new Queue(WORKFLOW_QUEUE_NAME, {
+      connection: redis as any,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 500 },
+      },
+    });
+
+    workflowWorker = new Worker(
+      WORKFLOW_QUEUE_NAME,
+      async (job) => {
+        if (!pool) return { ok: false, error: 'DB not ready' };
+        const data: any = job.data || {};
+        const kind = String(data.kind || '');
+        if (kind === 'event') {
+          await processWorkflowEvent(String(data.eventType || ''), data.eventData || {});
+          return { ok: true };
+        }
+        if (kind === 'step') {
+          await processWorkflowStep(String(data.runId || ''), Number(data.stepNumber || 0));
+          return { ok: true };
+        }
+        return { ok: false, error: `Unknown workflow job kind: ${kind}` };
+      },
+      { connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }) as any, concurrency: 5 }
+    );
+
+    workflowWorker.on('error', (err) => console.error('[WorkflowQueue] Worker error:', err));
+  } catch (err) {
+    console.error('[WorkflowQueue] Init failed:', err);
+    workflowQueue = null;
+    workflowWorker = null;
+  }
+}
+
+async function enqueueWorkflowEvent(triggerType: string, eventData: any): Promise<string | null> {
+  if (!pool) return null;
+  if (!isBullMqEnabled()) {
+    void processWorkflowEvent(triggerType, eventData).catch((err) => console.error('[Workflow] Inline event error:', err));
+    return null;
+  }
+  await ensureWorkflowQueue();
+  if (!workflowQueue) {
+    void processWorkflowEvent(triggerType, eventData).catch((err) => console.error('[Workflow] Inline event error:', err));
+    return null;
+  }
+  try {
+    const job = await workflowQueue.add('workflow-event', { kind: 'event', eventType: triggerType, eventData });
+    return String(job.id);
+  } catch (err) {
+    console.error('[WorkflowQueue] Enqueue event error:', err);
+    void processWorkflowEvent(triggerType, eventData).catch(() => undefined);
+    return null;
+  }
+}
+
+async function enqueueWorkflowStep(runId: string, stepNumber: number, delaySeconds: number) {
+  if (!runId || !pool) return;
+  const delayMs = Math.max(0, Math.floor(Number(delaySeconds || 0) * 1000));
+  if (!isBullMqEnabled()) {
+    setTimeout(() => void processWorkflowStep(runId, stepNumber).catch(() => undefined), delayMs);
+    return;
+  }
+  await ensureWorkflowQueue();
+  if (!workflowQueue) {
+    setTimeout(() => void processWorkflowStep(runId, stepNumber).catch(() => undefined), delayMs);
+    return;
+  }
+  try {
+    await workflowQueue.add(
+      'workflow-step',
+      { kind: 'step', runId, stepNumber },
+      { jobId: `wf:${runId}:${stepNumber}`, delay: delayMs }
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err || '');
+    if (/Job.*already exists/i.test(msg)) return;
+    console.error('[WorkflowQueue] Enqueue step error:', err);
+    setTimeout(() => void processWorkflowStep(runId, stepNumber).catch(() => undefined), delayMs);
+  }
+}
+
+// Fire-and-forget helper: publish an internal workflow event.
+async function publishWorkflowEvent(triggerType: string, eventData: any) {
+  if (!pool) return;
+  const type = String(triggerType || '').trim();
+  if (!type) return;
+  const payload = eventData && typeof eventData === 'object' ? eventData : {};
+  const userId = String(payload.user_id || payload.userId || '').trim();
+  if (!userId) return;
+  await enqueueWorkflowEvent(type, { ...payload, user_id: userId });
+}
+
+let workflowSchedulerStarted = false;
+
+function startWorkflowScheduler() {
+  if (workflowSchedulerStarted) return;
+  workflowSchedulerStarted = true;
+  if (!pool) return;
+
+  const tick = async () => {
+    if (!pool) return;
+    const now = new Date();
+    const hh = String(now.getUTCHours()).padStart(2, '0');
+    const mm = String(now.getUTCMinutes()).padStart(2, '0');
+    const nowTime = `${hh}:${mm}`;
+
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, user_id, trigger_config, last_run_at
+         FROM workflows
+         WHERE enabled=true AND trigger_type='scheduled'
+         ORDER BY created_at DESC
+         LIMIT 500`
+      );
+
+      for (const wf of rows as any[]) {
+        const cfg = wf.trigger_config && typeof wf.trigger_config === 'object' ? wf.trigger_config : {};
+        const configuredTime = String(cfg.time || '09:00').slice(0, 5);
+        if (configuredTime !== nowTime) continue;
+
+        const schedule = String(cfg.schedule || 'daily');
+        const day = now.getUTCDay(); // 0=Sun..6=Sat
+        const date = now.getUTCDate();
+        const lastDayOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+
+        const scheduleMatches =
+          schedule === 'daily' ||
+          (schedule === 'weekly_monday' && day === 1) ||
+          (schedule === 'weekly_friday' && day === 5) ||
+          (schedule === 'monthly_first' && date === 1) ||
+          (schedule === 'monthly_last' && date === lastDayOfMonth);
+
+        if (!scheduleMatches) continue;
+
+        const lastRunAt = wf.last_run_at ? new Date(String(wf.last_run_at)) : null;
+        if (lastRunAt && !isNaN(lastRunAt.getTime())) {
+          const lastTime = `${String(lastRunAt.getUTCHours()).padStart(2, '0')}:${String(lastRunAt.getUTCMinutes()).padStart(2, '0')}`;
+          const sameDay =
+            lastRunAt.getUTCFullYear() === now.getUTCFullYear() &&
+            lastRunAt.getUTCMonth() === now.getUTCMonth() &&
+            lastRunAt.getUTCDate() === now.getUTCDate();
+          if (sameDay && lastTime === nowTime) continue;
+        }
+
+        void processWorkflowEvent(
+          'scheduled',
+          { user_id: String(wf.user_id || '').trim(), schedule, time: configuredTime, fired_at: now.toISOString() },
+          String(wf.id || '').trim()
+        ).catch((err) => console.error('[WorkflowScheduler] Tick error:', err));
+      }
+    } catch (err) {
+      console.error('[WorkflowScheduler] Query error:', err);
+    }
+  };
+
+  // Every 30 seconds so we don't miss the minute boundary.
+  setInterval(() => void tick(), 30_000);
+  void tick();
+}
+
+function workflowTriggerConfigMatches(workflow: any, triggerData: any): boolean {
+  const type = String(workflow?.trigger_type || '').trim().toLowerCase();
+  const cfg = workflow?.trigger_config && typeof workflow.trigger_config === 'object' ? workflow.trigger_config : {};
+  const platform = String(triggerData?.platform || '').trim().toLowerCase();
+  const configuredPlatform = String(cfg.platform || 'all').trim().toLowerCase();
+  if (type === 'post_created' || type === 'post_published') {
+    if (configuredPlatform && configuredPlatform !== 'all') {
+      return platform ? platform === configuredPlatform : false;
+    }
+    return true;
+  }
+
+  if (type === 'engagement_threshold') {
+    if (configuredPlatform && configuredPlatform !== 'all') {
+      if (!platform || platform !== configuredPlatform) return false;
+    }
+
+    const metric = String(cfg.metric || 'total_engagement').trim();
+    const minValue = Number(cfg.min_value ?? cfg.min_engagement ?? 0);
+    const fallbackTotal = Number(triggerData?.total_engagement ?? triggerData?.engagement ?? triggerData?.engagement_count ?? 0);
+    const valueByMetric = (() => {
+      if (metric === 'likes') return Number(triggerData?.likes ?? triggerData?.likes_count ?? 0);
+      if (metric === 'comments') return Number(triggerData?.comments ?? triggerData?.comments_count ?? 0);
+      if (metric === 'shares') return Number(triggerData?.shares ?? triggerData?.shares_count ?? 0);
+      return fallbackTotal;
+    })();
+
+    return valueByMetric >= minValue;
+  }
+
+  return true;
+}
+
+async function processWorkflowEvent(triggerType: string, eventData: any, workflowId?: string) {
+  if (!pool) return;
+  const type = String(triggerType || '').trim();
+  if (!type) return;
+  const userId = String(eventData?.user_id || eventData?.userId || '').trim();
+  if (!userId) return;
+
+  const workflowFilterId = String(workflowId || '').trim();
+  const params: any[] = [userId, type];
+  let sql = `SELECT * FROM workflows WHERE user_id=$1 AND trigger_type=$2 AND enabled=true`;
+  if (workflowFilterId) {
+    params.push(workflowFilterId);
+    sql += ` AND id=$3`;
+  }
+  sql += ` ORDER BY created_at DESC`;
+  const workflowsRes = await pool.query(sql, params);
+
+  for (const wf of workflowsRes.rows) {
+    if (!workflowTriggerConfigMatches(wf, eventData || {})) continue;
+
+    const conditionsRes = await pool.query(
+      `SELECT field, operator, value, sort_order FROM workflow_conditions WHERE workflow_id=$1 ORDER BY sort_order ASC`,
+      [wf.id]
+    );
+    const actionsRes = await pool.query(
+      `SELECT id, action_type, action_config, delay_seconds, sort_order FROM workflow_actions WHERE workflow_id=$1 ORDER BY sort_order ASC`,
+      [wf.id]
+    );
+
+    const conditionsMet = evaluateWorkflowConditions(
+      conditionsRes.rows,
+      eventData || {},
+      workflowConditionMode(wf.condition_mode)
+    );
+    if (!conditionsMet) continue;
+    if (!actionsRes.rows.length) continue;
+
+    const triggerEventId =
+      String(eventData?.trigger_event_id || eventData?.event_id || eventData?.post_id || eventData?.campaign_id || eventData?.contact_id || '') ||
+      null;
+
+    const runRes = await pool.query(
+      `INSERT INTO workflow_runs (workflow_id, user_id, trigger_type, trigger_event_id, trigger_data, status)
+       VALUES ($1,$2,$3,$4,$5::jsonb,'queued') RETURNING id`,
+      [wf.id, userId, type, triggerEventId, JSON.stringify(eventData || {})]
+    );
+    const runId = String(runRes.rows[0]?.id || '');
+    if (!runId) continue;
+
+    // Snapshot steps so history survives workflow edits.
+    for (let i = 0; i < actionsRes.rows.length; i++) {
+      const action = actionsRes.rows[i];
+      await pool
+        .query(
+          `INSERT INTO workflow_run_steps (workflow_run_id, workflow_action_id, action_type, action_config, delay_seconds, step_number, status)
+           VALUES ($1,$2,$3,$4::jsonb,$5,$6,'pending')`,
+          [
+            runId,
+            action.id || null,
+            String(action.action_type || ''),
+            JSON.stringify(action.action_config || {}),
+            Number(action.delay_seconds || 0),
+            i,
+          ]
+        )
+        .catch(() => undefined);
+    }
+
+    await pool.query(`UPDATE workflows SET last_run_at=NOW(), updated_at=NOW() WHERE id=$1 AND user_id=$2`, [wf.id, userId]).catch(() => undefined);
+
+    const firstDelay = Number(actionsRes.rows[0]?.delay_seconds || 0);
+    await enqueueWorkflowStep(runId, 0, firstDelay);
+  }
+}
+
+async function finalizeWorkflowRun(runId: string) {
+  if (!pool) return;
+  const stepsRes = await pool.query(`SELECT status FROM workflow_run_steps WHERE workflow_run_id=$1`, [runId]);
+  const total = stepsRes.rows.length;
+  const failed = stepsRes.rows.filter((r: any) => String(r.status || '') === 'failed').length;
+  const status = failed === 0 ? 'success' : failed === total ? 'failed' : 'partially_failed';
+  const errorMessage = failed ? `${failed} step(s) failed` : null;
+
+  await pool
+    .query(`UPDATE workflow_runs SET status=$1, error_message=$2, completed_at=NOW() WHERE id=$3`, [status, errorMessage, runId])
+    .catch(() => undefined);
+
+  const runRes = await pool.query(`SELECT workflow_id FROM workflow_runs WHERE id=$1`, [runId]).catch(() => ({ rows: [] as any[] }));
+  const workflowId = String(runRes.rows[0]?.workflow_id || '');
+  if (workflowId) {
+    await pool.query(`UPDATE workflows SET last_run_at=NOW(), updated_at=NOW() WHERE id=$1`, [workflowId]).catch(() => undefined);
+  }
+}
+
+async function executeWorkflowAction(actionType: string, actionConfig: any, triggerData: any, userId: string) {
+  const type = String(actionType || '').trim().toLowerCase();
+  const cfg = actionConfig && typeof actionConfig === 'object' ? actionConfig : {};
+
+  if (!pool) return { status: 'failed' as const, error: 'DB not ready' };
+
+  if (type === 'delay') {
+    return { status: 'success' as const, result: { ok: true } };
+  }
+
+  if (type === 'send_email') {
+    const to = String(cfg.to || 'admin');
+    const subjectTemplate = String(cfg.subject || 'Workflow notification');
+    const subject = renderWorkflowTemplate(subjectTemplate, triggerData || {});
+    const user = await getUserById(userId);
+    const resolvedTo =
+      to === 'admin'
+        ? user?.email || 'admin'
+        : to === 'contact_email'
+          ? String(triggerData?.contact_email || triggerData?.email || '')
+          : String(triggerData?.post_creator_email || '');
+
+    return {
+      status: 'success' as const,
+      result: { to: resolvedTo || to, subject, template_id: cfg.template_id || null, variables: cfg.variables || null },
+    };
+  }
+
+  if (type === 'create_campaign') {
+    const prefix = String(cfg.name_prefix || 'Auto-');
+    const base = String(triggerData?.post_id || triggerData?.campaign_id || triggerData?.id || 'Campaign');
+    const suffix = randomBytes(3).toString('hex');
+    const name = `${prefix}${base}`.trim().slice(0, 80) + ` ${suffix}`;
+    const goal = String(cfg.goal || 'awareness');
+    const { rows } = await pool.query(
+      `INSERT INTO campaigns (id, user_id, name, description, goal, status, created_at, updated_at)
+       VALUES (gen_random_uuid()::text, $1, $2, '', $3, 'draft', NOW(), NOW())
+       RETURNING id`,
+      [userId, name, goal]
+    );
+    const campaignId = String(rows[0]?.id || '');
+
+    const channels = Array.isArray(cfg.channels) ? cfg.channels : [];
+    let createdChannels = 0;
+    for (const raw of channels) {
+      const ch = String(raw || '').trim().toLowerCase();
+      if (!ch) continue;
+      const saRes = await pool
+        .query(`SELECT id FROM social_accounts WHERE user_id=$1 AND LOWER(platform)=LOWER($2) AND connected=true LIMIT 1`, [userId, ch])
+        .catch(() => ({ rows: [] as any[] }));
+      const socialAccountId = saRes.rows[0]?.id ? String(saRes.rows[0].id) : null;
+      await pool
+        .query(
+          `INSERT INTO campaign_channels (id, campaign_id, user_id, channel_type, social_account_id, status)
+           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'active')`,
+          [campaignId, userId, ch, socialAccountId]
+        )
+        .then(() => { createdChannels++; })
+        .catch(() => undefined);
+    }
+
+    return { status: 'success' as const, result: { campaign_id: campaignId, channels_created: createdChannels } };
+  }
+
+  if (type === 'create_post') {
+    const titleTemplate = String(cfg.title || 'Auto post');
+    const title = renderWorkflowTemplate(titleTemplate, triggerData || {}).slice(0, 200);
+    const contentTemplate = String(cfg.content || '');
+    const content = renderWorkflowTemplate(contentTemplate, triggerData || {});
+    const id = randomUUID();
+    const slug = slugify(title) || id;
+    const { rows } = await pool.query(
+      `INSERT INTO blog_posts (id, user_id, title, slug, content, status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,'draft',NOW(),NOW()) RETURNING id`,
+      [id, userId, title, slug, content]
+    );
+    return { status: 'success' as const, result: { post_id: String(rows[0]?.id || id) } };
+  }
+
+  if (type === 'tag_contact') {
+    let contactId = String(triggerData?.contact_id || triggerData?.contactId || '').trim();
+    if (!contactId) {
+      const email = String(triggerData?.contact_email || triggerData?.email || '').toLowerCase().trim();
+      if (email) {
+        const cRes = await pool
+          .query(`SELECT id FROM mailing_contacts WHERE user_id=$1 AND email=$2 LIMIT 1`, [userId, email])
+          .catch(() => ({ rows: [] as any[] }));
+        contactId = String(cRes.rows[0]?.id || '').trim();
+      }
+    }
+    if (!contactId) return { status: 'failed' as const, error: 'No contact_id in trigger data' };
+
+    const tagsRaw = cfg.tags;
+    const tags = Array.from(
+      new Set(
+        (Array.isArray(tagsRaw) ? tagsRaw : String(tagsRaw || '').split(','))
+          .map((t: any) => String(t || '').trim())
+          .filter(Boolean)
+      )
+    );
+    let added = 0;
+    for (const tag of tags) {
+      await pool
+        .query(
+          `INSERT INTO mailing_contact_tags (id, contact_id, user_id, tag)
+           VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+          [randomUUID(), contactId, userId, tag]
+        )
+        .then(() => { added++; })
+        .catch(() => undefined);
+    }
+    return { status: 'success' as const, result: { contact_id: contactId, tags_added: added } };
+  }
+
+  return { status: 'failed' as const, error: `Unknown action type: ${actionType}` };
+}
+
+async function processWorkflowStep(runId: string, stepNumber: number) {
+  if (!pool) return;
+  const rid = String(runId || '').trim();
+  if (!rid) return;
+
+  const runRes = await pool.query(`SELECT * FROM workflow_runs WHERE id=$1`, [rid]).catch(() => ({ rows: [] as any[] }));
+  const run: any = runRes.rows[0];
+  if (!run) return;
+  const runStatus = String(run.status || '');
+  if (['success', 'failed', 'partially_failed'].includes(runStatus)) return;
+
+  const stepRes = await pool
+    .query(`SELECT * FROM workflow_run_steps WHERE workflow_run_id=$1 AND step_number=$2 LIMIT 1`, [rid, stepNumber])
+    .catch(() => ({ rows: [] as any[] }));
+  const step: any = stepRes.rows[0];
+  if (!step) {
+    await finalizeWorkflowRun(rid);
+    return;
+  }
+
+  if (String(step.status || '') === 'success') {
+    const nextRes = await pool
+      .query(`SELECT step_number, delay_seconds FROM workflow_run_steps WHERE workflow_run_id=$1 AND step_number=$2 LIMIT 1`, [rid, stepNumber + 1])
+      .catch(() => ({ rows: [] as any[] }));
+    const next = nextRes.rows[0];
+    if (next) {
+      await enqueueWorkflowStep(rid, stepNumber + 1, Number(next.delay_seconds || 0));
+      return;
+    }
+    await finalizeWorkflowRun(rid);
+    return;
+  }
+
+  await pool.query(`UPDATE workflow_runs SET status='running' WHERE id=$1 AND status='queued'`, [rid]).catch(() => undefined);
+  await pool
+    .query(
+      `UPDATE workflow_run_steps SET status='running', started_at=COALESCE(started_at, NOW())
+       WHERE id=$1 AND status IN ('pending','failed')`,
+      [step.id]
+    )
+    .catch(() => undefined);
+
+  const triggerData = run.trigger_data || {};
+  const userId = String(run.user_id || '').trim();
+
+  let status: 'success' | 'failed' = 'success';
+  let resultData: any = null;
+  let errorMessage: string | null = null;
+
+  try {
+    const exec = await executeWorkflowAction(String(step.action_type || ''), step.action_config || {}, triggerData, userId);
+    status = exec.status === 'success' ? 'success' : 'failed';
+    resultData = exec.result ?? null;
+    errorMessage = exec.status === 'failed' ? String(exec.error || 'Action failed') : null;
+  } catch (err) {
+    status = 'failed';
+    errorMessage = err instanceof Error ? err.message : String(err || 'Action failed');
+  }
+
+  await pool
+    .query(
+      `UPDATE workflow_run_steps
+       SET status=$1, result_data=$2::jsonb, error_message=$3, completed_at=NOW()
+       WHERE id=$4`,
+      [status, JSON.stringify(resultData), errorMessage, step.id]
+    )
+    .catch(() => undefined);
+
+  const nextRes = await pool
+    .query(`SELECT step_number, delay_seconds FROM workflow_run_steps WHERE workflow_run_id=$1 AND step_number=$2 LIMIT 1`, [rid, stepNumber + 1])
+    .catch(() => ({ rows: [] as any[] }));
+  const next = nextRes.rows[0];
+  if (next) {
+    await enqueueWorkflowStep(rid, stepNumber + 1, Number(next.delay_seconds || 0));
+    return;
+  }
+
+  await finalizeWorkflowRun(rid);
+}
+
+// ── Workflow Automation API ──────────────────────────────────────────────────
+
+app.get('/api/workflows/triggers', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  return res.json({ success: true, triggers: Object.values(WORKFLOW_TRIGGERS) });
+});
+
+app.get('/api/workflows/actions', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  return res.json({ success: true, actions: Object.values(WORKFLOW_ACTIONS) });
+});
+
+// GET /api/workflows
+app.get('/api/workflows', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const { rows } = await pool.query(
+      `SELECT w.*,
+        (SELECT COUNT(*)::int FROM workflow_conditions c WHERE c.workflow_id = w.id) AS condition_count,
+        (SELECT COUNT(*)::int FROM workflow_actions a WHERE a.workflow_id = w.id) AS action_count,
+        (SELECT COUNT(*)::int FROM workflow_runs r WHERE r.workflow_id = w.id) AS total_runs,
+        (SELECT r.status FROM workflow_runs r WHERE r.workflow_id = w.id ORDER BY r.triggered_at DESC LIMIT 1) AS last_run_status
+       FROM workflows w
+       WHERE w.user_id=$1
+       ORDER BY w.created_at DESC`,
+      [auth.userId]
+    );
+    return res.json({ success: true, workflows: rows });
+  } catch (err) {
+    console.error('Workflows list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to list workflows' });
+  }
+});
+
+// POST /api/workflows
+app.post('/api/workflows', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+  const body = (req.body || {}) as any;
+  const name = String(body.name || '').trim();
+  if (!name) return res.status(400).json({ success: false, error: 'name required' });
+  const triggerType = String(body.trigger_type || body.triggerType || '').trim();
+  if (!triggerType) return res.status(400).json({ success: false, error: 'trigger_type required' });
+
+  const conditions = Array.isArray(body.conditions) ? (body.conditions as WorkflowConditionInput[]) : [];
+  const actions = Array.isArray(body.actions) ? (body.actions as WorkflowActionInput[]) : [];
+  if (!actions.length) return res.status(400).json({ success: false, error: 'At least one action is required' });
+
+  const mode = workflowConditionMode(body.condition_mode || body.conditionMode);
+  const triggerConfig = body.trigger_config && typeof body.trigger_config === 'object' ? body.trigger_config : {};
+  const description = String(body.description || '').trim();
+  const enabled = Boolean(body.enabled);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const wfRes = await client.query(
+      `INSERT INTO workflows (id, user_id, name, description, trigger_type, trigger_config, condition_mode, enabled)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5::jsonb,$6,$7)
+       RETURNING *`,
+      [auth.userId, name, description, triggerType, JSON.stringify(triggerConfig), mode, enabled]
+    );
+    const workflow = wfRes.rows[0];
+
+    for (let i = 0; i < conditions.length; i++) {
+      const c = conditions[i];
+      const field = String(c?.field || '').trim();
+      const operator = String(c?.operator || '').trim();
+      if (!field || !operator) continue;
+      await client.query(
+        `INSERT INTO workflow_conditions (id, workflow_id, field, operator, value, sort_order)
+         VALUES (gen_random_uuid()::text,$1,$2,$3,$4::jsonb,$5)`,
+        [workflow.id, field, operator, JSON.stringify(c.value), Number(c.sort_order ?? i)]
+      );
+    }
+
+    for (let i = 0; i < actions.length; i++) {
+      const a = actions[i];
+      const actionType = String(a?.action_type || '').trim();
+      if (!actionType) continue;
+      await client.query(
+        `INSERT INTO workflow_actions (id, workflow_id, action_type, action_config, delay_seconds, sort_order)
+         VALUES (gen_random_uuid()::text,$1,$2,$3::jsonb,$4,$5)`,
+        [
+          workflow.id,
+          actionType,
+          JSON.stringify(a.action_config || {}),
+          Number(a.delay_seconds || 0),
+          Number(a.sort_order ?? i),
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const [cRes, aRes] = await Promise.all([
+      pool.query(`SELECT * FROM workflow_conditions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [workflow.id]),
+      pool.query(`SELECT * FROM workflow_actions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [workflow.id]),
+    ]);
+
+    return res.json({ success: true, workflow: { ...workflow, conditions: cRes.rows, actions: aRes.rows } });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.error('Workflow create error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create workflow' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/workflows/:id
+app.get('/api/workflows/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+  const id = String(req.params.id || '').trim();
+  const wfRes = await pool.query(`SELECT * FROM workflows WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
+  if (!wfRes.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
+  const workflow = wfRes.rows[0];
+  const [cRes, aRes] = await Promise.all([
+    pool.query(`SELECT * FROM workflow_conditions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [id]),
+    pool.query(`SELECT * FROM workflow_actions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [id]),
+  ]);
+  return res.json({ success: true, workflow: { ...workflow, conditions: cRes.rows, actions: aRes.rows } });
+});
+
+// PUT /api/workflows/:id
+app.put('/api/workflows/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+  const id = String(req.params.id || '').trim();
+  const body = (req.body || {}) as any;
+  const name = String(body.name || '').trim();
+  if (!name) return res.status(400).json({ success: false, error: 'name required' });
+  const triggerType = String(body.trigger_type || body.triggerType || '').trim();
+  if (!triggerType) return res.status(400).json({ success: false, error: 'trigger_type required' });
+
+  const conditions = Array.isArray(body.conditions) ? (body.conditions as WorkflowConditionInput[]) : [];
+  const actions = Array.isArray(body.actions) ? (body.actions as WorkflowActionInput[]) : [];
+  if (!actions.length) return res.status(400).json({ success: false, error: 'At least one action is required' });
+
+  const mode = workflowConditionMode(body.condition_mode || body.conditionMode);
+  const triggerConfig = body.trigger_config && typeof body.trigger_config === 'object' ? body.trigger_config : {};
+  const description = String(body.description || '').trim();
+  const enabled = Boolean(body.enabled);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const exists = await client.query(`SELECT id FROM workflows WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
+    if (!exists.rows.length) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      return res.status(404).json({ success: false, error: 'Not found' });
+    }
+
+    const wfRes = await client.query(
+      `UPDATE workflows
+       SET name=$1, description=$2, trigger_type=$3, trigger_config=$4::jsonb, condition_mode=$5, enabled=$6, updated_at=NOW()
+       WHERE id=$7 AND user_id=$8
+       RETURNING *`,
+      [name, description, triggerType, JSON.stringify(triggerConfig), mode, enabled, id, auth.userId]
+    );
+    const workflow = wfRes.rows[0];
+
+    await client.query(`DELETE FROM workflow_conditions WHERE workflow_id=$1`, [id]);
+    await client.query(`DELETE FROM workflow_actions WHERE workflow_id=$1`, [id]);
+
+    for (let i = 0; i < conditions.length; i++) {
+      const c = conditions[i];
+      const field = String(c?.field || '').trim();
+      const operator = String(c?.operator || '').trim();
+      if (!field || !operator) continue;
+      await client.query(
+        `INSERT INTO workflow_conditions (id, workflow_id, field, operator, value, sort_order)
+         VALUES (gen_random_uuid()::text,$1,$2,$3,$4::jsonb,$5)`,
+        [id, field, operator, JSON.stringify(c.value), Number(c.sort_order ?? i)]
+      );
+    }
+
+    for (let i = 0; i < actions.length; i++) {
+      const a = actions[i];
+      const actionType = String(a?.action_type || '').trim();
+      if (!actionType) continue;
+      await client.query(
+        `INSERT INTO workflow_actions (id, workflow_id, action_type, action_config, delay_seconds, sort_order)
+         VALUES (gen_random_uuid()::text,$1,$2,$3::jsonb,$4,$5)`,
+        [id, actionType, JSON.stringify(a.action_config || {}), Number(a.delay_seconds || 0), Number(a.sort_order ?? i)]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const [cRes, aRes] = await Promise.all([
+      pool.query(`SELECT * FROM workflow_conditions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [id]),
+      pool.query(`SELECT * FROM workflow_actions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [id]),
+    ]);
+
+    return res.json({ success: true, workflow: { ...workflow, conditions: cRes.rows, actions: aRes.rows } });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.error('Workflow update error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update workflow' });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/workflows/:id
+app.delete('/api/workflows/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+  const id = String(req.params.id || '').trim();
+  await pool.query(`DELETE FROM workflows WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
+  return res.json({ success: true, deleted: true });
+});
+
+// POST /api/workflows/:id/enable
+app.post('/api/workflows/:id/enable', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+  const id = String(req.params.id || '').trim();
+  const desired = (req.body as any)?.enabled;
+  const curRes = await pool.query(`SELECT enabled FROM workflows WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
+  if (!curRes.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
+  const current = Boolean(curRes.rows[0].enabled);
+  const next = typeof desired === 'boolean' ? desired : !current;
+  const updRes = await pool.query(`UPDATE workflows SET enabled=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3 RETURNING enabled`, [next, id, auth.userId]);
+  return res.json({ success: true, enabled: Boolean(updRes.rows[0]?.enabled) });
+});
+
+// POST /api/workflows/:id/test
+app.post('/api/workflows/:id/test', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+  const workflowId = String(req.params.id || '').trim();
+  const wfRes = await pool.query(`SELECT * FROM workflows WHERE id=$1 AND user_id=$2`, [workflowId, auth.userId]);
+  if (!wfRes.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
+  const workflow = wfRes.rows[0];
+
+  const [cRes, aRes] = await Promise.all([
+    pool.query(`SELECT field, operator, value, sort_order FROM workflow_conditions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [workflowId]),
+    pool.query(`SELECT id, action_type, action_config, delay_seconds, sort_order FROM workflow_actions WHERE workflow_id=$1 ORDER BY sort_order ASC`, [workflowId]),
+  ]);
+
+  const triggerData =
+    (req.body as any)?.trigger_data && typeof (req.body as any).trigger_data === 'object'
+      ? (req.body as any).trigger_data
+      : {
+          user_id: auth.userId,
+          post_id: 'post_123',
+          engagement_count: 150,
+          platform: 'linkedin',
+        };
+
+  const mode = workflowConditionMode(workflow.condition_mode);
+  const ok = evaluateWorkflowConditions(cRes.rows, triggerData, mode);
+  if (!ok) {
+    return res.json({ success: true, skipped: true, reason: 'Conditions not met' });
+  }
+
+  const triggerEventId =
+    String((req.body as any)?.trigger_event_id || triggerData.post_id || triggerData.campaign_id || triggerData.contact_id || '') || null;
+
+  const runRes = await pool.query(
+    `INSERT INTO workflow_runs (workflow_id, user_id, trigger_type, trigger_event_id, trigger_data, status)
+     VALUES ($1,$2,$3,$4,$5::jsonb,'running') RETURNING id`,
+    [workflowId, auth.userId, String(workflow.trigger_type || ''), triggerEventId, JSON.stringify(triggerData)]
+  );
+  const runId = String(runRes.rows[0]?.id || '');
+
+  const stepsOut: any[] = [];
+  let failed = 0;
+  for (let i = 0; i < aRes.rows.length; i++) {
+    const action = aRes.rows[i];
+    const stepIns = await pool.query(
+      `INSERT INTO workflow_run_steps (workflow_run_id, workflow_action_id, action_type, action_config, delay_seconds, step_number, status)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,'running') RETURNING id`,
+      [runId, action.id || null, action.action_type, JSON.stringify(action.action_config || {}), Number(action.delay_seconds || 0), i]
+    );
+    const stepId = String(stepIns.rows[0]?.id || '');
+
+    const exec = await executeWorkflowAction(String(action.action_type || ''), action.action_config || {}, triggerData, auth.userId);
+    const stepStatus = exec.status === 'success' ? 'success' : 'failed';
+    if (stepStatus === 'failed') failed++;
+
+    await pool.query(
+      `UPDATE workflow_run_steps SET status=$1, result_data=$2::jsonb, error_message=$3, completed_at=NOW() WHERE id=$4`,
+      [stepStatus, JSON.stringify(exec.result ?? null), exec.status === 'failed' ? String(exec.error || 'Action failed') : null, stepId]
+    ).catch(() => undefined);
+
+    stepsOut.push({ action: action.action_type, status: stepStatus, result: exec.result ?? null, error: exec.status === 'failed' ? exec.error : null });
+  }
+
+  const finalStatus = failed === 0 ? 'success' : failed === aRes.rows.length ? 'failed' : 'partially_failed';
+  await pool.query(`UPDATE workflow_runs SET status=$1, completed_at=NOW() WHERE id=$2`, [finalStatus, runId]).catch(() => undefined);
+  await pool.query(`UPDATE workflows SET last_run_at=NOW(), updated_at=NOW() WHERE id=$1 AND user_id=$2`, [workflowId, auth.userId]).catch(() => undefined);
+
+  return res.json({ success: true, workflow_run_id: runId, status: finalStatus, steps: stepsOut });
+});
+
+// GET /api/workflows/:id/runs
+app.get('/api/workflows/:id/runs', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+  const workflowId = String(req.params.id || '').trim();
+
+  const wfRes = await pool.query(`SELECT id FROM workflows WHERE id=$1 AND user_id=$2`, [workflowId, auth.userId]);
+  if (!wfRes.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
+
+  const [runsRes, totalRes] = await Promise.all([
+    pool.query(
+      `SELECT r.*,
+        EXTRACT(EPOCH FROM (COALESCE(r.completed_at, NOW()) - r.triggered_at))::int AS duration_seconds,
+        (SELECT COUNT(*)::int FROM workflow_run_steps s WHERE s.workflow_run_id=r.id AND s.status='success') AS steps_completed,
+        (SELECT COUNT(*)::int FROM workflow_run_steps s WHERE s.workflow_run_id=r.id AND s.status='failed') AS steps_failed
+       FROM workflow_runs r
+       WHERE r.workflow_id=$1 AND r.user_id=$2
+       ORDER BY r.triggered_at DESC
+       LIMIT 200`,
+      [workflowId, auth.userId]
+    ),
+    pool.query(`SELECT COUNT(*)::int AS total FROM workflow_runs WHERE workflow_id=$1 AND user_id=$2`, [workflowId, auth.userId]),
+  ]);
+
+  return res.json({ success: true, runs: runsRes.rows, total: Number(totalRes.rows[0]?.total || 0) });
+});
+
+// GET /api/workflows/:id/runs/:runId
+app.get('/api/workflows/:id/runs/:runId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+  const workflowId = String(req.params.id || '').trim();
+  const runId = String(req.params.runId || '').trim();
+
+  const runRes = await pool.query(`SELECT * FROM workflow_runs WHERE id=$1 AND workflow_id=$2 AND user_id=$3`, [runId, workflowId, auth.userId]);
+  if (!runRes.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
+
+  const stepsRes = await pool.query(
+    `SELECT action_type, status, started_at, completed_at, result_data AS result, error_message AS error
+     FROM workflow_run_steps
+     WHERE workflow_run_id=$1
+     ORDER BY step_number ASC`,
+    [runId]
+  );
+
+  return res.json({ success: true, run: runRes.rows[0], steps: stepsRes.rows });
+});
 
 // ─── Analytics & Insights Engine ─────────────────────────────────────────────
 
@@ -18978,6 +20156,15 @@ app.post('/api/campaign/campaigns/create', async (req: Request, res: Response) =
     }
 
     // ── Step 8: Return complete payload ──────────────────────────────────────
+    void publishWorkflowEvent('campaign_created', {
+      user_id: auth.userId,
+      campaign_id: campaignId,
+      name: campaign?.name || String(name || '').trim(),
+      goal: campaign?.goal || goal || 'awareness',
+      status: campaign?.status || 'active',
+      created_at: campaign?.created_at || new Date().toISOString(),
+    }).catch(() => undefined);
+
     return res.status(201).json({
       success: true,
       campaign: { ...campaign, mailing_campaign_id: mailingCampaign?.id || null },
