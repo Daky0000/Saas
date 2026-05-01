@@ -297,7 +297,7 @@ function Auth({ onLogin }: AuthProps) {
     } catch (error) {
       const message =
         error instanceof TypeError
-          ? 'Backend is unavailable on localhost:5000. Restart the backend and try again.'
+          ? `Backend is unavailable. Please check the API (${API_BASE_URL}) and your Railway deployment.`
           : error instanceof Error
             ? error.message
             : 'Unable to authenticate';
@@ -329,7 +329,7 @@ function Auth({ onLogin }: AuthProps) {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -364,7 +364,7 @@ function Auth({ onLogin }: AuthProps) {
     } catch (error) {
       const message =
         error instanceof TypeError
-          ? 'Backend is unavailable. Restart the backend and try again.'
+          ? `Backend is unavailable. Please check the API (${API_BASE_URL}) and your Railway deployment.`
           : error instanceof Error
             ? error.message
             : 'Unable to create account';
