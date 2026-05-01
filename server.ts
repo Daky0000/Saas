@@ -339,10 +339,10 @@ function getRetryDelayMs(attemptNumber: number, platform?: string) {
 }
 
 function hasDatabase() {
-  // Treat the database as "available" if a Pool is configured.
-  // Schema initialization can fail in restricted DB roles (no CREATE/ALTER),
-  // but reads/writes to existing tables may still succeed.
-  return Boolean(pool);
+  // Consider the database "available" only after schema initialization succeeds.
+  // If `DATABASE_URL` is set but the role can't run DDL (CREATE/ALTER), we fall back to in-memory mode
+  // to avoid throwing 500s across endpoints that expect tables to exist.
+  return Boolean(pool && dbReady);
 }
 
 type DataDeletionStatus = 'received' | 'completed' | 'unknown';
@@ -1953,7 +1953,9 @@ ensureDatabase()
   .then(() => startTokenHealthMonitor())
   .catch((err) => {
     dbReady = false;
-    if (!pool) seedInMemoryUsers();
+    // Even when a Pool exists, schema init can fail (permissions, missing extensions, etc).
+    // Fall back to in-memory users so auth endpoints still work.
+    seedInMemoryUsers();
     console.error('Database initialization failed:', err);
   });
 
