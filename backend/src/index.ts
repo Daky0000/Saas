@@ -21,14 +21,24 @@ const configuredOrigins = (process.env.FRONTEND_URL || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-const fallbackOrigin = "https://marketing.dakyworld.com";
+const defaultAllowedOrigins = [
+  "https://marketing.dakyworld.com",
+  "https://daky0000.github.io",
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
 const allowedOrigins = configuredOrigins.length
   ? configuredOrigins
-  : [fallbackOrigin];
+  : defaultAllowedOrigins;
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes("*")) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
   })
 );
