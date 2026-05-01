@@ -55,6 +55,15 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Lightweight diagnostics to debug Railway DB/CORS issues (no secrets).
+app.get('/api/debug/db', (_req: Request, res: Response) => {
+  res.json({
+    hasDatabase: hasDatabase(),
+    dbReady,
+    databaseUrlConfigured: Boolean(DATABASE_URL && DATABASE_URL.trim()),
+  });
+});
+
 // Serve static assets — no caching on any file so deploys take effect immediately
 app.use(express.static(path.join(__dirname, 'docs'), {
   setHeaders(res) {
@@ -7836,20 +7845,24 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
 app.get('/api/auth/providers', async (req: Request, res: Response) => {
   try {
     if (hasDatabase()) {
-      const result = await dbQuery('SELECT provider, config FROM auth_providers WHERE enabled = true ORDER BY provider');
+      const result = await dbQuery('SELECT provider, config FROM auth_providers WHERE enabled = true ORDER BY provider').catch((error) => {
+        console.error('Auth providers query failed; falling back to empty list:', error);
+        return { rows: [] as any[] } as any;
+      });
       return res.json({
         success: true,
         providers: result.rows.map((r: any) => ({
           provider: r.provider as string,
           // Only return public-safe fields (client_id / app_id, not secret)
-          clientId: (r.config as Record<string, string>).clientId || '',
+          clientId: ((r.config || {}) as Record<string, string>).clientId || '',
         })),
       });
     }
     return res.json({ success: true, providers: [] });
   } catch (error) {
     console.error('Get auth providers error:', error);
-    return res.status(500).json({ success: false, error: 'Failed to fetch providers' });
+    // Never block the login page just because providers are misconfigured.
+    return res.json({ success: true, providers: [] });
   }
 });
 
