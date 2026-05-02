@@ -13,8 +13,8 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "node scripts/use-source-index.mjs && npm --workspace @contentflow/web run dev",
     "dev:api": "npm --workspace @contentflow/api run dev",
-    "build": "npm --workspace @contentflow/web run build && node scripts/sync-pages.mjs && npm --workspace @contentflow/api run build",
-    "build:web": "npm --workspace @contentflow/web run build && node scripts/sync-pages.mjs",
+    "build": "node scripts/use-source-index.mjs && npm --workspace @contentflow/web run build && node scripts/sync-pages.mjs && npm --workspace @contentflow/api run build",
+    "build:web": "node scripts/use-source-index.mjs && npm --workspace @contentflow/web run build && node scripts/sync-pages.mjs",
     "build:api": "npm --workspace @contentflow/api run build",
     "test": "npm --workspace @contentflow/api test"
   },
