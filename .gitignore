@@ -74,8 +74,20 @@ tiktok*.txt
 
 # Environment files (never commit real secrets)
 .env
-.env.*
+.env.local
+.env.production
+.env.development
+.env.test
+.env.*.local
 backend/.env
-backend/.env.*
+backend/.env.local
+backend/.env.production
+backend/.env.development
+backend/.env.test
+backend/.env.*.local
 packages/**/.env
-packages/**/.env.*
+packages/**/.env.local
+packages/**/.env.production
+packages/**/.env.development
+packages/**/.env.test
+packages/**/.env.*.local
