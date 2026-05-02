@@ -422,6 +422,31 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to TEXT;`).catch(() => undefined);
   await pool.query(`ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS code_verifier TEXT;`).catch(() => undefined);
 
+  // Social Automation v2 schema (platform registry + richer account metadata)
+  // CREATE social_platforms FIRST before social_accounts (which has a FK to it)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_platforms (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      api_base_url TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(
+    `INSERT INTO social_platforms (name, slug, api_base_url, enabled)
+     VALUES 
+      ('Facebook', 'facebook', 'https://graph.facebook.com', true),
+      ('Instagram', 'instagram', 'https://graph.instagram.com', true),
+      ('LinkedIn', 'linkedin', 'https://api.linkedin.com', true),
+      ('X (Twitter)', 'twitter', 'https://api.twitter.com', true),
+      ('Pinterest', 'pinterest', 'https://api.pinterest.com', true),
+      ('TikTok', 'tiktok', 'https://api.tiktok.com', true),
+      ('Threads', 'threads', 'https://graph.threads.net', true)
+     ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, api_base_url=EXCLUDED.api_base_url;`
+  ).catch(() => undefined);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_accounts (
       id TEXT PRIMARY KEY,
