@@ -3000,7 +3000,7 @@ app.get('/api/facebook/targets', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
 
     const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
     const accessToken = String(conn?.access_token || '').trim();
@@ -3465,7 +3465,7 @@ function platformDisplayName(platformId: string) {
 }
 
 async function getOAuthStateRow(state: string): Promise<{ user_id: string; platform: string; return_to?: string | null; code_verifier?: string | null } | null> {
-  if (!pool) return null;
+  if (!hasDatabase()) return null;
   const result = await dbQuery<{ user_id: string; platform: string; return_to: string | null; code_verifier: string | null }>(
     'SELECT user_id, platform, return_to, code_verifier FROM oauth_states WHERE state = $1 AND expires_at > NOW()',
     [state]
@@ -4114,7 +4114,7 @@ async function exchangeTikTokCode(code: string, codeVerifier?: string) {
 
 // Database/Storage Functions
 async function getStoredState(state: string): Promise<boolean> {
-  if (!pool) return true;
+  if (!hasDatabase()) return true;
   const result = await dbQuery('SELECT 1 FROM oauth_states WHERE state = $1 AND expires_at > NOW()', [state]);
   return result.rowCount > 0;
 }
@@ -8905,7 +8905,7 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
 
     // Ensure WordPress is represented as a social account so it can be selected in the post automation flow.
     await ensureWordPressSocialAccount(auth.userId);
@@ -8923,7 +8923,7 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
     
     query += ` ORDER BY created_at DESC`;
     
-    const { rows } = await pool.query(query, params);
+    const { rows } = await pool!.query(query, params);
     return res.json({ success: true, accounts: rows });
   } catch (err) {
     console.error('v1 list social accounts error:', err);
@@ -8936,10 +8936,10 @@ app.delete('/api/v1/social/accounts/:id', async (req: Request, res: Response) =>
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
 
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM social_accounts WHERE id=$1 AND user_id=$2', [String(id), auth.userId]);
+    const result = await pool!.query('DELETE FROM social_accounts WHERE id=$1 AND user_id=$2', [String(id), auth.userId]);
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Not found' });
     return res.json({ success: true });
   } catch (err) {
