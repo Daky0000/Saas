@@ -25,6 +25,7 @@ import PinterestAnalytics from '../components/analytics/PinterestAnalytics';
 import LinkedInAnalytics from '../components/analytics/LinkedInAnalytics';
 import type { AnalyticsRangePreset, BlogAnalyticsDashboard, DashboardQuery } from '../services/blogAnalyticsService';
 import { blogAnalyticsService } from '../services/blogAnalyticsService';
+import { fetchApiJson } from '../utils/apiRequest';
 
 type Tab = 'overview' | 'tiktok' | 'facebook' | 'instagram' | 'threads' | 'pinterest' | 'linkedin' | 'comparison';
 
@@ -81,15 +82,14 @@ export default function Analytics() {
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
     if (!token) return;
-    fetch('/api/accounts', { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((json) => {
-        const accounts: any[] = json?.data ?? [];
+    fetchApiJson<{ data?: any[] }>('/api/accounts', { headers: { Authorization: `Bearer ${token}` } })
+      .then(({ payload }) => {
+        const accounts: any[] = payload?.data ?? [];
         setConnectedPlatforms(
           new Set(accounts.filter((a) => a?.connected !== false).map((a) => String(a.platform || '').toLowerCase()))
         );
       })
-      .catch(() => {});
+      .catch(() => setConnectedPlatforms(new Set()));
   }, []);
 
   useEffect(() => {
