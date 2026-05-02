@@ -16,7 +16,6 @@ import KpiCard from '../components/analytics/KpiCard';
 import PlatformBreakdown from '../components/analytics/PlatformBreakdown';
 import TopPostsTable from '../components/analytics/TopPostsTable';
 import TrendChart from '../components/analytics/TrendChart';
-import SocialAccountsOverview from '../components/analytics/SocialAccountsOverview';
 import ComparisonView from '../components/analytics/ComparisonView';
 import TikTokAnalytics from '../components/analytics/TikTokAnalytics';
 import FacebookAnalytics from '../components/analytics/FacebookAnalytics';
@@ -27,7 +26,16 @@ import LinkedInAnalytics from '../components/analytics/LinkedInAnalytics';
 import type { AnalyticsRangePreset, BlogAnalyticsDashboard, DashboardQuery } from '../services/blogAnalyticsService';
 import { blogAnalyticsService } from '../services/blogAnalyticsService';
 
-type Tab = 'publishing' | 'accounts' | 'tiktok' | 'facebook' | 'instagram' | 'threads' | 'pinterest' | 'linkedin' | 'comparison';
+type Tab = 'overview' | 'tiktok' | 'facebook' | 'instagram' | 'threads' | 'pinterest' | 'linkedin' | 'comparison';
+
+const PLATFORM_TABS: Array<{ id: Tab; label: string; platform: string }> = [
+  { id: 'tiktok',    label: 'TikTok',    platform: 'tiktok' },
+  { id: 'facebook',  label: 'Facebook',  platform: 'facebook' },
+  { id: 'instagram', label: 'Instagram', platform: 'instagram' },
+  { id: 'threads',   label: 'Threads',   platform: 'threads' },
+  { id: 'pinterest', label: 'Pinterest', platform: 'pinterest' },
+  { id: 'linkedin',  label: 'LinkedIn',  platform: 'linkedin' },
+];
 
 const PRESETS: Array<{ value: AnalyticsRangePreset; label: string }> = [
   { value: '7d', label: 'Last 7 days' },
@@ -50,7 +58,8 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export default function Analytics() {
-  const [activeTab, setActiveTab] = useState<Tab>('publishing');
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [connectedPlatforms, setConnectedPlatforms] = useState<Set<string>>(new Set());
 
   // Publishing tab state (existing)
   const [selectedPreset, setSelectedPreset] = useState<AnalyticsRangePreset>('30d');
@@ -69,7 +78,21 @@ export default function Analytics() {
   const socialDays = DAYS_MAP[selectedPreset] ?? 30;
 
   useEffect(() => {
-    if (activeTab !== 'publishing') return;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (!token) return;
+    fetch('/api/accounts', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((json) => {
+        const accounts: any[] = json?.data ?? [];
+        setConnectedPlatforms(
+          new Set(accounts.filter((a) => a?.connected !== false).map((a) => String(a.platform || '').toLowerCase()))
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'overview') return;
     let alive = true;
     setLoading(true);
     setError(null);
@@ -196,7 +219,7 @@ export default function Analytics() {
             Sync
           </button>
 
-          {activeTab === 'publishing' && (
+          {activeTab === 'overview' && (
             <>
               <button
                 type="button"
@@ -221,7 +244,7 @@ export default function Analytics() {
       </div>
 
       {/* Custom date range picker (publishing tab only) */}
-      {activeTab === 'publishing' && (selectedPreset === 'custom' || query.preset === 'custom') && (
+      {activeTab === 'overview' && (selectedPreset === 'custom' || query.preset === 'custom') && (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
             <div className="flex-1">
@@ -242,7 +265,7 @@ export default function Analytics() {
         </div>
       )}
 
-      {dashboard?.lastSyncedAt && activeTab === 'publishing' && (
+      {dashboard?.lastSyncedAt && activeTab === 'overview' && (
         <p className="text-xs text-slate-400">Analytics last synced: {new Date(dashboard.lastSyncedAt).toLocaleString()}</p>
       )}
 
@@ -272,27 +295,45 @@ export default function Analytics() {
 
       {/* Tab navigation */}
       <div className="flex flex-wrap gap-2" role="tablist">
-        {([
-          { id: 'publishing' as Tab, label: 'Publishing' },
-          { id: 'accounts' as Tab, label: 'Social Accounts' },
-          { id: 'tiktok' as Tab, label: 'TikTok' },
-          { id: 'facebook' as Tab, label: 'Facebook' },
-          { id: 'instagram' as Tab, label: 'Instagram' },
-          { id: 'threads' as Tab, label: 'Threads' },
-          { id: 'pinterest' as Tab, label: 'Pinterest' },
-          { id: 'linkedin' as Tab, label: 'LinkedIn' },
-          { id: 'comparison' as Tab, label: 'Comparison' },
-        ] as const).map((tab) => {
+        {/* Overview tab (always active) */}
+        {(['overview', 'comparison'] as const).map((id) => {
+          const label = id === 'overview' ? 'Overview' : 'Comparison';
+          const isActive = activeTab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => handleTabChange(id)}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+                isActive ? 'bg-slate-900 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+
+        {/* Platform tabs — inactive when account not connected */}
+        {PLATFORM_TABS.map((tab) => {
           const isActive = activeTab === tab.id;
+          const isConnected = connectedPlatforms.has(tab.platform);
           return (
             <button
               key={tab.id}
               type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => handleTabChange(tab.id)}
+              aria-disabled={!isConnected}
+              title={isConnected ? undefined : `Connect ${tab.label} to unlock`}
+              onClick={() => { if (isConnected) handleTabChange(tab.id); }}
               className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
-                isActive ? 'bg-slate-900 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                isActive
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : isConnected
+                    ? 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    : 'border border-slate-200 bg-white text-slate-300 cursor-not-allowed'
               }`}
             >
               {tab.label}
@@ -301,8 +342,8 @@ export default function Analytics() {
         })}
       </div>
 
-      {/* ── Publishing tab ─────────────────────────────────────────── */}
-      {activeTab === 'publishing' && (
+      {/* ── Overview tab ─────────────────────────────────────────── */}
+      {activeTab === 'overview' && (
         loading ? (
           <div className="grid gap-4 lg:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -343,11 +384,6 @@ export default function Analytics() {
             </div>
           </>
         )
-      )}
-
-      {/* ── Social Accounts tab ────────────────────────────────────── */}
-      {activeTab === 'accounts' && (
-        <SocialAccountsOverview days={socialDays} />
       )}
 
       {/* ── TikTok tab ────────────────────────────────────────────── */}
