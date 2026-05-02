@@ -15,7 +15,7 @@ console.log('Frontend with live source updates: http://localhost:3000');
 console.log('Backend API and built static app: http://localhost:5000');
 console.log('Open http://localhost:3000 to see recent frontend changes.');
 
-const frontend = run(`${npmCmd} run dev:frontend`);
+const frontend = run(`${npmCmd} run dev:web`);
 const backend = run(`${npmCmd} run dev:api`);
 
 let shuttingDown = false;

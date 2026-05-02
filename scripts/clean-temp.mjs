@@ -17,8 +17,8 @@ for (const file of readdirSync(process.cwd())) {
   }
 }
 
-// Clean any tmp_*.tsx inside src/pages (if present)
-const pagesDir = join(process.cwd(), 'src', 'pages');
+// Clean any tmp_*.tsx inside packages/web/src/pages (if present)
+const pagesDir = join(process.cwd(), 'packages', 'web', 'src', 'pages');
 try {
   for (const file of readdirSync(pagesDir)) {
     if (/^tmp_.*\.tsx?$/.test(file)) {

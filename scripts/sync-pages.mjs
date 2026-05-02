@@ -10,7 +10,7 @@ import {
 import { resolve } from 'node:path';
 
 const rootDir = resolve(process.cwd());
-const buildDir = resolve(rootDir, 'dist');
+const buildDir = resolve(rootDir, 'packages', 'web', 'dist');
 const buildIndex = resolve(buildDir, 'index.html');
 const buildAssets = resolve(buildDir, 'assets');
 const build404 = resolve(buildDir, '404.html');
@@ -21,7 +21,7 @@ const rootIndex = resolve(rootDir, 'index.html');
 const root404 = resolve(rootDir, '404.html');
 const rootCname = resolve(rootDir, 'CNAME');
 
-console.log('Starting post-build sync process for GitHub Pages...');
+console.log('Starting post-build sync process for GitHub Pages (from packages/web)...');
 
 if (!existsSync(buildIndex)) {
   throw new Error('dist/index.html not found. Run the Vite build before syncing.');
