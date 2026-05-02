@@ -968,6 +968,14 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS response JSONB;`).catch(() => undefined);
   await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;`).catch(() => undefined);
   await pool.query(`ALTER TABLE publishing_logs ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ;`).catch(() => undefined);
+  // Ensure post_id FK exists so deleting a blog post cascades to its publishing logs
+  await pool.query(`
+    ALTER TABLE publishing_logs
+    ADD CONSTRAINT publishing_logs_post_fk
+    FOREIGN KEY (post_id) REFERENCES blog_posts(id) ON DELETE CASCADE
+    NOT VALID;
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS publishing_logs_post_idx ON publishing_logs (post_id);`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_automation_tasks (
