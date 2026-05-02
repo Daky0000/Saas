@@ -145,7 +145,7 @@ function App() {
     // OAuth redirects (LinkedIn/Facebook/etc.). sessionStorage is cleared by some
     // browsers (Safari, Firefox strict mode) after navigating to an external domain
     // and back, causing auth_token to be wiped before OAuthCallback can read it.
-    const resetFlag = 'force_auth_reset_v7';
+    const resetFlag = 'force_auth_reset_v8';
     if (localStorage.getItem(resetFlag) === '1') {
       return;
     }

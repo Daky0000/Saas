@@ -43,10 +43,15 @@
       "Bash(git ls-tree:*)",
       "WebFetch(domain:marketing.dakyworld.com)",
       "WebFetch(domain:contentflow-api-production.up.railway.app)",
-      "Bash(grep -r \"VITE_API\\\\|API_BASE\" d:/Saas/.env*)"
+      "Bash(grep -r \"VITE_API\\\\|API_BASE\" d:/Saas/.env*)",
+      "Read(//tmp/**)",
+      "Bash(awk '/async function ensureDatabase/,/dbReady = true/' /d/Saas/packages/api/src/server.ts)",
+      "Bash(sqlite3 /d/Saas/packages/api/backend/database.sqlite \".tables\")",
+      "Bash(npm run *)"
     ],
     "additionalDirectories": [
-      "d:\\skills\\user\\db-cleanup"
+      "d:\\skills\\user\\db-cleanup",
+      "\\tmp"
     ]
   }
 }
