@@ -59,7 +59,8 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function Analytics() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-  const [connectedPlatforms, setConnectedPlatforms] = useState<Set<string>>(new Set());
+  // null = still loading (show tabs as active to avoid false-disabled flash)
+  const [connectedPlatforms, setConnectedPlatforms] = useState<Set<string> | null>(null);
 
   // Publishing tab state (existing)
   const [selectedPreset, setSelectedPreset] = useState<AnalyticsRangePreset>('30d');
@@ -315,10 +316,11 @@ export default function Analytics() {
           );
         })}
 
-        {/* Platform tabs — inactive when account not connected */}
+        {/* Platform tabs — inactive only after load confirms account not connected */}
         {PLATFORM_TABS.map((tab) => {
           const isActive = activeTab === tab.id;
-          const isConnected = connectedPlatforms.has(tab.platform);
+          // null = accounts not yet fetched; treat as connected so no premature disabling
+          const isConnected = connectedPlatforms === null || connectedPlatforms.has(tab.platform);
           return (
             <button
               key={tab.id}
