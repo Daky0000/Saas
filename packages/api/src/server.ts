@@ -487,30 +487,7 @@ async function ensureDatabase() {
      WHERE account_id IS NOT NULL AND account_type IS NOT NULL;`
   ).catch(() => undefined);
 
-  // Social Automation v2 schema (platform registry + richer account metadata)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS social_platforms (
-      id BIGSERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT UNIQUE NOT NULL,
-      api_base_url TEXT,
-      enabled BOOLEAN NOT NULL DEFAULT true,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  await pool.query(
-    `INSERT INTO social_platforms (name, slug, api_base_url, enabled)
-     VALUES 
-      ('Facebook', 'facebook', 'https://graph.facebook.com', true),
-      ('Instagram', 'instagram', 'https://graph.instagram.com', true),
-      ('LinkedIn', 'linkedin', 'https://api.linkedin.com', true),
-      ('X (Twitter)', 'twitter', 'https://api.twitter.com', true),
-      ('Pinterest', 'pinterest', 'https://api.pinterest.com', true),
-      ('TikTok', 'tiktok', 'https://api.tiktok.com', true),
-      ('Threads', 'threads', 'https://graph.threads.net', true)
-     ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, api_base_url=EXCLUDED.api_base_url;`
-  ).catch(() => undefined);
-
+  // social_platforms and platform_id columns already created above, now just handle migrations
   await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS platform_id BIGINT REFERENCES social_platforms(id) ON DELETE SET NULL;`).catch(() => undefined);
   await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS account_type TEXT;`).catch(() => undefined);
   await pool.query(`ALTER TABLE social_accounts ADD COLUMN IF NOT EXISTS account_id TEXT;`).catch(() => undefined);
