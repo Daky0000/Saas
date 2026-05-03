@@ -3761,7 +3761,7 @@ async function exchangePinterestCode(code: string, req?: Request) {
   const cfg = await getPlatformConfig('pinterest');
   const clientId = String(cfg.clientId || process.env.VITE_PINTEREST_CLIENT_ID || '').trim();
   const clientSecret = String(cfg.clientSecret || process.env.PINTEREST_CLIENT_SECRET || '').trim();
-  const redirectUri = resolveOAuthRedirectUri('pinterest', cfg.redirectUri || process.env.VITE_PINTEREST_REDIRECT_URI, req);
+  const redirectUri = resolveOAuthRedirectUri('pinterest', cfg.redirectUri, req);
   if (!clientId || !clientSecret) throw new Error('Pinterest client credentials not configured');
 
   const data = new URLSearchParams({
@@ -7803,6 +7803,8 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
 
     // Integration callbacks (LinkedIn/Twitter/Facebook/Instagram/Pinterest/Threads) belong to the frontend SPA path.
     if (!SOCIAL_PROVIDER_CONFIG[providerKey]) {
+      const hasError = req.query['error'] || req.query['error_description'];
+      if (hasError) console.error(`OAuth callback error for ${providerKey}:`, req.query);
       const query = new URLSearchParams(req.query as Record<string, string>).toString();
       const target = `${FRONTEND_URL}/auth/${encodeURIComponent(providerKey)}/callback${query ? `?${query}` : ''}`;
       return res.redirect(target);
