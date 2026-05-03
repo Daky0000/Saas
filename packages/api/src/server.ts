@@ -19616,17 +19616,142 @@ app.get('/r/:shortCode', async (req: Request, res: Response) => {
 
 // ─── End Campaign & Funnel Builder ────────────────────────────────────────────
 
-// ─── AI Chat ──────────────────────────────────────────────────────────────────
+// ─── AI Chat (Agentic) ────────────────────────────────────────────────────────
 
-const AI_SYSTEM_PROMPT = `You are an intelligent assistant built into ContentFlow, a SaaS platform for content creators and marketers. You help users with:
-- Content creation: writing captions, posts, blog drafts, and marketing copy
-- Social media strategy: tips for TikTok, Instagram, Facebook, LinkedIn, Pinterest, Threads, X (Twitter)
-- Analytics insights: understanding reach, engagement, follower growth
-- Publishing workflows: scheduling, automation, platform-specific best practices
-- Card builder: designing visual content cards
-- Account setup and integrations
+const AI_SYSTEM_PROMPT = `You are an intelligent assistant built into ContentFlow, a SaaS platform for content creators and marketers.
 
-Be concise, actionable, and friendly. When giving suggestions, tailor them to social media and content marketing. If a question is unrelated to content, social media, or marketing, you can still answer helpfully but keep it brief.`;
+You can take REAL actions on behalf of the user using the tools provided. When a user asks you to:
+- "draft", "write", "create a post/article" → use create_draft
+- "schedule", "publish at", "post on [date/time]" → use schedule_post
+- "show my posts", "what have I written", "list drafts" → use get_recent_posts
+- "what platforms", "which accounts are connected" → use get_connected_platforms
+
+Always use a tool when the intent matches — don't just describe what you could do, do it.
+After using a tool, briefly confirm what was done and offer a next step.
+
+For content/copy you write as part of create_draft or schedule_post, write real, high-quality content based on the user's request. Use clear paragraphs. Do not use placeholder text.
+
+You also help with: social media strategy, content tips, analytics, and platform best practices.
+Be concise, friendly, and action-oriented.`;
+
+const AI_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'create_draft',
+    description: 'Create a new blog/content post saved as a draft. Use when user asks to draft, write, or create a post/article.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Post title' },
+        content: { type: 'string', description: 'Full post content (can be markdown or plain text)' },
+        excerpt: { type: 'string', description: 'Short summary (1-2 sentences)' },
+      },
+      required: ['title', 'content'],
+    },
+  },
+  {
+    name: 'schedule_post',
+    description: 'Create a post and schedule it to publish at a specific date/time. Use when user specifies a date or time to publish.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Post title' },
+        content: { type: 'string', description: 'Full post content' },
+        scheduled_at: { type: 'string', description: 'ISO 8601 datetime string (e.g. "2025-06-01T09:00:00Z"). Convert relative times like "tomorrow at 9am" to absolute UTC.' },
+        excerpt: { type: 'string', description: 'Short summary' },
+      },
+      required: ['title', 'content', 'scheduled_at'],
+    },
+  },
+  {
+    name: 'get_recent_posts',
+    description: "Fetch the user's recent posts to show them or reference them.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Max number to return (default 5, max 10)' },
+        status: { type: 'string', description: 'Filter: draft | published | scheduled | all' },
+      },
+    },
+  },
+  {
+    name: 'get_connected_platforms',
+    description: "Get which social media platforms the user has connected so you can give relevant advice.",
+    input_schema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+];
+
+function aiToolLabel(name: string, input: any): string {
+  switch (name) {
+    case 'create_draft': return `Creating draft: "${input?.title || 'untitled'}"`;
+    case 'schedule_post': return `Scheduling post: "${input?.title || 'untitled'}"`;
+    case 'get_recent_posts': return 'Fetching your posts…';
+    case 'get_connected_platforms': return 'Checking connected platforms…';
+    default: return `Running ${name}…`;
+  }
+}
+
+async function executeAITool(name: string, input: any, userId: string): Promise<any> {
+  switch (name) {
+    case 'create_draft': {
+      const title = String(input?.title || 'Untitled').slice(0, 255);
+      const content = String(input?.content || '');
+      const excerpt = String(input?.excerpt || '').slice(0, 500);
+      const id = randomUUID();
+      const slug = slugify(title) || id;
+      const { rows } = await dbQuery(
+        `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'draft', NOW(), NOW()) RETURNING id, title, status`,
+        [id, userId, title, slug, content, excerpt]
+      );
+      return { success: true, action: 'created_draft', post: rows[0] };
+    }
+    case 'schedule_post': {
+      const title = String(input?.title || 'Untitled').slice(0, 255);
+      const content = String(input?.content || '');
+      const excerpt = String(input?.excerpt || '').slice(0, 500);
+      const scheduled_at = input?.scheduled_at ? new Date(input.scheduled_at).toISOString() : null;
+      if (!scheduled_at) throw new Error('Invalid scheduled_at datetime');
+      const id = randomUUID();
+      const slug = slugify(title) || id;
+      const { rows } = await dbQuery(
+        `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, status, scheduled_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, NOW(), NOW()) RETURNING id, title, status, scheduled_at`,
+        [id, userId, title, slug, content, excerpt, scheduled_at]
+      );
+      return { success: true, action: 'scheduled_post', post: rows[0] };
+    }
+    case 'get_recent_posts': {
+      const limit = Math.min(Number(input?.limit) || 5, 10);
+      const status = String(input?.status || '').trim().toLowerCase();
+      const params: any[] = [userId];
+      let q = `SELECT id, title, status, scheduled_at, published_at, updated_at
+               FROM blog_posts WHERE user_id = $1`;
+      if (status && status !== 'all') {
+        params.push(status);
+        q += ` AND status = $${params.length}`;
+      } else {
+        q += ` AND status NOT IN ('archived','deleted')`;
+      }
+      q += ` ORDER BY updated_at DESC LIMIT $${params.length + 1}`;
+      params.push(limit);
+      const { rows } = await dbQuery(q, params);
+      return { posts: rows };
+    }
+    case 'get_connected_platforms': {
+      const accounts = await getUserConnectedAccounts(userId);
+      const connected = accounts.filter((a: any) => a.connected !== false).map((a: any) => ({
+        platform: a.platform,
+        name: a.account_name || a.handle || a.platform,
+      }));
+      return { connected };
+    }
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
 
 app.post('/api/ai/chat', async (req: Request, res: Response) => {
   try {
@@ -19641,7 +19766,6 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'messages array is required' });
     }
 
-    // Resolve API key and model from DB config, with env var fallback
     const { model: cfgModel, encryptedKey } = await getAIConfig();
     const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
     if (!apiKey) {
@@ -19650,38 +19774,87 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 
     const client = new Anthropic({ apiKey });
 
-    // Keep last 20 messages to stay within token limits
-    const trimmed = messages.slice(-20).map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: String(m.content || '').slice(0, 4000),
-    }));
-
-    // Stream response to client
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const stream = await client.messages.stream({
-      model: cfgModel,
-      max_tokens: 1024,
-      system: AI_SYSTEM_PROMPT,
-      messages: trimmed,
-    });
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-        res.write(`data: ${JSON.stringify({ text: chunk.delta.text })}\n\n`);
+    // Build conversation — keep last 20, serialize assistant tool-use turns as text
+    const conversationMessages: Anthropic.MessageParam[] = messages.slice(-20).map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: String(m.content || '').slice(0, 4000),
+    }));
+
+    // Agentic loop — max 3 tool-use iterations then always stream final text
+    let loopMessages = [...conversationMessages];
+    for (let iteration = 0; iteration < 4; iteration++) {
+      const isLastIteration = iteration >= 3;
+
+      // Non-streaming call for tool detection
+      const response = await client.messages.create({
+        model: cfgModel,
+        max_tokens: 2048,
+        system: AI_SYSTEM_PROMPT,
+        tools: isLastIteration ? [] : AI_TOOLS,
+        messages: loopMessages,
+      });
+
+      if (response.stop_reason === 'tool_use' && !isLastIteration) {
+        // Send any text blocks before tool calls
+        for (const block of response.content) {
+          if (block.type === 'text' && block.text.trim()) {
+            send({ type: 'text', text: block.text });
+          }
+        }
+
+        // Execute each tool call
+        const toolResultContents: Anthropic.ToolResultBlockParam[] = [];
+        for (const block of response.content) {
+          if (block.type !== 'tool_use') continue;
+          send({ type: 'tool_start', name: block.name, label: aiToolLabel(block.name, block.input) });
+          try {
+            const result = await executeAITool(block.name, block.input, auth.userId);
+            send({ type: 'tool_done', name: block.name, success: true, result });
+            toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          } catch (err: any) {
+            const errMsg = err?.message || 'Tool failed';
+            send({ type: 'tool_done', name: block.name, success: false, error: errMsg });
+            toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${errMsg}`, is_error: true });
+          }
+        }
+
+        // Append assistant turn + tool results and continue loop
+        loopMessages = [
+          ...loopMessages,
+          { role: 'assistant', content: response.content },
+          { role: 'user', content: toolResultContents },
+        ];
+      } else {
+        // Final response — stream it
+        const finalStream = await client.messages.stream({
+          model: cfgModel,
+          max_tokens: 1024,
+          system: AI_SYSTEM_PROMPT,
+          messages: loopMessages,
+        });
+        for await (const chunk of finalStream) {
+          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            send({ type: 'text', text: chunk.delta.text });
+          }
+        }
+        break;
       }
     }
 
     res.write('data: [DONE]\n\n');
     res.end();
-  } catch (error) {
+  } catch (error: any) {
     console.error('AI chat error:', error);
     if (!res.headersSent) {
-      return res.status(500).json({ success: false, error: 'AI request failed' });
+      return res.status(500).json({ success: false, error: error?.message || 'AI request failed' });
     }
-    res.write(`data: ${JSON.stringify({ error: 'AI request failed' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: error?.message || 'AI request failed' })}\n\n`);
     res.end();
   }
 });
