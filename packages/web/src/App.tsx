@@ -33,6 +33,7 @@ import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
 import DataDeletion from './pages/DataDeletion';
 import OAuthCallback from './pages/OAuthCallback';
+import ChatWidget from './components/ChatWidget';
 import PostAutomation from './pages/PostAutomation';
 import Mailing from './pages/Mailing';
 import Campaign from './pages/Campaign';
@@ -626,6 +627,7 @@ function App() {
     </div>
 
       <AdvancedTemplateCardModal />
+      <ChatWidget />
     </TemplateEditorProvider>
   );
 }

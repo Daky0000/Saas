@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import express from 'express';
 import type { Request, Response } from 'express';
 import cors from 'cors';
@@ -19496,6 +19497,76 @@ app.get('/r/:shortCode', async (req: Request, res: Response) => {
 });
 
 // ─── End Campaign & Funnel Builder ────────────────────────────────────────────
+
+// ─── AI Chat ──────────────────────────────────────────────────────────────────
+
+const AI_SYSTEM_PROMPT = `You are an intelligent assistant built into ContentFlow, a SaaS platform for content creators and marketers. You help users with:
+- Content creation: writing captions, posts, blog drafts, and marketing copy
+- Social media strategy: tips for TikTok, Instagram, Facebook, LinkedIn, Pinterest, Threads, X (Twitter)
+- Analytics insights: understanding reach, engagement, follower growth
+- Publishing workflows: scheduling, automation, platform-specific best practices
+- Card builder: designing visual content cards
+- Account setup and integrations
+
+Be concise, actionable, and friendly. When giving suggestions, tailor them to social media and content marketing. If a question is unrelated to content, social media, or marketing, you can still answer helpfully but keep it brief.`;
+
+app.post('/api/ai/chat', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { messages } = req.body as {
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    };
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, error: 'messages array is required' });
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ success: false, error: 'AI service not configured' });
+    }
+
+    const client = new Anthropic({ apiKey });
+
+    // Keep last 20 messages to stay within token limits
+    const trimmed = messages.slice(-20).map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: String(m.content || '').slice(0, 4000),
+    }));
+
+    // Stream response to client
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const stream = await client.messages.stream({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      system: AI_SYSTEM_PROMPT,
+      messages: trimmed,
+    });
+
+    for await (const chunk of stream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+        res.write(`data: ${JSON.stringify({ text: chunk.delta.text })}\n\n`);
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error) {
+    console.error('AI chat error:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, error: 'AI request failed' });
+    }
+    res.write(`data: ${JSON.stringify({ error: 'AI request failed' })}\n\n`);
+    res.end();
+  }
+});
+
+// ─── End AI Chat ───────────────────────────────────────────────────────────────
 
 // Not found
 app.use((req, res) => {
