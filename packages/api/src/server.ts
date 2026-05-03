@@ -9541,6 +9541,124 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
   }
 });
 
+// ─── AI Config (admin) ───────────────────────────────────────────────────────
+
+const AI_CONFIG_PLATFORM = 'ai_assistant';
+
+async function getAIConfig(): Promise<{ model: string; encryptedKey: string | null }> {
+  const cfg = await getPlatformConfig(AI_CONFIG_PLATFORM);
+  return {
+    model: String(cfg.model || 'claude-haiku-4-5-20251001'),
+    encryptedKey: cfg.apiKeyEncrypted ? String(cfg.apiKeyEncrypted) : null,
+  };
+}
+
+function decryptAIKey(encryptedKey: string): string {
+  try { return decryptIntegrationSecret(encryptedKey); } catch { return ''; }
+}
+
+function maskKey(raw: string): string {
+  if (!raw || raw.length < 8) return '••••';
+  return '••••' + raw.slice(-4);
+}
+
+// GET /api/admin/ai-config
+app.get('/api/admin/ai-config', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { model, encryptedKey } = await getAIConfig();
+    const rawKey = encryptedKey ? decryptAIKey(encryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
+    return res.json({
+      success: true,
+      config: {
+        model,
+        apiKeyMasked: rawKey ? maskKey(rawKey) : '',
+        enabled: Boolean(rawKey),
+      },
+    });
+  } catch (err) {
+    console.error('AI config GET error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch AI config' });
+  }
+});
+
+// PUT /api/admin/ai-config
+app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { apiKey, model } = req.body as { apiKey?: string; model?: string };
+
+    const { encryptedKey: existingEncrypted } = await getAIConfig();
+    const newModel = String(model || 'claude-haiku-4-5-20251001').trim();
+
+    // Only re-encrypt if a new real key was provided (not the masked placeholder)
+    let newEncryptedKey = existingEncrypted;
+    if (apiKey && !String(apiKey).startsWith('••')) {
+      newEncryptedKey = encryptIntegrationSecret(String(apiKey).trim());
+    }
+
+    const configObj = {
+      model: newModel,
+      ...(newEncryptedKey ? { apiKeyEncrypted: newEncryptedKey } : {}),
+    };
+
+    if (hasDatabase()) {
+      const updateRes = await dbQuery(
+        `UPDATE platform_configs SET config = $2, enabled = true, updated_at = NOW() WHERE platform = $1`,
+        [AI_CONFIG_PLATFORM, JSON.stringify(configObj)]
+      );
+      if (updateRes.rowCount === 0) {
+        await dbQuery(
+          `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ($1, $2, true, NOW())`,
+          [AI_CONFIG_PLATFORM, JSON.stringify(configObj)]
+        );
+      }
+    } else {
+      inMemoryPlatformConfigs.set(AI_CONFIG_PLATFORM, {
+        platform: AI_CONFIG_PLATFORM,
+        config: configObj as any,
+        enabled: true,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    const rawKey = newEncryptedKey ? decryptAIKey(newEncryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
+    return res.json({
+      success: true,
+      config: { model: newModel, apiKeyMasked: rawKey ? maskKey(rawKey) : '', enabled: Boolean(rawKey) },
+    });
+  } catch (err) {
+    console.error('AI config PUT error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to save AI config' });
+  }
+});
+
+// POST /api/admin/ai-config/test
+app.post('/api/admin/ai-config/test', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { model, encryptedKey } = await getAIConfig();
+    const rawKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!rawKey) return res.status(400).json({ success: false, message: 'No API key configured' });
+
+    const client = new Anthropic({ apiKey: rawKey });
+    await client.messages.create({
+      model,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Reply with just: ok' }],
+    });
+    return res.json({ success: true, message: `Connected — model ${model} is responding` });
+  } catch (err: any) {
+    const msg = err?.message || 'Connection failed';
+    return res.status(400).json({ success: false, message: msg });
+  }
+});
+
+// ─── End AI Config ────────────────────────────────────────────────────────────
+
 // ─── Page Content ────────────────────────────────────────────────────────────
 app.get('/api/pages/:slug', async (req: Request, res: Response) => {
   const { slug } = req.params;
@@ -19523,9 +19641,11 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'messages array is required' });
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    // Resolve API key and model from DB config, with env var fallback
+    const { model: cfgModel, encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
     if (!apiKey) {
-      return res.status(503).json({ success: false, error: 'AI service not configured' });
+      return res.status(503).json({ success: false, error: 'AI service not configured — add your Anthropic API key in Admin → AI Assistant' });
     }
 
     const client = new Anthropic({ apiKey });
@@ -19542,7 +19662,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
     res.setHeader('Connection', 'keep-alive');
 
     const stream = await client.messages.stream({
-      model: 'claude-haiku-4-5-20251001',
+      model: cfgModel,
       max_tokens: 1024,
       system: AI_SYSTEM_PROMPT,
       messages: trimmed,

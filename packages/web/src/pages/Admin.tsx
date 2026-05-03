@@ -1,4 +1,4 @@
-import { ChevronDown, CreditCard, FileText, KeyRound, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X } from 'lucide-react';
+import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -9,6 +9,7 @@ import AdminAuthProviders from '../components/admin/AdminAuthProviders';
 import AdminPagesManagement from '../components/admin/AdminPagesManagement';
 import AdminMediaManagement from '../components/admin/AdminMediaManagement';
 import AdminIntegrations from '../components/admin/AdminIntegrations';
+import AdminAIConfig from '../components/admin/AdminAIConfig';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -30,7 +31,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'pages-login'
     | 'pages-privacy'
     | 'pages-terms'
-    | 'media';
+    | 'media'
+    | 'ai';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -48,6 +50,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     'pages-privacy': '/admin/pages/privacy',
     'pages-terms': '/admin/pages/terms',
     media: '/admin/media',
+    ai: '/admin/ai',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -77,6 +80,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
+    { id: 'ai', label: 'AI Assistant', icon: Bot, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
   ];
@@ -259,6 +263,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'auth-providers' && <AdminAuthProviders />}
             {activeTab === 'integrations' && <AdminIntegrations />}
             {activeTab === 'media' && <AdminMediaManagement />}
+            {activeTab === 'ai' && <AdminAIConfig />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>
