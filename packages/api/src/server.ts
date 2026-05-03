@@ -3747,7 +3747,7 @@ async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?
     case 'facebook':
       return exchangeFacebookCode(code);
     case 'pinterest':
-      return exchangePinterestCode(code);
+      return exchangePinterestCode(code, req);
     case 'threads':
       return exchangeThreadsCode(code);
     case 'tiktok':
@@ -3757,11 +3757,11 @@ async function exchangeOAuthCode(platformId: string, code: string, codeVerifier?
   }
 }
 
-async function exchangePinterestCode(code: string) {
+async function exchangePinterestCode(code: string, req?: Request) {
   const cfg = await getPlatformConfig('pinterest');
   const clientId = String(cfg.clientId || process.env.VITE_PINTEREST_CLIENT_ID || '').trim();
   const clientSecret = String(cfg.clientSecret || process.env.PINTEREST_CLIENT_SECRET || '').trim();
-  const redirectUri = resolveOAuthRedirectUri('pinterest', cfg.redirectUri || process.env.VITE_PINTEREST_REDIRECT_URI);
+  const redirectUri = resolveOAuthRedirectUri('pinterest', cfg.redirectUri || process.env.VITE_PINTEREST_REDIRECT_URI, req);
   if (!clientId || !clientSecret) throw new Error('Pinterest client credentials not configured');
 
   const data = new URLSearchParams({
@@ -3778,6 +3778,7 @@ async function exchangePinterestCode(code: string) {
   });
   if (resp.status >= 400) {
     const msg = (resp.data as any)?.message || (resp.data as any)?.error || `Pinterest token exchange failed (${resp.status})`;
+    console.error('Pinterest token exchange error:', { status: resp.status, body: resp.data, redirectUri });
     throw new Error(msg);
   }
   const tokenData: any = resp.data || {};
