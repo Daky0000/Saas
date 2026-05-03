@@ -9545,11 +9545,12 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
 
 const AI_CONFIG_PLATFORM = 'ai_assistant';
 
-async function getAIConfig(): Promise<{ model: string; encryptedKey: string | null }> {
+async function getAIConfig(): Promise<{ model: string; encryptedKey: string | null; systemPrompt: string | null }> {
   const cfg = await getPlatformConfig(AI_CONFIG_PLATFORM);
   return {
     model: String(cfg.model || 'claude-haiku-4-5-20251001'),
     encryptedKey: cfg.apiKeyEncrypted ? String(cfg.apiKeyEncrypted) : null,
+    systemPrompt: cfg.systemPrompt ? String(cfg.systemPrompt) : null,
   };
 }
 
@@ -9567,7 +9568,7 @@ app.get('/api/admin/ai-config', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { model, encryptedKey } = await getAIConfig();
+    const { model, encryptedKey, systemPrompt } = await getAIConfig();
     const rawKey = encryptedKey ? decryptAIKey(encryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
     return res.json({
       success: true,
@@ -9575,6 +9576,8 @@ app.get('/api/admin/ai-config', async (req: Request, res: Response) => {
         model,
         apiKeyMasked: rawKey ? maskKey(rawKey) : '',
         enabled: Boolean(rawKey),
+        systemPrompt: systemPrompt || null,
+        defaultSystemPrompt: AI_SYSTEM_PROMPT_DEFAULT,
       },
     });
   } catch (err) {
@@ -9588,9 +9591,9 @@ app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { apiKey, model } = req.body as { apiKey?: string; model?: string };
+    const { apiKey, model, systemPrompt } = req.body as { apiKey?: string; model?: string; systemPrompt?: string };
 
-    const { encryptedKey: existingEncrypted } = await getAIConfig();
+    const { encryptedKey: existingEncrypted, systemPrompt: existingSystemPrompt } = await getAIConfig();
     const newModel = String(model || 'claude-haiku-4-5-20251001').trim();
 
     // Only re-encrypt if a new real key was provided (not the masked placeholder)
@@ -9599,10 +9602,14 @@ app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
       newEncryptedKey = encryptIntegrationSecret(String(apiKey).trim());
     }
 
-    const configObj = {
-      model: newModel,
-      ...(newEncryptedKey ? { apiKeyEncrypted: newEncryptedKey } : {}),
-    };
+    // systemPrompt: update only when key is present in body; empty string = clear custom prompt
+    const finalSystemPrompt = 'systemPrompt' in req.body
+      ? (systemPrompt ? String(systemPrompt).trim() : null)
+      : existingSystemPrompt;
+
+    const configObj: Record<string, any> = { model: newModel };
+    if (newEncryptedKey) configObj.apiKeyEncrypted = newEncryptedKey;
+    if (finalSystemPrompt) configObj.systemPrompt = finalSystemPrompt;
 
     if (hasDatabase()) {
       const updateRes = await dbQuery(
@@ -9627,7 +9634,13 @@ app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
     const rawKey = newEncryptedKey ? decryptAIKey(newEncryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
     return res.json({
       success: true,
-      config: { model: newModel, apiKeyMasked: rawKey ? maskKey(rawKey) : '', enabled: Boolean(rawKey) },
+      config: {
+        model: newModel,
+        apiKeyMasked: rawKey ? maskKey(rawKey) : '',
+        enabled: Boolean(rawKey),
+        systemPrompt: finalSystemPrompt || null,
+        defaultSystemPrompt: AI_SYSTEM_PROMPT_DEFAULT,
+      },
     });
   } catch (err) {
     console.error('AI config PUT error:', err);
@@ -19618,7 +19631,7 @@ app.get('/r/:shortCode', async (req: Request, res: Response) => {
 
 // ─── AI Chat (Agentic) ────────────────────────────────────────────────────────
 
-const AI_SYSTEM_PROMPT = `You are an intelligent assistant built into ContentFlow, a SaaS platform for content creators and marketers.
+const AI_SYSTEM_PROMPT_DEFAULT = `You are an intelligent assistant built into ContentFlow, a SaaS platform for content creators and marketers.
 
 You can take REAL actions on behalf of the user using the tools provided. When a user asks you to:
 - "draft", "write", "create a post/article" → use create_draft
@@ -19630,6 +19643,11 @@ Always use a tool when the intent matches — don't just describe what you could
 After using a tool, briefly confirm what was done and offer a next step.
 
 For content/copy you write as part of create_draft or schedule_post, write real, high-quality content based on the user's request. Use clear paragraphs. Do not use placeholder text.
+
+Platform pre-selection: if the user mentions a specific social platform (e.g. "LinkedIn post", "Twitter thread", "Instagram caption", "Facebook update"), include the lowercase platform name(s) in the \`platforms\` field of create_draft or schedule_post. Examples:
+- "draft a LinkedIn post" → platforms: ["linkedin"]
+- "schedule a Facebook and Instagram post" → platforms: ["facebook","instagram"]
+- No platform mentioned → omit platforms field entirely.
 
 You also help with: social media strategy, content tips, analytics, and platform best practices.
 Be concise, friendly, and action-oriented.`;
@@ -19644,6 +19662,7 @@ const AI_TOOLS: Anthropic.Tool[] = [
         title: { type: 'string', description: 'Post title' },
         content: { type: 'string', description: 'Full post content (can be markdown or plain text)' },
         excerpt: { type: 'string', description: 'Short summary (1-2 sentences)' },
+        platforms: { type: 'array', items: { type: 'string' }, description: 'Lowercase social platform names to pre-select for automation (e.g. ["linkedin","instagram"]). Only include when user explicitly mentions specific platforms.' },
       },
       required: ['title', 'content'],
     },
@@ -19658,6 +19677,7 @@ const AI_TOOLS: Anthropic.Tool[] = [
         content: { type: 'string', description: 'Full post content' },
         scheduled_at: { type: 'string', description: 'ISO 8601 datetime string (e.g. "2025-06-01T09:00:00Z"). Convert relative times like "tomorrow at 9am" to absolute UTC.' },
         excerpt: { type: 'string', description: 'Short summary' },
+        platforms: { type: 'array', items: { type: 'string' }, description: 'Lowercase social platform names to pre-select for automation (e.g. ["linkedin","twitter"]). Only include when user explicitly mentions specific platforms.' },
       },
       required: ['title', 'content', 'scheduled_at'],
     },
@@ -19693,12 +19713,43 @@ function aiToolLabel(name: string, input: any): string {
   }
 }
 
+async function preselectPlatformsForPost(postId: string, userId: string, platforms: string[]): Promise<void> {
+  if (!pool || platforms.length === 0) return;
+  try {
+    const normalized = platforms.map((p) => p.toLowerCase().trim());
+    const expanded = Array.from(new Set(normalized.flatMap((p) => (p === 'x' ? ['twitter', 'x'] : p === 'twitter' ? ['twitter', 'x'] : [p]))));
+    const { rows: accounts } = await dbQuery(
+      `SELECT id FROM social_accounts WHERE user_id=$1 AND LOWER(platform) = ANY($2::text[])`,
+      [userId, expanded]
+    );
+    if (accounts.length === 0) return;
+    const settingId = randomUUID();
+    const existing = await dbQuery('SELECT id FROM social_post_settings WHERE post_id=$1', [postId]);
+    const settId: string = existing.rows[0]?.id ? String(existing.rows[0].id) : settingId;
+    if (!existing.rows.length) {
+      await dbQuery(
+        `INSERT INTO social_post_settings (id, post_id, template, publish_type, scheduled_at) VALUES ($1,$2,'','immediate',NULL)`,
+        [settId, postId]
+      );
+    }
+    for (const acc of accounts) {
+      await dbQuery(
+        `INSERT INTO social_post_targets (id, social_post_id, social_account_id, enabled) VALUES ($1,$2,$3,true)`,
+        [randomUUID(), settId, acc.id]
+      );
+    }
+  } catch (e) {
+    console.error('preselectPlatformsForPost error:', e);
+  }
+}
+
 async function executeAITool(name: string, input: any, userId: string): Promise<any> {
   switch (name) {
     case 'create_draft': {
       const title = String(input?.title || 'Untitled').slice(0, 255);
       const content = String(input?.content || '');
       const excerpt = String(input?.excerpt || '').slice(0, 500);
+      const platforms: string[] = Array.isArray(input?.platforms) ? input.platforms.map(String) : [];
       const id = randomUUID();
       const slug = slugify(title) || id;
       const { rows } = await dbQuery(
@@ -19706,6 +19757,7 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
          VALUES ($1, $2, $3, $4, $5, $6, 'draft', NOW(), NOW()) RETURNING id, title, status`,
         [id, userId, title, slug, content, excerpt]
       );
+      await preselectPlatformsForPost(id, userId, platforms);
       return { success: true, action: 'created_draft', post: rows[0] };
     }
     case 'schedule_post': {
@@ -19714,6 +19766,7 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
       const excerpt = String(input?.excerpt || '').slice(0, 500);
       const scheduled_at = input?.scheduled_at ? new Date(input.scheduled_at).toISOString() : null;
       if (!scheduled_at) throw new Error('Invalid scheduled_at datetime');
+      const platforms: string[] = Array.isArray(input?.platforms) ? input.platforms.map(String) : [];
       const id = randomUUID();
       const slug = slugify(title) || id;
       const { rows } = await dbQuery(
@@ -19721,6 +19774,7 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
          VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, NOW(), NOW()) RETURNING id, title, status, scheduled_at`,
         [id, userId, title, slug, content, excerpt, scheduled_at]
       );
+      await preselectPlatformsForPost(id, userId, platforms);
       return { success: true, action: 'scheduled_post', post: rows[0] };
     }
     case 'get_recent_posts': {
@@ -19766,12 +19820,13 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'messages array is required' });
     }
 
-    const { model: cfgModel, encryptedKey } = await getAIConfig();
+    const { model: cfgModel, encryptedKey, systemPrompt: storedPrompt } = await getAIConfig();
     const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
     if (!apiKey) {
       return res.status(503).json({ success: false, error: 'AI service not configured — add your Anthropic API key in Admin → AI Assistant' });
     }
 
+    const activeSystemPrompt = storedPrompt || AI_SYSTEM_PROMPT_DEFAULT;
     const client = new Anthropic({ apiKey });
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -19795,7 +19850,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       const response = await client.messages.create({
         model: cfgModel,
         max_tokens: 2048,
-        system: AI_SYSTEM_PROMPT,
+        system: activeSystemPrompt,
         tools: isLastIteration ? [] : AI_TOOLS,
         messages: loopMessages,
       });
@@ -19835,7 +19890,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
         const finalStream = await client.messages.stream({
           model: cfgModel,
           max_tokens: 1024,
-          system: AI_SYSTEM_PROMPT,
+          system: activeSystemPrompt,
           messages: loopMessages,
         });
         for await (const chunk of finalStream) {

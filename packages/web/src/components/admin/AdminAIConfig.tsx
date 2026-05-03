@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Bot, Check, Eye, EyeOff, Loader2, Save } from 'lucide-react';
+import { Bot, Check, Eye, EyeOff, Loader2, RotateCcw, Save } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
 const authHeaders = (): Record<string, string> => {
@@ -17,20 +17,32 @@ type Config = {
   model: string;
   apiKeyMasked: string;
   enabled: boolean;
+  systemPrompt: string | null;
+  defaultSystemPrompt: string;
 };
+
+type Tab = 'general' | 'bots';
 
 export default function AdminAIConfig() {
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('general');
+
+  // General tab state
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-
   const [model, setModel] = useState('claude-haiku-4-5-20251001');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+
+  // AI Bots tab state
+  const [promptText, setPromptText] = useState('');
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptSaved, setPromptSaved] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -41,23 +53,21 @@ export default function AdminAIConfig() {
           setConfig(data.config);
           setModel(data.config.model || 'claude-haiku-4-5-20251001');
           setApiKey(data.config.apiKeyMasked || '');
+          setPromptText(data.config.systemPrompt || data.config.defaultSystemPrompt || '');
         }
       })
       .catch(() => setError('Failed to load AI config'))
       .finally(() => setLoading(false));
   }, []);
 
-  const save = async (e: FormEvent) => {
+  const saveGeneral = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     setSaved(false);
     setSaving(true);
     try {
       const body: Record<string, string> = { model };
-      // Only send the key if it's a real new key (not the masked placeholder)
-      if (apiKey && !apiKey.startsWith('••')) {
-        body.apiKey = apiKey;
-      }
+      if (apiKey && !apiKey.startsWith('••')) body.apiKey = apiKey;
       const res = await fetch(`${API_BASE_URL}/api/admin/ai-config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -93,6 +103,32 @@ export default function AdminAIConfig() {
     }
   };
 
+  const savePrompt = async () => {
+    setPromptError(null);
+    setPromptSaved(false);
+    setPromptSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/ai-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ systemPrompt: promptText }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any).error || 'Save failed');
+      setConfig(data.config);
+      setPromptSaved(true);
+      setTimeout(() => setPromptSaved(false), 2500);
+    } catch (err) {
+      setPromptError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
+  const resetPrompt = () => {
+    if (config?.defaultSystemPrompt) setPromptText(config.defaultSystemPrompt);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -102,6 +138,7 @@ export default function AdminAIConfig() {
   }
 
   const hasKey = Boolean(config?.apiKeyMasked);
+  const isCustomPrompt = config?.systemPrompt !== null && config?.systemPrompt !== undefined;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -122,112 +159,192 @@ export default function AdminAIConfig() {
         </div>
       </div>
 
-      <form onSubmit={save} className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
-        {/* API Key */}
-        <div>
-          <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-            Anthropic API Key
-          </label>
-          <div className="relative">
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={hasKey ? 'Leave unchanged or enter a new key' : 'sk-ant-…'}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-3 pr-10 text-sm font-mono text-slate-900 placeholder-slate-400 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400"
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-            >
-              {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-slate-400">
-            Get your key at{' '}
-            <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-purple-500 hover:underline">
-              console.anthropic.com
-            </a>
-            . Stored encrypted — never exposed in API responses.
-          </p>
-        </div>
-
-        {/* Model selector */}
-        <div>
-          <label className="mb-2 block text-sm font-semibold text-slate-700">Model</label>
-          <div className="grid gap-2">
-            {ANTHROPIC_MODELS.map((m) => (
-              <label
-                key={m.id}
-                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
-                  model === m.id
-                    ? 'border-purple-400 bg-purple-50'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="model"
-                  value={m.id}
-                  checked={model === m.id}
-                  onChange={() => setModel(m.id)}
-                  className="accent-purple-500"
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-semibold text-slate-900">{m.label}</div>
-                  <div className="text-xs text-slate-500">{m.note}</div>
-                </div>
-                {model === m.id && <Check size={16} className="text-purple-500" />}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {error && (
-          <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
-        )}
-
-        <div className="flex items-center gap-3 pt-1">
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200">
+        {(['general', 'bots'] as Tab[]).map((tab) => (
           <button
-            type="submit"
-            disabled={saving}
-            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={`px-5 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors capitalize ${
+              activeTab === tab
+                ? 'border-slate-950 text-slate-950'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
           >
-            {saving ? <Loader2 size={15} className="animate-spin" /> : saved ? <Check size={15} /> : <Save size={15} />}
-            {saving ? 'Saving…' : saved ? 'Saved!' : 'Save Changes'}
+            {tab === 'general' ? 'General' : 'AI Bots'}
           </button>
-          {hasKey && (
-            <button
-              type="button"
-              onClick={testConnection}
-              disabled={testing}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {testing ? <Loader2 size={15} className="animate-spin" /> : <Bot size={15} />}
-              {testing ? 'Testing…' : 'Test Connection'}
-            </button>
-          )}
-        </div>
-
-        {testResult && (
-          <div className={`rounded-xl px-3 py-2 text-sm font-medium ${testResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-            {testResult.message}
-          </div>
-        )}
-      </form>
-
-      {/* Info box */}
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600 space-y-1.5">
-        <p className="font-semibold text-slate-800">How it works</p>
-        <ul className="list-disc list-inside space-y-1 text-slate-500">
-          <li>The sparkle chat widget appears for all logged-in users</li>
-          <li>Every message goes through your Anthropic API key — you control costs</li>
-          <li>The API key is AES-256-GCM encrypted before being stored in the database</li>
-          <li>Change the model any time; the current chat sessions will use the new model immediately</li>
-        </ul>
+        ))}
       </div>
+
+      {/* ── General Tab ── */}
+      {activeTab === 'general' && (
+        <>
+          <form onSubmit={saveGeneral} className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
+            {/* API Key */}
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-700">Anthropic API Key</label>
+              <div className="relative">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={hasKey ? 'Leave unchanged or enter a new key' : 'sk-ant-…'}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-3 pr-10 text-sm font-mono text-slate-900 placeholder-slate-400 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Get your key at{' '}
+                <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-purple-500 hover:underline">
+                  console.anthropic.com
+                </a>
+                . Stored encrypted — never exposed in API responses.
+              </p>
+            </div>
+
+            {/* Model selector */}
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">Model</label>
+              <div className="grid gap-2">
+                {ANTHROPIC_MODELS.map((m) => (
+                  <label
+                    key={m.id}
+                    className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
+                      model === m.id ? 'border-purple-400 bg-purple-50' : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <input type="radio" name="model" value={m.id} checked={model === m.id} onChange={() => setModel(m.id)} className="accent-purple-500" />
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-slate-900">{m.label}</div>
+                      <div className="text-xs text-slate-500">{m.note}</div>
+                    </div>
+                    {model === m.id && <Check size={16} className="text-purple-500" />}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={15} className="animate-spin" /> : saved ? <Check size={15} /> : <Save size={15} />}
+                {saving ? 'Saving…' : saved ? 'Saved!' : 'Save Changes'}
+              </button>
+              {hasKey && (
+                <button
+                  type="button"
+                  onClick={testConnection}
+                  disabled={testing}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {testing ? <Loader2 size={15} className="animate-spin" /> : <Bot size={15} />}
+                  {testing ? 'Testing…' : 'Test Connection'}
+                </button>
+              )}
+            </div>
+
+            {testResult && (
+              <div className={`rounded-xl px-3 py-2 text-sm font-medium ${testResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                {testResult.message}
+              </div>
+            )}
+          </form>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600 space-y-1.5">
+            <p className="font-semibold text-slate-800">How it works</p>
+            <ul className="list-disc list-inside space-y-1 text-slate-500">
+              <li>The sparkle chat widget appears for all logged-in users</li>
+              <li>Every message goes through your Anthropic API key — you control costs</li>
+              <li>The API key is AES-256-GCM encrypted before being stored in the database</li>
+              <li>Change the model any time; active chat sessions will use the new model immediately</li>
+            </ul>
+          </div>
+        </>
+      )}
+
+      {/* ── AI Bots Tab ── */}
+      {activeTab === 'bots' && (
+        <div className="space-y-5">
+          {/* Bot card */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: 'linear-gradient(135deg,#a855f7,#22d3ee)' }}>
+                  <Bot className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-900">ContentFlow Chat Bot</p>
+                  <p className="text-xs text-slate-500">Floating assistant visible to all logged-in users</p>
+                </div>
+              </div>
+              {isCustomPrompt && (
+                <span className="shrink-0 rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700">Custom prompt</span>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-sm font-semibold text-slate-700">System Prompt</label>
+                <button
+                  type="button"
+                  onClick={resetPrompt}
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"
+                >
+                  <RotateCcw size={12} />
+                  Reset to default
+                </button>
+              </div>
+              <textarea
+                value={promptText}
+                onChange={(e) => setPromptText(e.target.value)}
+                rows={14}
+                className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400 font-mono leading-relaxed"
+                placeholder="Enter the system prompt for the chat bot…"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Changes take effect immediately — no restart required. Clear the field and save to revert to the built-in default.
+              </p>
+            </div>
+
+            {promptError && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{promptError}</p>}
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={savePrompt}
+                disabled={promptSaving}
+                className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {promptSaving ? <Loader2 size={15} className="animate-spin" /> : promptSaved ? <Check size={15} /> : <Save size={15} />}
+                {promptSaving ? 'Saving…' : promptSaved ? 'Saved!' : 'Save Prompt'}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600 space-y-1.5">
+            <p className="font-semibold text-slate-800">Prompt tips</p>
+            <ul className="list-disc list-inside space-y-1 text-slate-500">
+              <li>Keep the tool-use instructions (create_draft, schedule_post etc.) — removing them disables agentic actions</li>
+              <li>Add your brand name, tone of voice, or content guidelines</li>
+              <li>The bot uses this prompt on every message in real-time</li>
+              <li>Reset to default restores the original built-in prompt without saving</li>
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
