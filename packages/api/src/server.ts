@@ -1010,6 +1010,138 @@ async function ensureDatabase() {
      ON platform_rate_counters (platform, period_start, period_end);`
   ).catch(() => undefined);
 
+  // ─── AI Skills ────────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      system_prompt TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL DEFAULT 'all',
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+
+  // Seed the built-in Content Generator skill (ON CONFLICT = skip if already exists)
+  try {
+    const cgId = 'skill-content-generator-v1';
+    const cgPrompt = `## CONTENT GENERATION SKILL — THREE-STAGE PIPELINE
+
+When a user asks you to generate content, write an article, create SEO content, or produce a blog post about a topic, activate this three-stage pipeline and execute all three stages in sequence before presenting output.
+
+---
+
+### STAGE 1 — IDEA INSPIRATION RESEARCHER
+
+Analyze how the topic is commonly covered. Extract structured insights, angles, gaps, and opportunities using your training knowledge. For every insight you derive, note the type of source that would typically cover it.
+
+Deliver these sections:
+
+1. Topic Overview — Summarize the core job readers want done. What questions are they asking? What outcomes do they want?
+2. Common Angles in Existing Content — List the angles other writers commonly use.
+3. High-Performing Themes — Identify content patterns and structures that appear frequently and perform well.
+4. Identified Gaps — Highlight areas that are often ignored, weakly explained, or missing depth.
+5. Unique Angles to Explore — Recommend angles not commonly used.
+6. Must-Cover Subtopics — List subtopics essential for comprehensive coverage.
+7. Reader Questions — List real questions readers expect answered but remain underserved.
+8. Format Recommendations — Suggest formats based on what performs well (how-to guides, checklists, templates, comparisons, case examples).
+9. Overused or Weak Ideas — Identify repetitive or saturated angles to avoid.
+10. Final Inspiration Summary — A brief original synthesis of the strongest opportunities discovered.
+
+Rules:
+- Never reproduce external text. All insights must be original.
+- No summaries of external content. Every insight must be your own synthesis.
+
+---
+
+### STAGE 2 — KEYWORD AND POWER WORD EXTRACTION
+
+Pull structured keyword data from the Stage 1 research output to fuel the article.
+
+Deliver the following:
+
+Main Keyword or Keyphrase — The single strongest keyword to anchor the article.
+Alternative Keywords or Keyphrases — Secondary terms closely related to the main keyword.
+Long-Tail Keyphrases — Specific multi-word phrases that reflect precise reader intent. These must later appear in article body content or FAQs.
+Matched Power Words — Select the most relevant power words from this list to use in the SEO title and throughout the article:
+
+Power Word Reference: Absolute, Accurate, Achieve, Actionable, Adaptable, Advantage, Affordable, Amazing, Approved, Assured, Astonishing, Astounding, Authentic, Authoritative, Authority, Awesome, Backed, Badass, Balanced, Bargain, Genius, Genuine, Gift, Giveaway, Glamorous, Glorious, Guaranteed, Growth, Hack, Happiness, Healthy, Hero, Hidden, Highly Effective, Hilarious, Honest, Hope, Hopeful, How To, Huge, Ignite, Important, Improved, Increase, Incredible, Indulgent, Inexpensive, Fundamentals, Funny, Greatest, Greatness, Grit, Grounded.
+
+Output format (use plain text, no markdown code fences):
+Main Keyword: [keyword]
+Alternative Keywords: [keyword 1], [keyword 2], [keyword 3]
+Long-Tail Keyphrases:
+- [phrase 1]
+- [phrase 2]
+- [phrase 3]
+Power Words Selected: [word 1], [word 2], [word 3]
+
+---
+
+### STAGE 3 — SEO ARTICLE GENERATION
+
+Produce a complete, fully optimized HTML article using all outputs from Stages 1 and 2.
+
+Output must follow this exact order:
+1. Keyword or Keyphrase
+2. SEO Title
+3. Meta Description
+4. Full HTML Content
+5. FAQs (numbered)
+6. Conclusion
+7. Internal Link Placement notes
+8. External Link Placement notes
+9. Call to Action
+
+STRICT RULES:
+
+SEO Title: Must be under 60 characters. Must contain the main keyword. Must include positive or negative sentiment. Must contain a power word from Stage 2.
+
+Meta Description: Must be under 160 characters. Must contain the main keyword.
+
+Main Keyword Usage: Must appear in title, meta description, first sentence, and at least one heading. Natural placement only. Target density 1.5% to 3.5%.
+
+Word Count: Minimum 900 words.
+
+Sentence Limit: No sentence may exceed 20 words.
+
+Paragraph Limit: Short paragraphs only — 2 to 4 lines maximum.
+
+Structure: Use one h1 only (the article title). Use h2 for major sections. Use h3 for subsections.
+
+FAQs: Must be numbered. Must be derived from the long-tail keyphrases in Stage 2.
+
+Conclusion: Include a clear summary. Include a CTA with an internal link embedded in a relevant phrase.
+
+Skimmability: Use lists, bullets, and bold text. Bold text must use HTML b tags only. No Markdown asterisks anywhere in the output.
+
+Internal Links: Insert only where they genuinely help the reader. Use short anchor text of six words maximum. Use exact URLs only — never place a bare URL in the text.
+
+External Links: Include at least 3 external links sourced from Stage 1 research. Link to relevant words or phrases inside body content. Do not place external links at the end of paragraphs in isolation.
+
+No Asterisks: Remove all asterisks from output. Bold any cleaned phrase using b tags instead.
+
+All output must be valid HTML. No plain text, no Markdown.
+
+---
+
+### FINAL INSTRUCTION
+
+Execute all three stages in sequence for the topic provided. Do not skip stages. Do not present partial output. Deliver the complete three-stage result as one unified response, clearly labeled by stage.`;
+
+    await pool.query(
+      `INSERT INTO ai_skills (id, name, description, system_prompt, scope, enabled, sort_order)
+       VALUES ($1, $2, $3, $4, 'all', true, 0)
+       ON CONFLICT (id) DO NOTHING`,
+      [cgId, 'Content Generator', 'Three-stage content pipeline: research inspiration, keyword extraction, and full SEO article generation.', cgPrompt]
+    );
+  } catch (e) {
+    console.warn('ai_skills seed skipped:', e);
+  }
+
   // Ensure cover_image_url exists on card_templates (added in v6.4)
   await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS cover_image_url TEXT`);
 
@@ -9671,6 +9803,137 @@ app.post('/api/admin/ai-config/test', async (req: Request, res: Response) => {
 });
 
 // ─── End AI Config ────────────────────────────────────────────────────────────
+
+// ─── AI Skills ────────────────────────────────────────────────────────────────
+
+async function getSkillsPromptForScope(page: string): Promise<string> {
+  if (!pool) return '';
+  try {
+    const { rows } = await dbQuery(
+      `SELECT name, description, system_prompt, scope FROM ai_skills WHERE enabled = true ORDER BY sort_order ASC, created_at ASC`,
+      []
+    );
+    const pageLower = (page || '').toLowerCase();
+    const matching = rows.filter((skill: any) => {
+      const scope = String(skill.scope || 'all').toLowerCase();
+      if (scope === 'all') return true;
+      if (scope === 'posts' && pageLower.includes('/posts')) return true;
+      if (scope === 'cards' && pageLower.includes('/cards')) return true;
+      if (scope === 'dashboard' && (pageLower === '/dashboard' || pageLower === '/')) return true;
+      if (scope === 'analytics' && pageLower.includes('/analytics')) return true;
+      return false;
+    });
+    if (matching.length === 0) return '';
+    return matching
+      .map((skill: any) =>
+        `---\n\nSKILL: ${skill.name}${skill.description ? `\nPurpose: ${skill.description}` : ''}\n\n${skill.system_prompt}`
+      )
+      .join('\n\n');
+  } catch (e) {
+    console.error('getSkillsPromptForScope error:', e);
+    return '';
+  }
+}
+
+// GET /api/admin/ai-skills
+app.get('/api/admin/ai-skills', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!pool) return res.json({ success: true, skills: [] });
+    const { rows } = await dbQuery(
+      `SELECT id, name, description, system_prompt, scope, enabled, sort_order, created_at, updated_at
+       FROM ai_skills ORDER BY sort_order ASC, created_at ASC`,
+      []
+    );
+    return res.json({ success: true, skills: rows });
+  } catch (err) {
+    console.error('ai-skills GET error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch skills' });
+  }
+});
+
+// POST /api/admin/ai-skills
+app.post('/api/admin/ai-skills', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { name, description, system_prompt, scope, enabled, sort_order } = req.body as {
+      name: string; description?: string; system_prompt: string; scope?: string; enabled?: boolean; sort_order?: number;
+    };
+    if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
+    if (!system_prompt?.trim()) return res.status(400).json({ success: false, error: 'system_prompt is required' });
+    const id = randomUUID();
+    const { rows } = await dbQuery(
+      `INSERT INTO ai_skills (id, name, description, system_prompt, scope, enabled, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, name, description, system_prompt, scope, enabled, sort_order, created_at, updated_at`,
+      [id, name.trim(), (description || '').trim(), system_prompt.trim(),
+       (scope || 'all').trim(), enabled !== false, Number(sort_order) || 0]
+    );
+    return res.status(201).json({ success: true, skill: rows[0] });
+  } catch (err) {
+    console.error('ai-skills POST error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create skill' });
+  }
+});
+
+// PUT /api/admin/ai-skills/:id
+app.put('/api/admin/ai-skills/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { id } = req.params;
+    const { name, description, system_prompt, scope, enabled, sort_order } = req.body as {
+      name?: string; description?: string; system_prompt?: string; scope?: string; enabled?: boolean; sort_order?: number;
+    };
+    const existing = await dbQuery('SELECT id FROM ai_skills WHERE id=$1', [id]);
+    if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Skill not found' });
+    const { rows } = await dbQuery(
+      `UPDATE ai_skills SET
+         name = COALESCE($2, name),
+         description = COALESCE($3, description),
+         system_prompt = COALESCE($4, system_prompt),
+         scope = COALESCE($5, scope),
+         enabled = COALESCE($6, enabled),
+         sort_order = COALESCE($7, sort_order),
+         updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, description, system_prompt, scope, enabled, sort_order, created_at, updated_at`,
+      [id,
+       name !== undefined ? name.trim() : null,
+       description !== undefined ? description.trim() : null,
+       system_prompt !== undefined ? system_prompt.trim() : null,
+       scope !== undefined ? scope.trim() : null,
+       enabled !== undefined ? enabled : null,
+       sort_order !== undefined ? Number(sort_order) : null]
+    );
+    return res.json({ success: true, skill: rows[0] });
+  } catch (err) {
+    console.error('ai-skills PUT error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update skill' });
+  }
+});
+
+// DELETE /api/admin/ai-skills/:id
+app.delete('/api/admin/ai-skills/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { id } = req.params;
+    const result = await dbQuery('DELETE FROM ai_skills WHERE id=$1', [id]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Skill not found' });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('ai-skills DELETE error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete skill' });
+  }
+});
+
+// ─── End AI Skills ────────────────────────────────────────────────────────────
 
 // ─── Page Content ────────────────────────────────────────────────────────────
 app.get('/api/pages/:slug', async (req: Request, res: Response) => {
@@ -19812,8 +20075,9 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const { messages } = req.body as {
+    const { messages, page } = req.body as {
       messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+      page?: string;
     };
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -19826,7 +20090,9 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       return res.status(503).json({ success: false, error: 'AI service not configured — add your Anthropic API key in Admin → AI Assistant' });
     }
 
-    const activeSystemPrompt = storedPrompt || AI_SYSTEM_PROMPT_DEFAULT;
+    const skillsPrompt = await getSkillsPromptForScope(page || '');
+    const basePrompt = storedPrompt || AI_SYSTEM_PROMPT_DEFAULT;
+    const activeSystemPrompt = skillsPrompt ? `${basePrompt}\n\n${skillsPrompt}` : basePrompt;
     const client = new Anthropic({ apiKey });
 
     res.setHeader('Content-Type', 'text/event-stream');

@@ -150,7 +150,7 @@ export default function ChatWidget() {
     if (open && messages.length === 0) {
       setMessages([{
         kind: 'text', id: 'welcome', role: 'assistant',
-        content: "Hi! I'm your ContentFlow AI. I can draft posts, schedule content, and answer questions about social media. What would you like to do?",
+        content: "Hi! I'm Daky, your ContentFlow AI assistant. I can draft posts, schedule content, generate SEO articles, and help with social media strategy. What would you like to do?",
       }]);
     }
   }, [open, messages.length]);
@@ -182,7 +182,7 @@ export default function ChatWidget() {
       const res = await fetch(`${getApiBaseUrl()}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ messages: history, page: window.location.pathname }),
         signal: ctrl.signal,
       });
 
@@ -254,9 +254,9 @@ export default function ChatWidget() {
   };
 
   const SUGGESTIONS = [
+    'Generate an SEO article about content marketing',
     'Draft a LinkedIn post about productivity',
     'Schedule a post for tomorrow at 9am',
-    'Show my recent drafts',
     'Which platforms am I connected to?',
   ];
 
@@ -283,8 +283,8 @@ export default function ChatWidget() {
           <div className="flex items-center gap-3 px-4 py-3 shrink-0" style={{ background: 'linear-gradient(135deg,#a855f7 0%,#22d3ee 100%)' }}>
             <SparkleIcon size={20} />
             <div className="flex-1">
-              <div className="text-sm font-bold text-white">ContentFlow AI</div>
-              <div className="text-xs text-white/70">Can draft, schedule, and advise</div>
+              <div className="text-sm font-bold text-white">Daky</div>
+              <div className="text-xs text-white/70">Your ContentFlow AI assistant</div>
             </div>
             <button type="button" onClick={() => setOpen(false)}
               className="flex h-7 w-7 items-center justify-center rounded-full text-white/80 hover:bg-white/20">✕</button>
@@ -360,7 +360,7 @@ export default function ChatWidget() {
               onChange={e => setInput(e.target.value)}
               onKeyDown={onKeyDown}
               disabled={loading}
-              placeholder="Ask or say 'draft a post about…'"
+              placeholder="Ask Daky to draft, schedule, or generate content…"
               className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400 disabled:opacity-50"
               style={{ maxHeight: 96, overflowY: 'auto' }}
             />

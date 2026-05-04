@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X } from 'lucide-react';
+import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -10,6 +10,7 @@ import AdminPagesManagement from '../components/admin/AdminPagesManagement';
 import AdminMediaManagement from '../components/admin/AdminMediaManagement';
 import AdminIntegrations from '../components/admin/AdminIntegrations';
 import AdminAIConfig from '../components/admin/AdminAIConfig';
+import AdminAISkills from '../components/admin/AdminAISkills';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -32,7 +33,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'pages-privacy'
     | 'pages-terms'
     | 'media'
-    | 'ai';
+    | 'ai-config'
+    | 'ai-skills';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -50,7 +52,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     'pages-privacy': '/admin/pages/privacy',
     'pages-terms': '/admin/pages/terms',
     media: '/admin/media',
-    ai: '/admin/ai',
+    'ai-config': '/admin/ai',
+    'ai-skills': '/admin/ai/skills',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -60,9 +63,8 @@ const Admin = ({ currentUser }: AdminProps) => {
   const getInitialTab = (): AdminTab => PATH_TO_TAB[window.location.pathname] ?? 'users';
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
-  const [pagesOpen, setPagesOpen] = useState(() => {
-    return window.location.pathname.startsWith('/admin/pages');
-  });
+  const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
+  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
 
@@ -80,7 +82,6 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
-    { id: 'ai', label: 'AI Assistant', icon: Bot, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
   ];
@@ -94,7 +95,13 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'pages-terms', label: 'Terms of Service' },
   ];
 
+  const aiItems: { id: AdminTab; label: string; icon: React.ElementType }[] = [
+    { id: 'ai-config', label: 'Configuration', icon: Bot },
+    { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
+  ];
+
   const isPagesActive = activeTab.startsWith('pages-');
+  const isAIActive = activeTab.startsWith('ai-');
 
   useEffect(() => {
     const onPop = () => {
@@ -102,6 +109,7 @@ const Admin = ({ currentUser }: AdminProps) => {
       if (tab) {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
+        setAiOpen(tab.startsWith('ai-'));
       }
     };
     window.addEventListener('popstate', onPop);
@@ -141,6 +149,47 @@ const Admin = ({ currentUser }: AdminProps) => {
             </button>
           );
         })}
+
+        {/* AI Assistant accordion */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setAiOpen((prev) => !prev)}
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+              isAIActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <Bot size={18} />
+            <span className="flex-1">AI Assistant</span>
+            <ChevronDown
+              size={15}
+              className={`transition-transform duration-200 ${aiOpen || isAIActive ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {(aiOpen || isAIActive) && (
+            <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
+              {aiItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => navigateTab(item.id)}
+                    className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                      activeTab === item.id
+                        ? 'bg-slate-100 text-slate-950'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    <Icon size={14} />
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Pages accordion */}
         <div>
@@ -263,7 +312,8 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'auth-providers' && <AdminAuthProviders />}
             {activeTab === 'integrations' && <AdminIntegrations />}
             {activeTab === 'media' && <AdminMediaManagement />}
-            {activeTab === 'ai' && <AdminAIConfig />}
+            {activeTab === 'ai-config' && <AdminAIConfig />}
+            {activeTab === 'ai-skills' && <AdminAISkills />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>
