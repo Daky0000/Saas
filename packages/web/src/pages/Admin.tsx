@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap } from 'lucide-react';
+import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -11,6 +11,7 @@ import AdminMediaManagement from '../components/admin/AdminMediaManagement';
 import AdminIntegrations from '../components/admin/AdminIntegrations';
 import AdminAIConfig from '../components/admin/AdminAIConfig';
 import AdminAISkills from '../components/admin/AdminAISkills';
+import AdminBillingDashboard from '../components/admin/AdminBillingDashboard';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -34,7 +35,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'pages-terms'
     | 'media'
     | 'ai-config'
-    | 'ai-skills';
+    | 'ai-skills'
+    | 'billing';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -54,6 +56,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     media: '/admin/media',
     'ai-config': '/admin/ai',
     'ai-skills': '/admin/ai/skills',
+    billing: '/admin/billing',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -79,6 +82,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true },
     { id: 'cards', label: 'Card Templates', icon: Image, active: true },
     { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
+    { id: 'billing', label: 'Subscriptions', icon: Receipt, active: true },
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
@@ -314,6 +318,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'media' && <AdminMediaManagement />}
             {activeTab === 'ai-config' && <AdminAIConfig />}
             {activeTab === 'ai-skills' && <AdminAISkills />}
+            {activeTab === 'billing' && <AdminBillingDashboard />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>

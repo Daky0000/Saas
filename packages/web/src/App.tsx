@@ -4,6 +4,7 @@ import {
   BarChart4,
   Building2,
   ChevronDown,
+  CreditCard,
   FileText,
   Image,
   LogOut,
@@ -40,6 +41,7 @@ import Mailing from './pages/Mailing';
 import Campaign from './pages/Campaign';
 import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
+import Billing from './pages/Billing';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
@@ -66,7 +68,8 @@ type PageType =
   | 'integrations'
   | 'mailing'
   | 'campaign'
-  | 'workspace';
+  | 'workspace'
+  | 'billing';
 
 type AuthMeResponse = {
   success: boolean;
@@ -95,6 +98,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   mailing: '/mailing',
   campaign: '/campaign',
   workspace: '/workspace',
+  billing: '/billing',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -425,6 +429,7 @@ function App() {
     { id: 'mailing' as const, label: 'Mailing', icon: Mail },
     { id: 'campaign' as const, label: 'Campaigns', icon: Megaphone },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
+    { id: 'billing' as const, label: 'Billing', icon: CreditCard },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
     { id: 'workspace' as const, label: 'Workspace', icon: Building2 },
     { id: 'profile' as const, label: 'Settings', icon: Settings },
@@ -458,6 +463,8 @@ function App() {
         return <Campaign />;
       case 'workspace':
         return <Workspace />;
+      case 'billing':
+        return <Billing />;
       default:
         return <Dashboard currentUser={authUser} />;
     }

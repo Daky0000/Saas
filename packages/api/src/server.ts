@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import Stripe from 'stripe';
 import express from 'express';
 import type { Request, Response } from 'express';
 import cors from 'cors';
@@ -45,6 +46,13 @@ const WORDPRESS_ENCRYPTION_KEY = (() => {
 const INTEGRATIONS_ENCRYPTION_KEY = (() => {
   return scryptSync(config.integrationsEncryptionKey, 'integrations', 32);
 })();
+
+// ── Stripe ────────────────────────────────────────────────────────────────────
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const stripe = STRIPE_SECRET_KEY
+  ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2025-05-28.basil' as any })
+  : null;
 
 const app = express();
 const PORT = config.port;
@@ -1666,6 +1674,93 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS attribution_model TEXT NOT NULL DEFAULT 'last_touch';`).catch(() => undefined);
   // ── End Campaign Tables ───────────────────────────────────────────────────────
 
+  // ─── Billing / Subscriptions ─────────────────────────────────────────────────
+  // Extend pricing_plans with Stripe price IDs and feature limits
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS stripe_price_id TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS stripe_annual_price_id TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS post_limit INT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS user_limit INT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;`).catch(() => undefined);
+
+  // Extend users with Stripe customer ID + current plan reference
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_id TEXT REFERENCES pricing_plans(id) ON DELETE SET NULL;`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_id_idx ON users (stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan_id TEXT REFERENCES pricing_plans(id) ON DELETE SET NULL,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      stripe_price_id TEXT,
+      status TEXT NOT NULL DEFAULT 'free',
+      current_period_start TIMESTAMPTZ,
+      current_period_end TIMESTAMPTZ,
+      cancel_at_period_end BOOLEAN DEFAULT FALSE,
+      canceled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id)
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS subscriptions_user_idx ON subscriptions (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS subscriptions_status_idx ON subscriptions (status);`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_stripe_sub_idx ON subscriptions (stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL;`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_payment_methods (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      stripe_payment_method_id TEXT UNIQUE,
+      card_brand TEXT,
+      card_last_four TEXT,
+      card_exp_month INT,
+      card_exp_year INT,
+      is_default BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS upm_user_idx ON user_payment_methods (user_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_invoices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      subscription_id TEXT REFERENCES subscriptions(id) ON DELETE SET NULL,
+      stripe_invoice_id TEXT UNIQUE,
+      invoice_number TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      subtotal_cents INT NOT NULL DEFAULT 0,
+      tax_cents INT NOT NULL DEFAULT 0,
+      total_cents INT NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'usd',
+      hosted_invoice_url TEXT,
+      invoice_pdf TEXT,
+      period_start TIMESTAMPTZ,
+      period_end TIMESTAMPTZ,
+      paid_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS billing_invoices_user_idx ON billing_invoices (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS billing_invoices_status_idx ON billing_invoices (status);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      event_type TEXT NOT NULL,
+      stripe_event_id TEXT,
+      data JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS billing_events_stripe_evt_idx ON billing_events (stripe_event_id) WHERE stripe_event_id IS NOT NULL;`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS billing_events_user_idx ON billing_events (user_id);`).catch(() => undefined);
+  // ── End Billing Tables ────────────────────────────────────────────────────────
+
   // ─── Workspace & Organizations ────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS organizations (
@@ -1789,6 +1884,102 @@ app.use(
 );
 app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// ── Stripe Webhook (must be after raw-body capture, before nothing else needs raw) ──
+app.post('/webhooks/stripe', async (req: Request, res: Response) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+  const sig = req.headers['stripe-signature'] as string;
+  const rawBody = (req as any).rawBody as Buffer;
+  if (!sig || !rawBody) return res.status(400).json({ error: 'Missing signature or body' });
+
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(rawBody, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err: any) {
+    console.error('Stripe webhook signature error:', err.message);
+    return res.status(400).json({ error: `Webhook Error: ${err.message}` });
+  }
+
+  // Idempotency check
+  if (hasDatabase()) {
+    const { rows: existing } = await dbQuery(
+      `SELECT id FROM billing_events WHERE stripe_event_id = $1`,
+      [event.id]
+    ).catch(() => ({ rows: [] }));
+    if (existing.length) { res.json({ received: true }); return; }
+  }
+
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        if (session.mode === 'subscription' && session.subscription) {
+          const sub = await stripe.subscriptions.retrieve(session.subscription as string, {
+            expand: ['items.data.price.product'],
+          });
+          const userId = session.metadata?.user_id;
+          if (userId && hasDatabase()) {
+            await syncStripeSubscription(userId, sub);
+          }
+        }
+        break;
+      }
+      case 'customer.subscription.updated': {
+        const sub = event.data.object as Stripe.Subscription;
+        const userId = sub.metadata?.user_id;
+        if (userId && hasDatabase()) {
+          await syncStripeSubscription(userId, sub);
+        }
+        break;
+      }
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object as Stripe.Subscription;
+        const userId = sub.metadata?.user_id;
+        if (userId && hasDatabase()) {
+          await dbQuery(
+            `UPDATE subscriptions SET status='canceled', canceled_at=NOW(), updated_at=NOW() WHERE stripe_subscription_id=$1`,
+            [sub.id]
+          );
+          await dbQuery(`UPDATE users SET plan_id=NULL WHERE id=$1`, [userId]);
+        }
+        break;
+      }
+      case 'invoice.payment_succeeded': {
+        const inv = event.data.object as Stripe.Invoice;
+        if (hasDatabase()) await upsertBillingInvoice(inv);
+        break;
+      }
+      case 'invoice.payment_failed': {
+        const inv = event.data.object as Stripe.Invoice;
+        if (hasDatabase()) {
+          await upsertBillingInvoice(inv);
+          const subId = typeof inv.subscription === 'string' ? inv.subscription : inv.subscription?.id;
+          if (subId) {
+            await dbQuery(
+              `UPDATE subscriptions SET status='past_due', updated_at=NOW() WHERE stripe_subscription_id=$1`,
+              [subId]
+            );
+          }
+        }
+        break;
+      }
+      default:
+        break;
+    }
+
+    if (hasDatabase()) {
+      const userId = (event.data.object as any).metadata?.user_id || null;
+      await dbQuery(
+        `INSERT INTO billing_events (id, user_id, event_type, stripe_event_id, data) VALUES ($1,$2,$3,$4,$5)`,
+        [randomUUID(), userId, event.type, event.id, JSON.stringify(event.data.object)]
+      ).catch(() => undefined);
+    }
+  } catch (e) {
+    console.error('Stripe webhook handler error:', e);
+  }
+
+  res.json({ received: true });
+});
 
 function verifyMetaWebhookSignature(req: Request, appSecret: string) {
   if (!appSecret) return true;
@@ -2699,6 +2890,72 @@ async function updateUserProfile(
 
   return result.rows[0];
 }
+
+// ── Stripe helpers ────────────────────────────────────────────────────────────
+
+async function getOrCreateStripeCustomer(userId: string, email: string, name: string | null): Promise<string> {
+  if (!stripe) throw new Error('Stripe not configured');
+  // Check DB first
+  const { rows } = await dbQuery(`SELECT stripe_customer_id FROM users WHERE id=$1`, [userId]);
+  if (rows[0]?.stripe_customer_id) return rows[0].stripe_customer_id as string;
+  // Create new customer
+  const customer = await stripe.customers.create({
+    email,
+    name: name || undefined,
+    metadata: { user_id: userId },
+  });
+  await dbQuery(`UPDATE users SET stripe_customer_id=$1 WHERE id=$2`, [customer.id, userId]);
+  return customer.id;
+}
+
+async function syncStripeSubscription(userId: string, sub: Stripe.Subscription): Promise<void> {
+  const priceId = sub.items.data[0]?.price?.id;
+  const periodStart = new Date((sub.current_period_start) * 1000).toISOString();
+  const periodEnd = new Date((sub.current_period_end) * 1000).toISOString();
+  // Find matching plan by stripe_price_id
+  const { rows: plans } = await dbQuery(
+    `SELECT id FROM pricing_plans WHERE stripe_price_id=$1 OR stripe_annual_price_id=$1 LIMIT 1`,
+    [priceId]
+  );
+  const planId = plans[0]?.id || null;
+  await dbQuery(
+    `INSERT INTO subscriptions (id, user_id, plan_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, status, current_period_start, current_period_end, cancel_at_period_end, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+     ON CONFLICT (user_id) DO UPDATE SET
+       plan_id=EXCLUDED.plan_id, stripe_subscription_id=EXCLUDED.stripe_subscription_id,
+       stripe_price_id=EXCLUDED.stripe_price_id, status=EXCLUDED.status,
+       current_period_start=EXCLUDED.current_period_start, current_period_end=EXCLUDED.current_period_end,
+       cancel_at_period_end=EXCLUDED.cancel_at_period_end, updated_at=NOW()`,
+    [randomUUID(), userId, planId, sub.customer, sub.id, priceId, sub.status, periodStart, periodEnd, sub.cancel_at_period_end]
+  );
+  if (planId) await dbQuery(`UPDATE users SET plan_id=$1, stripe_customer_id=$2 WHERE id=$3`, [planId, sub.customer, userId]);
+}
+
+async function upsertBillingInvoice(inv: Stripe.Invoice): Promise<void> {
+  const userId: string | null = (inv.metadata as any)?.user_id || null;
+  if (!userId) return;
+  const { rows: subRows } = await dbQuery(
+    `SELECT id FROM subscriptions WHERE stripe_subscription_id=$1 LIMIT 1`,
+    [typeof inv.subscription === 'string' ? inv.subscription : inv.subscription?.id]
+  );
+  const subId = subRows[0]?.id || null;
+  await dbQuery(
+    `INSERT INTO billing_invoices (id, user_id, subscription_id, stripe_invoice_id, invoice_number, status, subtotal_cents, tax_cents, total_cents, currency, hosted_invoice_url, invoice_pdf, period_start, period_end, paid_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     ON CONFLICT (stripe_invoice_id) DO UPDATE SET
+       status=EXCLUDED.status, paid_at=EXCLUDED.paid_at, hosted_invoice_url=EXCLUDED.hosted_invoice_url, invoice_pdf=EXCLUDED.invoice_pdf`,
+    [
+      randomUUID(), userId, subId, inv.id, inv.number, inv.status,
+      inv.subtotal || 0, inv.tax || 0, inv.total || 0, inv.currency || 'usd',
+      inv.hosted_invoice_url || null, inv.invoice_pdf || null,
+      inv.period_start ? new Date(inv.period_start * 1000).toISOString() : null,
+      inv.period_end ? new Date(inv.period_end * 1000).toISOString() : null,
+      inv.status_transitions?.paid_at ? new Date(inv.status_transitions.paid_at * 1000).toISOString() : null,
+    ]
+  ).catch(() => undefined);
+}
+
+// ── End Stripe helpers ─────────────────────────────────────────────────────────
 
 function requireAuth(req: Request, res: Response): { userId: string; email?: string } | null {
   const auth = getAuthUser(req);
@@ -20309,6 +20566,296 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 });
 
 // ─── End AI Chat ───────────────────────────────────────────────────────────────
+
+// ─── Billing Routes ────────────────────────────────────────────────────────────
+
+// GET /api/billing/subscription — current plan + usage + subscription status
+app.get('/api/billing/subscription', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, subscription: null, plan: null, usage: null });
+  try {
+    const { rows: subRows } = await dbQuery(
+      `SELECT s.*, p.name AS plan_name, p.price, p.billing_period, p.features, p.post_limit, p.user_limit
+       FROM subscriptions s
+       LEFT JOIN pricing_plans p ON p.id = s.plan_id
+       WHERE s.user_id = $1`,
+      [auth.userId]
+    );
+    const { rows: userRows } = await dbQuery(
+      `SELECT u.id, u.stripe_customer_id, p.name AS plan_name, p.price, p.billing_period, p.features, p.post_limit, p.user_limit, p.id AS plan_id
+       FROM users u LEFT JOIN pricing_plans p ON p.id = u.plan_id WHERE u.id=$1`,
+      [auth.userId]
+    );
+    const user = userRows[0];
+    const sub = subRows[0] || null;
+
+    // Usage: count posts this period
+    const { rows: usageRows } = await dbQuery(
+      `SELECT COUNT(*)::int AS posts_this_period FROM social_posts WHERE user_id=$1 AND created_at >= date_trunc('month', NOW())`,
+      [auth.userId]
+    ).catch(() => ({ rows: [{ posts_this_period: 0 }] }));
+
+    const postLimit = sub?.post_limit ?? user?.post_limit ?? null;
+    const usage = {
+      posts_this_period: usageRows[0]?.posts_this_period ?? 0,
+      posts_limit: postLimit,
+    };
+
+    res.json({
+      success: true,
+      subscription: sub,
+      plan: sub ? {
+        id: sub.plan_id,
+        name: sub.plan_name,
+        price: sub.price,
+        billing_period: sub.billing_period,
+        features: sub.features,
+        post_limit: sub.post_limit,
+        user_limit: sub.user_limit,
+      } : (user?.plan_id ? { id: user.plan_id, name: user.plan_name, price: user.price, billing_period: user.billing_period, features: user.features, post_limit: user.post_limit, user_limit: user.user_limit } : null),
+      usage,
+      stripeConfigured: Boolean(stripe),
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load subscription' });
+  }
+});
+
+// GET /api/billing/invoices
+app.get('/api/billing/invoices', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, invoices: [] });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT id, stripe_invoice_id, invoice_number, status, total_cents, currency, hosted_invoice_url, invoice_pdf, paid_at, period_start, period_end, created_at
+       FROM billing_invoices WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`,
+      [auth.userId]
+    );
+    res.json({ success: true, invoices: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load invoices' });
+  }
+});
+
+// POST /api/billing/checkout — create Stripe Checkout session for a plan
+app.post('/api/billing/checkout', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured on this server.' });
+  const { planId, period = 'monthly' } = req.body as { planId: string; period?: 'monthly' | 'yearly' };
+  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows: planRows } = await dbQuery(
+      `SELECT * FROM pricing_plans WHERE id=$1 AND is_active=true`,
+      [planId]
+    );
+    if (!planRows.length) return res.status(404).json({ success: false, error: 'Plan not found' });
+    const plan = planRows[0];
+    const stripePriceId = period === 'yearly' ? (plan.stripe_annual_price_id || plan.stripe_price_id) : plan.stripe_price_id;
+    if (!stripePriceId) return res.status(400).json({ success: false, error: 'This plan is not yet configured for Stripe payments. Please contact support.' });
+
+    const { rows: userRows } = await dbQuery(`SELECT email, full_name FROM users WHERE id=$1`, [auth.userId]);
+    if (!userRows.length) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const stripeCustomerId = await getOrCreateStripeCustomer(auth.userId, userRows[0].email, userRows[0].full_name);
+    const appUrl = process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com';
+
+    const session = await stripe.checkout.sessions.create({
+      customer: stripeCustomerId,
+      mode: 'subscription',
+      line_items: [{ price: stripePriceId, quantity: 1 }],
+      success_url: `${appUrl}/billing?session_id={CHECKOUT_SESSION_ID}&success=1`,
+      cancel_url: `${appUrl}/pricing`,
+      metadata: { user_id: auth.userId, plan_id: planId },
+      subscription_data: { metadata: { user_id: auth.userId, plan_id: planId } },
+      allow_promotion_codes: true,
+    });
+
+    res.json({ success: true, url: session.url });
+  } catch (e: any) {
+    console.error('Stripe checkout error:', e);
+    res.status(500).json({ success: false, error: e.message || 'Failed to create checkout session' });
+  }
+});
+
+// POST /api/billing/portal — open Stripe Customer Portal for self-service
+app.post('/api/billing/portal', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured.' });
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows: userRows } = await dbQuery(`SELECT email, full_name, stripe_customer_id FROM users WHERE id=$1`, [auth.userId]);
+    if (!userRows.length) return res.status(404).json({ success: false, error: 'User not found' });
+    const stripeCustomerId = userRows[0].stripe_customer_id || await getOrCreateStripeCustomer(auth.userId, userRows[0].email, userRows[0].full_name);
+    const appUrl = process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com';
+    const session = await stripe.billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      return_url: `${appUrl}/billing`,
+    });
+    res.json({ success: true, url: session.url });
+  } catch (e: any) {
+    console.error('Stripe portal error:', e);
+    res.status(500).json({ success: false, error: e.message || 'Failed to open billing portal' });
+  }
+});
+
+// POST /api/billing/cancel — cancel subscription at period end
+app.post('/api/billing/cancel', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!stripe || !hasDatabase()) return res.status(503).json({ success: false, error: 'Stripe not configured' });
+  try {
+    const { rows } = await dbQuery(`SELECT stripe_subscription_id FROM subscriptions WHERE user_id=$1 AND status='active'`, [auth.userId]);
+    if (!rows.length || !rows[0].stripe_subscription_id) return res.status(404).json({ success: false, error: 'No active subscription' });
+    await stripe.subscriptions.update(rows[0].stripe_subscription_id, { cancel_at_period_end: true });
+    await dbQuery(`UPDATE subscriptions SET cancel_at_period_end=true, updated_at=NOW() WHERE user_id=$1`, [auth.userId]);
+    res.json({ success: true, message: 'Subscription will be canceled at the end of the billing period.' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message || 'Failed to cancel subscription' });
+  }
+});
+
+// POST /api/billing/reactivate — undo cancel
+app.post('/api/billing/reactivate', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!stripe || !hasDatabase()) return res.status(503).json({ success: false, error: 'Stripe not configured' });
+  try {
+    const { rows } = await dbQuery(`SELECT stripe_subscription_id FROM subscriptions WHERE user_id=$1`, [auth.userId]);
+    if (!rows.length || !rows[0].stripe_subscription_id) return res.status(404).json({ success: false, error: 'No subscription found' });
+    await stripe.subscriptions.update(rows[0].stripe_subscription_id, { cancel_at_period_end: false });
+    await dbQuery(`UPDATE subscriptions SET cancel_at_period_end=false, updated_at=NOW() WHERE user_id=$1`, [auth.userId]);
+    res.json({ success: true, message: 'Subscription reactivated.' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message || 'Failed to reactivate subscription' });
+  }
+});
+
+// GET /api/admin/billing/metrics — MRR, ARR, customer counts
+app.get('/api/admin/billing/metrics', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, metrics: {} });
+  try {
+    const { rows: subStats } = await dbQuery(`
+      SELECT
+        COUNT(*)::int AS total_subscriptions,
+        COUNT(*) FILTER (WHERE s.status = 'active')::int AS active_subscriptions,
+        COUNT(*) FILTER (WHERE s.status = 'past_due')::int AS past_due_subscriptions,
+        COUNT(*) FILTER (WHERE s.status = 'canceled')::int AS canceled_subscriptions,
+        SUM(p.price) FILTER (WHERE s.status = 'active' AND p.billing_period = 'monthly') AS monthly_revenue,
+        SUM(p.price / 12) FILTER (WHERE s.status = 'active' AND p.billing_period = 'yearly') AS yearly_revenue_monthly
+      FROM subscriptions s
+      LEFT JOIN pricing_plans p ON p.id = s.plan_id
+    `);
+    const { rows: totalUsers } = await dbQuery(`SELECT COUNT(*)::int AS cnt FROM users`);
+    const { rows: planBreakdown } = await dbQuery(`
+      SELECT p.name AS plan_name, p.price, p.billing_period,
+        COUNT(s.id)::int AS subscriber_count,
+        SUM(CASE WHEN p.billing_period='monthly' THEN p.price WHEN p.billing_period='yearly' THEN p.price/12 ELSE 0 END) AS mrr_contribution
+      FROM subscriptions s
+      JOIN pricing_plans p ON p.id = s.plan_id
+      WHERE s.status = 'active'
+      GROUP BY p.id, p.name, p.price, p.billing_period
+      ORDER BY mrr_contribution DESC NULLS LAST
+    `);
+    const { rows: recentTxn } = await dbQuery(`
+      SELECT bi.invoice_number, bi.total_cents, bi.currency, bi.paid_at, bi.status, u.email
+      FROM billing_invoices bi JOIN users u ON u.id=bi.user_id
+      ORDER BY bi.created_at DESC LIMIT 10
+    `);
+
+    const s = subStats[0] || {};
+    const monthlyMRR = parseFloat(s.monthly_revenue || '0');
+    const yearlyMRR = parseFloat(s.yearly_revenue_monthly || '0');
+    const mrr = monthlyMRR + yearlyMRR;
+    const arr = mrr * 12;
+    const activeCount = s.active_subscriptions || 0;
+    const arpu = activeCount > 0 ? mrr / activeCount : 0;
+
+    res.json({
+      success: true,
+      metrics: {
+        mrr: Math.round(mrr * 100) / 100,
+        arr: Math.round(arr * 100) / 100,
+        arpu: Math.round(arpu * 100) / 100,
+        total_users: totalUsers[0]?.cnt || 0,
+        active_subscriptions: activeCount,
+        past_due: s.past_due_subscriptions || 0,
+        canceled: s.canceled_subscriptions || 0,
+      },
+      plan_breakdown: planBreakdown,
+      recent_invoices: recentTxn,
+      stripe_configured: Boolean(stripe),
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load billing metrics' });
+  }
+});
+
+// GET /api/admin/billing/customers — paginated customer list with billing info
+app.get('/api/admin/billing/customers', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, customers: [], total: 0 });
+  const limit = Math.min(parseInt(String(req.query.limit || '50')), 100);
+  const offset = parseInt(String(req.query.offset || '0'));
+  const search = String(req.query.search || '').trim();
+  try {
+    const searchClause = search ? `AND (u.email ILIKE $3 OR u.full_name ILIKE $3)` : '';
+    const params: unknown[] = [limit, offset];
+    if (search) params.push(`%${search}%`);
+    const { rows: customers } = await dbQuery(
+      `SELECT u.id, u.email, u.full_name, u.created_at,
+        p.name AS plan_name, p.price, p.billing_period,
+        s.status AS subscription_status, s.current_period_end, s.cancel_at_period_end
+       FROM users u
+       LEFT JOIN pricing_plans p ON p.id = u.plan_id
+       LEFT JOIN subscriptions s ON s.user_id = u.id
+       WHERE u.role != 'admin' ${searchClause}
+       ORDER BY u.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      params
+    );
+    const { rows: countRow } = await dbQuery(
+      `SELECT COUNT(*)::int AS total FROM users u WHERE u.role != 'admin' ${search ? "AND (u.email ILIKE $1 OR u.full_name ILIKE $1)" : ''}`,
+      search ? [`%${search}%`] : []
+    );
+    res.json({ success: true, customers, total: countRow[0]?.total || 0 });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load customers' });
+  }
+});
+
+// PUT /api/admin/billing/customers/:userId/plan — manually assign plan
+app.put('/api/admin/billing/customers/:userId/plan', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { userId } = req.params;
+  const { planId } = req.body as { planId: string | null };
+  try {
+    await dbQuery(`UPDATE users SET plan_id=$1 WHERE id=$2`, [planId || null, userId]);
+    if (planId) {
+      await dbQuery(
+        `INSERT INTO subscriptions (id, user_id, plan_id, status, updated_at) VALUES ($1,$2,$3,'active',NOW())
+         ON CONFLICT (user_id) DO UPDATE SET plan_id=EXCLUDED.plan_id, status='active', updated_at=NOW()`,
+        [randomUUID(), userId, planId]
+      );
+    } else {
+      await dbQuery(`UPDATE subscriptions SET status='canceled', canceled_at=NOW(), updated_at=NOW() WHERE user_id=$1`, [userId]);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to update plan' });
+  }
+});
+
+// ── End Billing Routes ─────────────────────────────────────────────────────────
 
 // ─── Workspace / Organization Routes ───────────────────────────────────────────
 

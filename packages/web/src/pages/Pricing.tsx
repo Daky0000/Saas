@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Check, Sparkles, Tag, ArrowRight } from 'lucide-react';
+import { Check, Sparkles, Tag, ArrowRight, Loader2 } from 'lucide-react';
 import { pricingService } from '../services/pricingService';
 import { PricingPlan } from '../types/pricing';
+import { API_BASE_URL } from '../utils/apiBase';
 
 type BillingCycle = 'monthly' | 'yearly';
 
@@ -9,10 +10,27 @@ function discountedPrice(price: number, pct: number) {
   return price * (1 - pct / 100);
 }
 
+async function startCheckout(planId: string): Promise<void> {
+  const token = localStorage.getItem('auth_token');
+  const r = await fetch(`${API_BASE_URL}/api/billing/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
+    body: JSON.stringify({ planId }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? 'Failed to start checkout');
+  }
+  const { url } = await r.json() as { url: string };
+  window.location.href = url;
+}
+
 const Pricing = () => {
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchPlans = async () => {
@@ -85,6 +103,13 @@ const Pricing = () => {
           </div>
         </div>
       </section>
+
+      {/* Checkout error */}
+      {checkoutError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+          {checkoutError}
+        </div>
+      )}
 
       {/* ── Plan cards ── */}
       <section className="grid gap-6 xl:grid-cols-3">
@@ -179,14 +204,32 @@ const Pricing = () => {
                 {/* CTA button */}
                 <button
                   type="button"
-                  className={`group mt-7 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition-colors ${
+                  disabled={checkoutLoading === plan.id}
+                  onClick={async () => {
+                    if (plan.price === 0) return;
+                    setCheckoutError(null);
+                    setCheckoutLoading(plan.id);
+                    try {
+                      await startCheckout(plan.id);
+                    } catch (e) {
+                      setCheckoutError(e instanceof Error ? e.message : 'Something went wrong');
+                      setCheckoutLoading(null);
+                    }
+                  }}
+                  className={`group mt-7 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition-colors disabled:opacity-70 disabled:cursor-not-allowed ${
                     isFeatured
                       ? 'bg-white text-slate-950 hover:bg-slate-100'
                       : 'bg-slate-950 text-white hover:bg-slate-800'
                   }`}
                 >
-                  {plan.price === 0 ? 'Get started free' : `Choose ${basePlanName}`}
-                  <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                  {checkoutLoading === plan.id ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <>
+                      {plan.price === 0 ? 'Get started free' : `Choose ${basePlanName}`}
+                      <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                    </>
+                  )}
                 </button>
 
                 {/* Features */}
