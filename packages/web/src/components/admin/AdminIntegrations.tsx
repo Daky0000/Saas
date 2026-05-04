@@ -173,6 +173,20 @@ const PLATFORMS: PlatformDef[] = [
     docsUrl: 'https://developers.hubtel.com/',
     redirectHint: 'Callback URL is handled automatically at `/api/payments/hubtel/callback`.',
   },
+  {
+    id: 'stripe',
+    name: 'Stripe (Subscriptions)',
+    description: 'Stripe credentials for SaaS subscription billing, checkout, and the customer portal.',
+    icon: 'S',
+    accentClass: 'bg-[#635BFF] text-white font-black',
+    fields: [
+      { id: 'secretKey', label: 'Secret Key', placeholder: 'sk_live_... or sk_test_...', type: 'password', helpText: 'From Stripe Dashboard → Developers → API keys. Never expose this to the browser.' },
+      { id: 'publishableKey', label: 'Publishable Key', placeholder: 'pk_live_... or pk_test_...', type: 'text', helpText: 'Safe to expose client-side. Used if you add Stripe.js elements in future.' },
+      { id: 'webhookSecret', label: 'Webhook Secret', placeholder: 'whsec_...', type: 'password', helpText: 'From Stripe Dashboard → Developers → Webhooks → your endpoint → Signing secret. Required for subscription sync.' },
+    ],
+    docsUrl: 'https://stripe.com/docs/api',
+    redirectHint: 'Webhook endpoint: POST /webhooks/stripe on your backend URL. Register it in Stripe Dashboard → Developers → Webhooks.',
+  },
 ];
 
 export default function AdminIntegrations() {

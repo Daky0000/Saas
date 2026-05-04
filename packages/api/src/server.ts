@@ -47,12 +47,30 @@ const INTEGRATIONS_ENCRYPTION_KEY = (() => {
   return scryptSync(config.integrationsEncryptionKey, 'integrations', 32);
 })();
 
-// ── Stripe ────────────────────────────────────────────────────────────────────
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-const stripe = STRIPE_SECRET_KEY
-  ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2025-05-28.basil' as any })
+// ── Stripe — initialized from DB platform_configs; env vars are fallback only ─
+let stripe: Stripe | null = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-05-28.basil' as any })
   : null;
+let STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+
+async function refreshStripe(): Promise<void> {
+  try {
+    const r = await dbQuery<{ config: Record<string, string>; enabled: boolean }>(
+      `SELECT config, enabled FROM platform_configs WHERE platform = 'stripe' LIMIT 1`
+    );
+    const row = r.rows[0];
+    if (!row) return; // no admin config yet — keep env var fallback
+    if (row.enabled && row.config?.secretKey) {
+      stripe = new Stripe(row.config.secretKey, { apiVersion: '2025-05-28.basil' as any });
+      STRIPE_WEBHOOK_SECRET = row.config.webhookSecret || '';
+    } else if (!row.enabled) {
+      stripe = null;
+      STRIPE_WEBHOOK_SECRET = '';
+    }
+  } catch {
+    // DB not ready yet — ignore, keep current value
+  }
+}
 
 const app = express();
 const PORT = config.port;
@@ -2404,6 +2422,7 @@ function normalizeUsername(value: string) {
 ensureDatabase()
   .then(() => ensureSeedUsers())
   .then(() => ensureSeedPricingPlans())
+  .then(() => refreshStripe())
   .then(() => startSocialAutomationProcessor())
   .then(() => startTokenHealthMonitor())
   .catch((err) => {
@@ -6776,6 +6795,9 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     } else {
       inMemoryPlatformConfigs.set(platform, { platform, config: normalizedConfig, enabled: finalEnabled, updated_at: now });
     }
+
+    // Reload Stripe client immediately when admin saves Stripe credentials
+    if (platform === 'stripe') void refreshStripe();
 
     return res.json({ success: true, message: 'Platform config saved' });
   } catch (error) {
