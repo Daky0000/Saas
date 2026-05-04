@@ -1666,6 +1666,112 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS attribution_model TEXT NOT NULL DEFAULT 'last_touch';`).catch(() => undefined);
   // ── End Campaign Tables ───────────────────────────────────────────────────────
 
+  // ─── Workspace & Organizations ────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      logo_url TEXT,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS organizations_slug_unique_idx ON organizations (LOWER(slug));`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS organizations_owner_idx ON organizations (owner_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organization_memberships (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'viewer',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(org_id, user_id)
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS org_memberships_user_idx ON organization_memberships (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS org_memberships_org_idx ON organization_memberships (org_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organization_invitations (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'editor',
+      token TEXT NOT NULL,
+      invited_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      accepted_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS org_invitations_token_idx ON organization_invitations (token);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS org_invitations_org_idx ON organization_invitations (org_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      color TEXT NOT NULL DEFAULT '#5b6cf9',
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS projects_org_idx ON projects (org_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organization_audit_logs (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS org_audit_logs_org_idx ON organization_audit_logs (org_id, created_at DESC);`).catch(() => undefined);
+
+  // Seed a default personal workspace for every user who doesn't have one yet
+  try {
+    const { rows: usersWithoutOrg } = await pool.query(`
+      SELECT u.id, u.full_name, u.email, u.username
+      FROM users u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM organization_memberships om WHERE om.user_id = u.id
+      )
+      ORDER BY u.created_at ASC
+    `);
+    for (const user of usersWithoutOrg) {
+      const orgId = randomUUID();
+      const projId = randomUUID();
+      const displayName = (user.full_name || user.username || user.email.split('@')[0]).trim();
+      const slug = `${displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40)}-${orgId.substring(0, 6)}`;
+      await pool.query(
+        `INSERT INTO organizations (id, name, slug, description, owner_id) VALUES ($1, $2, $3, '', $4) ON CONFLICT DO NOTHING`,
+        [orgId, `${displayName}'s Workspace`, slug, user.id]
+      );
+      await pool.query(
+        `INSERT INTO organization_memberships (id, org_id, user_id, role) VALUES ($1, $2, $3, 'owner') ON CONFLICT DO NOTHING`,
+        [randomUUID(), orgId, user.id]
+      );
+      await pool.query(
+        `INSERT INTO projects (id, org_id, name, description, created_by_user_id) VALUES ($1, $2, 'Main Project', 'Default project', $3) ON CONFLICT DO NOTHING`,
+        [projId, orgId, user.id]
+      );
+    }
+  } catch (e) {
+    console.warn('Workspace seed skipped:', e);
+  }
+  // ── End Workspace Tables ──────────────────────────────────────────────────────
+
   dbReady = true;
 }
 
@@ -2612,6 +2718,28 @@ async function requireAdmin(req: Request, res: Response): Promise<DbUserRow | nu
     return null;
   }
   return user;
+}
+
+const ORG_ROLE_RANK: Record<string, number> = { owner: 4, admin: 3, editor: 2, viewer: 1 };
+
+async function requireOrgMembership(
+  req: Request,
+  res: Response,
+  orgId: string,
+  minRole: 'viewer' | 'editor' | 'admin' | 'owner' = 'viewer'
+): Promise<{ userId: string; role: string } | null> {
+  const auth = requireAuth(req, res);
+  if (!auth) return null;
+  if (!hasDatabase()) { res.status(503).json({ success: false, error: 'Database unavailable' }); return null; }
+  const { rows } = await dbQuery(
+    `SELECT role FROM organization_memberships WHERE org_id = $1 AND user_id = $2`,
+    [orgId, auth.userId]
+  );
+  if (!rows.length || (ORG_ROLE_RANK[rows[0].role] ?? 0) < (ORG_ROLE_RANK[minRole] ?? 0)) {
+    res.status(403).json({ success: false, error: 'Not authorized for this organization' });
+    return null;
+  }
+  return { userId: auth.userId, role: rows[0].role as string };
 }
 
 const authRegisterSchema = z.object({
@@ -20181,6 +20309,404 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 });
 
 // ─── End AI Chat ───────────────────────────────────────────────────────────────
+
+// ─── Workspace / Organization Routes ───────────────────────────────────────────
+
+// GET /api/workspace/summary — returns user's orgs with role + member_count
+app.get('/api/workspace/summary', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, organizations: [] });
+  try {
+    const { rows: orgs } = await dbQuery(
+      `SELECT o.id, o.name, o.slug, o.description, o.logo_url, o.owner_id, o.created_at, o.updated_at, om.role,
+        (SELECT COUNT(*)::int FROM organization_memberships WHERE org_id = o.id) AS member_count
+       FROM organizations o
+       JOIN organization_memberships om ON om.org_id = o.id AND om.user_id = $1
+       ORDER BY o.created_at ASC`,
+      [auth.userId]
+    );
+    res.json({ success: true, organizations: orgs });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load workspace summary' });
+  }
+});
+
+// POST /api/organizations — create a new organization
+app.post('/api/organizations', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { name, description = '', slug: rawSlug } = req.body as { name: string; description?: string; slug?: string };
+  if (!name?.trim()) return res.status(400).json({ success: false, error: 'Name is required' });
+  try {
+    const orgId = randomUUID();
+    const projId = randomUUID();
+    const slug = rawSlug?.trim()
+      ? rawSlug.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').substring(0, 60)
+      : `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40)}-${orgId.substring(0, 6)}`;
+    await dbQuery(
+      `INSERT INTO organizations (id, name, slug, description, owner_id) VALUES ($1, $2, $3, $4, $5)`,
+      [orgId, name.trim(), slug, description.trim(), auth.userId]
+    );
+    await dbQuery(
+      `INSERT INTO organization_memberships (id, org_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
+      [randomUUID(), orgId, auth.userId]
+    );
+    await dbQuery(
+      `INSERT INTO projects (id, org_id, name, description, created_by_user_id) VALUES ($1, $2, 'Main Project', '', $3)`,
+      [projId, orgId, auth.userId]
+    );
+    const { rows } = await dbQuery(
+      `SELECT o.*, om.role FROM organizations o JOIN organization_memberships om ON om.org_id = o.id AND om.user_id = $1 WHERE o.id = $2`,
+      [auth.userId, orgId]
+    );
+    res.json({ success: true, organization: rows[0] });
+  } catch (e: any) {
+    if (e?.code === '23505') return res.status(409).json({ success: false, error: 'Slug already taken' });
+    res.status(500).json({ success: false, error: 'Failed to create organization' });
+  }
+});
+
+// GET /api/organizations/:orgId
+app.get('/api/organizations/:orgId', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId);
+  if (!membership) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT o.*, om.role, (SELECT COUNT(*)::int FROM organization_memberships WHERE org_id = o.id) AS member_count
+       FROM organizations o JOIN organization_memberships om ON om.org_id = o.id AND om.user_id = $1 WHERE o.id = $2`,
+      [membership.userId, orgId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Organization not found' });
+    res.json({ success: true, organization: rows[0] });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load organization' });
+  }
+});
+
+// PUT /api/organizations/:orgId
+app.put('/api/organizations/:orgId', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  const { name, description, slug: rawSlug } = req.body as { name?: string; description?: string; slug?: string };
+  try {
+    const updates: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (name !== undefined) { updates.push(`name = $${i++}`); vals.push(name.trim()); }
+    if (description !== undefined) { updates.push(`description = $${i++}`); vals.push(description.trim()); }
+    if (rawSlug !== undefined) {
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').substring(0, 60);
+      updates.push(`slug = $${i++}`); vals.push(slug);
+    }
+    if (updates.length === 0) return res.status(400).json({ success: false, error: 'Nothing to update' });
+    updates.push(`updated_at = NOW()`);
+    vals.push(orgId);
+    await dbQuery(`UPDATE organizations SET ${updates.join(', ')} WHERE id = $${i}`, vals);
+    const { rows } = await dbQuery(
+      `SELECT o.*, om.role FROM organizations o JOIN organization_memberships om ON om.org_id = o.id AND om.user_id = $1 WHERE o.id = $2`,
+      [membership.userId, orgId]
+    );
+    res.json({ success: true, organization: rows[0] });
+  } catch (e: any) {
+    if (e?.code === '23505') return res.status(409).json({ success: false, error: 'Slug already taken' });
+    res.status(500).json({ success: false, error: 'Failed to update organization' });
+  }
+});
+
+// DELETE /api/organizations/:orgId
+app.delete('/api/organizations/:orgId', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'owner');
+  if (!membership) return;
+  try {
+    await dbQuery(`DELETE FROM organizations WHERE id = $1`, [orgId]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to delete organization' });
+  }
+});
+
+// GET /api/organizations/:orgId/members
+app.get('/api/organizations/:orgId/members', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId);
+  if (!membership) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT om.id, om.role, om.created_at,
+        u.id AS user_id, u.full_name, u.email, u.username, u.avatar_url
+       FROM organization_memberships om
+       JOIN users u ON u.id = om.user_id
+       WHERE om.org_id = $1
+       ORDER BY CASE om.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'editor' THEN 2 ELSE 3 END, om.created_at ASC`,
+      [orgId]
+    );
+    res.json({ success: true, members: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load members' });
+  }
+});
+
+// PUT /api/organizations/:orgId/members/:targetUserId — update member role
+app.put('/api/organizations/:orgId/members/:targetUserId', async (req: Request, res: Response) => {
+  const { orgId, targetUserId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  const { role } = req.body as { role: string };
+  if (!['admin', 'editor', 'viewer'].includes(role)) {
+    return res.status(400).json({ success: false, error: 'Invalid role. Allowed: admin, editor, viewer' });
+  }
+  if (targetUserId === membership.userId) {
+    return res.status(400).json({ success: false, error: 'Cannot change your own role' });
+  }
+  try {
+    const { rows: target } = await dbQuery(
+      `SELECT role FROM organization_memberships WHERE org_id = $1 AND user_id = $2`,
+      [orgId, targetUserId]
+    );
+    if (!target.length) return res.status(404).json({ success: false, error: 'Member not found' });
+    if (target[0].role === 'owner') return res.status(403).json({ success: false, error: 'Cannot change the owner role' });
+    await dbQuery(
+      `UPDATE organization_memberships SET role = $1 WHERE org_id = $2 AND user_id = $3`,
+      [role, orgId, targetUserId]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to update member role' });
+  }
+});
+
+// DELETE /api/organizations/:orgId/members/:targetUserId — remove member
+app.delete('/api/organizations/:orgId/members/:targetUserId', async (req: Request, res: Response) => {
+  const { orgId, targetUserId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  if (targetUserId === membership.userId) {
+    return res.status(400).json({ success: false, error: 'Cannot remove yourself' });
+  }
+  try {
+    const { rows: target } = await dbQuery(
+      `SELECT role FROM organization_memberships WHERE org_id = $1 AND user_id = $2`,
+      [orgId, targetUserId]
+    );
+    if (!target.length) return res.status(404).json({ success: false, error: 'Member not found' });
+    if (target[0].role === 'owner') return res.status(403).json({ success: false, error: 'Cannot remove the owner' });
+    await dbQuery(`DELETE FROM organization_memberships WHERE org_id = $1 AND user_id = $2`, [orgId, targetUserId]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to remove member' });
+  }
+});
+
+// POST /api/organizations/:orgId/invite — invite a user by email
+app.post('/api/organizations/:orgId/invite', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  const { email, role = 'editor' } = req.body as { email: string; role?: string };
+  if (!email?.trim()) return res.status(400).json({ success: false, error: 'Email is required' });
+  if (!['admin', 'editor', 'viewer'].includes(role)) {
+    return res.status(400).json({ success: false, error: 'Invalid role' });
+  }
+  try {
+    const { rows: existing } = await dbQuery(
+      `SELECT u.id FROM users u JOIN organization_memberships om ON om.user_id = u.id
+       WHERE LOWER(u.email) = LOWER($1) AND om.org_id = $2`,
+      [email.trim(), orgId]
+    );
+    if (existing.length) return res.status(409).json({ success: false, error: 'User is already a member' });
+    await dbQuery(
+      `DELETE FROM organization_invitations WHERE org_id = $1 AND LOWER(email) = LOWER($2) AND accepted_at IS NULL`,
+      [orgId, email.trim()]
+    );
+    const invId = randomUUID();
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await dbQuery(
+      `INSERT INTO organization_invitations (id, org_id, email, role, token, invited_by_user_id, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [invId, orgId, email.trim().toLowerCase(), role, token, membership.userId, expiresAt]
+    );
+    res.json({ success: true, inviteToken: token, inviteLink: `/invite/${token}` });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to send invitation' });
+  }
+});
+
+// GET /api/organizations/:orgId/invitations — list pending invitations
+app.get('/api/organizations/:orgId/invitations', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT oi.id, oi.email, oi.role, oi.expires_at, oi.created_at, oi.token,
+        u.full_name AS invited_by_name
+       FROM organization_invitations oi
+       JOIN users u ON u.id = oi.invited_by_user_id
+       WHERE oi.org_id = $1 AND oi.accepted_at IS NULL AND oi.expires_at > NOW()
+       ORDER BY oi.created_at DESC`,
+      [orgId]
+    );
+    res.json({ success: true, invitations: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load invitations' });
+  }
+});
+
+// DELETE /api/organizations/:orgId/invitations/:invId — cancel invitation
+app.delete('/api/organizations/:orgId/invitations/:invId', async (req: Request, res: Response) => {
+  const { orgId, invId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  try {
+    await dbQuery(`DELETE FROM organization_invitations WHERE id = $1 AND org_id = $2`, [invId, orgId]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to cancel invitation' });
+  }
+});
+
+// GET /api/invitations/:token — public: get invite details for accept page
+app.get('/api/invitations/:token', async (req: Request, res: Response) => {
+  const { token } = req.params;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT oi.id, oi.email, oi.role, oi.expires_at, oi.accepted_at,
+        o.name AS org_name, o.id AS org_id, u.full_name AS invited_by_name
+       FROM organization_invitations oi
+       JOIN organizations o ON o.id = oi.org_id
+       JOIN users u ON u.id = oi.invited_by_user_id
+       WHERE oi.token = $1`,
+      [token]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Invitation not found' });
+    const inv = rows[0];
+    if (inv.accepted_at) return res.status(409).json({ success: false, error: 'Invitation already accepted' });
+    if (new Date(inv.expires_at) < new Date()) return res.status(410).json({ success: false, error: 'Invitation expired' });
+    res.json({ success: true, invitation: inv });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load invitation' });
+  }
+});
+
+// POST /api/invitations/:token/accept — accept invite (requires auth)
+app.post('/api/invitations/:token/accept', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { token } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT oi.*, o.id AS org_id FROM organization_invitations oi JOIN organizations o ON o.id = oi.org_id WHERE oi.token = $1`,
+      [token]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Invitation not found' });
+    const inv = rows[0];
+    if (inv.accepted_at) return res.status(409).json({ success: false, error: 'Invitation already accepted' });
+    if (new Date(inv.expires_at) < new Date()) return res.status(410).json({ success: false, error: 'Invitation expired' });
+    const { rows: userRows } = await dbQuery(`SELECT email FROM users WHERE id = $1`, [auth.userId]);
+    if (!userRows.length) return res.status(401).json({ success: false, error: 'User not found' });
+    if (userRows[0].email.toLowerCase() !== (inv.email as string).toLowerCase()) {
+      return res.status(403).json({ success: false, error: `This invitation was sent to ${inv.email}` });
+    }
+    await dbQuery(
+      `INSERT INTO organization_memberships (id, org_id, user_id, role) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
+      [randomUUID(), inv.org_id, auth.userId, inv.role]
+    );
+    await dbQuery(`UPDATE organization_invitations SET accepted_at = NOW() WHERE token = $1`, [token]);
+    res.json({ success: true, orgId: inv.org_id });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to accept invitation' });
+  }
+});
+
+// GET /api/organizations/:orgId/projects — list projects
+app.get('/api/organizations/:orgId/projects', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId);
+  if (!membership) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT p.*, u.full_name AS created_by_name
+       FROM projects p LEFT JOIN users u ON u.id = p.created_by_user_id
+       WHERE p.org_id = $1 ORDER BY p.created_at ASC`,
+      [orgId]
+    );
+    res.json({ success: true, projects: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to load projects' });
+  }
+});
+
+// POST /api/organizations/:orgId/projects — create project
+app.post('/api/organizations/:orgId/projects', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'editor');
+  if (!membership) return;
+  const { name, description = '', color = '#5b6cf9' } = req.body as { name: string; description?: string; color?: string };
+  if (!name?.trim()) return res.status(400).json({ success: false, error: 'Name is required' });
+  try {
+    const projId = randomUUID();
+    await dbQuery(
+      `INSERT INTO projects (id, org_id, name, description, color, created_by_user_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [projId, orgId, name.trim(), description.trim(), color, membership.userId]
+    );
+    const { rows } = await dbQuery(`SELECT * FROM projects WHERE id = $1`, [projId]);
+    res.json({ success: true, project: rows[0] });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to create project' });
+  }
+});
+
+// PUT /api/organizations/:orgId/projects/:projectId
+app.put('/api/organizations/:orgId/projects/:projectId', async (req: Request, res: Response) => {
+  const { orgId, projectId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'editor');
+  if (!membership) return;
+  const { name, description, color } = req.body as { name?: string; description?: string; color?: string };
+  try {
+    const updates: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (name !== undefined) { updates.push(`name = $${i++}`); vals.push(name.trim()); }
+    if (description !== undefined) { updates.push(`description = $${i++}`); vals.push(description.trim()); }
+    if (color !== undefined) { updates.push(`color = $${i++}`); vals.push(color); }
+    if (updates.length === 0) return res.status(400).json({ success: false, error: 'Nothing to update' });
+    updates.push(`updated_at = NOW()`);
+    vals.push(projectId, orgId);
+    await dbQuery(`UPDATE projects SET ${updates.join(', ')} WHERE id = $${i} AND org_id = $${i + 1}`, vals);
+    const { rows } = await dbQuery(`SELECT * FROM projects WHERE id = $1`, [projectId]);
+    res.json({ success: true, project: rows[0] });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to update project' });
+  }
+});
+
+// DELETE /api/organizations/:orgId/projects/:projectId
+app.delete('/api/organizations/:orgId/projects/:projectId', async (req: Request, res: Response) => {
+  const { orgId, projectId } = req.params;
+  const membership = await requireOrgMembership(req, res, orgId, 'admin');
+  if (!membership) return;
+  try {
+    const { rows: cnt } = await dbQuery(`SELECT COUNT(*)::int AS n FROM projects WHERE org_id = $1`, [orgId]);
+    if (cnt[0].n <= 1) {
+      return res.status(409).json({ success: false, error: 'Cannot delete the last project in an organization' });
+    }
+    await dbQuery(`DELETE FROM projects WHERE id = $1 AND org_id = $2`, [projectId, orgId]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Failed to delete project' });
+  }
+});
+
+// ── End Workspace Routes ──────────────────────────────────────────────────────
 
 // Not found
 app.use((req, res) => {

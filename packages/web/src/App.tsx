@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
+  Building2,
   ChevronDown,
   FileText,
   Image,
@@ -37,8 +38,11 @@ import ChatWidget from './components/ChatWidget';
 import PostAutomation from './pages/PostAutomation';
 import Mailing from './pages/Mailing';
 import Campaign from './pages/Campaign';
+import Workspace from './pages/Workspace';
+import AcceptInvite from './pages/AcceptInvite';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
+import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
 import { API_BASE_URL } from './utils/apiBase';
 import {
   AppUser,
@@ -61,7 +65,8 @@ type PageType =
   | 'media'
   | 'integrations'
   | 'mailing'
-  | 'campaign';
+  | 'campaign'
+  | 'workspace';
 
 type AuthMeResponse = {
   success: boolean;
@@ -89,6 +94,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   integrations: '/integrations',
   mailing: '/mailing',
   campaign: '/campaign',
+  workspace: '/workspace',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -130,6 +136,24 @@ async function fetchCurrentUser(token: string): Promise<AppUser | null> {
   } catch {
     return null;
   }
+}
+
+function SidebarOrgBadge({ onClick }: { onClick: () => void }) {
+  const { currentOrg, currentProject, loading } = useWorkspace();
+  if (loading || !currentOrg) return null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mx-4 mb-1 mt-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-left hover:bg-gray-100 transition"
+    >
+      <Building2 size={13} className="shrink-0 text-blue-500" />
+      <div className="min-w-0">
+        <p className="truncate text-xs font-semibold text-gray-700">{currentOrg.name}</p>
+        {currentProject && <p className="truncate text-[10px] text-gray-400">{currentProject.name}</p>}
+      </div>
+    </button>
+  );
 }
 
 function App() {
@@ -272,7 +296,7 @@ function App() {
 
     if (!loggedIn) {
       const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
-      if (!publicPaths.includes(pathname)) {
+      if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
         navigatePath('/login', true);
       }
       return () => {
@@ -307,7 +331,7 @@ function App() {
 
       if (!isAuthenticated) {
         const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
-        if (!publicPaths.includes(pathname)) {
+        if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
           navigatePath('/login', true);
           setCurrentPathname('/login');
         }
@@ -359,6 +383,10 @@ function App() {
   if (currentPathname === '/tools') return <Tools onLoginClick={goToLogin} />;
   if (currentPathname === '/data-deletion') return <DataDeletion />;
   if (currentPathname.startsWith('/auth/')) return <OAuthCallback />;
+  if (currentPathname.startsWith('/invite/')) {
+    const token = currentPathname.replace('/invite/', '');
+    return <AcceptInvite token={token} onLoginClick={goToLogin} />;
+  }
   if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={goToLogin} />;
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={goToLogin} />;
@@ -398,6 +426,7 @@ function App() {
     { id: 'campaign' as const, label: 'Campaigns', icon: Megaphone },
     { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
     { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
+    { id: 'workspace' as const, label: 'Workspace', icon: Building2 },
     { id: 'profile' as const, label: 'Settings', icon: Settings },
   ];
 
@@ -427,12 +456,15 @@ function App() {
         return <Mailing />;
       case 'campaign':
         return <Campaign />;
+      case 'workspace':
+        return <Workspace />;
       default:
         return <Dashboard currentUser={authUser} />;
     }
   };
 
   return (
+    <WorkspaceProvider>
     <TemplateEditorProvider>
       <div className="flex h-screen bg-gray-50">
       <aside
@@ -443,6 +475,7 @@ function App() {
         <div className="p-6 border-b border-gray-100">
           <div className="text-2xl font-black text-gray-900">{sidebarOpen ? 'Dakyworld hub' : 'DH'}</div>
         </div>
+        {sidebarOpen && <SidebarOrgBadge onClick={() => navigateToPage('workspace')} />}
 
         <nav className="flex-1 p-4 space-y-2">
           {menuItems.map((item) => {
@@ -629,6 +662,7 @@ function App() {
       <AdvancedTemplateCardModal />
       <ChatWidget />
     </TemplateEditorProvider>
+    </WorkspaceProvider>
   );
 }
 
