@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap } from 'lucide-react';
+import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -12,6 +12,7 @@ import AdminIntegrations from '../components/admin/AdminIntegrations';
 import AdminAIConfig from '../components/admin/AdminAIConfig';
 import AdminAISkills from '../components/admin/AdminAISkills';
 import AdminBillingDashboard from '../components/admin/AdminBillingDashboard';
+import AdminApify from '../components/admin/AdminApify';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -36,7 +37,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'media'
     | 'ai-config'
     | 'ai-skills'
-    | 'billing';
+    | 'billing'
+    | 'apify';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -57,6 +59,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     'ai-config': '/admin/ai',
     'ai-skills': '/admin/ai/skills',
     billing: '/admin/billing',
+    apify: '/admin/apify',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -68,6 +71,7 @@ const Admin = ({ currentUser }: AdminProps) => {
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
   const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai'));
+  const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
 
@@ -106,6 +110,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const isPagesActive = activeTab.startsWith('pages-');
   const isAIActive = activeTab.startsWith('ai-');
+  const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
     const onPop = () => {
@@ -114,6 +119,7 @@ const Admin = ({ currentUser }: AdminProps) => {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
         setAiOpen(tab.startsWith('ai-'));
+        setApifyOpen(tab === 'apify');
       }
     };
     window.addEventListener('popstate', onPop);
@@ -191,6 +197,41 @@ const Admin = ({ currentUser }: AdminProps) => {
                   </button>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        {/* Apify accordion */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setApifyOpen((prev) => !prev)}
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+              isApifyActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <Globe size={18} />
+            <span className="flex-1">Apify</span>
+            <ChevronDown
+              size={15}
+              className={`transition-transform duration-200 ${apifyOpen || isApifyActive ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {(apifyOpen || isApifyActive) && (
+            <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
+              <button
+                type="button"
+                onClick={() => navigateTab('apify')}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                  activeTab === 'apify'
+                    ? 'bg-slate-100 text-slate-950'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <Globe size={14} />
+                Actors & Runs
+              </button>
             </div>
           )}
         </div>
@@ -319,6 +360,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'ai-config' && <AdminAIConfig />}
             {activeTab === 'ai-skills' && <AdminAISkills />}
             {activeTab === 'billing' && <AdminBillingDashboard />}
+            {activeTab === 'apify' && <AdminApify />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>

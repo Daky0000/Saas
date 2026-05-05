@@ -1794,6 +1794,33 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     );
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS user_memories_user_id_idx ON user_memories (user_id);`).catch(() => undefined);
+
+  // ── Apify ─────────────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS apify_actors (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      actor_id    TEXT NOT NULL UNIQUE,
+      name        TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      tag         TEXT NOT NULL DEFAULT 'Custom',
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS apify_runs (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      actor_db_id   UUID REFERENCES apify_actors(id) ON DELETE SET NULL,
+      actor_name    TEXT NOT NULL,
+      apify_run_id  TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'READY',
+      input         JSONB,
+      dataset_id    TEXT,
+      started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at   TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  // ── End Apify ─────────────────────────────────────────────────────────────────
+
   // ── End User Memory ───────────────────────────────────────────────────────────
 
   // ─── Workspace & Organizations ────────────────────────────────────────────────
@@ -21026,6 +21053,160 @@ app.put('/api/admin/billing/customers/:userId/plan', async (req: Request, res: R
 });
 
 // ── End Billing Routes ─────────────────────────────────────────────────────────
+
+// ─── Apify Admin Routes ────────────────────────────────────────────────────────
+
+async function getApifyToken(): Promise<string | null> {
+  try {
+    const r = await dbQuery<{ config: Record<string, string> }>(
+      `SELECT config FROM platform_configs WHERE platform = 'apify' AND enabled = true LIMIT 1`
+    );
+    return r.rows[0]?.config?.apiKey ?? null;
+  } catch { return null; }
+}
+
+// GET /api/admin/apify/status — check Apify connection
+app.get('/api/admin/apify/status', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const token = await getApifyToken();
+  if (!token) return res.json({ connected: false });
+  try {
+    const resp = await axios.get('https://api.apify.com/v2/users/me', {
+      headers: { Authorization: `Bearer ${token}` },
+      validateStatus: () => true,
+      timeout: 8000,
+    });
+    if (resp.status !== 200) return res.json({ connected: false });
+    const d = resp.data?.data ?? {};
+    return res.json({
+      connected: true,
+      username: d.username || d.email || '',
+      plan: d.plan?.id ?? '',
+      creditBalance: d.limits?.monthlyUsageUsd ?? null,
+    });
+  } catch {
+    return res.json({ connected: false });
+  }
+});
+
+// GET /api/admin/apify/actors — list saved actors
+app.get('/api/admin/apify/actors', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ actors: [] });
+  try {
+    const { rows } = await dbQuery(`SELECT * FROM apify_actors ORDER BY created_at DESC`);
+    return res.json({ actors: rows });
+  } catch {
+    return res.status(500).json({ error: 'Failed to fetch actors' });
+  }
+});
+
+// POST /api/admin/apify/actors — save an actor
+app.post('/api/admin/apify/actors', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const { actor_id, name, description = '', tag = 'Custom' } = req.body as { actor_id: string; name: string; description?: string; tag?: string };
+  if (!actor_id?.trim() || !name?.trim()) return res.status(400).json({ error: 'actor_id and name required' });
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO apify_actors (actor_id, name, description, tag)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (actor_id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, tag=EXCLUDED.tag
+       RETURNING *`,
+      [actor_id.trim(), name.trim(), description.trim(), tag.trim()]
+    );
+    return res.json({ actor: rows[0] });
+  } catch {
+    return res.status(500).json({ error: 'Failed to save actor' });
+  }
+});
+
+// DELETE /api/admin/apify/actors/:id — remove an actor
+app.delete('/api/admin/apify/actors/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  await dbQuery(`DELETE FROM apify_actors WHERE id=$1`, [req.params.id]);
+  return res.json({ success: true });
+});
+
+// POST /api/admin/apify/actors/:id/run — trigger an actor run
+app.post('/api/admin/apify/actors/:id/run', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const apiToken = await getApifyToken();
+  if (!apiToken) return res.status(400).json({ error: 'Apify API key not configured' });
+  try {
+    const { rows } = await dbQuery(`SELECT * FROM apify_actors WHERE id=$1`, [req.params.id]);
+    const actor = rows[0];
+    if (!actor) return res.status(404).json({ error: 'Actor not found' });
+
+    const input = (req.body as { input?: Record<string, unknown> }).input ?? {};
+    const resp = await axios.post(
+      `https://api.apify.com/v2/acts/${encodeURIComponent(actor.actor_id)}/runs`,
+      input,
+      { headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 15000 }
+    );
+    if (resp.status >= 400) return res.status(400).json({ error: `Apify error ${resp.status}: ${JSON.stringify(resp.data)}` });
+
+    const run = resp.data?.data ?? {};
+    await dbQuery(
+      `INSERT INTO apify_runs (actor_db_id, actor_name, apify_run_id, status, input)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [actor.id, actor.name, run.id ?? 'unknown', run.status ?? 'READY', JSON.stringify(input)]
+    );
+    return res.json({ success: true, runId: run.id });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to start run' });
+  }
+});
+
+// GET /api/admin/apify/runs — list recent runs (merged DB + live Apify status)
+app.get('/api/admin/apify/runs', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ runs: [] });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT r.*, a.actor_id FROM apify_runs r LEFT JOIN apify_actors a ON a.id = r.actor_db_id ORDER BY r.started_at DESC LIMIT 50`
+    );
+
+    // Attempt live status refresh from Apify for RUNNING/READY rows
+    const apiToken = await getApifyToken();
+    if (apiToken && rows.length) {
+      const pending = rows.filter((r) => r.status === 'RUNNING' || r.status === 'READY');
+      await Promise.allSettled(pending.map(async (run) => {
+        try {
+          const resp = await axios.get(`https://api.apify.com/v2/actor-runs/${run.apify_run_id}`, {
+            headers: { Authorization: `Bearer ${apiToken}` },
+            validateStatus: () => true,
+            timeout: 5000,
+          });
+          if (resp.status === 200) {
+            const d = resp.data?.data ?? {};
+            await dbQuery(
+              `UPDATE apify_runs SET status=$1, dataset_id=$2, finished_at=$3 WHERE id=$4`,
+              [d.status ?? run.status, d.defaultDatasetId ?? run.dataset_id, d.finishedAt ?? run.finished_at, run.id]
+            );
+            run.status = d.status ?? run.status;
+            run.dataset_id = d.defaultDatasetId ?? run.dataset_id;
+            run.finished_at = d.finishedAt ?? run.finished_at;
+          }
+        } catch { /* skip */ }
+      }));
+    }
+
+    return res.json({ runs: rows });
+  } catch {
+    return res.status(500).json({ error: 'Failed to fetch runs' });
+  }
+});
+
+// ── End Apify Admin Routes ─────────────────────────────────────────────────────
 
 // ─── Workspace / Organization Routes ───────────────────────────────────────────
 
