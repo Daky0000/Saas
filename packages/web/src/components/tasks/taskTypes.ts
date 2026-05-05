@@ -13,6 +13,25 @@ export type TaskLabel = {
   color: string;
 };
 
+export type TaskAction = {
+  id: string;
+  task_id: string;
+  action_type: string;
+  label: string;
+  target_count: number;
+  current_count: number;
+};
+
+export const ACTION_TYPES: { value: string; label: string }[] = [
+  { value: 'create_post', label: 'Create Post' },
+  { value: 'create_card', label: 'Create Card / Design' },
+  { value: 'create_campaign', label: 'Create Campaign' },
+  { value: 'send_email', label: 'Send Email' },
+  { value: 'upload_media', label: 'Upload Media' },
+  { value: 'create_automation', label: 'Set Up Automation' },
+  { value: 'custom', label: 'Custom Action' },
+];
+
 export type Subtask = {
   id: string;
   task_id: string;
@@ -55,6 +74,7 @@ export type Task = {
   comment_count: number;
   subtasks?: Subtask[];
   attachments?: TaskAttachment[];
+  actions?: TaskAction[];
 };
 
 export type Comment = {

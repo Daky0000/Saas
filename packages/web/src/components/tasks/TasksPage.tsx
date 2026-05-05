@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BarChart2, Clock, Files, LayoutGrid, Users } from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { API_BASE_URL } from '../../utils/apiBase';
-import { Task, TaskStatus } from './taskTypes';
+import { Task, TaskStatus, TaskLabel, ProjectMember } from './taskTypes';
 import TaskOverview from './tabs/TaskOverview';
 import TaskBoard from './tabs/TaskBoard';
 import TaskFiles from './tabs/TaskFiles';
@@ -39,6 +39,8 @@ export default function TasksPage({ initialFilter }: Props) {
   );
 
   const projectId = currentProject?.id ?? '';
+  const [projectMembers, setProjectMembers] = useState<{ id: string; name: string; avatar_url: string | null }[]>([]);
+  const [projectLabels, setProjectLabels] = useState<TaskLabel[]>([]);
 
   const loadTasks = async (status?: TaskStatus | 'all') => {
     if (!projectId) return;
@@ -54,6 +56,14 @@ export default function TasksPage({ initialFilter }: Props) {
 
   useEffect(() => {
     void loadTasks(filterStatus !== 'all' ? filterStatus : undefined);
+    if (projectId) {
+      apiFetch<{ members: ProjectMember[] }>(`/api/projects/${projectId}/members`)
+        .then((d) => setProjectMembers(d.members.map((m) => ({ id: m.id, name: m.name, avatar_url: m.avatar_url }))))
+        .catch(() => undefined);
+      apiFetch<{ labels: TaskLabel[] }>(`/api/projects/${projectId}/labels`)
+        .then((d) => setProjectLabels(d.labels))
+        .catch(() => undefined);
+    }
   }, [projectId, filterStatus]);
 
   useEffect(() => {
@@ -123,6 +133,8 @@ export default function TasksPage({ initialFilter }: Props) {
           onTasksChange={setTasks}
           onOpenTask={(t) => setSelectedTask(t)}
           onReload={() => void loadTasks()}
+          projectMembers={projectMembers}
+          projectLabels={projectLabels}
         />
       )}
       {activeTab === 'files' && <TaskFiles projectId={projectId} />}

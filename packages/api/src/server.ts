@@ -2004,6 +2004,18 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS task_activity_project_idx ON task_activity (project_id, created_at DESC);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS task_activity_task_idx ON task_activity (task_id, created_at DESC);`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_actions (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id       UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      action_type   TEXT NOT NULL,
+      label         TEXT NOT NULL,
+      target_count  INT NOT NULL DEFAULT 1,
+      current_count INT NOT NULL DEFAULT 0,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS task_actions_task_idx ON task_actions (task_id);`).catch(() => undefined);
   // ── End Task Management ───────────────────────────────────────────────────────
 
   // Seed a default personal workspace for every user who doesn't have one yet
@@ -6755,6 +6767,8 @@ app.post('/api/designs', async (req: Request, res: Response) => {
     await syncUserDesignMedia(auth.userId, design).catch((error) => {
       console.error('Design media sync error:', error);
     });
+
+    void checkTaskActions(auth.userId, 'create_card');
 
     return res.status(201).json({ success: true, design });
   } catch (error) {
@@ -12194,6 +12208,8 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
   await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
     console.error('Blog post media sync error:', error);
   });
+
+  void checkTaskActions(user.userId, 'create_post');
 
   if (status === 'published') {
     try {
@@ -21745,6 +21761,32 @@ async function logTaskActivity(
   } catch { /* non-fatal */ }
 }
 
+async function checkTaskActions(userId: string, actionType: string) {
+  if (!hasDatabase()) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT ta.id, ta.current_count, ta.target_count, ta.task_id, t.project_id, t.status
+       FROM task_actions ta
+       JOIN tasks t ON t.id = ta.task_id
+       JOIN task_assignees tass ON tass.task_id = t.id AND tass.user_id = $1
+       WHERE ta.action_type = $2 AND ta.current_count < ta.target_count AND t.status != 'done'`,
+      [userId, actionType]
+    );
+    for (const row of rows) {
+      const newCount = row.current_count + 1;
+      await dbQuery(`UPDATE task_actions SET current_count = $1 WHERE id = $2`, [newCount, row.id]);
+      const { rows: totals } = await dbQuery(
+        `SELECT COALESCE(SUM(target_count),0) AS tgt, COALESCE(SUM(current_count),0) AS cur FROM task_actions WHERE task_id = $1`,
+        [row.task_id]
+      );
+      if (Number(totals[0].cur) >= Number(totals[0].tgt)) {
+        await dbQuery(`UPDATE tasks SET status = 'done', updated_at = NOW() WHERE id = $1`, [row.task_id]);
+        void logTaskActivity(row.project_id, userId, 'status_changed', row.task_id, { from: row.status, to: 'done' });
+      }
+    }
+  } catch { /* non-fatal */ }
+}
+
 // GET /api/projects/:projectId/tasks
 app.get('/api/projects/:projectId/tasks', async (req: Request, res: Response) => {
   const { projectId } = req.params;
@@ -21761,7 +21803,8 @@ app.get('/api/projects/:projectId/tasks', async (req: Request, res: Response) =>
         (SELECT COUNT(*)::int FROM subtasks s WHERE s.task_id = t.id) AS subtask_count,
         (SELECT COUNT(*)::int FROM subtasks s WHERE s.task_id = t.id AND s.completed) AS subtask_done,
         (SELECT COUNT(*)::int FROM task_comments c WHERE c.task_id = t.id AND c.parent_id IS NULL) AS comment_count,
-        COALESCE(su.full_name, su.username, su.email) AS supervisor_name
+        COALESCE(su.full_name, su.username, su.email) AS supervisor_name,
+        COALESCE((SELECT json_agg(a ORDER BY a.created_at) FROM task_actions a WHERE a.task_id = t.id), '[]') AS actions
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id
       LEFT JOIN users u ON u.id = ta.user_id
@@ -21787,8 +21830,8 @@ app.post('/api/projects/:projectId/tasks', async (req: Request, res: Response) =
   const { projectId } = req.params;
   const access = await requireProjectAccess(req, res, projectId);
   if (!access) return;
-  const { title, description = '', status = 'todo', priority = 'medium', due_date, supervisor_id, assignee_ids = [] } =
-    req.body as { title: string; description?: string; status?: string; priority?: string; due_date?: string; supervisor_id?: string; assignee_ids?: string[] };
+  const { title, description = '', status = 'todo', priority = 'medium', due_date, supervisor_id, assignee_ids = [], label_ids = [], actions = [] } =
+    req.body as { title: string; description?: string; status?: string; priority?: string; due_date?: string; supervisor_id?: string; assignee_ids?: string[]; label_ids?: string[]; actions?: { action_type: string; label: string; target_count: number }[] };
   if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
   try {
     const { rows: pos } = await dbQuery(
@@ -21801,13 +21844,26 @@ app.post('/api/projects/:projectId/tasks', async (req: Request, res: Response) =
       [projectId, title.trim(), description, status, priority, pos[0].next, due_date || null, supervisor_id || null, access.userId]
     );
     const task = rows[0];
-    if (assignee_ids.length) {
-      await Promise.all(assignee_ids.map((uid) =>
+    await Promise.all([
+      ...assignee_ids.map((uid) =>
         dbQuery(`INSERT INTO task_assignees (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [task.id, uid])
+      ),
+      ...label_ids.map((lid) =>
+        dbQuery(`INSERT INTO task_label_assignments (task_id, label_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [task.id, lid])
+      ),
+    ]);
+    let savedActions: Record<string, unknown>[] = [];
+    if (actions.length) {
+      const actRows = await Promise.all(actions.map((a) =>
+        dbQuery(
+          `INSERT INTO task_actions (id, task_id, action_type, label, target_count, current_count) VALUES ($1,$2,$3,$4,$5,0) RETURNING *`,
+          [randomUUID(), task.id, a.action_type, a.label, Math.max(1, a.target_count || 1)]
+        ).then((r) => r.rows[0])
       ));
+      savedActions = actRows;
     }
     await logTaskActivity(projectId, access.userId, 'task_created', task.id, { title: task.title });
-    return res.json({ task });
+    return res.json({ task: { ...task, assignees: [], labels: [], subtask_count: 0, subtask_done: 0, comment_count: 0, actions: savedActions } });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to create task' });
   }
@@ -21837,11 +21893,12 @@ app.get('/api/projects/:projectId/tasks/:taskId', async (req: Request, res: Resp
       [taskId, projectId]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
-    const [subtasks, attachments] = await Promise.all([
+    const [subtasks, attachments, actionsRes] = await Promise.all([
       dbQuery(`SELECT * FROM subtasks WHERE task_id=$1 ORDER BY position, created_at`, [taskId]),
       dbQuery(`SELECT a.*, COALESCE(u.full_name, u.username) AS uploader_name FROM task_attachments a LEFT JOIN users u ON u.id=a.uploaded_by WHERE a.task_id=$1 ORDER BY a.created_at DESC`, [taskId]),
+      dbQuery(`SELECT * FROM task_actions WHERE task_id=$1 ORDER BY created_at`, [taskId]),
     ]);
-    return res.json({ task: { ...rows[0], subtasks: subtasks.rows, attachments: attachments.rows } });
+    return res.json({ task: { ...rows[0], subtasks: subtasks.rows, attachments: attachments.rows, actions: actionsRes.rows } });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to load task' });
   }

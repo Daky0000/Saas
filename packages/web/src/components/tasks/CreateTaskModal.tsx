@@ -1,0 +1,224 @@
+import { useEffect, useRef, useState } from 'react';
+import { X, Plus, Trash2 } from 'lucide-react';
+import { Task, TaskStatus, TaskPriority, TaskLabel, ACTION_TYPES } from './taskTypes';
+import { apiFetch } from './TasksPage';
+
+type ActionDraft = { action_type: string; label: string; target_count: number };
+
+type Props = {
+  projectId: string;
+  defaultStatus: TaskStatus;
+  projectMembers: { id: string; name: string; avatar_url: string | null }[];
+  projectLabels: TaskLabel[];
+  onCreated: (task: Task) => void;
+  onClose: () => void;
+};
+
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string; color: string }[] = [
+  { value: 'low', label: 'Low', color: 'text-slate-500' },
+  { value: 'medium', label: 'Medium', color: 'text-blue-500' },
+  { value: 'high', label: 'High', color: 'text-amber-500' },
+  { value: 'urgent', label: 'Urgent', color: 'text-red-500' },
+];
+
+export default function CreateTaskModal({ projectId, defaultStatus, projectMembers, projectLabels, onCreated, onClose }: Props) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [status, setStatus] = useState<TaskStatus>(defaultStatus);
+  const [priority, setPriority] = useState<TaskPriority>('medium');
+  const [dueDate, setDueDate] = useState('');
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
+  const [labelIds, setLabelIds] = useState<string[]>([]);
+  const [actions, setActions] = useState<ActionDraft[]>([]);
+  const [saving, setSaving] = useState(false);
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { titleRef.current?.focus(); }, []);
+
+  const toggleAssignee = (id: string) =>
+    setAssigneeIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  const toggleLabel = (id: string) =>
+    setLabelIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  const addAction = () =>
+    setActions((prev) => [...prev, { action_type: ACTION_TYPES[0].value, label: ACTION_TYPES[0].label, target_count: 1 }]);
+
+  const updateAction = (i: number, patch: Partial<ActionDraft>) =>
+    setActions((prev) => prev.map((a, idx) => idx === i ? { ...a, ...patch } : a));
+
+  const removeAction = (i: number) =>
+    setActions((prev) => prev.filter((_, idx) => idx !== i));
+
+  const handleSubmit = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    try {
+      const data = await apiFetch<{ task: Task }>(`/api/projects/${projectId}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: title.trim(),
+          description,
+          status,
+          priority,
+          due_date: dueDate || undefined,
+          assignee_ids: assigneeIds,
+          label_ids: labelIds,
+          actions,
+        }),
+      });
+      onCreated(data.task);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-[15px] font-bold text-gray-900">New Task</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X size={16} /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {/* Title */}
+          <input
+            ref={titleRef}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) void handleSubmit(); }}
+            placeholder="Task title…"
+            className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-[15px] font-semibold text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          />
+
+          {/* Description */}
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Add description…"
+            rows={2}
+            className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-[13px] text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+          />
+
+          {/* Status + Priority + Due Date */}
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</label>
+              <select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}
+                className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="todo">To Do</option>
+                <option value="in_progress">In Progress</option>
+                <option value="in_review">Need Review</option>
+                <option value="done">Done</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Priority</label>
+              <select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}
+                className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Due Date</label>
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            </div>
+          </div>
+
+          {/* Assignees */}
+          {projectMembers.length > 0 && (
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Assign To</label>
+              <div className="flex flex-wrap gap-1.5">
+                {projectMembers.map((m) => {
+                  const on = assigneeIds.includes(m.id);
+                  return (
+                    <button key={m.id} type="button" onClick={() => toggleAssignee(m.id)}
+                      className={`flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium transition-colors ${on ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                      {m.avatar_url
+                        ? <img src={m.avatar_url} alt={m.name} className="h-4 w-4 rounded-full object-cover" />
+                        : <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold text-white">{m.name[0]}</span>
+                      }
+                      {m.name.split(' ')[0]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Labels */}
+          {projectLabels.length > 0 && (
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Labels</label>
+              <div className="flex flex-wrap gap-1.5">
+                {projectLabels.map((l) => {
+                  const on = labelIds.includes(l.id);
+                  return (
+                    <button key={l.id} type="button" onClick={() => toggleLabel(l.id)}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${on ? 'text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                      style={on ? { backgroundColor: l.color, borderColor: l.color } : {}}>
+                      {l.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Actions (auto-tracked)</label>
+              <button type="button" onClick={addAction}
+                className="flex items-center gap-1 rounded-lg border border-dashed border-gray-300 px-2 py-0.5 text-[11px] text-gray-500 hover:border-indigo-300 hover:text-indigo-600">
+                <Plus size={11} /> Add Action
+              </button>
+            </div>
+            {actions.length === 0 && (
+              <p className="text-[12px] text-gray-400 italic">No actions — add actions to auto-track progress as the team works in the platform.</p>
+            )}
+            <div className="space-y-2">
+              {actions.map((a, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                  <select value={a.action_type}
+                    onChange={(e) => {
+                      const found = ACTION_TYPES.find((t) => t.value === e.target.value);
+                      updateAction(i, { action_type: e.target.value, label: found?.label ?? e.target.value });
+                    }}
+                    className="flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    {ACTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-gray-400">×</span>
+                    <input type="number" min={1} max={9999} value={a.target_count}
+                      onChange={(e) => updateAction(i, { target_count: Math.max(1, parseInt(e.target.value) || 1) })}
+                      className="w-14 rounded-lg border border-gray-200 bg-white px-2 py-1 text-center text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                  </div>
+                  <button type="button" onClick={() => removeAction(i)} className="text-gray-300 hover:text-red-400 transition-colors">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded-xl border border-gray-200 px-4 py-2 text-[13px] text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button type="button" onClick={() => void handleSubmit()} disabled={saving || !title.trim()}
+            className="rounded-xl bg-indigo-600 px-5 py-2 text-[13px] font-bold text-white hover:bg-indigo-700 disabled:opacity-40">
+            {saving ? 'Creating…' : 'Create Task'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
