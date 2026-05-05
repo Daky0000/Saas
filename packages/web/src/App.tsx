@@ -47,6 +47,7 @@ import AcceptInvite from './pages/AcceptInvite';
 import Billing from './pages/Billing';
 import Memory from './pages/Memory';
 import Notifications from './pages/Notifications';
+import TasksPage from './components/tasks/TasksPage';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
@@ -76,7 +77,8 @@ type PageType =
   | 'campaign'
   | 'workspace'
   | 'billing'
-  | 'pricing';
+  | 'pricing'
+  | 'tasks';
 
 type AuthMeResponse = {
   success: boolean;
@@ -108,6 +110,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   campaign: '/campaign',
   workspace: '/workspace',
   billing: '/billing',
+  tasks: '/tasks',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -160,6 +163,8 @@ type AppSidebarProps = {
   navigateToPage: (page: PageType, replace?: boolean) => void;
   handleLogout: () => void;
   onMobileClose?: () => void;
+  goTasks: (filter?: string) => void;
+  currentTaskFilter: string;
 };
 
 function AppSidebar({
@@ -171,6 +176,8 @@ function AppSidebar({
   navigateToPage,
   handleLogout,
   onMobileClose,
+  goTasks,
+  currentTaskFilter,
 }: AppSidebarProps) {
   const { currentOrg, currentProject, projects, refresh } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -364,16 +371,35 @@ function AppSidebar({
                 </button>
                 {isExpanded && (
                   <div className="ml-[22px] border-l border-gray-100 pl-3 pb-0.5 flex flex-col">
-                    {(['Overview', 'Tasks', 'Team'] as const).map((tab) => (
+                    <button type="button" onClick={() => go('workspace')}
+                      className="flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors">
+                      Overview
+                    </button>
+                    {/* Tasks sub-items */}
+                    {([
+                      { label: 'All Tasks', filter: 'all' },
+                      { label: 'To Do', filter: 'todo' },
+                      { label: 'In Progress', filter: 'in_progress' },
+                      { label: 'Done', filter: 'done' },
+                      { label: 'Need Review', filter: 'in_review' },
+                    ] as const).map(({ label, filter }) => (
                       <button
-                        key={tab}
+                        key={filter}
                         type="button"
-                        onClick={() => go('workspace')}
-                        className="flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors"
+                        onClick={() => { goTasks(filter); onMobileClose?.(); }}
+                        className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${
+                          currentPage === 'tasks' && currentTaskFilter === filter
+                            ? 'text-indigo-600 font-semibold'
+                            : 'text-gray-400 hover:text-gray-700'
+                        }`}
                       >
-                        {tab}
+                        {label}
                       </button>
                     ))}
+                    <button type="button" onClick={() => go('workspace')}
+                      className="flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors">
+                      Team
+                    </button>
                   </div>
                 )}
               </div>
@@ -483,6 +509,17 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
+  const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
+
+  const goTasks = useCallback((filter = 'all') => {
+    setCurrentTaskFilter(filter);
+    setCurrentPage('tasks');
+    const path = '/tasks';
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path);
+      setCurrentPathname(path);
+    }
+  }, []);
 
 
   useEffect(() => {
@@ -750,6 +787,7 @@ function App() {
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;
       case 'notifications': return <Notifications />;
+      case 'tasks': return <TasksPage initialFilter={currentTaskFilter} />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };
@@ -762,6 +800,8 @@ function App() {
     profileNeedsAttention,
     navigateToPage,
     handleLogout,
+    goTasks,
+    currentTaskFilter,
   };
 
   return (

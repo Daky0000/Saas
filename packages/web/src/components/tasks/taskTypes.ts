@@ -1,0 +1,129 @@
+export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'done';
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export type TaskAssignee = {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+};
+
+export type TaskLabel = {
+  id: string;
+  name: string;
+  color: string;
+};
+
+export type Subtask = {
+  id: string;
+  task_id: string;
+  title: string;
+  completed: boolean;
+  position: number;
+};
+
+export type TaskAttachment = {
+  id: string;
+  task_id: string;
+  name: string;
+  url: string;
+  size: number | null;
+  mime_type: string | null;
+  uploaded_by: string | null;
+  uploader_name: string | null;
+  created_at: string;
+};
+
+export type Task = {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  position: number;
+  due_date: string | null;
+  supervisor_id: string | null;
+  supervisor_name: string | null;
+  supervisor_avatar: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  assignees: TaskAssignee[];
+  labels: TaskLabel[];
+  subtask_count: number;
+  subtask_done: number;
+  comment_count: number;
+  subtasks?: Subtask[];
+  attachments?: TaskAttachment[];
+};
+
+export type Comment = {
+  id: string;
+  task_id: string;
+  user_id: string;
+  content: string;
+  parent_id: string | null;
+  created_at: string;
+  updated_at: string;
+  author_name: string;
+  author_avatar: string | null;
+  reactions: { emoji: string; count: number; reacted: boolean }[];
+  replies: Comment[];
+};
+
+export type ProjectMember = {
+  id: string;
+  name: string;
+  email: string;
+  avatar_url: string | null;
+  role: string;
+  task_count: number;
+};
+
+export type TaskStats = {
+  byStatus: Partial<Record<TaskStatus, number>>;
+  total: number;
+  overdue: number;
+  memberLoad: { name: string; avatar: string | null; task_count: number }[];
+  recentActivity: ActivityItem[];
+};
+
+export type ActivityItem = {
+  id: string;
+  action: string;
+  created_at: string;
+  metadata: Record<string, string> | null;
+  user_name: string | null;
+  avatar_url: string | null;
+  task_title: string | null;
+};
+
+export const STATUS_LABELS: Record<TaskStatus, string> = {
+  todo: 'To Do',
+  in_progress: 'In Progress',
+  in_review: 'Need Review',
+  done: 'Done',
+};
+
+export const STATUS_COLORS: Record<TaskStatus, string> = {
+  todo: 'bg-slate-100 text-slate-600',
+  in_progress: 'bg-blue-100 text-blue-700',
+  in_review: 'bg-amber-100 text-amber-700',
+  done: 'bg-emerald-100 text-emerald-700',
+};
+
+export const PRIORITY_COLORS: Record<TaskPriority, string> = {
+  low: '#94a3b8',
+  medium: '#3b82f6',
+  high: '#f59e0b',
+  urgent: '#ef4444',
+};
+
+export const PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  urgent: 'Urgent',
+};
+
+export const QUICK_EMOJIS = ['👍', '❤️', '🎉', '😂', '🔥', '✅'];

@@ -1896,6 +1896,116 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS org_audit_logs_org_idx ON organization_audit_logs (org_id, created_at DESC);`).catch(() => undefined);
 
+  // ── Task Management ───────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title         TEXT NOT NULL,
+      description   TEXT NOT NULL DEFAULT '',
+      status        TEXT NOT NULL DEFAULT 'todo',
+      priority      TEXT NOT NULL DEFAULT 'medium',
+      position      INT  NOT NULL DEFAULT 0,
+      due_date      DATE,
+      supervisor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_by    TEXT NOT NULL REFERENCES users(id),
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS tasks_project_status_idx ON tasks (project_id, status, position);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_assignees (
+      task_id     UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      assigned_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (task_id, user_id)
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_labels (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name       TEXT NOT NULL,
+      color      TEXT NOT NULL DEFAULT '#6366f1',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_label_assignments (
+      task_id  UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      label_id UUID NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, label_id)
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subtasks (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id    UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      title      TEXT NOT NULL,
+      completed  BOOLEAN NOT NULL DEFAULT FALSE,
+      position   INT NOT NULL DEFAULT 0,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS subtasks_task_idx ON subtasks (task_id, position);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_attachments (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id     UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      url         TEXT NOT NULL,
+      size        INT,
+      mime_type   TEXT,
+      uploaded_by TEXT REFERENCES users(id),
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS task_attachments_task_idx ON task_attachments (task_id);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id    UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content    TEXT NOT NULL,
+      parent_id  UUID REFERENCES task_comments(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS task_comments_task_idx ON task_comments (task_id, created_at);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_comment_reactions (
+      comment_id UUID NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      emoji      TEXT NOT NULL,
+      PRIMARY KEY (comment_id, user_id, emoji)
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_activity (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id    UUID REFERENCES tasks(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id    TEXT REFERENCES users(id),
+      action     TEXT NOT NULL,
+      metadata   JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS task_activity_project_idx ON task_activity (project_id, created_at DESC);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS task_activity_task_idx ON task_activity (task_id, created_at DESC);`).catch(() => undefined);
+  // ── End Task Management ───────────────────────────────────────────────────────
+
   // Seed a default personal workspace for every user who doesn't have one yet
   try {
     const { rows: usersWithoutOrg } = await pool.query(`
@@ -21605,6 +21715,528 @@ app.delete('/api/organizations/:orgId/projects/:projectId', async (req: Request,
 });
 
 // ── End Workspace Routes ──────────────────────────────────────────────────────
+
+// ─── Task Management Routes ───────────────────────────────────────────────────
+
+async function requireProjectAccess(
+  req: Request, res: Response, projectId: string
+): Promise<{ userId: string; orgRole: string } | null> {
+  const auth = requireAuth(req, res);
+  if (!auth) return null;
+  if (!hasDatabase()) { res.status(503).json({ error: 'Database unavailable' }); return null; }
+  const { rows } = await dbQuery(
+    `SELECT om.role FROM projects p
+     JOIN organization_memberships om ON om.org_id = p.org_id AND om.user_id = $1
+     WHERE p.id = $2`,
+    [auth.userId, projectId]
+  );
+  if (!rows[0]) { res.status(403).json({ error: 'Not a project member' }); return null; }
+  return { userId: auth.userId, orgRole: rows[0].role };
+}
+
+async function logTaskActivity(
+  projectId: string, userId: string, action: string, taskId?: string, metadata?: Record<string, unknown>
+) {
+  try {
+    await dbQuery(
+      `INSERT INTO task_activity (project_id, user_id, action, task_id, metadata) VALUES ($1,$2,$3,$4,$5)`,
+      [projectId, userId, action, taskId ?? null, metadata ? JSON.stringify(metadata) : null]
+    );
+  } catch { /* non-fatal */ }
+}
+
+// GET /api/projects/:projectId/tasks
+app.get('/api/projects/:projectId/tasks', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { status, assignee, q } = req.query as Record<string, string>;
+  try {
+    let sql = `
+      SELECT t.*,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('user_id', u.id, 'name', COALESCE(u.full_name, u.username, u.email), 'avatar', u.avatar_url))
+          FILTER (WHERE u.id IS NOT NULL), '[]') AS assignees,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('id', tl.id, 'name', tl.name, 'color', tl.color))
+          FILTER (WHERE tl.id IS NOT NULL), '[]') AS labels,
+        (SELECT COUNT(*)::int FROM subtasks s WHERE s.task_id = t.id) AS subtask_count,
+        (SELECT COUNT(*)::int FROM subtasks s WHERE s.task_id = t.id AND s.completed) AS subtask_done,
+        (SELECT COUNT(*)::int FROM task_comments c WHERE c.task_id = t.id AND c.parent_id IS NULL) AS comment_count,
+        COALESCE(su.full_name, su.username, su.email) AS supervisor_name
+      FROM tasks t
+      LEFT JOIN task_assignees ta ON ta.task_id = t.id
+      LEFT JOIN users u ON u.id = ta.user_id
+      LEFT JOIN task_label_assignments tla ON tla.task_id = t.id
+      LEFT JOIN task_labels tl ON tl.id = tla.label_id
+      LEFT JOIN users su ON su.id = t.supervisor_id
+      WHERE t.project_id = $1`;
+    const vals: unknown[] = [projectId];
+    let i = 2;
+    if (status) { sql += ` AND t.status = $${i++}`; vals.push(status); }
+    if (assignee) { sql += ` AND ta.user_id = $${i++}`; vals.push(assignee); }
+    if (q) { sql += ` AND t.title ILIKE $${i++}`; vals.push(`%${q}%`); }
+    sql += ` GROUP BY t.id, su.full_name, su.username, su.email ORDER BY t.status, t.position, t.created_at`;
+    const { rows } = await dbQuery(sql, vals);
+    return res.json({ tasks: rows });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to load tasks' });
+  }
+});
+
+// POST /api/projects/:projectId/tasks
+app.post('/api/projects/:projectId/tasks', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { title, description = '', status = 'todo', priority = 'medium', due_date, supervisor_id, assignee_ids = [] } =
+    req.body as { title: string; description?: string; status?: string; priority?: string; due_date?: string; supervisor_id?: string; assignee_ids?: string[] };
+  if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
+  try {
+    const { rows: pos } = await dbQuery(
+      `SELECT COALESCE(MAX(position),0)+1 AS next FROM tasks WHERE project_id=$1 AND status=$2`,
+      [projectId, status]
+    );
+    const { rows } = await dbQuery(
+      `INSERT INTO tasks (project_id, title, description, status, priority, position, due_date, supervisor_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [projectId, title.trim(), description, status, priority, pos[0].next, due_date || null, supervisor_id || null, access.userId]
+    );
+    const task = rows[0];
+    if (assignee_ids.length) {
+      await Promise.all(assignee_ids.map((uid) =>
+        dbQuery(`INSERT INTO task_assignees (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [task.id, uid])
+      ));
+    }
+    await logTaskActivity(projectId, access.userId, 'task_created', task.id, { title: task.title });
+    return res.json({ task });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to create task' });
+  }
+});
+
+// GET /api/projects/:projectId/tasks/:taskId
+app.get('/api/projects/:projectId/tasks/:taskId', async (req: Request, res: Response) => {
+  const { projectId, taskId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT t.*,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('user_id', u.id, 'name', COALESCE(u.full_name, u.username, u.email), 'avatar', u.avatar_url))
+          FILTER (WHERE u.id IS NOT NULL), '[]') AS assignees,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('id', tl.id, 'name', tl.name, 'color', tl.color))
+          FILTER (WHERE tl.id IS NOT NULL), '[]') AS labels,
+        COALESCE(su.full_name, su.username, su.email) AS supervisor_name, su.avatar_url AS supervisor_avatar
+       FROM tasks t
+       LEFT JOIN task_assignees ta ON ta.task_id = t.id
+       LEFT JOIN users u ON u.id = ta.user_id
+       LEFT JOIN task_label_assignments tla ON tla.task_id = t.id
+       LEFT JOIN task_labels tl ON tl.id = tla.label_id
+       LEFT JOIN users su ON su.id = t.supervisor_id
+       WHERE t.id = $1 AND t.project_id = $2
+       GROUP BY t.id, su.full_name, su.username, su.email, su.avatar_url`,
+      [taskId, projectId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
+    const [subtasks, attachments] = await Promise.all([
+      dbQuery(`SELECT * FROM subtasks WHERE task_id=$1 ORDER BY position, created_at`, [taskId]),
+      dbQuery(`SELECT a.*, COALESCE(u.full_name, u.username) AS uploader_name FROM task_attachments a LEFT JOIN users u ON u.id=a.uploaded_by WHERE a.task_id=$1 ORDER BY a.created_at DESC`, [taskId]),
+    ]);
+    return res.json({ task: { ...rows[0], subtasks: subtasks.rows, attachments: attachments.rows } });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to load task' });
+  }
+});
+
+// PUT /api/projects/:projectId/tasks/:taskId
+app.put('/api/projects/:projectId/tasks/:taskId', async (req: Request, res: Response) => {
+  const { projectId, taskId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { title, description, priority, due_date, supervisor_id } =
+    req.body as { title?: string; description?: string; priority?: string; due_date?: string | null; supervisor_id?: string | null };
+  try {
+    const sets: string[] = ['updated_at=NOW()'];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (title !== undefined) { sets.push(`title=$${i++}`); vals.push(title.trim()); }
+    if (description !== undefined) { sets.push(`description=$${i++}`); vals.push(description); }
+    if (priority !== undefined) { sets.push(`priority=$${i++}`); vals.push(priority); }
+    if (due_date !== undefined) { sets.push(`due_date=$${i++}`); vals.push(due_date || null); }
+    if (supervisor_id !== undefined) { sets.push(`supervisor_id=$${i++}`); vals.push(supervisor_id || null); }
+    vals.push(taskId); vals.push(projectId);
+    const { rows } = await dbQuery(
+      `UPDATE tasks SET ${sets.join(',')} WHERE id=$${i++} AND project_id=$${i} RETURNING *`, vals
+    );
+    return res.json({ task: rows[0] });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to update task' });
+  }
+});
+
+// PATCH /api/projects/:projectId/tasks/:taskId/status
+app.patch('/api/projects/:projectId/tasks/:taskId/status', async (req: Request, res: Response) => {
+  const { projectId, taskId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { status } = req.body as { status: string };
+  const validStatuses = ['todo', 'in_progress', 'in_review', 'done'];
+  if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  try {
+    const { rows: task } = await dbQuery(`SELECT status, supervisor_id FROM tasks WHERE id=$1`, [taskId]);
+    if (!task[0]) return res.status(404).json({ error: 'Task not found' });
+    const isAdmin = ['owner', 'admin'].includes(access.orgRole);
+    const isSupervisor = task[0].supervisor_id === access.userId;
+    if (!isAdmin && !isSupervisor) return res.status(403).json({ error: 'Only admins and supervisors can change task status' });
+    const { rows: pos } = await dbQuery(
+      `SELECT COALESCE(MAX(position),0)+1 AS next FROM tasks WHERE project_id=$1 AND status=$2`,
+      [projectId, status]
+    );
+    await dbQuery(
+      `UPDATE tasks SET status=$1, position=$2, updated_at=NOW() WHERE id=$3`,
+      [status, pos[0].next, taskId]
+    );
+    await logTaskActivity(projectId, access.userId, 'status_changed', taskId, { from: task[0].status, to: status });
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
+// PATCH /api/projects/:projectId/tasks/reorder
+app.patch('/api/projects/:projectId/tasks/reorder', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const isAdmin = ['owner', 'admin'].includes(access.orgRole);
+  if (!isAdmin) return res.status(403).json({ error: 'Only admins can reorder tasks' });
+  const { updates } = req.body as { updates: { id: string; status: string; position: number }[] };
+  try {
+    await Promise.all(updates.map(({ id, status, position }) =>
+      dbQuery(`UPDATE tasks SET status=$1, position=$2, updated_at=NOW() WHERE id=$3 AND project_id=$4`, [status, position, id, projectId])
+    ));
+    return res.json({ success: true });
+  } catch {
+    return res.status(500).json({ error: 'Failed to reorder tasks' });
+  }
+});
+
+// DELETE /api/projects/:projectId/tasks/:taskId
+app.delete('/api/projects/:projectId/tasks/:taskId', async (req: Request, res: Response) => {
+  const { projectId, taskId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const isAdmin = ['owner', 'admin'].includes(access.orgRole);
+  if (!isAdmin) return res.status(403).json({ error: 'Only admins can delete tasks' });
+  await dbQuery(`DELETE FROM tasks WHERE id=$1 AND project_id=$2`, [taskId, projectId]);
+  return res.json({ success: true });
+});
+
+// GET /api/projects/:projectId/task-stats
+app.get('/api/projects/:projectId/task-stats', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  try {
+    const [statusCounts, overdue, memberLoad, recent] = await Promise.all([
+      dbQuery(`SELECT status, COUNT(*)::int AS count FROM tasks WHERE project_id=$1 GROUP BY status`, [projectId]),
+      dbQuery(`SELECT COUNT(*)::int AS count FROM tasks WHERE project_id=$1 AND due_date < CURRENT_DATE AND status != 'done'`, [projectId]),
+      dbQuery(
+        `SELECT COALESCE(u.full_name, u.username, u.email) AS name, u.avatar_url AS avatar, COUNT(*)::int AS task_count
+         FROM task_assignees ta JOIN tasks t ON t.id=ta.task_id JOIN users u ON u.id=ta.user_id
+         WHERE t.project_id=$1 AND t.status != 'done' GROUP BY u.id, u.full_name, u.username, u.email, u.avatar_url
+         ORDER BY task_count DESC LIMIT 8`, [projectId]
+      ),
+      dbQuery(
+        `SELECT a.action, a.created_at, a.metadata, COALESCE(u.full_name, u.username, u.email) AS user_name, t.title AS task_title
+         FROM task_activity a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN tasks t ON t.id=a.task_id
+         WHERE a.project_id=$1 ORDER BY a.created_at DESC LIMIT 10`, [projectId]
+      ),
+    ]);
+    const byStatus = Object.fromEntries(statusCounts.rows.map((r) => [r.status, r.count]));
+    const total = statusCounts.rows.reduce((s, r) => s + r.count, 0);
+    return res.json({ byStatus, total, overdue: overdue.rows[0]?.count ?? 0, memberLoad: memberLoad.rows, recentActivity: recent.rows });
+  } catch {
+    return res.status(500).json({ error: 'Failed to load stats' });
+  }
+});
+
+// GET /api/projects/:projectId/labels
+app.get('/api/projects/:projectId/labels', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { rows } = await dbQuery(`SELECT * FROM task_labels WHERE project_id=$1 ORDER BY name`, [projectId]);
+  return res.json({ labels: rows });
+});
+
+// POST /api/projects/:projectId/labels
+app.post('/api/projects/:projectId/labels', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { name, color = '#6366f1' } = req.body as { name: string; color?: string };
+  if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
+  const { rows } = await dbQuery(
+    `INSERT INTO task_labels (project_id, name, color) VALUES ($1,$2,$3) RETURNING *`,
+    [projectId, name.trim(), color]
+  );
+  return res.json({ label: rows[0] });
+});
+
+// DELETE /api/projects/:projectId/labels/:labelId
+app.delete('/api/projects/:projectId/labels/:labelId', async (req: Request, res: Response) => {
+  const { projectId, labelId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  await dbQuery(`DELETE FROM task_labels WHERE id=$1 AND project_id=$2`, [labelId, projectId]);
+  return res.json({ success: true });
+});
+
+// POST /api/tasks/:taskId/labels/:labelId
+app.post('/api/tasks/:taskId/labels/:labelId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId, labelId } = req.params;
+  await dbQuery(`INSERT INTO task_label_assignments (task_id, label_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [taskId, labelId]);
+  return res.json({ success: true });
+});
+
+// DELETE /api/tasks/:taskId/labels/:labelId
+app.delete('/api/tasks/:taskId/labels/:labelId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId, labelId } = req.params;
+  await dbQuery(`DELETE FROM task_label_assignments WHERE task_id=$1 AND label_id=$2`, [taskId, labelId]);
+  return res.json({ success: true });
+});
+
+// POST /api/tasks/:taskId/assignees
+app.post('/api/tasks/:taskId/assignees', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId } = req.params;
+  const { user_id } = req.body as { user_id: string };
+  await dbQuery(`INSERT INTO task_assignees (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [taskId, user_id]);
+  return res.json({ success: true });
+});
+
+// DELETE /api/tasks/:taskId/assignees/:userId
+app.delete('/api/tasks/:taskId/assignees/:userId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId, userId } = req.params;
+  await dbQuery(`DELETE FROM task_assignees WHERE task_id=$1 AND user_id=$2`, [taskId, userId]);
+  return res.json({ success: true });
+});
+
+// POST /api/tasks/:taskId/subtasks
+app.post('/api/tasks/:taskId/subtasks', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId } = req.params;
+  const { title } = req.body as { title: string };
+  if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
+  const { rows: pos } = await dbQuery(`SELECT COALESCE(MAX(position),0)+1 AS next FROM subtasks WHERE task_id=$1`, [taskId]);
+  const { rows } = await dbQuery(
+    `INSERT INTO subtasks (task_id, title, position, created_by) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [taskId, title.trim(), pos[0].next, auth.userId]
+  );
+  return res.json({ subtask: rows[0] });
+});
+
+// PATCH /api/tasks/:taskId/subtasks/:subtaskId
+app.patch('/api/tasks/:taskId/subtasks/:subtaskId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId, subtaskId } = req.params;
+  const { title, completed } = req.body as { title?: string; completed?: boolean };
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  let i = 1;
+  if (title !== undefined) { sets.push(`title=$${i++}`); vals.push(title.trim()); }
+  if (completed !== undefined) { sets.push(`completed=$${i++}`); vals.push(completed); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+  vals.push(subtaskId); vals.push(taskId);
+  const { rows } = await dbQuery(`UPDATE subtasks SET ${sets.join(',')} WHERE id=$${i++} AND task_id=$${i} RETURNING *`, vals);
+  return res.json({ subtask: rows[0] });
+});
+
+// DELETE /api/tasks/:taskId/subtasks/:subtaskId
+app.delete('/api/tasks/:taskId/subtasks/:subtaskId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  await dbQuery(`DELETE FROM subtasks WHERE id=$1 AND task_id=$2`, [req.params.subtaskId, req.params.taskId]);
+  return res.json({ success: true });
+});
+
+// POST /api/tasks/:taskId/attachments
+app.post('/api/tasks/:taskId/attachments', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId } = req.params;
+  const { name, url, size, mime_type } = req.body as { name: string; url: string; size?: number; mime_type?: string };
+  if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+  const { rows } = await dbQuery(
+    `INSERT INTO task_attachments (task_id, name, url, size, mime_type, uploaded_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [taskId, name, url, size ?? null, mime_type ?? null, auth.userId]
+  );
+  return res.json({ attachment: rows[0] });
+});
+
+// DELETE /api/tasks/:taskId/attachments/:attachmentId
+app.delete('/api/tasks/:taskId/attachments/:attachmentId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  await dbQuery(`DELETE FROM task_attachments WHERE id=$1 AND task_id=$2`, [req.params.attachmentId, req.params.taskId]);
+  return res.json({ success: true });
+});
+
+// GET /api/tasks/:taskId/comments
+app.get('/api/tasks/:taskId/comments', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId } = req.params;
+  try {
+    const { rows: comments } = await dbQuery(
+      `SELECT c.*, COALESCE(u.full_name, u.username, u.email) AS author_name, u.avatar_url AS author_avatar,
+        COALESCE(
+          (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'reacted', r.reacted))
+           FROM (
+             SELECT r2.emoji, COUNT(*)::int AS cnt, MAX(CASE WHEN r2.user_id=$1 THEN 1 ELSE 0 END)::boolean AS reacted
+             FROM task_comment_reactions r2 WHERE r2.comment_id=c.id GROUP BY r2.emoji
+           ) r
+          ), '[]'
+        ) AS reactions
+       FROM task_comments c JOIN users u ON u.id=c.user_id
+       WHERE c.task_id=$2 AND c.parent_id IS NULL
+       ORDER BY c.created_at`,
+      [auth.userId, taskId]
+    );
+    const { rows: replies } = await dbQuery(
+      `SELECT c.*, COALESCE(u.full_name, u.username, u.email) AS author_name, u.avatar_url AS author_avatar
+       FROM task_comments c JOIN users u ON u.id=c.user_id
+       WHERE c.task_id=$1 AND c.parent_id IS NOT NULL ORDER BY c.created_at`,
+      [taskId]
+    );
+    const replyMap: Record<string, typeof replies> = {};
+    for (const r of replies) {
+      if (!replyMap[r.parent_id]) replyMap[r.parent_id] = [];
+      replyMap[r.parent_id].push(r);
+    }
+    return res.json({ comments: comments.map((c) => ({ ...c, replies: replyMap[c.id] ?? [] })) });
+  } catch {
+    return res.status(500).json({ error: 'Failed to load comments' });
+  }
+});
+
+// POST /api/tasks/:taskId/comments
+app.post('/api/tasks/:taskId/comments', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { taskId } = req.params;
+  const { content, parent_id } = req.body as { content: string; parent_id?: string };
+  if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
+  const { rows } = await dbQuery(
+    `INSERT INTO task_comments (task_id, user_id, content, parent_id) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [taskId, auth.userId, content.trim(), parent_id || null]
+  );
+  const { rows: task } = await dbQuery(`SELECT project_id FROM tasks WHERE id=$1`, [taskId]);
+  if (task[0]) await logTaskActivity(task[0].project_id, auth.userId, 'comment_added', taskId, {});
+  return res.json({ comment: rows[0] });
+});
+
+// PUT /api/tasks/:taskId/comments/:commentId
+app.put('/api/tasks/:taskId/comments/:commentId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { content } = req.body as { content: string };
+  if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
+  const { rows } = await dbQuery(
+    `UPDATE task_comments SET content=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3 RETURNING *`,
+    [content.trim(), req.params.commentId, auth.userId]
+  );
+  if (!rows[0]) return res.status(403).json({ error: 'Not your comment' });
+  return res.json({ comment: rows[0] });
+});
+
+// DELETE /api/tasks/:taskId/comments/:commentId
+app.delete('/api/tasks/:taskId/comments/:commentId', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  await dbQuery(`DELETE FROM task_comments WHERE id=$1 AND user_id=$2`, [req.params.commentId, auth.userId]);
+  return res.json({ success: true });
+});
+
+// POST /api/tasks/:taskId/comments/:commentId/reactions
+app.post('/api/tasks/:taskId/comments/:commentId/reactions', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { emoji } = req.body as { emoji: string };
+  if (!emoji) return res.status(400).json({ error: 'Emoji required' });
+  const existing = await dbQuery(
+    `SELECT 1 FROM task_comment_reactions WHERE comment_id=$1 AND user_id=$2 AND emoji=$3`,
+    [req.params.commentId, auth.userId, emoji]
+  );
+  if (existing.rows.length) {
+    await dbQuery(`DELETE FROM task_comment_reactions WHERE comment_id=$1 AND user_id=$2 AND emoji=$3`, [req.params.commentId, auth.userId, emoji]);
+  } else {
+    await dbQuery(`INSERT INTO task_comment_reactions (comment_id, user_id, emoji) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [req.params.commentId, auth.userId, emoji]);
+  }
+  return res.json({ success: true, toggled: !existing.rows.length });
+});
+
+// GET /api/projects/:projectId/activity
+app.get('/api/projects/:projectId/activity', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { rows } = await dbQuery(
+    `SELECT a.*, COALESCE(u.full_name, u.username, u.email) AS user_name, u.avatar_url,
+       t.title AS task_title
+     FROM task_activity a
+     LEFT JOIN users u ON u.id=a.user_id
+     LEFT JOIN tasks t ON t.id=a.task_id
+     WHERE a.project_id=$1 ORDER BY a.created_at DESC LIMIT 50`,
+    [projectId]
+  );
+  return res.json({ activity: rows });
+});
+
+// GET /api/projects/:projectId/files
+app.get('/api/projects/:projectId/files', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { rows } = await dbQuery(
+    `SELECT a.*, t.title AS task_title, t.id AS task_id, COALESCE(u.full_name, u.username, u.email) AS uploader_name
+     FROM task_attachments a
+     JOIN tasks t ON t.id=a.task_id
+     LEFT JOIN users u ON u.id=a.uploaded_by
+     WHERE t.project_id=$1 ORDER BY a.created_at DESC`,
+    [projectId]
+  );
+  return res.json({ files: rows });
+});
+
+// GET /api/projects/:projectId/members  — project members (org members)
+app.get('/api/projects/:projectId/members', async (req: Request, res: Response) => {
+  const { projectId } = req.params;
+  const access = await requireProjectAccess(req, res, projectId);
+  if (!access) return;
+  const { rows } = await dbQuery(
+    `SELECT u.id, COALESCE(u.full_name, u.username, u.email) AS name, u.email, u.avatar_url, om.role,
+       (SELECT COUNT(*)::int FROM task_assignees ta JOIN tasks t ON t.id=ta.task_id
+        WHERE ta.user_id=u.id AND t.project_id=$1) AS task_count
+     FROM projects p
+     JOIN organization_memberships om ON om.org_id=p.org_id
+     JOIN users u ON u.id=om.user_id
+     WHERE p.id=$1 ORDER BY om.role, u.full_name`,
+    [projectId]
+  );
+  return res.json({ members: rows });
+});
+
+// ── End Task Management Routes ─────────────────────────────────────────────────
 
 // Not found
 app.use((req, res) => {
