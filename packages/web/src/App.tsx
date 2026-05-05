@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
-  Building2,
+  CheckCircle2,
   ChevronDown,
   CreditCard,
   FileText,
+  Folder,
+  HelpCircle,
   Image,
   LogOut,
   Mail,
@@ -13,10 +15,13 @@ import {
   Menu,
   Palette,
   Receipt,
+  Shield,
+  Sparkles,
+  Star,
+  TrendingUp,
+  User,
   Waypoints,
   Settings,
-  TrendingUp,
-  X,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Posts from './pages/Posts';
@@ -142,21 +147,290 @@ async function fetchCurrentUser(token: string): Promise<AppUser | null> {
   }
 }
 
-function SidebarOrgBadge({ onClick }: { onClick: () => void }) {
-  const { currentOrg, currentProject, loading } = useWorkspace();
-  if (loading || !currentOrg) return null;
+type AppSidebarProps = {
+  currentPage: PageType;
+  authUser: AppUser | null;
+  postsMenuOpen: boolean;
+  setPostsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  profileNeedsAttention: boolean;
+  navigateToPage: (page: PageType, replace?: boolean) => void;
+  handleLogout: () => void;
+  onMobileClose?: () => void;
+};
+
+function AppSidebar({
+  currentPage,
+  authUser,
+  postsMenuOpen,
+  setPostsMenuOpen,
+  profileNeedsAttention,
+  navigateToPage,
+  handleLogout,
+  onMobileClose,
+}: AppSidebarProps) {
+  const { currentOrg, currentProject, projects } = useWorkspace();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [projectsExpanded, setProjectsExpanded] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function handle(e: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [userMenuOpen]);
+
+  const go = (page: PageType) => {
+    navigateToPage(page);
+    onMobileClose?.();
+    setUserMenuOpen(false);
+  };
+
+  const navItems: {
+    id: PageType;
+    label: string;
+    icon: React.ElementType;
+    children?: { id: PageType; label: string }[];
+  }[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart4 },
+    { id: 'posts', label: 'Posts', icon: FileText, children: [{ id: 'post-automation', label: 'Automation' }] },
+    { id: 'media', label: 'Media', icon: Image },
+    { id: 'cards', label: 'Cards', icon: Palette },
+    { id: 'integrations', label: 'Integrations', icon: Waypoints },
+    { id: 'mailing', label: 'Mailing', icon: Mail },
+    { id: 'campaign', label: 'Campaigns', icon: Megaphone },
+    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
+    { id: 'pricing', label: 'Pricing', icon: Receipt },
+    { id: 'billing', label: 'Billing', icon: CreditCard },
+  ];
+
+  const orgName = currentOrg?.name ?? 'Workspace';
+  const projName = currentProject?.name ?? 'Project';
+  const orgInitial = orgName[0].toUpperCase();
+  const displayName = currentOrg?.name ?? authUser?.name ?? 'My Workspace';
+  const userInitial = displayName[0].toUpperCase();
+
+  const navItemCls = (active: boolean) =>
+    `flex w-full items-center gap-2.5 border-l-2 py-[7px] pl-4 pr-3 text-[13px] font-medium transition-colors ${
+      active
+        ? 'border-indigo-600 bg-indigo-50/70 text-indigo-600'
+        : 'border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+    }`;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="mx-4 mb-1 mt-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-left hover:bg-gray-100 transition"
-    >
-      <Building2 size={13} className="shrink-0 text-blue-500" />
-      <div className="min-w-0">
-        <p className="truncate text-xs font-semibold text-gray-700">{currentOrg.name}</p>
-        {currentProject && <p className="truncate text-[10px] text-gray-400">{currentProject.name}</p>}
+    <div className="flex h-full flex-col bg-white">
+      {/* ── Org / Project header ── */}
+      <div className="px-4 py-5 border-b border-gray-100">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm font-black select-none">
+            {orgInitial}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{orgName}</p>
+            <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{projName}</p>
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Free Plan</p>
+          </div>
+        </div>
       </div>
-    </button>
+
+      {/* ── Main nav ── */}
+      <nav className="flex-1 overflow-y-auto py-2 flex flex-col">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = currentPage === item.id || item.children?.some((c) => c.id === currentPage);
+          const hasChildren = Boolean(item.children?.length);
+          const childOpen = item.id === 'posts' ? postsMenuOpen : false;
+
+          return (
+            <div key={item.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (hasChildren && item.id === 'posts') setPostsMenuOpen((p) => !p);
+                  go(item.id);
+                }}
+                className={navItemCls(!!isActive)}
+              >
+                <Icon size={15} className="shrink-0" />
+                <span className="flex-1 truncate text-left">{item.label}</span>
+                {hasChildren && (
+                  <ChevronDown
+                    size={12}
+                    className={`shrink-0 text-gray-400 transition-transform ${childOpen ? 'rotate-180' : ''}`}
+                  />
+                )}
+              </button>
+
+              {hasChildren && childOpen && (
+                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                  {item.children!.map((child) => (
+                    <button
+                      key={child.id}
+                      type="button"
+                      onClick={() => go(child.id)}
+                      className={`flex w-full items-center rounded py-[6px] px-3 text-[12px] font-medium transition-colors ${
+                        currentPage === child.id ? 'text-indigo-600' : 'text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      {child.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Projects from workspace */}
+        {projects.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setProjectsExpanded((p) => !p)}
+              className={navItemCls(false)}
+            >
+              <Folder size={15} className="shrink-0" />
+              <span className="flex-1 text-left">Projects</span>
+              <ChevronDown
+                size={12}
+                className={`shrink-0 text-gray-400 transition-transform ${projectsExpanded ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {projectsExpanded && (
+              <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                {projects.map((proj) => (
+                  <button
+                    key={proj.id}
+                    type="button"
+                    onClick={() => go('workspace')}
+                    className={`flex w-full items-center rounded py-[6px] px-3 text-[12px] font-medium transition-colors ${
+                      currentProject?.id === proj.id ? 'text-indigo-600' : 'text-gray-500 hover:text-gray-800'
+                    }`}
+                  >
+                    {proj.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Admin shortcut */}
+        {authUser?.role === 'admin' && (
+          <button
+            type="button"
+            onClick={() => go('admin')}
+            className={navItemCls(currentPage === 'admin')}
+          >
+            <Shield size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Admin</span>
+          </button>
+        )}
+      </nav>
+
+      {/* ── Pinned: Settings ── */}
+      <div className="border-t border-gray-100">
+        <button
+          type="button"
+          onClick={() => go('profile')}
+          className={navItemCls(currentPage === 'profile')}
+        >
+          <Settings size={15} className="shrink-0" />
+          <span className="flex-1 text-left">Settings</span>
+          {profileNeedsAttention && <AlertCircle size={12} className="text-red-500" />}
+        </button>
+      </div>
+
+      {/* ── User / Workspace card ── */}
+      <div ref={userMenuRef} className="relative px-3 pb-3 pt-1">
+        {userMenuOpen && (
+          <div className="absolute bottom-full left-0 right-0 mx-0 mb-1 rounded-2xl border border-gray-200 bg-white py-1.5 shadow-xl z-50 overflow-hidden">
+            {/* Current workspace row */}
+            <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white text-[11px] font-black">
+                {orgInitial}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-semibold text-gray-900 truncate">{displayName}</p>
+                <p className="text-[10px] uppercase tracking-widest text-gray-400">Free Plan</p>
+              </div>
+              <CheckCircle2 size={13} className="text-indigo-500 shrink-0" />
+            </div>
+            <div className="mx-3 h-px bg-gray-100" />
+            <button
+              type="button"
+              onClick={() => go('pricing')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+            >
+              <Star size={14} className="shrink-0" />
+              Upgrade for free
+            </button>
+            <button
+              type="button"
+              onClick={() => go('profile')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <Sparkles size={14} className="shrink-0 text-gray-400" />
+              Personalization
+            </button>
+            <button
+              type="button"
+              onClick={() => go('profile')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <User size={14} className="shrink-0 text-gray-400" />
+              Profile
+            </button>
+            <button
+              type="button"
+              onClick={() => go('profile')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <Settings size={14} className="shrink-0 text-gray-400" />
+              Settings
+            </button>
+            <div className="mx-3 my-1 h-px bg-gray-100" />
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <HelpCircle size={14} className="shrink-0 text-gray-400" />
+              Help
+            </button>
+            <button
+              type="button"
+              onClick={() => { handleLogout(); setUserMenuOpen(false); }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <LogOut size={14} className="shrink-0" />
+              Log out
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setUserMenuOpen((v) => !v)}
+          className="flex w-full items-center gap-2.5 rounded-xl bg-gray-50 px-3 py-2.5 hover:bg-gray-100 transition-colors"
+        >
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white text-[11px] font-black select-none">
+            {userInitial}
+          </div>
+          <div className="min-w-0 flex-1 text-left">
+            <p className="text-[12px] font-semibold text-gray-900 leading-tight truncate">{displayName}</p>
+            <p className="text-[10px] uppercase tracking-widest text-gray-400 leading-tight">Free Plan</p>
+          </div>
+          <ChevronDown
+            size={13}
+            className={`shrink-0 text-gray-400 transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -415,256 +689,77 @@ function App() {
   }
 
   const profileNeedsAttention = !isProfileComplete(authUser);
-  const menuItems = [
-    { id: 'dashboard' as const, label: 'Dashboard', icon: BarChart4 },
-    {
-      id: 'posts' as const,
-      label: 'Posts',
-      icon: FileText,
-      children: [{ id: 'post-automation' as const, label: 'Automation' }],
-    },
-    { id: 'cards' as const, label: 'Cards', icon: Palette },
-    { id: 'media' as const, label: 'Media', icon: Image },
-    { id: 'integrations' as const, label: 'Integrations', icon: Waypoints },
-    { id: 'mailing' as const, label: 'Mailing', icon: Mail },
-    { id: 'campaign' as const, label: 'Campaigns', icon: Megaphone },
-    { id: 'pricing' as const, label: 'Pricing', icon: Receipt },
-    { id: 'billing' as const, label: 'Billing', icon: CreditCard },
-    { id: 'analytics' as const, label: 'Analytics', icon: TrendingUp },
-    { id: 'workspace' as const, label: 'Workspace', icon: Building2 },
-    { id: 'profile' as const, label: 'Settings', icon: Settings },
-  ];
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard currentUser={authUser} />;
-      case 'posts':
-        return <Posts currentUser={authUser} />;
-      case 'post-automation':
-        return <PostAutomation />;
-      case 'cards':
-        return <Cards />;
-      case 'pricing':
-        return <Pricing />;
-      case 'admin':
-        return <Admin currentUser={authUser} />;
-      case 'analytics':
-        return <Analytics />;
-      case 'profile':
-        return <Profile currentUser={authUser} onUserUpdated={handleUserUpdated} />;
-      case 'media':
-        return <Media />;
-      case 'integrations':
-        return <Integrations />;
-      case 'mailing':
-        return <Mailing />;
-      case 'campaign':
-        return <Campaign />;
-      case 'workspace':
-        return <Workspace />;
-      case 'billing':
-        return <Billing />;
-      default:
-        return <Dashboard currentUser={authUser} />;
+      case 'dashboard': return <Dashboard currentUser={authUser} />;
+      case 'posts': return <Posts currentUser={authUser} />;
+      case 'post-automation': return <PostAutomation />;
+      case 'cards': return <Cards />;
+      case 'pricing': return <Pricing />;
+      case 'admin': return <Admin currentUser={authUser} />;
+      case 'analytics': return <Analytics />;
+      case 'profile': return <Profile currentUser={authUser} onUserUpdated={handleUserUpdated} />;
+      case 'media': return <Media />;
+      case 'integrations': return <Integrations />;
+      case 'mailing': return <Mailing />;
+      case 'campaign': return <Campaign />;
+      case 'workspace': return <Workspace />;
+      case 'billing': return <Billing />;
+      default: return <Dashboard currentUser={authUser} />;
     }
+  };
+
+  const sidebarProps: AppSidebarProps = {
+    currentPage,
+    authUser,
+    postsMenuOpen,
+    setPostsMenuOpen,
+    profileNeedsAttention,
+    navigateToPage,
+    handleLogout,
   };
 
   return (
     <WorkspaceProvider>
     <TemplateEditorProvider>
       <div className="flex h-screen bg-gray-50">
-      <aside
-        className={`${
-          sidebarOpen ? 'w-64' : 'w-20'
-        } bg-white border-r border-gray-200 transition-all duration-300 hidden md:flex flex-col`}
-      >
-        <div className="p-6 border-b border-gray-100">
-          <div className="text-2xl font-black text-gray-900">{sidebarOpen ? 'Dakyworld hub' : 'DH'}</div>
-        </div>
-        {sidebarOpen && <SidebarOrgBadge onClick={() => navigateToPage('workspace')} />}
 
-        <nav className="flex-1 p-4 space-y-2">
-          {menuItems.map((item) => {
-            const IconComponent = item.icon;
-            const hasChildren = Boolean(item.children?.length);
-            const isActive =
-              currentPage === item.id || item.children?.some((child) => child.id === currentPage);
-            const isOpen = item.id === 'posts' ? postsMenuOpen : true;
-            return (
-              <div key={item.id} className="space-y-1">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => navigateToPage(item.id)}
-                    className={`w-full relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
-                      isActive ? 'bg-blue-50 text-blue-600 shadow-sm' : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    <IconComponent size={20} />
-                    {sidebarOpen && <span>{item.label}</span>}
-                    {item.id === 'profile' && profileNeedsAttention && (
-                      <span
-                        className="absolute right-3 top-3 text-red-500"
-                        title="Complete your profile"
-                        aria-label="Profile incomplete"
-                      >
-                        <AlertCircle size={14} />
-                      </span>
-                    )}
-                  </button>
-                  {hasChildren && sidebarOpen && (
-                    <button
-                      type="button"
-                      onClick={() => setPostsMenuOpen((prev) => !prev)}
-                      aria-label="Toggle posts menu"
-                      className="h-10 w-10 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-50"
-                    >
-                      <ChevronDown size={18} className={isOpen ? '' : '-rotate-90'} />
-                    </button>
-                  )}
-                </div>
-                {hasChildren && sidebarOpen && isOpen && (
-                  <div className="ml-10 space-y-1">
-                    {item.children?.map((child) => (
-                      <button
-                        key={child.id}
-                        onClick={() => navigateToPage(child.id)}
-                        className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                          currentPage === child.id
-                            ? 'bg-blue-50 text-blue-600'
-                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
-                        }`}
-                      >
-                        <span>{child.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
+        {/* Desktop sidebar — fixed width, always visible */}
+        <aside className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-gray-100 bg-white">
+          <AppSidebar {...sidebarProps} />
+        </aside>
 
-        <div className="p-4 border-t border-gray-100 space-y-2">
-          {authUser?.role === 'admin' && (
-            <button
-              onClick={() => navigateToPage('admin')}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100"
-            >
-              Open Admin Portal
-            </button>
-          )}
-
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium text-red-600 hover:bg-red-50"
-          >
-            <LogOut size={20} />
-            {sidebarOpen && <span>Logout</span>}
-          </button>
-
-          <button
-            onClick={() => setSidebarOpen((previous) => !previous)}
-            className="w-full text-gray-500 hover:text-gray-700 transition-colors text-sm py-2"
-          >
-            {sidebarOpen ? 'Collapse' : 'Expand'}
-          </button>
-        </div>
-      </aside>
-
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white border-b border-gray-100 px-4 py-4 flex md:hidden items-center justify-between">
-          <button
-            onClick={() => setSidebarOpen((previous) => !previous)}
-            className="p-2 hover:bg-gray-100 rounded-lg"
-          >
-            {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-          <h1 className="text-xl font-black">Dakyworld hub</h1>
-          <div className="w-10" />
-        </header>
-
+        {/* Mobile overlay */}
         {sidebarOpen && (
-          <div className="md:hidden bg-white p-4 border-b border-gray-100">
-            <nav className="space-y-2">
-              {menuItems.map((item) => {
-                const IconComponent = item.icon;
-                const hasChildren = Boolean(item.children?.length);
-                const isActive =
-                  currentPage === item.id || item.children?.some((child) => child.id === currentPage);
-                const isOpen = item.id === 'posts' ? postsMenuOpen : true;
-                return (
-                  <div key={item.id} className="space-y-1">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
-                          navigateToPage(item.id);
-                          setSidebarOpen(false);
-                        }}
-                        className={`w-full relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
-                          isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
-                        }`}
-                      >
-                        <IconComponent size={20} />
-                        <span>{item.label}</span>
-                        {item.id === 'profile' && profileNeedsAttention && (
-                          <span className="absolute right-3 top-3 text-red-500" aria-label="Profile incomplete">
-                            <AlertCircle size={14} />
-                          </span>
-                        )}
-                      </button>
-                      {hasChildren && (
-                        <button
-                          type="button"
-                          onClick={() => setPostsMenuOpen((prev) => !prev)}
-                          aria-label="Toggle posts menu"
-                          className="h-10 w-10 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-50"
-                        >
-                          <ChevronDown size={18} className={isOpen ? '' : '-rotate-90'} />
-                        </button>
-                      )}
-                    </div>
-                    {hasChildren && isOpen && (
-                      <div className="ml-10 space-y-1">
-                        {item.children?.map((child) => (
-                          <button
-                            key={child.id}
-                            onClick={() => {
-                              navigateToPage(child.id);
-                              setSidebarOpen(false);
-                            }}
-                            className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                              currentPage === child.id
-                                ? 'bg-blue-50 text-blue-600'
-                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
-                            }`}
-                          >
-                            <span>{child.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </nav>
-            {authUser?.role === 'admin' && (
-              <button
-                onClick={() => {
-                  navigateToPage('admin');
-                  setSidebarOpen(false);
-                }}
-                className="mt-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700"
-              >
-                Open Admin Portal
-              </button>
-            )}
-          </div>
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/30 md:hidden"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <aside className="fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col bg-white shadow-xl md:hidden">
+              <AppSidebar {...sidebarProps} onMobileClose={() => setSidebarOpen(false)} />
+            </aside>
+          </>
         )}
 
-        <main className="flex-1 overflow-auto p-6 md:p-8">{renderPage()}</main>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Mobile topbar */}
+          <header className="flex items-center justify-between border-b border-gray-100 bg-white px-4 py-3 md:hidden">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((p) => !p)}
+              className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+            >
+              <Menu size={20} />
+            </button>
+            <span className="text-sm font-bold text-gray-900">Dakyworld Hub</span>
+            <div className="w-8" />
+          </header>
+
+          <main className="flex-1 overflow-auto p-5 md:p-7">{renderPage()}</main>
+        </div>
       </div>
-    </div>
 
       <AdvancedTemplateCardModal />
       <ChatWidget />
