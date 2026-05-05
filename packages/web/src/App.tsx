@@ -2,19 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
+  Bell,
   CheckCircle2,
   ChevronDown,
   CreditCard,
   FileText,
-  Folder,
   HelpCircle,
-  Image,
   LogOut,
   Mail,
   Megaphone,
   Menu,
-  Palette,
-  Receipt,
+  Plus,
   Shield,
   Sparkles,
   Star,
@@ -47,6 +45,8 @@ import Campaign from './pages/Campaign';
 import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
 import Billing from './pages/Billing';
+import Memory from './pages/Memory';
+import Notifications from './pages/Notifications';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
@@ -62,19 +62,21 @@ import {
 
 type PageType =
   | 'dashboard'
+  | 'notifications'
   | 'posts'
-  | 'cards'
-  | 'pricing'
-  | 'admin'
   | 'post-automation'
-  | 'analytics'
-  | 'profile'
+  | 'cards'
   | 'media'
+  | 'analytics'
+  | 'admin'
+  | 'profile'
+  | 'memory'
   | 'integrations'
   | 'mailing'
   | 'campaign'
   | 'workspace'
-  | 'billing';
+  | 'billing'
+  | 'pricing';
 
 type AuthMeResponse = {
   success: boolean;
@@ -91,14 +93,16 @@ const safeJson = async <T,>(response: Response): Promise<T | null> => {
 
 const PAGE_PATHS: Record<PageType, string> = {
   dashboard: '/dashboard',
+  notifications: '/notifications',
   posts: '/posts',
   'post-automation': '/posts/automation',
   cards: '/cards',
+  media: '/media',
+  analytics: '/analytics',
   pricing: '/pricing',
   admin: '/admin/users',
-  analytics: '/analytics',
   profile: '/profile',
-  media: '/media',
+  memory: '/memory',
   integrations: '/integrations',
   mailing: '/mailing',
   campaign: '/campaign',
@@ -168,10 +172,14 @@ function AppSidebar({
   handleLogout,
   onMobileClose,
 }: AppSidebarProps) {
-  const { currentOrg, currentProject, projects } = useWorkspace();
+  const { currentOrg, currentProject, projects, refresh } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [projectsExpanded, setProjectsExpanded] = useState(false);
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [addingProject, setAddingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const newProjectRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!userMenuOpen) return;
@@ -184,175 +192,242 @@ function AppSidebar({
     return () => document.removeEventListener('mousedown', handle);
   }, [userMenuOpen]);
 
+  useEffect(() => {
+    if (addingProject) newProjectRef.current?.focus();
+  }, [addingProject]);
+
   const go = (page: PageType) => {
     navigateToPage(page);
     onMobileClose?.();
     setUserMenuOpen(false);
   };
 
-  const navItems: {
-    id: PageType;
-    label: string;
-    icon: React.ElementType;
-    children?: { id: PageType; label: string }[];
-  }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart4 },
-    { id: 'posts', label: 'Posts', icon: FileText, children: [{ id: 'post-automation', label: 'Automation' }] },
-    { id: 'media', label: 'Media', icon: Image },
-    { id: 'cards', label: 'Cards', icon: Palette },
-    { id: 'integrations', label: 'Integrations', icon: Waypoints },
-    { id: 'mailing', label: 'Mailing', icon: Mail },
-    { id: 'campaign', label: 'Campaigns', icon: Megaphone },
-    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
-    { id: 'pricing', label: 'Pricing', icon: Receipt },
-    { id: 'billing', label: 'Billing', icon: CreditCard },
-  ];
+  const createProject = async () => {
+    if (!newProjectName.trim() || !currentOrg) return;
+    setCreatingProject(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      await fetch(`${(import.meta as any).env?.VITE_API_URL ?? ''}/api/organizations/${currentOrg.id}/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
+        body: JSON.stringify({ name: newProjectName.trim(), color: '#6366f1' }),
+      });
+      await refresh();
+      setNewProjectName('');
+      setAddingProject(false);
+    } finally {
+      setCreatingProject(false);
+    }
+  };
 
-  const orgName = currentOrg?.name ?? 'Workspace';
+  const toggleProject = (id: string) => {
+    setExpandedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const wsName = currentOrg?.name ?? 'Workspace';
   const projName = currentProject?.name ?? 'Project';
-  const orgInitial = orgName[0].toUpperCase();
+  const wsInitial = wsName[0].toUpperCase();
   const displayName = currentOrg?.name ?? authUser?.name ?? 'My Workspace';
   const userInitial = displayName[0].toUpperCase();
 
-  const navItemCls = (active: boolean) =>
+  const cls = (active: boolean) =>
     `flex w-full items-center gap-2.5 border-l-2 py-[7px] pl-4 pr-3 text-[13px] font-medium transition-colors ${
       active
-        ? 'border-indigo-600 bg-indigo-50/70 text-indigo-600'
+        ? 'border-indigo-600 bg-indigo-50/60 text-indigo-600'
         : 'border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+    }`;
+
+  const subCls = (active: boolean) =>
+    `flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${
+      active ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-700'
     }`;
 
   return (
     <div className="flex h-full flex-col bg-white">
-      {/* ── Org / Project header ── */}
-      <div className="px-4 py-5 border-b border-gray-100">
-        <div className="flex items-center gap-3">
+      {/* ── Workspace header ── */}
+      <div className="px-4 py-4 border-b border-gray-100">
+        <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm font-black select-none">
-            {orgInitial}
+            {wsInitial}
           </div>
           <div className="min-w-0">
-            <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{orgName}</p>
+            <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{wsName}</p>
             <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{projName}</p>
             <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Free Plan</p>
           </div>
         </div>
       </div>
 
-      {/* ── Main nav ── */}
+      {/* ── Nav ── */}
       <nav className="flex-1 overflow-y-auto py-2 flex flex-col">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = currentPage === item.id || item.children?.some((c) => c.id === currentPage);
-          const hasChildren = Boolean(item.children?.length);
-          const childOpen = item.id === 'posts' ? postsMenuOpen : false;
 
-          return (
-            <div key={item.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  if (hasChildren && item.id === 'posts') setPostsMenuOpen((p) => !p);
-                  go(item.id);
-                }}
-                className={navItemCls(!!isActive)}
-              >
-                <Icon size={15} className="shrink-0" />
-                <span className="flex-1 truncate text-left">{item.label}</span>
-                {hasChildren && (
-                  <ChevronDown
-                    size={12}
-                    className={`shrink-0 text-gray-400 transition-transform ${childOpen ? 'rotate-180' : ''}`}
-                  />
-                )}
+        {/* Dashboard */}
+        <button type="button" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
+          <BarChart4 size={15} className="shrink-0" />
+          <span className="flex-1 text-left">Dashboard</span>
+        </button>
+
+        {/* Notifications */}
+        <button type="button" onClick={() => go('notifications')} className={cls(currentPage === 'notifications')}>
+          <Bell size={15} className="shrink-0" />
+          <span className="flex-1 text-left">Notifications</span>
+        </button>
+
+        {/* Content (Posts + Automation + Media + Cards) */}
+        <button
+          type="button"
+          onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
+          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards')}
+        >
+          <FileText size={15} className="shrink-0" />
+          <span className="flex-1 text-left">Content</span>
+          <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {postsMenuOpen && (
+          <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+            {([
+              { id: 'post-automation' as PageType, label: 'Automation' },
+              { id: 'media' as PageType, label: 'Media' },
+              { id: 'cards' as PageType, label: 'Cards' },
+            ] as { id: PageType; label: string }[]).map((c) => (
+              <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                {c.label}
               </button>
-
-              {hasChildren && childOpen && (
-                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                  {item.children!.map((child) => (
-                    <button
-                      key={child.id}
-                      type="button"
-                      onClick={() => go(child.id)}
-                      className={`flex w-full items-center rounded py-[6px] px-3 text-[12px] font-medium transition-colors ${
-                        currentPage === child.id ? 'text-indigo-600' : 'text-gray-500 hover:text-gray-800'
-                      }`}
-                    >
-                      {child.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Projects from workspace */}
-        {projects.length > 0 && (
-          <div>
-            <button
-              type="button"
-              onClick={() => setProjectsExpanded((p) => !p)}
-              className={navItemCls(false)}
-            >
-              <Folder size={15} className="shrink-0" />
-              <span className="flex-1 text-left">Projects</span>
-              <ChevronDown
-                size={12}
-                className={`shrink-0 text-gray-400 transition-transform ${projectsExpanded ? 'rotate-180' : ''}`}
-              />
-            </button>
-            {projectsExpanded && (
-              <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                {projects.map((proj) => (
-                  <button
-                    key={proj.id}
-                    type="button"
-                    onClick={() => go('workspace')}
-                    className={`flex w-full items-center rounded py-[6px] px-3 text-[12px] font-medium transition-colors ${
-                      currentProject?.id === proj.id ? 'text-indigo-600' : 'text-gray-500 hover:text-gray-800'
-                    }`}
-                  >
-                    {proj.name}
-                  </button>
-                ))}
-              </div>
-            )}
+            ))}
           </div>
         )}
 
-        {/* Admin shortcut */}
-        {authUser?.role === 'admin' && (
-          <button
-            type="button"
-            onClick={() => go('admin')}
-            className={navItemCls(currentPage === 'admin')}
-          >
-            <Shield size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Admin</span>
+        {/* Analytics */}
+        <button type="button" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
+          <TrendingUp size={15} className="shrink-0" />
+          <span className="flex-1 text-left">Analytics</span>
+        </button>
+
+        {/* ── Projects ── */}
+        <div className="mt-1">
+          <div className="flex items-center border-l-2 border-transparent pl-4 pr-2">
+            <span className="flex-1 text-[11px] font-semibold uppercase tracking-widest text-gray-400">Projects</span>
+            <button
+              type="button"
+              title="New project"
+              onClick={() => setAddingProject((p) => !p)}
+              className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+
+          {/* Inline new project input */}
+          {addingProject && (
+            <div className="ml-4 mr-2 mt-1 mb-1">
+              <div className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-2 py-1.5">
+                <input
+                  ref={newProjectRef}
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void createProject(); if (e.key === 'Escape') setAddingProject(false); }}
+                  placeholder="Project name…"
+                  className="flex-1 bg-transparent text-[12px] text-gray-800 placeholder-gray-400 focus:outline-none"
+                />
+                {creatingProject
+                  ? <span className="text-indigo-400 text-[10px]">…</span>
+                  : <button type="button" onClick={createProject} disabled={!newProjectName.trim()} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-40">Add</button>
+                }
+              </div>
+            </div>
+          )}
+
+          {/* Project list */}
+          {projects.map((proj) => {
+            const isExpanded = expandedProjects.has(proj.id);
+            const isCurrent = currentProject?.id === proj.id;
+            return (
+              <div key={proj.id}>
+                <button
+                  type="button"
+                  onClick={() => { toggleProject(proj.id); }}
+                  className={`flex w-full items-center gap-2 border-l-2 py-[6px] pl-5 pr-3 text-[13px] font-medium transition-colors ${
+                    isCurrent ? 'border-indigo-400 text-indigo-600' : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: proj.color || '#6366f1' }}
+                  />
+                  <span className="flex-1 truncate text-left">{proj.name}</span>
+                  <ChevronDown size={11} className={`shrink-0 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                </button>
+                {isExpanded && (
+                  <div className="ml-[22px] border-l border-gray-100 pl-3 pb-0.5 flex flex-col">
+                    {(['Overview', 'Tasks', 'Team'] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => go('workspace')}
+                        className="flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors"
+                      >
+                        {tab}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Bottom nav items ── */}
+        <div className="mt-2 border-t border-gray-100 pt-2">
+          <button type="button" onClick={() => go('mailing')} className={cls(currentPage === 'mailing')}>
+            <Mail size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Mailing</span>
           </button>
+          <button type="button" onClick={() => go('campaign')} className={cls(currentPage === 'campaign')}>
+            <Megaphone size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Campaigns</span>
+          </button>
+          <button type="button" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
+            <Waypoints size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Integrations</span>
+          </button>
+          <button type="button" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
+            <CreditCard size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Billing</span>
+          </button>
+        </div>
+
+        {/* Admin */}
+        {authUser?.role === 'admin' && (
+          <div className="border-t border-gray-100 pt-2 mt-1">
+            <button type="button" onClick={() => go('admin')} className={cls(currentPage === 'admin')}>
+              <Shield size={15} className="shrink-0" />
+              <span className="flex-1 text-left">Admin</span>
+            </button>
+          </div>
         )}
       </nav>
 
-      {/* ── Pinned: Settings ── */}
+      {/* ── Settings ── */}
       <div className="border-t border-gray-100">
-        <button
-          type="button"
-          onClick={() => go('profile')}
-          className={navItemCls(currentPage === 'profile')}
-        >
+        <button type="button" onClick={() => go('profile')} className={cls(currentPage === 'profile')}>
           <Settings size={15} className="shrink-0" />
           <span className="flex-1 text-left">Settings</span>
-          {profileNeedsAttention && <AlertCircle size={12} className="text-red-500" />}
+          {profileNeedsAttention && <AlertCircle size={12} className="text-red-500 shrink-0" />}
         </button>
       </div>
 
-      {/* ── User / Workspace card ── */}
+      {/* ── User card + dropdown ── */}
       <div ref={userMenuRef} className="relative px-3 pb-3 pt-1">
         {userMenuOpen && (
-          <div className="absolute bottom-full left-0 right-0 mx-0 mb-1 rounded-2xl border border-gray-200 bg-white py-1.5 shadow-xl z-50 overflow-hidden">
-            {/* Current workspace row */}
+          <div className="absolute bottom-full left-0 right-0 mb-1 rounded-2xl border border-gray-200 bg-white py-1.5 shadow-xl z-50 overflow-hidden">
             <div className="flex items-center gap-2.5 px-3.5 py-2.5">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white text-[11px] font-black">
-                {orgInitial}
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white text-[11px] font-black select-none">
+                {wsInitial}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold text-gray-900 truncate">{displayName}</p>
@@ -361,57 +436,27 @@ function AppSidebar({
               <CheckCircle2 size={13} className="text-indigo-500 shrink-0" />
             </div>
             <div className="mx-3 h-px bg-gray-100" />
-            <button
-              type="button"
-              onClick={() => go('pricing')}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-            >
-              <Star size={14} className="shrink-0" />
-              Upgrade for free
+            <button type="button" onClick={() => go('billing')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <Star size={14} className="shrink-0" /> Upgrade
             </button>
-            <button
-              type="button"
-              onClick={() => go('profile')}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <Sparkles size={14} className="shrink-0 text-gray-400" />
-              Personalization
+            <button type="button" onClick={() => go('memory')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <Sparkles size={14} className="shrink-0 text-gray-400" /> Personalization
             </button>
-            <button
-              type="button"
-              onClick={() => go('profile')}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <User size={14} className="shrink-0 text-gray-400" />
-              Profile
+            <button type="button" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <User size={14} className="shrink-0 text-gray-400" /> Profile
             </button>
-            <button
-              type="button"
-              onClick={() => go('profile')}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <Settings size={14} className="shrink-0 text-gray-400" />
-              Settings
+            <button type="button" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <Settings size={14} className="shrink-0 text-gray-400" /> Settings
             </button>
             <div className="mx-3 my-1 h-px bg-gray-100" />
-            <button
-              type="button"
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <HelpCircle size={14} className="shrink-0 text-gray-400" />
-              Help
+            <button type="button" className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <HelpCircle size={14} className="shrink-0 text-gray-400" /> Help
             </button>
-            <button
-              type="button"
-              onClick={() => { handleLogout(); setUserMenuOpen(false); }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors"
-            >
-              <LogOut size={14} className="shrink-0" />
-              Log out
+            <button type="button" onClick={() => { handleLogout(); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors">
+              <LogOut size={14} className="shrink-0" /> Log out
             </button>
           </div>
         )}
-
         <button
           type="button"
           onClick={() => setUserMenuOpen((v) => !v)}
@@ -424,10 +469,7 @@ function AppSidebar({
             <p className="text-[12px] font-semibold text-gray-900 leading-tight truncate">{displayName}</p>
             <p className="text-[10px] uppercase tracking-widest text-gray-400 leading-tight">Free Plan</p>
           </div>
-          <ChevronDown
-            size={13}
-            className={`shrink-0 text-gray-400 transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`}
-          />
+          <ChevronDown size={13} className={`shrink-0 text-gray-400 transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`} />
         </button>
       </div>
     </div>
@@ -706,6 +748,8 @@ function App() {
       case 'campaign': return <Campaign />;
       case 'workspace': return <Workspace />;
       case 'billing': return <Billing />;
+      case 'memory': return <Memory />;
+      case 'notifications': return <Notifications />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };

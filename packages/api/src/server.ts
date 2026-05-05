@@ -1779,6 +1779,23 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`CREATE INDEX IF NOT EXISTS billing_events_user_idx ON billing_events (user_id);`).catch(() => undefined);
   // ── End Billing Tables ────────────────────────────────────────────────────────
 
+  // ── User Memory ───────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_memories (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category    TEXT NOT NULL DEFAULT 'custom',
+      title       TEXT NOT NULL,
+      content     TEXT NOT NULL,
+      source      TEXT NOT NULL DEFAULT 'manual',
+      sort_order  INT NOT NULL DEFAULT 0,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS user_memories_user_id_idx ON user_memories (user_id);`).catch(() => undefined);
+  // ── End User Memory ───────────────────────────────────────────────────────────
+
   // ─── Workspace & Organizations ────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS organizations (
@@ -20756,6 +20773,137 @@ app.post('/api/billing/reactivate', async (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: e.message || 'Failed to reactivate subscription' });
   }
 });
+
+// ── User Memory Routes ────────────────────────────────────────────────────────
+
+// GET /api/memory — all memories for authenticated user
+app.get('/api/memory', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  try {
+    const rows = await dbQuery<{ id: string; category: string; title: string; content: string; source: string; sort_order: number; created_at: string }>(
+      `SELECT id, category, title, content, source, sort_order, created_at FROM user_memories WHERE user_id = $1 ORDER BY category, sort_order, created_at`,
+      [auth.userId]
+    );
+    return res.json({ success: true, memories: rows.rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/memory — create a memory field
+app.post('/api/memory', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  const { category = 'custom', title, content, source = 'manual' } = req.body as Record<string, string>;
+  if (!title?.trim() || !content?.trim()) return res.status(400).json({ success: false, error: 'title and content are required' });
+  try {
+    const row = await dbQuery<{ id: string; category: string; title: string; content: string; source: string; created_at: string }>(
+      `INSERT INTO user_memories (user_id, category, title, content, source) VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, category, title, content, source, created_at`,
+      [auth.userId, category.trim(), title.trim(), content.trim(), source]
+    );
+    return res.json({ success: true, memory: row.rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/memory/:id — update a memory field
+app.put('/api/memory/:id', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  const { id } = req.params;
+  const { title, content } = req.body as Record<string, string>;
+  if (!title?.trim() || !content?.trim()) return res.status(400).json({ success: false, error: 'title and content are required' });
+  try {
+    const row = await dbQuery<{ id: string; category: string; title: string; content: string; source: string; created_at: string }>(
+      `UPDATE user_memories SET title=$1, content=$2, updated_at=NOW() WHERE id=$3 AND user_id=$4
+       RETURNING id, category, title, content, source, created_at`,
+      [title.trim(), content.trim(), id, auth.userId]
+    );
+    if (!row.rows[0]) return res.status(404).json({ success: false, error: 'Memory not found' });
+    return res.json({ success: true, memory: row.rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/memory/:id — delete a memory field
+app.delete('/api/memory/:id', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  const { id } = req.params;
+  try {
+    await dbQuery(`DELETE FROM user_memories WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/memory/generate — AI-generate memories from wizard input
+app.post('/api/memory/generate', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  const { brandName, industry, offerings, audience, voiceTones = [], goals = [] } = req.body as Record<string, any>;
+  if (!brandName?.trim()) return res.status(400).json({ success: false, error: 'brandName is required' });
+
+  const { encryptedKey } = await getAIConfig();
+  const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+  if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured — add Anthropic API key in Admin → AI Assistant' });
+
+  const prompt = `You are a brand strategist AI. Generate a structured memory profile for a brand based on the following info.
+
+Brand: ${brandName}
+Industry: ${industry || 'Not specified'}
+Products/Services: ${offerings || 'Not specified'}
+Target Audience: ${audience || 'Not specified'}
+Brand Voice/Tone: ${Array.isArray(voiceTones) ? voiceTones.join(', ') : voiceTones || 'Not specified'}
+Content Goals: ${Array.isArray(goals) ? goals.join(', ') : goals || 'Not specified'}
+
+Output ONLY a valid JSON array of memory objects. Each object must have exactly these keys:
+- "category": one of: brand, business, audience, content, social, website, custom
+- "title": short descriptive title (max 50 chars)
+- "content": detailed, useful content (1-4 sentences)
+
+Generate 20-35 diverse, specific memories covering all categories. No markdown, no explanation — pure JSON array only.`;
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content.find((b) => b.type === 'text')?.text ?? '';
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('AI did not return valid JSON');
+
+    const items = JSON.parse(jsonMatch[0]) as { category: string; title: string; content: string }[];
+    const validCategories = new Set(['brand', 'business', 'audience', 'content', 'social', 'website', 'custom']);
+
+    let count = 0;
+    for (const item of items) {
+      if (!item.title?.trim() || !item.content?.trim()) continue;
+      const cat = validCategories.has(item.category) ? item.category : 'custom';
+      await dbQuery(
+        `INSERT INTO user_memories (user_id, category, title, content, source)
+         VALUES ($1,$2,$3,$4,'generated')
+         ON CONFLICT DO NOTHING`,
+        [auth.userId, cat, item.title.trim().slice(0, 100), item.content.trim().slice(0, 2000)]
+      );
+      count++;
+    }
+
+    return res.json({ success: true, count });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End User Memory Routes ────────────────────────────────────────────────────
 
 // GET /api/admin/billing/metrics — MRR, ARR, customer counts
 app.get('/api/admin/billing/metrics', async (req: Request, res: Response) => {
