@@ -21254,6 +21254,143 @@ Generate 20-35 diverse, specific memories covering all categories. No markdown, 
   }
 });
 
+// POST /api/memory/scrape — trigger Apify actors for provided URLs, extract & store memories
+app.post('/api/memory/scrape', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { website, instagram, linkedin, twitter, facebook } = req.body as {
+    website?: string; instagram?: string; linkedin?: string; twitter?: string; facebook?: string;
+  };
+
+  type ScrapeJob = { url: string; type: string; actorMatches: string[] };
+  const jobs: ScrapeJob[] = [
+    { url: website ?? '',   type: 'website',   actorMatches: ['website-content-crawler'] },
+    { url: instagram ?? '', type: 'instagram', actorMatches: ['instagram-scraper', 'instagram'] },
+    { url: linkedin ?? '',  type: 'linkedin',  actorMatches: ['linkedin-profile-scraper', 'linkedin'] },
+    { url: twitter ?? '',   type: 'twitter',   actorMatches: ['twitter-scraper', 'x-scraper', 'twitter'] },
+    { url: facebook ?? '',  type: 'facebook',  actorMatches: ['facebook-pages-scraper', 'facebook'] },
+  ].filter((j): j is ScrapeJob => Boolean(j.url.trim()));
+
+  if (jobs.length === 0) return res.status(400).json({ error: 'Please provide at least one URL to scrape' });
+
+  const apiToken = await getApifyToken();
+  if (!apiToken) return res.status(503).json({ error: 'Apify not configured — ask your admin to add the API key in Admin → Integrations → Apify' });
+
+  let savedActors: any[] = [];
+  try {
+    const r = await dbQuery('SELECT * FROM apify_actors');
+    savedActors = r.rows;
+  } catch { /* ignore */ }
+  if (savedActors.length === 0) return res.status(503).json({ error: 'No Apify actors set up — ask your admin to add actors in Admin → Integrations → Apify' });
+
+  function buildActorInput(url: string, actorId: string): Record<string, unknown> {
+    if (actorId.includes('website-content-crawler')) return { startUrls: [{ url }], maxCrawlPages: 5, maxCrawlDepth: 1 };
+    if (actorId.includes('instagram')) return { directUrls: [url], resultsLimit: 10 };
+    if (actorId.includes('linkedin')) return { profileUrls: [url] };
+    if (actorId.includes('twitter') || actorId.includes('x-scraper')) return { startUrls: [{ url }], maxItems: 20 };
+    if (actorId.includes('facebook')) return { startUrls: [{ url }], maxPosts: 10 };
+    return { startUrls: [{ url }] };
+  }
+
+  const scrapedSections: string[] = [];
+
+  for (const job of jobs) {
+    const actor = savedActors.find((a: any) =>
+      job.actorMatches.some((m) => a.actor_id.toLowerCase().includes(m)),
+    );
+    if (!actor) continue;
+
+    try {
+      const apifyActorId = (actor.actor_id as string).replace('/', '~');
+      const input = buildActorInput(job.url, actor.actor_id as string);
+      const runResp = await axios.post(
+        `https://api.apify.com/v2/acts/${apifyActorId}/runs`,
+        input,
+        { headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+          params: { token: apiToken, waitForFinish: 60 },
+          timeout: 70000 },
+      );
+      const run = runResp.data?.data ?? {};
+      if (run.defaultDatasetId) {
+        const dsResp = await axios.get(
+          `https://api.apify.com/v2/datasets/${run.defaultDatasetId}/items`,
+          { headers: { Authorization: `Bearer ${apiToken}` }, params: { token: apiToken, limit: 10, clean: true }, timeout: 30000 },
+        );
+        const items: unknown[] = Array.isArray(dsResp.data) ? dsResp.data : [];
+        if (items.length > 0) {
+          const text = items.slice(0, 5).map((item) => JSON.stringify(item).slice(0, 1500)).join('\n---\n');
+          scrapedSections.push(`=== ${job.type.toUpperCase()}: ${job.url} ===\n${text}`);
+        }
+      }
+    } catch (e) {
+      console.error(`Apify scrape error for ${job.type}:`, (e as any)?.message);
+    }
+  }
+
+  if (scrapedSections.length === 0) {
+    return res.status(400).json({ error: 'Scraping finished but no data was returned. Check that your Apify actors are configured and the URLs are accessible.' });
+  }
+
+  const fullRaw = scrapedSections.join('\n\n').slice(0, 12000);
+
+  // Save raw "Full Scraped Memory" entry — shown pinned at top of Memory page
+  await dbQuery(
+    `INSERT INTO user_memories (user_id, category, title, content, source) VALUES ($1,$2,$3,$4,$5)`,
+    [auth.userId, 'custom', '🌐 Full Scraped Memory', fullRaw, 'scraped'],
+  );
+  let memoriesCreated = 1;
+
+  // Use AI to extract structured memory fields from the raw data
+  const { encryptedKey } = await getAIConfig();
+  const aiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+  if (aiKey) {
+    try {
+      const client = new Anthropic({ apiKey: aiKey });
+      const resp = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2500,
+        messages: [{
+          role: 'user',
+          content: `Analyse this scraped brand data and extract structured memory fields as a JSON array.
+
+SCRAPED DATA:
+${fullRaw.slice(0, 6000)}
+
+Return ONLY a valid JSON array, no markdown fences:
+[
+  { "category": "brand", "title": "Brand Name", "content": "..." },
+  ...
+]
+
+Valid categories: brand, business, audience, content, social, website, custom
+
+Extract 8–15 fields covering: brand name, tagline/description, mission, products/services, target audience, brand voice/tone, social media handles, website purpose, key messages, contact details, unique value proposition, competitors, pricing (if visible). Only include fields that have real data from the scraped content. Skip anything empty or irrelevant.`,
+        }],
+      });
+      const raw = resp.content[0]?.type === 'text' ? resp.content[0].text : '';
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (match) {
+        const fields = JSON.parse(match[0]) as { category?: string; title?: string; content?: string }[];
+        for (const f of fields) {
+          if (f.title?.trim() && f.content?.trim()) {
+            await dbQuery(
+              `INSERT INTO user_memories (user_id, category, title, content, source) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+              [auth.userId, f.category ?? 'custom', f.title.trim().slice(0, 200), f.content.trim().slice(0, 2000), 'scraped'],
+            );
+            memoriesCreated++;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('AI memory extraction error:', (e as any)?.message);
+    }
+  }
+
+  return res.json({ success: true, count: memoriesCreated });
+});
+
 // ── End User Memory Routes ────────────────────────────────────────────────────
 
 // GET /api/admin/billing/metrics — MRR, ARR, customer counts

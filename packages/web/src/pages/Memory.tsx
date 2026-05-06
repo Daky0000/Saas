@@ -3,6 +3,7 @@ import {
   Brain,
   ChevronDown,
   Edit2,
+  Globe,
   Loader2,
   Plus,
   Sparkles,
@@ -309,6 +310,127 @@ function GenerateModal({ onClose, onGenerated }: GenerateModalProps) {
   );
 }
 
+// ── Scrape modal ───────────────────────────────────────────────────────────────
+
+const SCRAPE_PLATFORMS = [
+  { key: 'website',   label: 'Website',     placeholder: 'https://yourbrand.com',                emoji: '🌐' },
+  { key: 'instagram', label: 'Instagram',   placeholder: 'https://instagram.com/yourbrand',       emoji: '📸' },
+  { key: 'linkedin',  label: 'LinkedIn',    placeholder: 'https://linkedin.com/company/yourbrand', emoji: '💼' },
+  { key: 'twitter',   label: 'Twitter / X', placeholder: 'https://x.com/yourbrand',               emoji: '🐦' },
+  { key: 'facebook',  label: 'Facebook',    placeholder: 'https://facebook.com/yourbrand',         emoji: '👥' },
+] as const;
+
+type ScrapeModalProps = { onClose: () => void; onScraped: () => void };
+function ScrapeModal({ onClose, onScraped }: ScrapeModalProps) {
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [scraping, setScraping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ count: number } | null>(null);
+
+  const hasUrl = Object.values(urls).some((v) => v.trim());
+
+  const startScrape = async () => {
+    setScraping(true);
+    setError(null);
+    try {
+      const payload = Object.fromEntries(
+        Object.entries(urls).filter(([, v]) => v.trim()),
+      );
+      const res = await api<{ count: number }>('POST', '/api/memory/scrape', payload);
+      setResult(res);
+      onScraped();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Scrape failed');
+    } finally {
+      setScraping(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 px-4 pb-4 sm:items-center">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Globe size={16} className="text-blue-600" />
+            <span className="text-sm font-bold text-gray-900">Scrape Brand Data</span>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Scraping loading state */}
+        {scraping && (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50">
+              <Loader2 size={28} className="animate-spin text-blue-600" />
+            </div>
+            <p className="text-base font-bold text-gray-900">Scraping brand data…</p>
+            <p className="mt-1 text-sm text-gray-500">Running your Apify actors. This may take up to a minute.</p>
+          </div>
+        )}
+
+        {/* Success state */}
+        {!scraping && result && (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white">
+              <Brain size={24} />
+            </div>
+            <p className="text-lg font-black text-gray-900">{result.count} memories created</p>
+            <p className="mt-1 text-sm text-gray-500">Scraped data has been analysed and filled into your memory.</p>
+            <button type="button" onClick={onClose} className="mt-5 rounded-xl bg-gray-900 px-5 py-2 text-sm font-semibold text-white hover:bg-gray-800 transition-colors">
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* Form */}
+        {!scraping && !result && (
+          <>
+            <div className="px-6 py-5 space-y-3">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Paste your brand URLs below. Daky will use your Apify actors to scrape them and automatically fill your memory. All fields are optional — only filled URLs are scraped.
+              </p>
+              {SCRAPE_PLATFORMS.map(({ key, label, placeholder, emoji }) => (
+                <div key={key}>
+                  <label className="mb-1 block text-xs font-semibold text-gray-600">
+                    {emoji} {label}
+                  </label>
+                  <input
+                    type="url"
+                    value={urls[key] ?? ''}
+                    onChange={(e) => setUrls((prev) => ({ ...prev, [key]: e.target.value }))}
+                    placeholder={placeholder}
+                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-800 placeholder-gray-400 focus:border-blue-400 focus:outline-none"
+                  />
+                </div>
+              ))}
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4">
+              <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void startScrape()}
+                disabled={!hasUrl}
+                className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                <Globe size={14} />
+                Start Scrape
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Memory() {
   const [memories, setMemories] = useState<MemoryField[]>([]);
   const [loading, setLoading] = useState(true);
@@ -317,6 +439,7 @@ export default function Memory() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showScrape, setShowScrape] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(CATEGORIES.map((c) => c.id))
   );
@@ -396,11 +519,19 @@ export default function Memory() {
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => setShowScrape(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+          >
+            <Globe size={14} />
+            Scrape
+          </button>
+          <button
+            type="button"
             onClick={() => setShowGenerate(true)}
             className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
           >
             <Sparkles size={14} />
-            Generate
+            Generate with AI
           </button>
         </div>
       </div>
@@ -408,6 +539,32 @@ export default function Memory() {
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
+
+      {/* Full scraped memory — pinned at top */}
+      {memories.filter((m) => m.source === 'scraped' && m.title === '🌐 Full Scraped Memory').map((m) => (
+        <div key={m.id} className="rounded-2xl border border-blue-200 bg-blue-50 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-blue-100">
+            <div className="flex items-center gap-2">
+              <Globe size={14} className="text-blue-600 shrink-0" />
+              <span className="text-sm font-bold text-blue-900">Full Scraped Memory</span>
+              <span className="rounded-full bg-blue-100 border border-blue-200 px-2 py-0.5 text-[10px] font-semibold text-blue-700">scraped</span>
+            </div>
+            <button type="button" onClick={() => deleteField(m.id)} disabled={deletingId === m.id}
+              className="rounded-lg p-1.5 text-blue-400 hover:bg-blue-100 hover:text-red-500 transition-colors disabled:opacity-50">
+              {deletingId === m.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            </button>
+          </div>
+          <details className="group">
+            <summary className="cursor-pointer px-5 py-2.5 text-xs font-semibold text-blue-700 hover:bg-blue-100/50 transition-colors list-none flex items-center gap-1.5">
+              <ChevronDown size={12} className="transition-transform group-open:rotate-180" />
+              View raw scraped data
+            </summary>
+            <div className="px-5 pb-4">
+              <pre className="whitespace-pre-wrap text-[11px] text-blue-900 leading-relaxed max-h-64 overflow-y-auto bg-white/60 rounded-xl border border-blue-100 p-3">{m.content}</pre>
+            </div>
+          </details>
+        </div>
+      ))}
 
       {/* Empty state */}
       {memories.length === 0 && !loading && (
@@ -536,6 +693,12 @@ export default function Memory() {
         <GenerateModal
           onClose={() => setShowGenerate(false)}
           onGenerated={() => { void load(); }}
+        />
+      )}
+      {showScrape && (
+        <ScrapeModal
+          onClose={() => setShowScrape(false)}
+          onScraped={() => { void load(); }}
         />
       )}
     </div>
