@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BarChart2,
+  Calendar,
   CheckCircle,
+  Clock,
   Edit2,
   ExternalLink,
   Mic,
@@ -48,7 +50,14 @@ type FormMessage = {
   questions: FormQuestion[];
   submitted: boolean;
 };
-type Message = TextMessage | ToolMessage | FormMessage;
+type SchedulerMessage = {
+  kind: 'scheduler';
+  id: string;
+  postTitle?: string;
+  postContent?: string;
+  submitted: boolean;
+};
+type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage;
 
 // ── Form parsing ─────────────────────────────────────────────────────────────
 
@@ -293,6 +302,155 @@ function FormCard({ msg, onSubmit }: { msg: FormMessage; onSubmit: (formatted: s
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Scheduler card ───────────────────────────────────────────────────────────
+
+function SchedulerCard({
+  msg,
+  onSchedule,
+}: {
+  msg: SchedulerMessage;
+  onSchedule: (isoDate: string, label: string) => void;
+}) {
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('09:00');
+  const [quickPicked, setQuickPicked] = useState<string | null>(null);
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  const quickOptions = (() => {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const saturday = new Date(now);
+    saturday.setDate(now.getDate() + ((6 - now.getDay() + 7) % 7 || 7));
+    const nextMonday = new Date(now);
+    nextMonday.setDate(now.getDate() + ((1 - now.getDay() + 7) % 7 || 7));
+
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    return [
+      { label: 'Tonight 8 PM', date: fmt(now), time: '20:00' },
+      { label: 'Tomorrow 9 AM', date: fmt(tomorrow), time: '09:00' },
+      { label: 'This weekend', date: fmt(saturday), time: '10:00' },
+      { label: 'Next Monday', date: fmt(nextMonday), time: '09:00' },
+    ];
+  })();
+
+  const pickQuick = (opt: (typeof quickOptions)[0]) => {
+    setDate(opt.date);
+    setTime(opt.time);
+    setQuickPicked(opt.label);
+  };
+
+  const previewLabel = (() => {
+    if (!date) return null;
+    const dt = new Date(`${date}T${time}`);
+    return dt.toLocaleString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  })();
+
+  const handleSchedule = () => {
+    const iso = new Date(`${date}T${time}`).toISOString();
+    onSchedule(iso, previewLabel ?? date);
+  };
+
+  return (
+    <div className="rounded-xl border border-blue-100 bg-white overflow-hidden shadow-sm text-xs">
+      {/* Header */}
+      <div className="px-3.5 py-2.5 border-b border-blue-50" style={{ background: 'linear-gradient(135deg,#eff6ff,#eef2ff)' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-blue-100">
+            <Calendar size={12} className="text-blue-600" />
+          </div>
+          <div>
+            <p className="text-[11px] font-bold text-blue-800">Schedule Post</p>
+            {msg.postTitle && (
+              <p className="text-[10px] text-blue-400 truncate max-w-[220px]">"{msg.postTitle}"</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {msg.submitted ? (
+        <div className="px-3.5 py-4 flex items-center gap-2">
+          <CheckCircle size={14} className="text-emerald-500 shrink-0" />
+          <p className="text-[11px] text-emerald-700 font-semibold">Post scheduled!</p>
+        </div>
+      ) : (
+        <>
+          {/* Quick presets */}
+          <div className="px-3.5 pt-3 pb-2">
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Quick pick</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {quickOptions.map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => pickQuick(opt)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-all text-left ${
+                    quickPicked === opt.label
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:bg-blue-50/60'
+                  }`}
+                >
+                  <Clock size={10} className="shrink-0" />
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom date + time */}
+          <div className="px-3.5 pb-2">
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Or pick a date</p>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={date}
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => { setDate(e.target.value); setQuickPicked(null); }}
+                className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-300"
+              />
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => { setTime(e.target.value); setQuickPicked(null); }}
+                className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-300"
+              />
+            </div>
+          </div>
+
+          {/* Preview */}
+          {previewLabel && (
+            <div className="mx-3.5 mb-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 flex items-center gap-2">
+              <Calendar size={11} className="text-blue-500 shrink-0" />
+              <span className="text-[11px] text-blue-700 font-semibold">{previewLabel}</span>
+            </div>
+          )}
+
+          {/* Confirm button */}
+          <div className="px-3.5 pb-3">
+            <button
+              type="button"
+              disabled={!date}
+              onClick={handleSchedule}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-2 text-[11px] font-bold text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+            >
+              <Calendar size={11} /> Confirm Schedule
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -623,6 +781,24 @@ export default function ChatWidget() {
   // ── Form submit ───────────────────────────────────────────────────────────
 
   const submitForm = (formId: string, formatted: string) => {
+    const isSchedule = /schedule it/i.test(formatted);
+    if (isSchedule) {
+      setMessages((prev) => {
+        const lastDraft = [...prev].reverse().find(
+          (m): m is ToolMessage => m.kind === 'tool' && m.name === 'create_draft' && m.status === 'done',
+        );
+        return [
+          ...prev.map((m) => m.id === formId && m.kind === 'form' ? { ...m, submitted: true } : m),
+          {
+            kind: 'scheduler',
+            id: `sched-${Date.now()}`,
+            postTitle: lastDraft?.result?.post?.title,
+            submitted: false,
+          } satisfies SchedulerMessage,
+        ];
+      });
+      return;
+    }
     setMessages((prev) =>
       prev.map((m) => m.id === formId && m.kind === 'form' ? { ...m, submitted: true } : m),
     );
@@ -761,6 +937,18 @@ export default function ChatWidget() {
                     ) : msg.kind === 'form' ? (
                       <div className="pl-9">
                         <FormCard msg={msg} onSubmit={(f) => submitForm(msg.id, f)} />
+                      </div>
+                    ) : msg.kind === 'scheduler' ? (
+                      <div className="pl-9">
+                        <SchedulerCard
+                          msg={msg}
+                          onSchedule={(iso, label) => {
+                            setMessages((prev) =>
+                              prev.map((m) => m.id === msg.id ? { ...m, submitted: true } : m),
+                            );
+                            void send(`Schedule for ${iso} (${label})`);
+                          }}
+                        />
                       </div>
                     ) : (
                       <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} gap-2`}>
