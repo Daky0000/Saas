@@ -47,7 +47,10 @@
       "Read(//tmp/**)",
       "Bash(awk '/async function ensureDatabase/,/dbReady = true/' /d/Saas/packages/api/src/server.ts)",
       "Bash(sqlite3 /d/Saas/packages/api/backend/database.sqlite \".tables\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(grep -v \"//.*comment\\\\|console\\\\.\")",
+      "Bash(npm install *)",
+      "Bash(npm --workspace @contentflow/api install stripe)"
     ],
     "additionalDirectories": [
       "d:\\skills\\user\\db-cleanup",
