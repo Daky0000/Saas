@@ -10,7 +10,7 @@ import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS,
 } from '../taskTypes';
 import { compressImage } from '../../../utils/imageCompression';
-import { mediaService } from '../../../services/mediaService';
+import FileUploadDropzone from '../../FileUploadDropzone';
 
 type Tab = 'progress' | 'files' | 'comments';
 
@@ -64,10 +64,8 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
   const [supervisorWarning, setSupervisorWarning] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#6366f1');
-  const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [saving, setSaving] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
   const currentUserId = getCurrentUserId();
 
   // Close all pickers on outside click
@@ -225,43 +223,31 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
     }));
   };
 
-  // Attachments — images go through media library, other files stored as base64 DataURL
-  const uploadFile = async (file: File) => {
-    setUploading(true);
+  // Upload files: compress images → base64 DataURL stored directly in task_attachments
+  const uploadFiles = async (files: File[]) => {
     setUploadError('');
     try {
-      let url: string;
-      if (file.type.startsWith('image/')) {
-        const compressed = await compressImage(file);
-        const media = await mediaService.upload({
-          url: compressed.url,
-          thumbnail_url: compressed.thumbnail_url,
-          file_name: file.name,
-          original_name: file.name,
-          file_size: compressed.file_size,
-          file_type: compressed.file_type,
-          width: compressed.width,
-          height: compressed.height,
+      for (const file of files) {
+        let url: string;
+        if (file.type.startsWith('image/')) {
+          const compressed = await compressImage(file);
+          url = compressed.url;
+        } else {
+          url = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target?.result as string);
+            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.readAsDataURL(file);
+          });
+        }
+        const att = await apiFetch<{ attachment: TaskAttachment }>(`/api/tasks/${task.id}/attachments`, {
+          method: 'POST',
+          body: JSON.stringify({ name: file.name, url, size: file.size, mime_type: file.type }),
         });
-        url = media.url;
-      } else {
-        url = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.onerror = () => reject(new Error('Failed to read file'));
-          reader.readAsDataURL(file);
-        });
+        setAttachments((p) => [...p, att.attachment]);
       }
-      const att = await apiFetch<{ attachment: TaskAttachment }>(`/api/tasks/${task.id}/attachments`, {
-        method: 'POST',
-        body: JSON.stringify({ name: file.name, url, size: file.size, mime_type: file.type }),
-      });
-      setAttachments((p) => [...p, att.attachment]);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -523,23 +509,22 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
 
               {/* ── FILES TAB ── */}
               {tab === 'files' && (
-                <>
-                  {attachments.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-gray-200 p-10 text-center">
-                      <Paperclip size={28} className="mx-auto mb-3 text-gray-200" />
-                      <p className="text-[13px] font-semibold text-gray-500">No files yet</p>
-                      <p className="mt-1 text-[12px] text-gray-400">Upload files to share with the team</p>
-                    </div>
-                  ) : (
+                <div className="space-y-3">
+                  {/* Existing attachments */}
+                  {attachments.length > 0 && (
                     <div className="space-y-2">
                       {attachments.map((a) => (
                         <div key={a.id} className="flex items-center gap-3 rounded-xl border border-gray-200 px-4 py-3 hover:border-gray-300 transition-colors">
-                          <Paperclip size={15} className="shrink-0 text-gray-400" />
+                          {a.mime_type?.startsWith('image/') ? (
+                            <img src={a.url} alt={a.name} className="h-10 w-10 rounded-lg object-cover shrink-0" />
+                          ) : (
+                            <Paperclip size={15} className="shrink-0 text-gray-400" />
+                          )}
                           <div className="flex-1 min-w-0">
                             <p className="truncate text-[13px] font-medium text-gray-800">{a.name}</p>
-                            {a.size && <p className="text-[11px] text-gray-400">{(a.size / 1024).toFixed(0)} KB</p>}
+                            {a.size && <p className="text-[11px] text-gray-400">{(a.size / 1024).toFixed(0)} KB · {a.mime_type}</p>}
                           </div>
-                          <a href={a.url} target="_blank" rel="noreferrer"
+                          <a href={a.url} download={a.name} target="_blank" rel="noreferrer"
                             className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors">
                             <Download size={14} />
                           </a>
@@ -551,18 +536,15 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
                       ))}
                     </div>
                   )}
-                  <input ref={fileRef} type="file" className="hidden" onChange={(e) => e.target.files?.[0] && void uploadFile(e.target.files[0])} />
-                  <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading}
-                    className="flex items-center gap-2 rounded-xl border border-dashed border-gray-300 px-4 py-3 text-[13px] font-medium text-gray-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors w-full">
-                    <Plus size={15} /> {uploading ? 'Uploading…' : 'Upload file'}
-                  </button>
                   {uploadError && (
                     <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-600">
                       <AlertCircle size={13} /> {uploadError}
                       <button type="button" onClick={() => setUploadError('')} className="ml-auto"><X size={11} /></button>
                     </div>
                   )}
-                </>
+                  {/* Drop zone */}
+                  <FileUploadDropzone multiple onUpload={uploadFiles} />
+                </div>
               )}
 
               {/* ── COMMENTS TAB ── */}
