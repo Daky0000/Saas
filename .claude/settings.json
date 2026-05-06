@@ -50,7 +50,10 @@
       "Bash(npm run *)",
       "Bash(grep -v \"//.*comment\\\\|console\\\\.\")",
       "Bash(npm install *)",
-      "Bash(npm --workspace @contentflow/api install stripe)"
+      "Bash(npm --workspace @contentflow/api install stripe)",
+      "WebFetch(domain:docs.apify.com)",
+      "Bash(cd /d d:\\\\Saas)",
+      "Bash(find . -type f -name \"*apify*\")"
     ],
     "additionalDirectories": [
       "d:\\skills\\user\\db-cleanup",
