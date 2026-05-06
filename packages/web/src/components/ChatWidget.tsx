@@ -666,10 +666,10 @@ export default function ChatWidget() {
     const rawText = (textOverride ?? input).trim();
     const imgs = imgsOverride ?? attachedImages;
 
-    // Client-side intercept: if user manually types "schedule it" and there's a draft, show scheduler
-    if (/^schedule it\b/i.test(rawText) && !imgsOverride) {
+    // Client-side intercept: if user manually types "schedule it/the post" and there's a draft, show scheduler
+    if (/^schedule\b/i.test(rawText) && !imgsOverride) {
       const lastDraft = [...messages].reverse().find(
-        (m): m is ToolMessage => m.kind === 'tool' && m.name === 'create_draft' && m.status === 'done',
+        (m): m is ToolMessage => m.kind === 'tool' && m.name === 'create_draft' && (m.status === 'done' || m.status === 'error'),
       );
       if (lastDraft) {
         setInput('');
@@ -791,7 +791,7 @@ export default function ChatWidget() {
           const formId = `form-${lastA.id}`;
           if (prev.some((m) => m.id === formId)) return prev;
           const parsed = parseFormFromText(lastA.content);
-          if (!parsed || parsed.questions.length < 2) return prev;
+          if (!parsed || parsed.questions.length < 1) return prev;
           // Trim the assistant text to just the intro
           return [
             ...prev.map((m) =>
