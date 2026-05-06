@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -13,6 +13,7 @@ import AdminAIConfig from '../components/admin/AdminAIConfig';
 import AdminAISkills from '../components/admin/AdminAISkills';
 import AdminBillingDashboard from '../components/admin/AdminBillingDashboard';
 import AdminApify from '../components/admin/AdminApify';
+import AdminLearn from '../components/admin/AdminLearn';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -38,7 +39,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'ai-config'
     | 'ai-skills'
     | 'billing'
-    | 'apify';
+    | 'apify'
+    | 'learn';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -60,6 +62,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     'ai-skills': '/admin/ai/skills',
     billing: '/admin/billing',
     apify: '/admin/apify',
+    learn: '/admin/learn',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -70,7 +73,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai'));
+  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn');
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -106,10 +109,11 @@ const Admin = ({ currentUser }: AdminProps) => {
   const aiItems: { id: AdminTab; label: string; icon: React.ElementType }[] = [
     { id: 'ai-config', label: 'Configuration', icon: Bot },
     { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
+    { id: 'learn', label: 'Daky Learn', icon: BookOpen },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-');
+  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn';
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -118,7 +122,7 @@ const Admin = ({ currentUser }: AdminProps) => {
       if (tab) {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
-        setAiOpen(tab.startsWith('ai-'));
+        setAiOpen(tab.startsWith('ai-') || tab === 'learn');
         setApifyOpen(tab === 'apify');
       }
     };
@@ -361,6 +365,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'ai-skills' && <AdminAISkills />}
             {activeTab === 'billing' && <AdminBillingDashboard />}
             {activeTab === 'apify' && <AdminApify />}
+            {activeTab === 'learn' && <AdminLearn />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>

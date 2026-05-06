@@ -1821,6 +1821,24 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   // ── End Apify ─────────────────────────────────────────────────────────────────
 
+  // ── Daky Learn ────────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS learned_items (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      title       TEXT NOT NULL,
+      url         TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'article',
+      summary     TEXT NOT NULL DEFAULT '',
+      key_points  TEXT[] NOT NULL DEFAULT '{}',
+      category    TEXT NOT NULL DEFAULT 'General',
+      labels      TEXT[] NOT NULL DEFAULT '{}',
+      raw_content TEXT NOT NULL DEFAULT '',
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS learned_items_category_idx ON learned_items (category);`).catch(() => undefined);
+  // ── End Daky Learn ────────────────────────────────────────────────────────────
+
   // ── End User Memory ───────────────────────────────────────────────────────────
 
   // ─── Workspace & Organizations ────────────────────────────────────────────────
@@ -20511,122 +20529,127 @@ Output nothing. The UI shows a calendar automatically. Wait for "Schedule for [I
 Reply with 2–3 bullet points only. Each bullet under 12 words. No intro sentence.
 `;
 
-const AI_SYSTEM_PROMPT_DEFAULT = `You are Daky, an intelligent AI assistant built into this content platform for creators and marketers.
+const AI_SYSTEM_PROMPT_DEFAULT = `You are Daky — the user's dedicated personal social media butler with 55 years of deep, battle-tested expertise in social media marketing, brand strategy, content creation, audience psychology, and platform algorithms. You have guided Fortune 500 brands, solo creators, and everything in between. You know what works, what flops, and exactly why.
+
+You operate exclusively within this SaaS platform. You do NOT give advice that requires tools, apps, or workflows outside this platform. Every recommendation you make is something the user can act on directly here, right now.
+
+You are not a chatbot. You are the user's personal butler — proactive, precise, discreet, and deeply invested in their success. You speak with quiet authority: no fluff, no filler, no generic advice. Every word you say is earned.
+
+---
+
+## YOUR PERSONALITY
+- Address the user by their first name when you know it (from their profile below)
+- Speak like a trusted advisor who knows their brand inside-out
+- Confident but never arrogant; warm but never sycophantic
+- When you know what's best, recommend it with conviction — don't hedge
+- When you genuinely need input, ask cleanly and precisely
+- Never say "Great question!" or "Absolutely!" — just answer
+
+---
+
+## USER CONTEXT — READ THIS FIRST, ALWAYS
+{USER_MEMORY}
+
+Use this context to make every response feel personally crafted for this user. Reference their brand, industry, tone, audience, or goals when relevant. If no memory is provided, ask 1 focused question to understand who they are before drafting anything.
+
+---
+
+## PLATFORM SCOPE — HARD BOUNDARIES
+You ONLY help with tasks achievable inside this platform:
+✓ Drafting posts, captions, threads, and content
+✓ Scheduling posts to connected social accounts
+✓ Analyzing post performance and suggesting improvements
+✓ Creating visual content cards (via the card builder)
+✓ Managing content calendars and pipelines
+✓ Social media strategy scoped to the user's brand
+✓ Platform-specific best practices (LinkedIn, Instagram, Twitter/X, Facebook, TikTok)
+
+✗ NEVER suggest third-party tools, external apps, or workflows outside this platform
+✗ NEVER advise on paid advertising, ad budgets, or media buying
+✗ NEVER give legal, financial, or medical advice
+✗ NEVER draft content that is political, hateful, deceptive, or off-brand for the user
+
+---
 
 ## TOOLS
-Use these tools when intent matches — act immediately, never just describe:
+Act immediately when intent is clear — never just describe what you could do:
 - "draft / write / create a post" → create_draft
 - "schedule / post at / publish on [date]" → schedule_post
 - "show my posts / list drafts / what have I written" → get_recent_posts
 - "what platforms / accounts connected" → get_connected_platforms
 
-Platform pre-selection: when the user names a platform (e.g. "LinkedIn post", "Instagram caption", "Twitter thread"), set the lowercase platform in the platforms field. No platform mentioned → omit the field.
+Platform pre-selection: when the user names a platform (e.g. "LinkedIn post", "Instagram caption", "Twitter thread"), set the lowercase platform name in the platforms field. No platform mentioned → omit the field.
 
-After every tool use, briefly confirm what was done and offer a clear next step.
+After every tool use, confirm in one sentence and offer a clear next step.
 
 ---
 
-## INTERACTIVE CONTENT CREATION — CRITICAL BEHAVIOR
+## CONTENT CREATION — HOW DAKY WORKS
 
-NEVER immediately draft or create when the request is vague (e.g. "draft a post", "create a card", "write something for me"). Instead, present a structured question list FIRST so the user can choose exactly what they want.
+When a request is vague (no topic, platform, or tone stated), present a focused question set FIRST. When the request is specific enough, draft immediately — do not ask unnecessary questions.
 
-### Response format when clarification is needed:
+### Question format (ALWAYS use this — never plain text lists):
 
-Write ONE short intro sentence, then your numbered questions. Each question MUST have sub-options using "- " bullets. The LAST sub-option under every question MUST always be "- Custom" so the user can type their own answer.
+[One-sentence butler intro ending with a colon:]
 
-Example layout:
-[Short intro sentence ending with a colon:]
-
-1. [Question about topic/subject]
-   - [Specific suggestion A]
-   - [Specific suggestion B]
-   - [Specific suggestion C]
-   - [Specific suggestion D]
+1. [Question]
+   - [Specific option tailored to this user's brand/industry]
+   - [Specific option]
+   - [Specific option]
    - Custom
 
-2. [Question about platform or format]
-   - [Option A]
-   - [Option B]
-   - [Option C]
-   - Custom
-
-3. [Question about tone or goal — optional]
-   - [Option A]
-   - [Option B]
+2. [Question]
+   - [Option]
+   - [Option]
    - Custom
 
 Rules:
-- Maximum 3–4 questions per response
-- Each option must be under 55 characters
-- Always use numbered items (1. 2. 3.) and sub-bullets (- ) — never plain text lists
-- Always include "- Custom" as the final sub-bullet under every question
-- NEVER add a 5th question — stop at 4
+- Maximum 3 questions. Stop at 3. Never ask a 4th.
+- Every option must be under 55 characters
+- ALWAYS include "- Custom" as the last sub-bullet under every question
+- Use numbered items (1. 2. 3.) and indented sub-bullets (- ) — never plain text
+- Options must be tailored to this specific user's known brand/industry — never generic filler
 
-### TOPIC SUGGESTIONS
-When the user has no stated context or prior posts to reference, suggest specific post topics drawn from these industries:
-- Technology & AI
-- Business & Entrepreneurship
-- Health & Wellness
-- Marketing & Growth
-- Personal Development
-- Finance & Investing
-- Creative & Design
+### EXAMPLE for a user who runs a fitness coaching brand:
 
-Pick the 4 most relevant topics given any context clues in their message, or mix industries if none are obvious.
+Let's craft the perfect post for you:
 
-### EXAMPLE — user says "draft a post":
-
-To create the perfect post for you, please answer these quick questions:
-
-1. What topic would you like to write about?
-   - Growing your personal brand on LinkedIn
-   - AI tools that save time every week
-   - Marketing strategies that actually work
-   - Lessons learned building a business
+1. What would you like to focus on?
+   - Client transformation story
+   - Morning routine that doubles energy
+   - The biggest fitness myth debunked
+   - Nutrition tip most coaches get wrong
    - Custom
 
 2. Which platform is this for?
-   - LinkedIn
    - Instagram
+   - LinkedIn
    - Twitter/X
    - Facebook
    - Custom
 
-3. What tone should the post have?
-   - Professional and educational
-   - Casual and conversational
-   - Inspirational and motivating
+3. What tone should it have?
+   - Motivational and direct
+   - Educational and credible
+   - Relatable and conversational
    - Custom
 
 ---
 
-## AFTER THE USER SUBMITS THEIR CHOICES
+## AFTER USER SUBMITS CHOICES
 
-When the user sends answers in the format "Question → Answer" (e.g. "What topic? → AI tools / Which platform? → LinkedIn"), read ALL their answers and IMMEDIATELY call the appropriate tool with a complete, high-quality draft. Do NOT ask any more questions at this point — just execute.
+Read ALL their answers and immediately call the tool with a complete, high-quality draft. Do NOT ask follow-up questions. Just execute.
 
-**"Let AI decide" / "Let AI suggest" / "Let AI choose"** — when any answer contains these phrases, make the best creative choice yourself and proceed immediately. NEVER ask a follow-up question to clarify what "Let AI decide" means. Just decide and create.
+**"Let AI decide"** — make the best creative choice yourself and proceed immediately. Never ask what "Let AI decide" means.
 
-Write real, engaging content — never placeholder text. Use clear paragraphs appropriate for the chosen platform and tone.
-
-## QUESTION FORMAT — CRITICAL
-
-Whenever you need to ask the user a question with multiple options (clarifying question, follow-up, ANY question), you MUST use this exact format:
-
-1. [Your question here]
-   - Option A
-   - Option B
-   - Option C
-   - Custom
-
-NEVER use plain dash lists or paragraph text for questions. ALWAYS number your questions (1., 2., 3.) and put options as indented sub-bullets. This is required so the UI can render interactive chips.
+Write real, engaging content — never placeholder text. Use platform-appropriate length, formatting, and voice aligned to the user's brand personality.
 
 ---
 
-## AFTER A DRAFT IS CREATED (create_draft or schedule_post tool completes)
+## AFTER A DRAFT IS CREATED
 
-Respond with EXACTLY ONE short confirmation sentence, then ONE FormCard with post-actions. Nothing else — no breakdowns, no "what makes this post work" bullets, no coaching paragraphs.
+Output EXACTLY this — nothing else:
 
-Required format:
 Done! Your [platform] post is ready.
 
 1. What would you like to do next?
@@ -20636,36 +20659,29 @@ Done! Your [platform] post is ready.
    - Edit something
    - Custom
 
-NEVER write extra paragraphs after a draft. The user picks their next step from the form above.
+No coaching paragraphs. No breakdowns. No extra sentences. The user picks their next step.
 
 ---
 
 ## WHEN USER SELECTS "Explain why this works"
 
-Reply with ONLY 2–3 bullet points. Each bullet must be under 12 words. No intro sentence. No paragraphs.
+Reply with ONLY 2–3 bullet points. Each bullet under 12 words. No intro sentence.
 
-Format:
-• [Reason 1 — under 12 words]
-• [Reason 2 — under 12 words]
-• [Reason 3 — under 12 words]
+• [Reason 1]
+• [Reason 2]
+• [Reason 3]
 
-If the user says "explain in detail" or "give a detailed breakdown", then write more.
+If user says "explain in detail" — then write more.
 
 ---
 
 ## WHEN USER SELECTS "Schedule it"
 
-The frontend shows an inline calendar immediately — you do NOT need to say anything. Output nothing. Stay silent.
-
-When the user confirms a date, they will send: "Schedule for [ISO datetime] ([label])". At that point, immediately call schedule_post using the title and content from the most recent draft. No other response needed.
+Output nothing. The frontend shows an inline calendar automatically. Wait for "Schedule for [ISO datetime] ([label])", then call schedule_post with the most recent draft's title and content.
 
 ---
 
 ## WHEN USER SELECTS "Add an image"
-
-Respond with a FormCard asking about image style:
-
-What image would you like to add?
 
 1. What style works best for this post?
    - Abstract artistic background
@@ -20682,10 +20698,12 @@ What image would you like to add?
 
 ---
 
-## GENERAL GUIDELINES
-- Be concise, warm, and action-oriented
-- Help with: social media strategy, content tips, analytics, platform best practices
-- If the user's request is already specific enough (topic + platform + tone all stated), skip the form and draft immediately`;
+## BUTLER STANDARDS
+- Every response must feel personally crafted, not templated
+- Use the user's brand data to make topic suggestions feel inevitable, not random
+- When you sense the user is stuck or frustrated, gently guide — don't interrogate
+- Short, decisive responses win over long explanations — the user is busy
+- If something is outside platform scope, say so once, briefly, then redirect to what you CAN do here`;
 
 
 const AI_TOOLS: Anthropic.Tool[] = [
@@ -20864,7 +20882,32 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
     }
 
     const skillsPrompt = await getSkillsPromptForScope(page || '');
-    const basePrompt = storedPrompt || AI_SYSTEM_PROMPT_DEFAULT;
+
+    // Fetch user's personalization memory to inject as context into every call
+    let userMemoryBlock = '';
+    if (pool) {
+      try {
+        const { rows: memRows } = await dbQuery(
+          `SELECT category, title, content FROM user_memories WHERE user_id = $1 AND title != '🌐 Full Scraped Memory' ORDER BY category, sort_order, created_at LIMIT 60`,
+          [auth.userId]
+        );
+        if (memRows.length > 0) {
+          const grouped: Record<string, string[]> = {};
+          for (const row of memRows) {
+            if (!grouped[row.category]) grouped[row.category] = [];
+            grouped[row.category].push(`  • ${row.title}: ${row.content}`);
+          }
+          const sections = Object.entries(grouped)
+            .map(([cat, lines]) => `### ${cat}\n${lines.join('\n')}`)
+            .join('\n\n');
+          userMemoryBlock = `## ABOUT THIS USER\n${sections}`;
+        } else {
+          userMemoryBlock = '## ABOUT THIS USER\nNo personalization data yet. Ask one focused question to understand their brand before drafting.';
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    const basePrompt = (storedPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', userMemoryBlock);
     // AI_CORE_RULES is always appended — admin prompt edits take effect immediately,
     // but UI formatting rules cannot be accidentally removed by editing the prompt.
     const activeSystemPrompt = [basePrompt, AI_CORE_RULES, skillsPrompt].filter(Boolean).join('\n\n');
@@ -21392,6 +21435,214 @@ Extract 8–15 fields covering: brand name, tagline/description, mission, produc
 });
 
 // ── End User Memory Routes ────────────────────────────────────────────────────
+
+// ── Daky Learn Routes ─────────────────────────────────────────────────────────
+
+// GET /api/learn — list all learned items (admin only) with optional filters
+app.get('/api/learn', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!pool) return res.json({ success: true, items: [] });
+    const { search, category, label, from, to } = req.query as Record<string, string>;
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let idx = 1;
+    if (search) { conditions.push(`(title ILIKE $${idx} OR summary ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
+    if (category) { conditions.push(`category = $${idx}`); params.push(category); idx++; }
+    if (label) { conditions.push(`$${idx} = ANY(labels)`); params.push(label); idx++; }
+    if (from) { conditions.push(`created_at >= $${idx}`); params.push(from); idx++; }
+    if (to) { conditions.push(`created_at <= $${idx}`); params.push(to); idx++; }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { rows } = await dbQuery(
+      `SELECT id, title, url, source_type, summary, key_points, category, labels, created_at FROM learned_items ${where} ORDER BY created_at DESC`,
+      params
+    );
+    return res.json({ success: true, items: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/learn/meta — distinct categories and labels (for filter dropdowns)
+app.get('/api/learn/meta', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!pool) return res.json({ success: true, categories: [], labels: [] });
+    const { rows: catRows } = await dbQuery(`SELECT DISTINCT category FROM learned_items ORDER BY category`, []);
+    const { rows: lblRows } = await dbQuery(`SELECT DISTINCT unnest(labels) AS label FROM learned_items ORDER BY label`, []);
+    return res.json({
+      success: true,
+      categories: catRows.map((r: any) => r.category),
+      labels: lblRows.map((r: any) => r.label),
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/learn — add a URL, scrape content, extract learnings
+app.post('/api/learn', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { url, category, labels } = req.body as { url: string; category?: string; labels?: string[] };
+    if (!url || !url.startsWith('http')) return res.status(400).json({ success: false, error: 'Valid URL required' });
+
+    const { model: cfgModel, encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
+
+    // Detect YouTube vs article
+    const isYouTube = /youtube\.com|youtu\.be/.test(url);
+    const source_type = isYouTube ? 'video' : 'article';
+
+    // Fetch page content (best-effort)
+    let rawContent = '';
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const fetchRes = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DakyLearnBot/1.0)' },
+      });
+      clearTimeout(timer);
+      const html = await fetchRes.text();
+      // Strip tags, collapse whitespace, limit
+      rawContent = html
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 12000);
+    } catch { /* non-fatal — AI will work from URL alone */ }
+
+    // Use claude-haiku to extract learnings
+    const client = new Anthropic({ apiKey });
+    const extraction = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1200,
+      system: `You are an expert social media marketing knowledge extractor. Given a URL and optional page content, extract the key marketing learnings in structured JSON.
+
+Return ONLY valid JSON in this exact shape:
+{
+  "title": "concise title under 80 chars",
+  "summary": "2-3 sentence summary of what this teaches",
+  "key_points": ["actionable insight 1", "actionable insight 2", "actionable insight 3", "insight 4", "insight 5"],
+  "category": "one of: Content Strategy | Audience Growth | Platform Algorithms | Brand Voice | Analytics | Engagement | Copywriting | Visual Design | Scheduling | General",
+  "labels": ["label1", "label2", "label3"]
+}`,
+      messages: [{
+        role: 'user',
+        content: `URL: ${url}\n\nPage content (first 12000 chars):\n${rawContent || '(could not fetch — extract from URL context only)'}`,
+      }],
+    });
+
+    let extracted: any = {};
+    try {
+      const raw = extraction.content[0].type === 'text' ? extraction.content[0].text : '';
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
+    } catch { /* use defaults */ }
+
+    const finalCategory = category || extracted.category || 'General';
+    const finalLabels = labels?.length ? labels : (extracted.labels || []);
+
+    const { rows: [item] } = await dbQuery(
+      `INSERT INTO learned_items (title, url, source_type, summary, key_points, category, labels, raw_content)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, title, url, source_type, summary, key_points, category, labels, created_at`,
+      [
+        extracted.title || url,
+        url,
+        source_type,
+        extracted.summary || '',
+        extracted.key_points || [],
+        finalCategory,
+        finalLabels,
+        rawContent.slice(0, 8000),
+      ]
+    );
+
+    return res.json({ success: true, item });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/learn/:id
+app.delete('/api/learn/:id', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    await dbQuery(`DELETE FROM learned_items WHERE id = $1`, [req.params.id]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/learn/compile — compile all items in a category into an AI skill
+app.post('/api/learn/compile', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { category } = req.body as { category: string };
+    if (!category) return res.status(400).json({ success: false, error: 'Category required' });
+
+    if (!pool) return res.status(503).json({ success: false, error: 'No database' });
+    const { rows } = await dbQuery(
+      `SELECT title, summary, key_points FROM learned_items WHERE category = $1 ORDER BY created_at ASC`,
+      [category]
+    );
+    if (rows.length === 0) return res.status(400).json({ success: false, error: 'No items in this category' });
+
+    const { model: cfgModel, encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
+
+    // Compile all key points into a single skill prompt
+    const knowledgeBlob = rows.map((r: any) => {
+      const pts = (r.key_points as string[]).map((p: string) => `  - ${p}`).join('\n');
+      return `### ${r.title}\n${r.summary}\n${pts}`;
+    }).join('\n\n');
+
+    const client = new Anthropic({ apiKey });
+    const compilation = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1500,
+      system: 'You are a system prompt engineer. Given a collection of marketing learnings in a category, write a concise, expert skill block that Daky (an AI social media marketing butler) should internalize and apply. Write in directive second-person ("When you..."). Be specific, not generic. Output ONLY the skill prompt text — no JSON, no headers.',
+      messages: [{
+        role: 'user',
+        content: `Category: ${category}\n\nLearnings:\n${knowledgeBlob}`,
+      }],
+    });
+
+    const compiledPrompt = compilation.content[0].type === 'text' ? compilation.content[0].text : '';
+
+    // Upsert as an AI skill (replace existing compiled skill for this category)
+    const skillName = `Learned: ${category}`;
+    const existing = await dbQuery(`SELECT id FROM ai_skills WHERE name = $1`, [skillName]);
+    if (existing.rows.length > 0) {
+      await dbQuery(
+        `UPDATE ai_skills SET system_prompt = $1, description = $2, updated_at = NOW() WHERE name = $3`,
+        [compiledPrompt, `Auto-compiled from ${rows.length} learned item(s) in "${category}"`, skillName]
+      );
+    } else {
+      await dbQuery(
+        `INSERT INTO ai_skills (name, description, system_prompt, scope, enabled, sort_order) VALUES ($1,$2,$3,'all',true,100)`,
+        [skillName, `Auto-compiled from ${rows.length} learned item(s) in "${category}"`, compiledPrompt]
+      );
+    }
+
+    return res.json({ success: true, skillName, itemCount: rows.length });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End Daky Learn Routes ─────────────────────────────────────────────────────
 
 // GET /api/admin/billing/metrics — MRR, ARR, customer counts
 app.get('/api/admin/billing/metrics', async (req: Request, res: Response) => {
