@@ -114,7 +114,9 @@ function parseFormFromText(text: string): { intro: string; questions: FormQuesti
     }
   }
   if (cur) blocks.push(cur);
-  if (blocks.length < 2) return null;
+  if (blocks.length === 0) return null;
+  // Allow single-block forms only when the block has 3+ clear option bullets
+  if (blocks.length < 2 && blocks[0].bullets.length < 3) return null;
 
   const questions: FormQuestion[] = [];
 
@@ -644,6 +646,23 @@ export default function ChatWidget() {
   const send = useCallback(async (textOverride?: string, imgsOverride?: AttachedImg[]) => {
     const rawText = (textOverride ?? input).trim();
     const imgs = imgsOverride ?? attachedImages;
+
+    // Client-side intercept: if user manually types "schedule it" and there's a draft, show scheduler
+    if (/^schedule it\b/i.test(rawText) && !imgsOverride) {
+      const lastDraft = [...messages].reverse().find(
+        (m): m is ToolMessage => m.kind === 'tool' && m.name === 'create_draft' && m.status === 'done',
+      );
+      if (lastDraft) {
+        setInput('');
+        setAttachedImages([]);
+        setMessages((prev) => [
+          ...prev,
+          { kind: 'text', id: crypto.randomUUID(), role: 'user', content: rawText } satisfies TextMessage,
+          { kind: 'scheduler', id: `sched-${Date.now()}`, postTitle: lastDraft.result?.post?.title, submitted: false } satisfies SchedulerMessage,
+        ]);
+        return;
+      }
+    }
 
     // Build the text to show in the user bubble (clean)
     // Build the text to send to API (with image refs if any)

@@ -20601,9 +20601,9 @@ If the user says "explain in detail" or "give a detailed breakdown", then write 
 
 ## WHEN USER SELECTS "Schedule it"
 
-The UI shows a calendar — do NOT ask for a date. Wait for the user to send "Schedule for [ISO datetime]", then immediately call schedule_post using:
-- The same title and content from the most recent draft in this conversation
-- The provided scheduled_at datetime
+The frontend shows an inline calendar immediately — you do NOT need to say anything. Output nothing. Stay silent.
+
+When the user confirms a date, they will send: "Schedule for [ISO datetime] ([label])". At that point, immediately call schedule_post using the title and content from the most recent draft. No other response needed.
 
 ---
 
