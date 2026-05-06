@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Bot, Check, Eye, EyeOff, Loader2, RotateCcw, Save } from 'lucide-react';
+import { Bot, Check, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, RotateCcw, Save } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
 const authHeaders = (): Record<string, string> => {
@@ -43,6 +43,7 @@ export default function AdminAIConfig() {
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptSaved, setPromptSaved] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
+  const [showFormatGuide, setShowFormatGuide] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -334,13 +335,72 @@ export default function AdminAIConfig() {
             </div>
           </div>
 
+          {/* Format guide — collapsible */}
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowFormatGuide((v) => !v)}
+              className="flex w-full items-center justify-between px-5 py-4 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                {showFormatGuide ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
+                Interactive Form Format Guide
+              </span>
+              <span className="text-[11px] font-normal text-slate-400">How the chat form cards work</span>
+            </button>
+
+            {showFormatGuide && (
+              <div className="border-t border-slate-100 px-5 py-4 space-y-4 text-sm text-slate-600">
+                <p className="text-slate-700">
+                  When the AI responds with a numbered list of questions (each with sub-bullet options), the chat widget automatically renders them as an <strong>interactive form card</strong> — users click chips to answer instead of typing.
+                </p>
+
+                <div>
+                  <p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Required format in the prompt response:</p>
+                  <pre className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed">{`[One short intro sentence:]
+
+1. Question about topic or subject?
+   - Suggestion A
+   - Suggestion B
+   - Suggestion C
+   - Custom
+
+2. Question about platform or format?
+   - Option A
+   - Option B
+   - Custom
+
+3. Question about tone or goal?
+   - Option A
+   - Option B
+   - Custom`}</pre>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Rules that must be in your prompt:</p>
+                  <ul className="list-disc list-inside space-y-1 text-xs text-slate-500">
+                    <li>Use <code className="bg-slate-100 px-1 rounded">1. 2. 3.</code> for questions and <code className="bg-slate-100 px-1 rounded">- </code> for sub-options</li>
+                    <li>Always include <code className="bg-slate-100 px-1 rounded">- Custom</code> as the final sub-bullet under every question</li>
+                    <li>Keep each option under 55 characters</li>
+                    <li>Max 4 questions per response</li>
+                    <li>After user submits, AI must call the tool immediately — no more questions</li>
+                  </ul>
+                </div>
+
+                <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
+                  <strong>Keep the TOOLS section</strong> in your prompt — removing it disables create_draft, schedule_post and other agentic actions.
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600 space-y-1.5">
             <p className="font-semibold text-slate-800">Prompt tips</p>
             <ul className="list-disc list-inside space-y-1 text-slate-500">
-              <li>Keep the tool-use instructions (create_draft, schedule_post etc.) — removing them disables agentic actions</li>
-              <li>Add your brand name, tone of voice, or content guidelines</li>
-              <li>The bot uses this prompt on every message in real-time</li>
-              <li>Reset to default restores the original built-in prompt without saving</li>
+              <li>Add your brand name, tone of voice, or content guidelines in a new section</li>
+              <li>The bot uses this prompt on every message in real-time — no restart needed</li>
+              <li>Reset to default restores the full built-in prompt (including interactive form rules)</li>
+              <li>Clear the field and save to revert to the built-in default</li>
             </ul>
           </div>
         </div>

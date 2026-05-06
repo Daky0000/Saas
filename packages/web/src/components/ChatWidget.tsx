@@ -116,14 +116,22 @@ function parseFormFromText(text: string): { intro: string; questions: FormQuesti
       const opts = block.bullets
         .map((b) => b.replace(/\s*\(.*?\)\s*$/, '').trim())
         .filter(Boolean);
-      if (!opts.includes('Custom')) opts.push('Custom');
+      // Add Custom only if no option already implies it
+      const hasCustomLike = opts.some((o) => /^custom$|^other$|^my own|^i'll type|^type your/i.test(o));
+      if (!hasCustomLike) opts.push('Custom');
       questions.push({ id: `q${questions.length}`, text: formatQuestion(block.header), options: opts, answer: null, customText: '' });
     } else if (block.bullets.length >= 2 && bulletIsSubQ) {
       for (const bullet of block.bullets) {
-        questions.push({ id: `q${questions.length}`, text: formatQuestion(bullet), options: getSmartOptions(bullet), answer: null, customText: '' });
+        const opts = getSmartOptions(bullet);
+        const hasC = opts.some((o) => /^custom$|^other$|^my own|^i'll type|^type your/i.test(o));
+        if (!hasC) opts.push('Custom');
+        questions.push({ id: `q${questions.length}`, text: formatQuestion(bullet), options: opts, answer: null, customText: '' });
       }
     } else {
-      questions.push({ id: `q${questions.length}`, text: formatQuestion(block.header), options: getSmartOptions(block.header), answer: null, customText: '' });
+      const opts = getSmartOptions(block.header);
+      const hasC = opts.some((o) => /^custom$|^other$|^my own|^i'll type|^type your/i.test(o));
+      if (!hasC) opts.push('Custom');
+      questions.push({ id: `q${questions.length}`, text: formatQuestion(block.header), options: opts, answer: null, customText: '' });
     }
   }
 
