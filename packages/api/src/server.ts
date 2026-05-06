@@ -21398,6 +21398,7 @@ app.get('/api/admin/apify/status', async (req: Request, res: Response) => {
   try {
     const resp = await axios.get('https://api.apify.com/v2/users/me', {
       headers: { Authorization: `Bearer ${token}` },
+      params: { token },
       validateStatus: () => true,
       timeout: 8000,
     });
@@ -21470,10 +21471,18 @@ app.post('/api/admin/apify/actors/:id/run', async (req: Request, res: Response) 
     if (!actor) return res.status(404).json({ error: 'Actor not found' });
 
     const input = (req.body as { input?: Record<string, unknown> }).input ?? {};
+    // Apify REST API uses '~' as username/actor-name separator in URL paths.
+    // 'apify/instagram-scraper' → 'apify~instagram-scraper'
+    const apifyActorId = actor.actor_id.replace('/', '~');
     const resp = await axios.post(
-      `https://api.apify.com/v2/acts/${encodeURIComponent(actor.actor_id)}/runs`,
+      `https://api.apify.com/v2/acts/${apifyActorId}/runs`,
       input,
-      { headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 15000 }
+      {
+        headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+        params: { token: apiToken },
+        validateStatus: () => true,
+        timeout: 15000,
+      }
     );
     if (resp.status >= 400) return res.status(400).json({ error: `Apify error ${resp.status}: ${JSON.stringify(resp.data)}` });
 
@@ -21507,6 +21516,7 @@ app.get('/api/admin/apify/runs', async (req: Request, res: Response) => {
         try {
           const resp = await axios.get(`https://api.apify.com/v2/actor-runs/${run.apify_run_id}`, {
             headers: { Authorization: `Bearer ${apiToken}` },
+            params: { token: apiToken },
             validateStatus: () => true,
             timeout: 5000,
           });

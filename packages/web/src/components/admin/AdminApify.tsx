@@ -68,6 +68,7 @@ export default function AdminApify() {
   const [runModalActor, setRunModalActor] = useState<Actor | null>(null);
   const [runInput, setRunInput] = useState('{}');
   const [triggeringRun, setTriggeringRun] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const tok = () => localStorage.getItem('auth_token') ?? '';
 
@@ -77,8 +78,10 @@ export default function AdminApify() {
         headers: { Authorization: `Bearer ${tok()}` },
       });
       if (r.ok) {
-        const data = await r.json() as { config?: { apiKey?: string } };
-        if (data.config?.apiKey) setApiKey(data.config.apiKey);
+        // GET returns { success, config: { platform, config: { apiKey }, enabled } }
+        const data = await r.json() as { config?: { config?: { apiKey?: string } } };
+        const key = data.config?.config?.apiKey;
+        if (key) setApiKey(key);
       }
     } catch { /* ignore */ }
   };
@@ -176,18 +179,26 @@ export default function AdminApify() {
   const triggerRun = async () => {
     if (!runModalActor) return;
     setTriggeringRun(true);
+    setRunError(null);
     try {
       let parsedInput: Record<string, unknown> = {};
       try { parsedInput = JSON.parse(runInput) as Record<string, unknown>; } catch { /* use empty */ }
-      await fetch(`${API_BASE_URL}/api/admin/apify/actors/${runModalActor.id}/run`, {
+      const r = await fetch(`${API_BASE_URL}/api/admin/apify/actors/${runModalActor.id}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({ input: parsedInput }),
       });
+      const data = await r.json().catch(() => ({})) as { error?: string };
+      if (!r.ok) {
+        setRunError(data.error ?? `Error ${r.status}`);
+        return;
+      }
       setRunModalActor(null);
       setRunInput('{}');
       setTab('runs');
       await loadRuns();
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : 'Failed to start run');
     } finally {
       setTriggeringRun(false);
     }
@@ -226,7 +237,7 @@ export default function AdminApify() {
           {status?.connected && typeof status.creditBalance === 'number' && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Credit Balance</p>
-              <p className="text-lg font-black text-slate-900">${(status.creditBalance / 100).toFixed(2)}</p>
+              <p className="text-lg font-black text-slate-900">${Number(status.creditBalance).toFixed(2)}</p>
             </div>
           )}
         </div>
@@ -307,7 +318,7 @@ export default function AdminApify() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => { setRunModalActor(actor); setRunInput('{}'); }}
+                        onClick={() => { setRunModalActor(actor); setRunInput('{}'); setRunError(null); }}
                         className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white transition-colors hover:bg-indigo-700"
                       >
                         <Play size={11} /> Run
@@ -540,6 +551,11 @@ export default function AdminApify() {
             <p className="mt-1 text-[11px] text-slate-400">
               Provide the actor's input as JSON. See the actor's docs on Apify Console.
             </p>
+            {runError && (
+              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {runError}
+              </div>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
