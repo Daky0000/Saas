@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Calendar, Check, ChevronDown, Download, Flag,
+  AlertCircle, Calendar, Check, ChevronDown, Download, Flag,
   Paperclip, Plus, Send, Trash2, User, X,
 } from 'lucide-react';
 import { apiFetch } from '../TasksPage';
@@ -9,7 +9,8 @@ import {
   ProjectMember, TaskAttachment, TaskAction, QUICK_EMOJIS,
   STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS,
 } from '../taskTypes';
-import { API_BASE_URL } from '../../../utils/apiBase';
+import { compressImage } from '../../../utils/imageCompression';
+import { mediaService } from '../../../services/mediaService';
 
 type Tab = 'progress' | 'files' | 'comments';
 
@@ -21,16 +22,23 @@ type Props = {
   onDeleted: (id: string) => void;
 };
 
-function Avatar({ name, avatar, size = 24 }: { name: string; avatar: string | null; size?: number }) {
-  if (avatar) return <img src={avatar} alt={name} className="rounded-full object-cover" style={{ width: size, height: size }} />;
+function Avatar({ name, avatar, size = 24 }: { name?: string | null; avatar?: string | null; size?: number }) {
+  const initial = name?.[0]?.toUpperCase() ?? '?';
+  if (avatar) return <img src={avatar} alt={name ?? ''} className="rounded-full object-cover" style={{ width: size, height: size }} />;
   return (
     <div className="flex shrink-0 items-center justify-center rounded-full bg-indigo-600 font-bold text-white" style={{ width: size, height: size, fontSize: size * 0.4 }}>
-      {name[0]?.toUpperCase()}
+      {initial}
     </div>
   );
 }
 
-function tok() { return localStorage.getItem('auth_token') ?? ''; }
+function getCurrentUserId(): string {
+  try {
+    const token = localStorage.getItem('auth_token') ?? '';
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.userId ?? payload.sub ?? '';
+  } catch { return ''; }
+}
 
 export default function TaskDetailPanel({ task: initialTask, projectId, onClose, onUpdated, onDeleted }: Props) {
   const [task, setTask] = useState<Task>(initialTask);
@@ -53,11 +61,25 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [showSupervisorPicker, setShowSupervisorPicker] = useState(false);
+  const [supervisorWarning, setSupervisorWarning] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#6366f1');
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const currentUserId = getCurrentUserId();
+
+  // Close all pickers on outside click
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) return;
+      // Only close pickers if click is outside their trigger areas — handled by the buttons toggling
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const patch = async (updates: Partial<Task>) => {
     const merged = { ...task, ...updates };
@@ -203,25 +225,44 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
     }));
   };
 
-  // Attachments
+  // Attachments — images go through media library, other files stored as base64 DataURL
   const uploadFile = async (file: File) => {
     setUploading(true);
+    setUploadError('');
     try {
-      const form = new FormData();
-      form.append('file', file);
-      const r = await fetch(`${API_BASE_URL}/api/media/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${tok()}` },
-        body: form,
-      });
-      const data = await r.json() as { url?: string };
-      if (!data.url) throw new Error('Upload failed');
+      let url: string;
+      if (file.type.startsWith('image/')) {
+        const compressed = await compressImage(file);
+        const media = await mediaService.upload({
+          url: compressed.url,
+          thumbnail_url: compressed.thumbnail_url,
+          file_name: file.name,
+          original_name: file.name,
+          file_size: compressed.file_size,
+          file_type: compressed.file_type,
+          width: compressed.width,
+          height: compressed.height,
+        });
+        url = media.url;
+      } else {
+        url = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.onerror = () => reject(new Error('Failed to read file'));
+          reader.readAsDataURL(file);
+        });
+      }
       const att = await apiFetch<{ attachment: TaskAttachment }>(`/api/tasks/${task.id}/attachments`, {
         method: 'POST',
-        body: JSON.stringify({ name: file.name, url: data.url, size: file.size, mime_type: file.type }),
+        body: JSON.stringify({ name: file.name, url, size: file.size, mime_type: file.type }),
       });
       setAttachments((p) => [...p, att.attachment]);
-    } finally { setUploading(false); }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
   };
 
   const deleteAttachment = async (id: string) => {
@@ -250,7 +291,7 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
       <div className="flex-1 bg-black/20" onClick={onClose} />
 
       {/* Panel */}
-      <div className="flex h-full w-full max-w-2xl flex-col border-l border-gray-200 bg-white shadow-2xl">
+      <div ref={panelRef} className="flex h-full w-full max-w-2xl flex-col border-l border-gray-200 bg-white shadow-2xl">
 
         {/* Header */}
         <div className="border-b border-gray-100 px-6 py-4">
@@ -515,6 +556,12 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
                     className="flex items-center gap-2 rounded-xl border border-dashed border-gray-300 px-4 py-3 text-[13px] font-medium text-gray-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors w-full">
                     <Plus size={15} /> {uploading ? 'Uploading…' : 'Upload file'}
                   </button>
+                  {uploadError && (
+                    <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-600">
+                      <AlertCircle size={13} /> {uploadError}
+                      <button type="button" onClick={() => setUploadError('')} className="ml-auto"><X size={11} /></button>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -643,11 +690,21 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
                 </button>
                 {showSupervisorPicker && (
                   <div className="absolute left-0 top-10 z-20 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
-                    <button type="button" onClick={() => { setShowSupervisorPicker(false); void patch({ supervisor_id: null }); }}
+                    {supervisorWarning && (
+                      <div className="flex items-center gap-1.5 px-3 py-2 text-[11px] text-amber-600 bg-amber-50 border-b border-amber-100">
+                        <AlertCircle size={11} /> You can't assign yourself as supervisor
+                      </div>
+                    )}
+                    <button type="button" onClick={() => { setShowSupervisorPicker(false); setSupervisorWarning(false); void patch({ supervisor_id: null }); }}
                       className="w-full px-3 py-2 text-left text-[12px] text-gray-400 hover:bg-gray-50">None</button>
                     {members.map((m) => (
-                      <button key={m.id} type="button" onClick={() => { setShowSupervisorPicker(false); void patch({ supervisor_id: m.id }); }}
-                        className="flex w-full items-center gap-2 px-3 py-2 hover:bg-gray-50">
+                      <button key={m.id} type="button" onClick={() => {
+                        if (m.id === currentUserId) { setSupervisorWarning(true); return; }
+                        setSupervisorWarning(false);
+                        setShowSupervisorPicker(false);
+                        void patch({ supervisor_id: m.id });
+                      }}
+                        className={`flex w-full items-center gap-2 px-3 py-2 hover:bg-gray-50 ${m.id === currentUserId ? 'opacity-50' : ''}`}>
                         <Avatar name={m.name} avatar={m.avatar_url} size={18} />
                         <span className="flex-1 truncate text-[12px] text-gray-700">{m.name}</span>
                         {task.supervisor_id === m.id && <Check size={11} className="text-indigo-600" />}

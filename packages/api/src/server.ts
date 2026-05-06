@@ -21764,19 +21764,25 @@ async function logTaskActivity(
 async function checkTaskActions(userId: string, actionType: string) {
   if (!hasDatabase()) return;
   try {
+    // Match tasks where user is either a direct assignee OR the supervisor
     const { rows } = await dbQuery(
-      `SELECT ta.id, ta.current_count, ta.target_count, ta.task_id, t.project_id, t.status
+      `SELECT DISTINCT ta.id, ta.current_count, ta.target_count, ta.task_id, t.project_id, t.status
        FROM task_actions ta
        JOIN tasks t ON t.id = ta.task_id
-       JOIN task_assignees tass ON tass.task_id = t.id AND tass.user_id = $1
-       WHERE ta.action_type = $2 AND ta.current_count < ta.target_count AND t.status != 'done'`,
+       WHERE ta.action_type = $2
+         AND ta.current_count < ta.target_count
+         AND t.status != 'done'
+         AND (
+           EXISTS (SELECT 1 FROM task_assignees tass WHERE tass.task_id = t.id AND tass.user_id = $1)
+           OR t.supervisor_id = $1
+         )`,
       [userId, actionType]
     );
     for (const row of rows) {
       const newCount = row.current_count + 1;
       await dbQuery(`UPDATE task_actions SET current_count = $1 WHERE id = $2`, [newCount, row.id]);
       const { rows: totals } = await dbQuery(
-        `SELECT COALESCE(SUM(target_count),0) AS tgt, COALESCE(SUM(current_count),0) AS cur FROM task_actions WHERE task_id = $1`,
+        `SELECT COALESCE(SUM(target_count),0) AS tgt, COALESCE(SUM(LEAST(current_count, target_count)),0) AS cur FROM task_actions WHERE task_id = $1`,
         [row.task_id]
       );
       if (Number(totals[0].cur) >= Number(totals[0].tgt)) {
@@ -21784,7 +21790,9 @@ async function checkTaskActions(userId: string, actionType: string) {
         void logTaskActivity(row.project_id, userId, 'status_changed', row.task_id, { from: row.status, to: 'done' });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.error('[checkTaskActions] error:', err);
+  }
 }
 
 // GET /api/projects/:projectId/tasks
@@ -22194,12 +22202,14 @@ app.post('/api/tasks/:taskId/comments', async (req: Request, res: Response) => {
   const { content, parent_id } = req.body as { content: string; parent_id?: string };
   if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
   const { rows } = await dbQuery(
-    `INSERT INTO task_comments (task_id, user_id, content, parent_id) VALUES ($1,$2,$3,$4) RETURNING *`,
+    `INSERT INTO task_comments (task_id, user_id, content, parent_id) VALUES ($1,$2,$3,$4)
+     RETURNING *, (SELECT COALESCE(full_name, username, email) FROM users WHERE id=$2) AS author_name,
+                  (SELECT avatar_url FROM users WHERE id=$2) AS author_avatar`,
     [taskId, auth.userId, content.trim(), parent_id || null]
   );
   const { rows: task } = await dbQuery(`SELECT project_id FROM tasks WHERE id=$1`, [taskId]);
-  if (task[0]) await logTaskActivity(task[0].project_id, auth.userId, 'comment_added', taskId, {});
-  return res.json({ comment: rows[0] });
+  if (task?.[0]) await logTaskActivity(task[0].project_id, auth.userId, 'comment_added', taskId, {});
+  return res.json({ comment: { ...rows[0], reactions: [], replies: [] } });
 });
 
 // PUT /api/tasks/:taskId/comments/:commentId

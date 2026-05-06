@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { BarChart2, Clock, Files, LayoutGrid, Users } from 'lucide-react';
+import { BarChart2, Clock, Files, LayoutGrid, Plus, Users } from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { API_BASE_URL } from '../../utils/apiBase';
 import { Task, TaskStatus, TaskLabel, ProjectMember } from './taskTypes';
+import CreateTaskModal from './CreateTaskModal';
 import TaskOverview from './tabs/TaskOverview';
 import TaskBoard from './tabs/TaskBoard';
 import TaskFiles from './tabs/TaskFiles';
@@ -37,6 +38,7 @@ export default function TasksPage({ initialFilter }: Props) {
   const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>(
     (initialFilter as TaskStatus) || 'all'
   );
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const projectId = currentProject?.id ?? '';
   const [projectMembers, setProjectMembers] = useState<{ id: string; name: string; avatar_url: string | null }[]>([]);
@@ -102,6 +104,10 @@ export default function TasksPage({ initialFilter }: Props) {
           </div>
           {currentOrg && <p className="mt-0.5 text-xs text-gray-400">{currentOrg.name}</p>}
         </div>
+        <button type="button" onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-indigo-700 shadow-sm transition-colors">
+          <Plus size={14} /> Create Task
+        </button>
       </div>
 
       {/* Tab bar */}
@@ -140,6 +146,18 @@ export default function TasksPage({ initialFilter }: Props) {
       {activeTab === 'files' && <TaskFiles projectId={projectId} />}
       {activeTab === 'activity' && <TaskActivity projectId={projectId} />}
       {activeTab === 'members' && <TaskMembers projectId={projectId} />}
+
+      {/* Global create task modal */}
+      {showCreateModal && (
+        <CreateTaskModal
+          projectId={projectId}
+          defaultStatus="todo"
+          projectMembers={projectMembers}
+          projectLabels={projectLabels}
+          onCreated={(task) => setTasks((prev) => [...prev, task])}
+          onClose={() => setShowCreateModal(false)}
+        />
+      )}
 
       {/* Task detail slide-over */}
       {selectedTask && (

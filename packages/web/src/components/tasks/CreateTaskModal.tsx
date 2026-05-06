@@ -29,6 +29,9 @@ export default function CreateTaskModal({ projectId, defaultStatus, projectMembe
   const [dueDate, setDueDate] = useState('');
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [labelIds, setLabelIds] = useState<string[]>([]);
+  const [availableLabels, setAvailableLabels] = useState<TaskLabel[]>(projectLabels);
+  const [newLabelName, setNewLabelName] = useState('');
+  const [newLabelColor, setNewLabelColor] = useState('#6366f1');
   const [actions, setActions] = useState<ActionDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -152,23 +155,41 @@ export default function CreateTaskModal({ projectId, defaultStatus, projectMembe
           )}
 
           {/* Labels */}
-          {projectLabels.length > 0 && (
-            <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Labels</label>
-              <div className="flex flex-wrap gap-1.5">
-                {projectLabels.map((l) => {
-                  const on = labelIds.includes(l.id);
-                  return (
-                    <button key={l.id} type="button" onClick={() => toggleLabel(l.id)}
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${on ? 'text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
-                      style={on ? { backgroundColor: l.color, borderColor: l.color } : {}}>
-                      {l.name}
-                    </button>
-                  );
-                })}
-              </div>
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Labels</label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {availableLabels.map((l) => {
+                const on = labelIds.includes(l.id);
+                return (
+                  <button key={l.id} type="button" onClick={() => toggleLabel(l.id)}
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${on ? 'text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                    style={on ? { backgroundColor: l.color, borderColor: l.color } : {}}>
+                    {l.name}
+                  </button>
+                );
+              })}
             </div>
-          )}
+            <div className="flex items-center gap-1.5">
+              <input value={newLabelName} onChange={(e) => setNewLabelName(e.target.value)}
+                placeholder="New label name…"
+                className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              <input type="color" value={newLabelColor} onChange={(e) => setNewLabelColor(e.target.value)}
+                className="h-8 w-8 cursor-pointer rounded-lg border border-gray-200 p-0.5" />
+              <button type="button" disabled={!newLabelName.trim()} onClick={async () => {
+                if (!newLabelName.trim()) return;
+                try {
+                  const d = await apiFetch<{ label: TaskLabel }>(`/api/projects/${projectId}/labels`, {
+                    method: 'POST', body: JSON.stringify({ name: newLabelName.trim(), color: newLabelColor }),
+                  });
+                  setAvailableLabels((p) => [...p, d.label]);
+                  setLabelIds((p) => [...p, d.label.id]);
+                  setNewLabelName('');
+                } catch { /* ignore */ }
+              }} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-indigo-700 disabled:opacity-40">
+                + Add
+              </button>
+            </div>
+          </div>
 
           {/* Actions */}
           <div>

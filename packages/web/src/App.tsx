@@ -48,6 +48,7 @@ import Billing from './pages/Billing';
 import Memory from './pages/Memory';
 import Notifications from './pages/Notifications';
 import TasksPage from './components/tasks/TasksPage';
+import ProjectSettings from './pages/ProjectSettings';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
@@ -78,7 +79,8 @@ type PageType =
   | 'workspace'
   | 'billing'
   | 'pricing'
-  | 'tasks';
+  | 'tasks'
+  | 'project-settings';
 
 type AuthMeResponse = {
   success: boolean;
@@ -111,6 +113,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   workspace: '/workspace',
   billing: '/billing',
   tasks: '/tasks',
+  'project-settings': '/project/settings',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -164,7 +167,6 @@ type AppSidebarProps = {
   handleLogout: () => void;
   onMobileClose?: () => void;
   goTasks: (filter?: string) => void;
-  currentTaskFilter: string;
 };
 
 function AppSidebar({
@@ -177,7 +179,6 @@ function AppSidebar({
   handleLogout,
   onMobileClose,
   goTasks,
-  currentTaskFilter,
 }: AppSidebarProps) {
   const { currentOrg, currentProject, projects, refresh } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -201,6 +202,20 @@ function AppSidebar({
 
   useEffect(() => {
     if (addingProject) newProjectRef.current?.focus();
+  }, [addingProject]);
+
+  // Close add-project input on outside click
+  const addProjectContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!addingProject) return;
+    function handle(e: MouseEvent) {
+      if (addProjectContainerRef.current && !addProjectContainerRef.current.contains(e.target as Node)) {
+        setAddingProject(false);
+        setNewProjectName('');
+      }
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
   }, [addingProject]);
 
   const go = (page: PageType) => {
@@ -331,7 +346,7 @@ function AppSidebar({
 
           {/* Inline new project input */}
           {addingProject && (
-            <div className="ml-4 mr-2 mt-1 mb-1">
+            <div ref={addProjectContainerRef} className="ml-4 mr-2 mt-1 mb-1">
               <div className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-2 py-1.5">
                 <input
                   ref={newProjectRef}
@@ -371,35 +386,20 @@ function AppSidebar({
                 </button>
                 {isExpanded && (
                   <div className="ml-[22px] border-l border-gray-100 pl-3 pb-0.5 flex flex-col">
-                    <button type="button" onClick={() => go('workspace')}
-                      className="flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors">
-                      Overview
-                    </button>
-                    {/* Tasks sub-items */}
-                    {([
-                      { label: 'All Tasks', filter: 'all' },
-                      { label: 'To Do', filter: 'todo' },
-                      { label: 'In Progress', filter: 'in_progress' },
-                      { label: 'Done', filter: 'done' },
-                      { label: 'Need Review', filter: 'in_review' },
-                    ] as const).map(({ label, filter }) => (
-                      <button
-                        key={filter}
-                        type="button"
-                        onClick={() => { goTasks(filter); onMobileClose?.(); }}
-                        className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${
-                          currentPage === 'tasks' && currentTaskFilter === filter
-                            ? 'text-indigo-600 font-semibold'
-                            : 'text-gray-400 hover:text-gray-700'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                    <button type="button" onClick={() => go('workspace')}
-                      className="flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors">
-                      Team
-                    </button>
+                    <a
+                      href={PAGE_PATHS['project-settings']}
+                      onClick={(e) => { e.preventDefault(); go('project-settings'); }}
+                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'project-settings' ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                    >
+                      General
+                    </a>
+                    <a
+                      href={PAGE_PATHS['tasks']}
+                      onClick={(e) => { e.preventDefault(); goTasks('all'); onMobileClose?.(); }}
+                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'tasks' ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                    >
+                      All Tasks
+                    </a>
                   </div>
                 )}
               </div>
@@ -788,6 +788,7 @@ function App() {
       case 'memory': return <Memory />;
       case 'notifications': return <Notifications />;
       case 'tasks': return <TasksPage initialFilter={currentTaskFilter} />;
+      case 'project-settings': return <ProjectSettings />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };
@@ -801,7 +802,6 @@ function App() {
     navigateToPage,
     handleLogout,
     goTasks,
-    currentTaskFilter,
   };
 
   return (
