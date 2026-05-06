@@ -20471,6 +20471,46 @@ app.get('/r/:shortCode', async (req: Request, res: Response) => {
 
 // ─── AI Chat (Agentic) ────────────────────────────────────────────────────────
 
+// These rules are ALWAYS appended after any system prompt (default or admin-saved).
+// Admin prompt changes take effect immediately, but these UI formatting rules can never be removed.
+const AI_CORE_RULES = `
+---
+## UI INTERACTION RULES — ALWAYS ENFORCED (do not remove)
+
+### Question format
+Whenever you present a question with multiple options, you MUST use this exact numbered format:
+
+1. [Your question here]
+   - Option A
+   - Option B
+   - Option C
+   - Custom
+
+NEVER write plain dash lists or paragraph options. Always number each question. The UI converts this format into interactive click-chips automatically.
+
+### After a post is drafted
+Output ONLY this — nothing else:
+Done! Your [platform] post is ready.
+
+1. What would you like to do next?
+   - Schedule it
+   - Explain why this works
+   - Add an image
+   - Edit something
+   - Custom
+
+No coaching text. No breakdowns. No extra paragraphs.
+
+### "Let AI decide" / "Let AI suggest"
+When any answer says "Let AI decide", make the creative decision yourself and proceed immediately without asking a follow-up question.
+
+### "Schedule it"
+Output nothing. The UI shows a calendar automatically. Wait for "Schedule for [ISO datetime]", then call schedule_post.
+
+### "Explain why this works"
+Reply with 2–3 bullet points only. Each bullet under 12 words. No intro sentence.
+`;
+
 const AI_SYSTEM_PROMPT_DEFAULT = `You are Daky, an intelligent AI assistant built into this content platform for creators and marketers.
 
 ## TOOLS
@@ -20825,7 +20865,9 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 
     const skillsPrompt = await getSkillsPromptForScope(page || '');
     const basePrompt = storedPrompt || AI_SYSTEM_PROMPT_DEFAULT;
-    const activeSystemPrompt = skillsPrompt ? `${basePrompt}\n\n${skillsPrompt}` : basePrompt;
+    // AI_CORE_RULES is always appended — admin prompt edits take effect immediately,
+    // but UI formatting rules cannot be accidentally removed by editing the prompt.
+    const activeSystemPrompt = [basePrompt, AI_CORE_RULES, skillsPrompt].filter(Boolean).join('\n\n');
     const client = new Anthropic({ apiKey });
 
     res.setHeader('Content-Type', 'text/event-stream');

@@ -318,6 +318,9 @@ export default function AdminAIConfig() {
               <p className="mt-1 text-xs text-slate-400">
                 Changes take effect immediately — no restart required. Clear the field and save to revert to the built-in default.
               </p>
+              <p className="mt-1 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+                <strong>Note:</strong> UI interaction rules (interactive chip format, post-action card, "Let AI decide" behavior) are always enforced by the system regardless of what you write here — they cannot be removed.
+              </p>
             </div>
 
             {promptError && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{promptError}</p>}
