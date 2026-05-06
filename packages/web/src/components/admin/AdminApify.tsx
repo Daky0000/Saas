@@ -11,6 +11,34 @@ const SUGGESTED_ACTORS = [
   { id: 'apify/facebook-pages-scraper', name: 'Facebook Pages Scraper', description: 'Scrape Facebook business pages and posts', tag: 'Social' },
 ];
 
+const ACTOR_INPUT_TEMPLATES: Record<string, object> = {
+  'apify/website-content-crawler': {
+    startUrls: [{ url: 'https://example.com' }],
+    maxCrawlDepth: 1,
+    maxCrawlPages: 10,
+  },
+  'apify/instagram-scraper': {
+    directUrls: ['https://www.instagram.com/username/'],
+    resultsLimit: 20,
+  },
+  'apify/linkedin-profile-scraper': {
+    profileUrls: ['https://www.linkedin.com/in/username/'],
+  },
+  'apify/twitter-scraper': {
+    searchTerms: ['your keyword here'],
+    maxItems: 20,
+  },
+  'apify/google-search-scraper': {
+    queries: ['your search term'],
+    maxPagesPerQuery: 1,
+    resultsPerPage: 10,
+  },
+  'apify/facebook-pages-scraper': {
+    startUrls: [{ url: 'https://www.facebook.com/pagename' }],
+    maxPosts: 20,
+  },
+};
+
 type Actor = {
   id: string;
   actor_id: string;
@@ -53,6 +81,7 @@ export default function AdminApify() {
   const [apiKey, setApiKey] = useState('');
   const [savingKey, setSavingKey] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [actors, setActors] = useState<Actor[]>([]);
@@ -104,15 +133,23 @@ export default function AdminApify() {
   const saveApiKey = async () => {
     if (!apiKey.trim()) return;
     setSavingKey(true);
+    setSaveError(null);
     try {
-      await fetch(`${API_BASE_URL}/api/admin/platform-configs/apify`, {
+      const r = await fetch(`${API_BASE_URL}/api/admin/platform-configs/apify`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({ config: { apiKey: apiKey.trim() }, enabled: true }),
       });
+      const data = await r.json().catch(() => ({})) as { error?: string; success?: boolean };
+      if (!r.ok) {
+        setSaveError(data.error ?? `Server error ${r.status}`);
+        return;
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
       await checkStatus();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Failed to save API key');
     } finally {
       setSavingKey(false);
     }
@@ -270,6 +307,9 @@ export default function AdminApify() {
             Test
           </button>
         </div>
+        {saveError && (
+          <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{saveError}</p>
+        )}
         <p className="mt-2 text-[11px] text-slate-400">
           Find your API key at <span className="font-semibold text-slate-600">console.apify.com → Settings → Integrations</span>
         </p>
@@ -318,7 +358,12 @@ export default function AdminApify() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => { setRunModalActor(actor); setRunInput('{}'); setRunError(null); }}
+                        onClick={() => {
+                          const template = ACTOR_INPUT_TEMPLATES[actor.actor_id];
+                          setRunModalActor(actor);
+                          setRunInput(template ? JSON.stringify(template, null, 2) : '{}');
+                          setRunError(null);
+                        }}
                         className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white transition-colors hover:bg-indigo-700"
                       >
                         <Play size={11} /> Run
