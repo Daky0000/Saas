@@ -114,9 +114,28 @@ function parseFormFromText(text: string): { intro: string; questions: FormQuesti
     }
   }
   if (cur) blocks.push(cur);
+  // Fallback: catch unnumbered "Did you mean:" / "Which option?" + bullet list pattern
+  if (blocks.length === 0) {
+    let qIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!l.match(/^[-•*\d]/) && (l.endsWith('?') || l.endsWith(':'))) qIdx = i;
+    }
+    if (qIdx >= 0) {
+      const bullets: string[] = [];
+      for (let i = qIdx + 1; i < lines.length; i++) {
+        const bm = lines[i].match(/^[-•*]\s+(.+)$/);
+        if (bm) bullets.push(bm[1].replace(/[?!,]$/, '').trim());
+      }
+      if (bullets.length >= 2) {
+        blocks.push({ header: lines[qIdx].replace(/:$/, '').trim(), bullets });
+      }
+    }
+  }
+
   if (blocks.length === 0) return null;
   // Allow single-block forms only when the block has 3+ clear option bullets
-  if (blocks.length < 2 && blocks[0].bullets.length < 3) return null;
+  if (blocks.length < 2 && blocks[0].bullets.length < 2) return null;
 
   const questions: FormQuestion[] = [];
 
