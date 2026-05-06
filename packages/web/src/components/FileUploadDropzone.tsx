@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, FileText, Film, ImageIcon, Upload, X } from 'lucide-react';
 import { compressImage, formatBytes } from '../utils/imageCompression';
 
@@ -20,6 +20,12 @@ export default function FileUploadDropzone({ onUpload, onClose, multiple = false
   const [uploading, setUploading] = useState(false);
   const [success, setSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!success) return;
+    const t = setTimeout(() => setSuccess(false), 2500);
+    return () => clearTimeout(t);
+  }, [success]);
 
   const processFiles = useCallback(async (rawFiles: File[]) => {
     const toAdd = multiple ? rawFiles : rawFiles.slice(0, 1);

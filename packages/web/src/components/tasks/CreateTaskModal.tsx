@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { Task, TaskStatus, TaskPriority, TaskLabel, ACTION_TYPES } from './taskTypes';
 import { apiFetch } from './TasksPage';
+import { ColorPickerPopover } from '../cards/builder/ColorPicker';
 
 type ActionDraft = { action_type: string; label: string; target_count: number };
 
@@ -173,8 +174,7 @@ export default function CreateTaskModal({ projectId, defaultStatus, projectMembe
               <input value={newLabelName} onChange={(e) => setNewLabelName(e.target.value)}
                 placeholder="New label name…"
                 className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-              <input type="color" value={newLabelColor} onChange={(e) => setNewLabelColor(e.target.value)}
-                className="h-8 w-8 cursor-pointer rounded-lg border border-gray-200 p-0.5" />
+              <ColorPickerPopover value={newLabelColor} onChange={setNewLabelColor} />
               <button type="button" disabled={!newLabelName.trim()} onClick={async () => {
                 if (!newLabelName.trim()) return;
                 try {

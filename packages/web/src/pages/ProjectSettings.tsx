@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Save, Trash2, AlertTriangle } from 'lucide-react';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import { API_BASE_URL } from '../utils/apiBase';
+import { ColorPickerPopover } from '../components/cards/builder/ColorPicker';
 
-const COLORS = [
+const PRESET_COLORS = [
   '#6366f1', '#3b82f6', '#10b981', '#f59e0b',
   '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6',
   '#f97316', '#64748b',
@@ -123,25 +124,21 @@ export default function ProjectSettings() {
         {/* Color */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Project Color</label>
-          <div className="flex flex-wrap gap-2">
-            {COLORS.map((c) => (
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESET_COLORS.map((c) => (
               <button
                 key={c}
                 type="button"
                 disabled={!isAdmin}
                 onClick={() => setColor(c)}
-                className={`h-8 w-8 rounded-full border-2 transition-transform ${color === c ? 'border-gray-900 scale-110' : 'border-transparent hover:scale-110'}`}
+                className={`h-7 w-7 rounded-full border-2 transition-transform ${color === c ? 'border-gray-900 scale-110' : 'border-transparent hover:scale-110'} ${!isAdmin ? 'cursor-not-allowed opacity-50' : ''}`}
                 style={{ background: c }}
               />
             ))}
-            <input
-              type="color"
-              value={color}
-              disabled={!isAdmin}
-              onChange={(e) => setColor(e.target.value)}
-              className="h-8 w-8 cursor-pointer rounded-full border border-gray-200 p-0.5"
-              title="Custom color"
-            />
+            <div className="flex items-center gap-2 ml-1 border-l border-gray-200 pl-3">
+              <ColorPickerPopover value={color} onChange={setColor} disabled={!isAdmin} />
+              <span className="text-[11px] font-mono text-gray-400">{color}</span>
+            </div>
           </div>
         </div>
 

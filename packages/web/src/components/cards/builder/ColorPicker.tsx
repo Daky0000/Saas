@@ -300,3 +300,47 @@ export default function ColorPicker({ value, onChange }: ColorPickerProps) {
     </div>
   );
 }
+
+// ── Floating popover wrapper used by other pages ──────────────────────────────
+
+export function ColorPickerPopover({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (c: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative inline-block">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        className={`h-8 w-8 rounded-full border-2 border-white shadow transition-transform ${
+          open ? 'ring-2 ring-indigo-400 ring-offset-1' : 'ring-1 ring-slate-300'
+        } ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:scale-110'}`}
+        style={{ background: value }}
+        title={value}
+      />
+      {open && (
+        <div className="absolute left-0 z-50 mt-2">
+          <ColorPicker value={value} onChange={onChange} />
+        </div>
+      )}
+    </div>
+  );
+}
