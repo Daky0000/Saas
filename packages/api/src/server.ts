@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import Stripe from 'stripe';
 import express from 'express';
 import type { Request, Response } from 'express';
@@ -3314,16 +3315,17 @@ async function compileAgentSkill(userId: string, agentKey: string): Promise<void
     }
 
     const memText = memoryRows.map((r: any) => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
-    const client = new Anthropic({ apiKey });
-    const resp = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
-      messages: [{
-        role: 'user',
-        content: `You are ${def.name} (${def.role}) on a marketing team. Below is the user's brand/business memory. Write a concise 3-5 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty. Be specific and useful — this will be injected into your system prompt.\n\nUser memory:\n${memText}\n\nSkill brief:`
-      }]
-    });
-    const skill = resp.content[0]?.type === 'text' ? resp.content[0].text.trim() : '';
+    const aiCfgCompile = await getAIConfig();
+    const compileKey = resolveActiveKey(aiCfgCompile);
+    const compileFastModel = aiCfgCompile.provider === 'google'
+      ? (GEMINI_MODELS.includes(aiCfgCompile.model) ? aiCfgCompile.model : 'gemini-2.0-flash')
+      : 'claude-haiku-4-5-20251001';
+    const skill = await callAINonStreaming(
+      aiCfgCompile.provider, compileKey, compileFastModel,
+      `You are ${def.name} (${def.role}) on a marketing team.`,
+      `Below is the user's brand/business memory. Write a concise 3-5 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty. Be specific and useful — this will be injected into your system prompt.\n\nUser memory:\n${memText}\n\nSkill brief:`,
+      512
+    );
     await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [skill, userId, agentKey]);
   } catch { /* non-fatal */ }
 }
@@ -10405,13 +10407,63 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
 
 const AI_CONFIG_PLATFORM = 'ai_assistant';
 
-async function getAIConfig(): Promise<{ model: string; encryptedKey: string | null; systemPrompt: string | null }> {
+// Gemini model names — used for model selection UI + provider-aware calls
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
+// Map from Anthropic model IDs → equivalent Gemini models for background/agent calls
+const ANTHROPIC_TO_GEMINI: Record<string, string> = {
+  'claude-haiku-4-5-20251001': 'gemini-2.0-flash',
+  'claude-sonnet-4-6': 'gemini-1.5-pro',
+  'claude-opus-4-7': 'gemini-2.5-pro',
+};
+
+async function getAIConfig(): Promise<{
+  model: string;
+  provider: 'anthropic' | 'google';
+  encryptedKey: string | null;
+  googleEncryptedKey: string | null;
+  systemPrompt: string | null;
+}> {
   const cfg = await getPlatformConfig(AI_CONFIG_PLATFORM);
   return {
     model: String(cfg.model || 'claude-haiku-4-5-20251001'),
+    provider: (cfg.provider as 'anthropic' | 'google') || 'anthropic',
     encryptedKey: cfg.apiKeyEncrypted ? String(cfg.apiKeyEncrypted) : null,
+    googleEncryptedKey: cfg.googleApiKeyEncrypted ? String(cfg.googleApiKeyEncrypted) : null,
     systemPrompt: cfg.systemPrompt ? String(cfg.systemPrompt) : null,
   };
+}
+
+function resolveActiveKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null }): string {
+  if (config.provider === 'google') {
+    return (config.googleEncryptedKey ? decryptAIKey(config.googleEncryptedKey) : null) || process.env.GOOGLE_AI_API_KEY || '';
+  }
+  return (config.encryptedKey ? decryptAIKey(config.encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+}
+
+async function callAINonStreaming(
+  provider: 'anthropic' | 'google',
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens = 400,
+): Promise<string> {
+  if (provider === 'google') {
+    const effectiveModel = GEMINI_MODELS.includes(model) ? model : (ANTHROPIC_TO_GEMINI[model] ?? 'gemini-2.0-flash');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: systemPrompt });
+    const result = await gModel.generateContent(userMessage);
+    return result.response.text();
+  } else {
+    const client = new Anthropic({ apiKey });
+    const resp = await client.messages.create({
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    return resp.content[0]?.type === 'text' ? resp.content[0].text : '';
+  }
 }
 
 function decryptAIKey(encryptedKey: string): string {
@@ -10428,14 +10480,18 @@ app.get('/api/admin/ai-config', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { model, encryptedKey, systemPrompt } = await getAIConfig();
-    const rawKey = encryptedKey ? decryptAIKey(encryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
+    const { model, provider, encryptedKey, googleEncryptedKey, systemPrompt } = await getAIConfig();
+    const rawAnthropicKey = encryptedKey ? decryptAIKey(encryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
+    const rawGoogleKey = googleEncryptedKey ? decryptAIKey(googleEncryptedKey) : (process.env.GOOGLE_AI_API_KEY || '');
+    const activeKey = provider === 'google' ? rawGoogleKey : rawAnthropicKey;
     return res.json({
       success: true,
       config: {
         model,
-        apiKeyMasked: rawKey ? maskKey(rawKey) : '',
-        enabled: Boolean(rawKey),
+        provider,
+        apiKeyMasked: rawAnthropicKey ? maskKey(rawAnthropicKey) : '',
+        googleApiKeyMasked: rawGoogleKey ? maskKey(rawGoogleKey) : '',
+        enabled: Boolean(activeKey),
         systemPrompt: systemPrompt || null,
         defaultSystemPrompt: AI_SYSTEM_PROMPT_DEFAULT,
       },
@@ -10451,24 +10507,31 @@ app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { apiKey, model, systemPrompt } = req.body as { apiKey?: string; model?: string; systemPrompt?: string };
+    const { apiKey, googleApiKey, model, provider, systemPrompt } = req.body as {
+      apiKey?: string; googleApiKey?: string; model?: string; provider?: string; systemPrompt?: string;
+    };
 
-    const { encryptedKey: existingEncrypted, systemPrompt: existingSystemPrompt } = await getAIConfig();
-    const newModel = String(model || 'claude-haiku-4-5-20251001').trim();
+    const existing = await getAIConfig();
+    const newModel = String(model || existing.model).trim();
+    const newProvider = (provider === 'google' || provider === 'anthropic') ? provider : existing.provider;
 
-    // Only re-encrypt if a new real key was provided (not the masked placeholder)
-    let newEncryptedKey = existingEncrypted;
+    let newEncryptedKey = existing.encryptedKey;
     if (apiKey && !String(apiKey).startsWith('••')) {
       newEncryptedKey = encryptIntegrationSecret(String(apiKey).trim());
     }
 
-    // systemPrompt: update only when key is present in body; empty string = clear custom prompt
+    let newGoogleEncryptedKey = existing.googleEncryptedKey;
+    if (googleApiKey && !String(googleApiKey).startsWith('••')) {
+      newGoogleEncryptedKey = encryptIntegrationSecret(String(googleApiKey).trim());
+    }
+
     const finalSystemPrompt = 'systemPrompt' in req.body
       ? (systemPrompt ? String(systemPrompt).trim() : null)
-      : existingSystemPrompt;
+      : existing.systemPrompt;
 
-    const configObj: Record<string, any> = { model: newModel };
+    const configObj: Record<string, any> = { model: newModel, provider: newProvider };
     if (newEncryptedKey) configObj.apiKeyEncrypted = newEncryptedKey;
+    if (newGoogleEncryptedKey) configObj.googleApiKeyEncrypted = newGoogleEncryptedKey;
     if (finalSystemPrompt) configObj.systemPrompt = finalSystemPrompt;
 
     if (hasDatabase()) {
@@ -10491,13 +10554,17 @@ app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
       });
     }
 
-    const rawKey = newEncryptedKey ? decryptAIKey(newEncryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
+    const rawAnthropicKey = newEncryptedKey ? decryptAIKey(newEncryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
+    const rawGoogleKey = newGoogleEncryptedKey ? decryptAIKey(newGoogleEncryptedKey) : (process.env.GOOGLE_AI_API_KEY || '');
+    const activeKey = newProvider === 'google' ? rawGoogleKey : rawAnthropicKey;
     return res.json({
       success: true,
       config: {
         model: newModel,
-        apiKeyMasked: rawKey ? maskKey(rawKey) : '',
-        enabled: Boolean(rawKey),
+        provider: newProvider,
+        apiKeyMasked: rawAnthropicKey ? maskKey(rawAnthropicKey) : '',
+        googleApiKeyMasked: rawGoogleKey ? maskKey(rawGoogleKey) : '',
+        enabled: Boolean(activeKey),
         systemPrompt: finalSystemPrompt || null,
         defaultSystemPrompt: AI_SYSTEM_PROMPT_DEFAULT,
       },
@@ -10513,17 +10580,12 @@ app.post('/api/admin/ai-config/test', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { model, encryptedKey } = await getAIConfig();
-    const rawKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
-    if (!rawKey) return res.status(400).json({ success: false, message: 'No API key configured' });
+    const aiCfg = await getAIConfig();
+    const rawKey = resolveActiveKey(aiCfg);
+    if (!rawKey) return res.status(400).json({ success: false, message: 'No API key configured for the active provider' });
 
-    const client = new Anthropic({ apiKey: rawKey });
-    await client.messages.create({
-      model,
-      max_tokens: 16,
-      messages: [{ role: 'user', content: 'Reply with just: ok' }],
-    });
-    return res.json({ success: true, message: `Connected — model ${model} is responding` });
+    const reply = await callAINonStreaming(aiCfg.provider, rawKey, aiCfg.model, 'You are a test assistant.', 'Reply with just: ok', 16);
+    return res.json({ success: true, message: `Connected — ${aiCfg.provider === 'google' ? 'Google Gemini' : 'Anthropic'} model ${aiCfg.model} is responding` });
   } catch (err: any) {
     const msg = err?.message || 'Connection failed';
     return res.status(400).json({ success: false, message: msg });
@@ -21010,10 +21072,10 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'messages array is required' });
     }
 
-    const { model: cfgModel, encryptedKey, systemPrompt: storedPrompt } = await getAIConfig();
-    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    const aiCfg = await getAIConfig();
+    const apiKey = resolveActiveKey(aiCfg);
     if (!apiKey) {
-      return res.status(503).json({ success: false, error: 'AI service not configured — add your Anthropic API key in Admin → AI Assistant' });
+      return res.status(503).json({ success: false, error: 'AI service not configured — add your API key in Admin → AI Assistant' });
     }
 
     const skillsPrompt = await getSkillsPromptForScope(page || '');
@@ -21042,17 +21104,41 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       } catch { /* non-fatal */ }
     }
 
-    const basePrompt = (storedPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', userMemoryBlock);
-    // AI_CORE_RULES is always appended — admin prompt edits take effect immediately,
-    // but UI formatting rules cannot be accidentally removed by editing the prompt.
+    const basePrompt = (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', userMemoryBlock);
     const activeSystemPrompt = [basePrompt, AI_CORE_RULES, skillsPrompt].filter(Boolean).join('\n\n');
-    const client = new Anthropic({ apiKey });
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
     const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    // ── Google Gemini path — direct streaming, no tool use ────────────────────
+    if (aiCfg.provider === 'google') {
+      const effectiveModel = GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : (ANTHROPIC_TO_GEMINI[aiCfg.model] ?? 'gemini-2.0-flash');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: activeSystemPrompt });
+
+      const allMessages = messages.slice(-20).map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: String(m.content || '').slice(0, 4000) }],
+      }));
+      const history = allMessages.slice(0, -1);
+      const lastPart = allMessages[allMessages.length - 1]?.parts[0]?.text ?? '';
+
+      const chat = gModel.startChat({ history });
+      const stream = await chat.sendMessageStream(lastPart);
+      for await (const chunk of stream.stream) {
+        const text = chunk.text();
+        if (text) send({ type: 'text', text });
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    // ── Anthropic path — full agentic loop with tools ─────────────────────────
+    const client = new Anthropic({ apiKey });
 
     // Build conversation — keep last 20, serialize assistant tool-use turns as text
     const conversationMessages: Anthropic.MessageParam[] = messages.slice(-20).map((m) => ({
@@ -21067,7 +21153,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 
       // Non-streaming call for tool detection
       const response = await client.messages.create({
-        model: cfgModel,
+        model: aiCfg.model,
         max_tokens: 2048,
         system: activeSystemPrompt,
         tools: isLastIteration ? [] : AI_TOOLS,
@@ -21107,7 +21193,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       } else {
         // Final response — stream it
         const finalStream = await client.messages.stream({
-          model: cfgModel,
+          model: aiCfg.model,
           max_tokens: 1024,
           system: activeSystemPrompt,
           messages: loopMessages,
@@ -21148,17 +21234,16 @@ app.post('/api/ai/orchestrate', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'messages required' });
     }
 
-    const { encryptedKey } = await getAIConfig();
-    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    const aiCfgOrch = await getAIConfig();
+    const apiKey = resolveActiveKey(aiCfgOrch);
     if (!apiKey) return res.json({ type: 'direct' });
 
     const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+    const orchFastModel = aiCfgOrch.provider === 'google'
+      ? (GEMINI_MODELS.includes(aiCfgOrch.model) ? aiCfgOrch.model : 'gemini-2.0-flash')
+      : 'claude-haiku-4-5-20251001';
 
-    const client = new Anthropic({ apiKey });
-    const resp = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 400,
-      system: `You are a routing assistant for a marketing AI team. Decide if a user message requires a coordinated multi-agent response from specialist agents (Nova=creative director, Sage=strategy analyst, Aria=analytics, Flux=automation) or can be handled directly by the main assistant.
+    const orchSystemPrompt = `You are a routing assistant for a marketing AI team. Decide if a user message requires a coordinated multi-agent response from specialist agents (Nova=creative director, Sage=strategy analyst, Aria=analytics, Flux=automation) or can be handled directly by the main assistant.
 
 Return ONLY valid JSON. No markdown fences, no explanation.
 
@@ -21169,11 +21254,9 @@ If multi-agent (complex campaign, brand strategy, platform automation, multi-dom
 Rules:
 - Include only genuinely relevant agents (2-4 max)
 - Simple post requests, quick questions, single-domain tasks → direct
-- Brand + strategy + analytics + automation tasks → plan`,
-      messages: [{ role: 'user', content: `User request: "${lastUserMsg.slice(0, 600)}"` }]
-    });
+- Brand + strategy + analytics + automation tasks → plan`;
 
-    const raw = resp.content[0]?.type === 'text' ? resp.content[0].text.trim() : '{"type":"direct"}';
+    const raw = await callAINonStreaming(aiCfgOrch.provider, apiKey, orchFastModel, orchSystemPrompt, `User request: "${lastUserMsg.slice(0, 600)}"`, 400);
     try {
       const parsed = JSON.parse(raw);
       if (parsed.type === 'plan' && Array.isArray(parsed.agents) && parsed.agents.length >= 2) {
@@ -21201,8 +21284,8 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'messages and plan required' });
     }
 
-    const { model: cfgModel, encryptedKey } = await getAIConfig();
-    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    const aiCfg = await getAIConfig();
+    const apiKey = resolveActiveKey(aiCfg);
     if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -21210,7 +21293,6 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
     res.setHeader('Connection', 'keep-alive');
     const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-    const client = new Anthropic({ apiKey });
     const enabledAgents = plan.agents.filter((a) => a.enabled);
     const conversationHistory = messages.slice(-10).map((m) => ({
       role: m.role as 'user' | 'assistant',
@@ -21242,6 +21324,10 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
     send({ type: 'agents_start', count: enabledAgents.length });
     const agentResults: Array<{ key: string; name: string; icon: string; color: string; task: string; analysis: string }> = [];
 
+    const agentFastModel = aiCfg.provider === 'google'
+      ? (GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : 'gemini-2.0-flash')
+      : 'claude-haiku-4-5-20251001';
+
     await Promise.all(enabledAgents.map(async (agent) => {
       send({ type: 'agent_start', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color });
       try {
@@ -21250,13 +21336,7 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
         const skill = skillMap[agent.key] || '';
         const agentSystem = `${basePrompt}${skill ? `\n\nWhat you know about this user:\n${skill}` : ''}\n\nYour specific task: ${agent.task}\n\nGive a concise expert analysis (3-5 sentences or a brief bullet list). No intros or sign-offs. Pure insight.`;
 
-        const agentResp = await client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 350,
-          system: agentSystem,
-          messages: [{ role: 'user', content: lastUserMsg.slice(0, 1000) }]
-        });
-        const analysis = agentResp.content[0]?.type === 'text' ? agentResp.content[0].text.trim() : '';
+        const analysis = await callAINonStreaming(aiCfg.provider, apiKey, agentFastModel, agentSystem, lastUserMsg.slice(0, 1000), 350);
         agentResults.push({ key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, task: agent.task, analysis });
         send({ type: 'agent_done', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, analysis });
       } catch {
@@ -21276,24 +21356,33 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
       .join('\n\n');
 
     const synthSystem = `${AI_SYSTEM_PROMPT_DEFAULT.replace('{USER_MEMORY}', userMemBlock)}\n\n${AI_CORE_RULES}`;
-    const synthMessages: Anthropic.MessageParam[] = [
-      ...conversationHistory.slice(0, -1),
-      {
-        role: 'user',
-        content: `${lastUserMsg}\n\n---\nYour specialist team has analyzed this:\n\n${teamContext}\n\nSynthesize their insights into one unified, decisive recommendation. Be the orchestrator — build on their analyses, don't just repeat them.`
+    const synthPrompt = `${lastUserMsg}\n\n---\nYour specialist team has analyzed this:\n\n${teamContext}\n\nSynthesize their insights into one unified, decisive recommendation. Be the orchestrator — build on their analyses, don't just repeat them.`;
+
+    if (aiCfg.provider === 'google') {
+      const effectiveModel = GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : (ANTHROPIC_TO_GEMINI[aiCfg.model] ?? 'gemini-1.5-pro');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: synthSystem });
+      const gStream = await gModel.generateContentStream(synthPrompt);
+      for await (const chunk of gStream.stream) {
+        const text = chunk.text();
+        if (text) send({ type: 'text', text });
       }
-    ];
-
-    const finalStream = await client.messages.stream({
-      model: cfgModel,
-      max_tokens: 1024,
-      system: synthSystem,
-      messages: synthMessages,
-    });
-
-    for await (const chunk of finalStream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-        send({ type: 'text', text: chunk.delta.text });
+    } else {
+      const anthropicClient = new Anthropic({ apiKey });
+      const synthMessages: Anthropic.MessageParam[] = [
+        ...conversationHistory.slice(0, -1),
+        { role: 'user', content: synthPrompt }
+      ];
+      const finalStream = await anthropicClient.messages.stream({
+        model: aiCfg.model,
+        max_tokens: 1024,
+        system: synthSystem,
+        messages: synthMessages,
+      });
+      for await (const chunk of finalStream) {
+        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+          send({ type: 'text', text: chunk.delta.text });
+        }
       }
     }
 
