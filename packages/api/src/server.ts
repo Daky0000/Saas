@@ -5007,7 +5007,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   if (platformId === 'twitter' && accessTokenRaw && (!accountId || !accountName || !profileImage)) {
     try {
       const meResp = await axios.get(X_USERS_ME_API, {
-        params: { 'user.fields': 'id,name,username,profile_image_url' },
+        params: { 'user.fields': 'id,name,username,profile_image_url,description,public_metrics' },
         headers: { Authorization: `Bearer ${accessTokenRaw}` },
         validateStatus: () => true,
         timeout: 10000,
@@ -5023,6 +5023,10 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
           ...(accountName ? { name: accountName } : {}),
           ...(meData?.username ? { username: String(meData.username) } : {}),
           ...(profileImage ? { avatar_url: profileImage } : {}),
+          ...(meData?.description ? { bio: String(meData.description) } : {}),
+          ...(meData?.public_metrics?.followers_count != null
+            ? { followers_count: Number(meData.public_metrics.followers_count) }
+            : {}),
         };
       }
     } catch {
@@ -5044,6 +5048,13 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
   const platformDbId = platRow?.rows?.[0]?.id ?? null;
   const accessTokenEncrypted = accessTokenRaw ? encryptIntegrationSecret(accessTokenRaw) : null;
   const refreshTokenEncrypted = refreshTokenRaw ? encryptIntegrationSecret(refreshTokenRaw) : null;
+
+  // Detect first-time connection before the upsert
+  const existingConn = await dbQuery(
+    `SELECT id FROM social_accounts WHERE user_id = $1 AND platform = $2 AND account_type = 'profile'`,
+    [userId, platformId],
+  ).catch(() => ({ rows: [] } as any));
+  const isFirstConnect = (existingConn?.rows?.length ?? 0) === 0;
 
   await dbQuery(
     `
@@ -5106,6 +5117,67 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
     status: 'success',
     response: { platform: platformId, accountId, accountName },
   });
+
+  if (isFirstConnect) {
+    seedSocialMemory(userId, platformId, {
+      handle: String(handle),
+      accountName: accountName || null,
+      followers: Number(normalizedTokenData?.followers_count ?? followers),
+      bio: normalizedTokenData?.bio ? String(normalizedTokenData.bio) : undefined,
+    }).catch(() => undefined);
+  }
+}
+
+async function seedSocialMemory(
+  userId: string,
+  platform: string,
+  profile: { handle: string; accountName: string | null; followers: number; bio?: string },
+): Promise<void> {
+  const platformLabel = platform.charAt(0).toUpperCase() + platform.slice(1);
+  const handleDisplay = profile.handle && !profile.handle.includes('_account')
+    ? `@${profile.handle}` : profile.accountName || platform;
+
+  let content = '';
+  try {
+    const cfg = await getAIConfig();
+    const apiKey = resolveActiveKey(cfg);
+    if (apiKey) {
+      const fastModel = cfg.provider === 'google'
+        ? (GEMINI_MODELS.includes(cfg.model) ? cfg.model : 'gemini-2.0-flash')
+        : 'claude-haiku-4-5-20251001';
+      content = await callAINonStreaming(
+        cfg.provider, apiKey, fastModel,
+        'You write concise memory entries for a marketing AI assistant. Be factual and useful. 2-3 sentences max.',
+        `Write a memory entry about this user's newly connected social account:\n\nPlatform: ${platformLabel}\nHandle: ${handleDisplay}\nDisplay name: ${profile.accountName || ''}\nFollowers: ${profile.followers}\n${profile.bio ? `Bio: "${profile.bio}"` : 'No bio available.'}\n\nInclude the platform, handle, audience size, and a note about what this means for their content strategy.`,
+        200,
+      );
+    }
+  } catch { /* fall through to plain text */ }
+
+  if (!content) {
+    content = `${platformLabel} account ${handleDisplay}${profile.accountName ? ` (${profile.accountName})` : ''} — ${profile.followers.toLocaleString()} followers.${profile.bio ? ` Bio: "${profile.bio}"` : ''}`;
+  }
+
+  try {
+    const existing = await dbQuery(
+      `SELECT id FROM user_memories WHERE user_id = $1 AND source = $2`,
+      [userId, `social:${platform}`],
+    );
+    if (existing.rows.length > 0) {
+      await dbQuery(
+        `UPDATE user_memories SET title = $1, content = $2, updated_at = NOW() WHERE id = $3`,
+        [`${platformLabel} social account`, content, existing.rows[0].id],
+      );
+    } else {
+      await dbQuery(
+        `INSERT INTO user_memories (user_id, category, title, content, source) VALUES ($1, $2, $3, $4, $5)`,
+        [userId, 'social', `${platformLabel} social account`, content, `social:${platform}`],
+      );
+    }
+    await triggerAgentCompilation(userId).catch(() => undefined);
+  } catch (e) {
+    console.error('seedSocialMemory DB error:', e);
+  }
 }
 
 async function getEnabledPlatformSlugs(): Promise<string[]> {
