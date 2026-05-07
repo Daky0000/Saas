@@ -1796,6 +1796,22 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS user_memories_user_id_idx ON user_memories (user_id);`).catch(() => undefined);
 
+  // ── Notifications ─────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type        TEXT NOT NULL DEFAULT 'info',
+      title       TEXT NOT NULL,
+      message     TEXT NOT NULL DEFAULT '',
+      data        JSONB NOT NULL DEFAULT '{}',
+      is_read     BOOLEAN NOT NULL DEFAULT false,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS notifications_user_id_idx ON notifications (user_id, created_at DESC);`).catch(() => undefined);
+  // ── End Notifications ─────────────────────────────────────────────────────────
+
   // ── Apify ─────────────────────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS apify_actors (
@@ -3390,6 +3406,11 @@ app.post('/api/auth/register', validateBody(authRegisterSchema), async (req: Req
 
     const user = await createUser(name, username, email, password);
     provisionUserAgents(user.id).catch(() => undefined);
+    createNotification(user.id, 'welcome',
+      'Welcome to Dakyworld Hub!',
+      'Your account is ready. Connect a social account and start chatting with Daky.',
+      {},
+    ).catch(() => undefined);
     const token = signToken(user.id, user.email);
 
     return res.json({
@@ -5118,6 +5139,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
     response: { platform: platformId, accountId, accountName },
   });
 
+  const platformLabel = platformId.charAt(0).toUpperCase() + platformId.slice(1);
   if (isFirstConnect) {
     seedSocialMemory(userId, platformId, {
       handle: String(handle),
@@ -5125,6 +5147,17 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
       followers: Number(normalizedTokenData?.followers_count ?? followers),
       bio: normalizedTokenData?.bio ? String(normalizedTokenData.bio) : undefined,
     }).catch(() => undefined);
+    createNotification(userId, 'social_connected',
+      `${platformLabel} connected`,
+      `Your ${platformLabel} account (@${handle}) has been connected successfully.`,
+      { platform: platformId, handle: String(handle) },
+    ).catch(() => undefined);
+  } else {
+    createNotification(userId, 'social_reconnected',
+      `${platformLabel} reconnected`,
+      `Your ${platformLabel} account (@${handle}) token has been refreshed.`,
+      { platform: platformId, handle: String(handle) },
+    ).catch(() => undefined);
   }
 }
 
@@ -5177,6 +5210,24 @@ async function seedSocialMemory(
     await triggerAgentCompilation(userId).catch(() => undefined);
   } catch (e) {
     console.error('seedSocialMemory DB error:', e);
+  }
+}
+
+async function createNotification(
+  userId: string,
+  type: string,
+  title: string,
+  message: string,
+  data: Record<string, any> = {},
+): Promise<void> {
+  if (!pool) return;
+  try {
+    await dbQuery(
+      `INSERT INTO notifications (user_id, type, title, message, data) VALUES ($1,$2,$3,$4,$5)`,
+      [userId, type, title, message, data],
+    );
+  } catch (e) {
+    console.error('createNotification error:', e);
   }
 }
 
@@ -21097,6 +21148,11 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
         [id, userId, title, slug, content, excerpt]
       );
       await preselectPlatformsForPost(id, userId, platforms);
+      createNotification(userId, 'draft_created',
+        'Draft created',
+        `"${title}" has been saved as a draft.`,
+        { postId: id },
+      ).catch(() => undefined);
       return { success: true, action: 'created_draft', post: rows[0] };
     }
     case 'schedule_post': {
@@ -21114,6 +21170,12 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
         [id, userId, title, slug, content, excerpt, scheduled_at]
       );
       await preselectPlatformsForPost(id, userId, platforms);
+      const schedDate = scheduled_at ? new Date(scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      createNotification(userId, 'post_scheduled',
+        'Post scheduled',
+        `"${title}" is scheduled for ${schedDate}.`,
+        { postId: id, scheduled_at },
+      ).catch(() => undefined);
       return { success: true, action: 'scheduled_post', post: rows[0] };
     }
     case 'get_recent_posts': {
@@ -21475,6 +21537,12 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
     }
 
     send({ type: 'done' });
+    const agentNames = enabledAgents.map((a: any) => a.name).join(', ');
+    createNotification(auth.userId, 'plan_executed',
+      'Agent team finished',
+      `Your marketing team (${agentNames}) completed their analysis.`,
+      { agentCount: enabledAgents.length },
+    ).catch(() => undefined);
     res.end();
   } catch (e: any) {
     if (!res.headersSent) return res.status(500).json({ success: false, error: e?.message || 'Execute plan failed' });
@@ -21682,6 +21750,11 @@ app.post('/api/memory', async (req: Request, res: Response) => {
       [auth.userId, category.trim(), title.trim(), content.trim(), source]
     );
     triggerAgentCompilation(auth.userId).catch(() => undefined);
+    createNotification(auth.userId, 'memory_saved',
+      'Memory saved',
+      `"${title.trim()}" added to your personalization memory.`,
+      { memoryId: row.rows[0]?.id },
+    ).catch(() => undefined);
     return res.json({ success: true, memory: row.rows[0] });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -22337,6 +22410,11 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
       );
     }
 
+    createNotification(admin.userId, 'skill_compiled',
+      'Skill compiled',
+      `"${skillName}" was built from ${rows.length} item(s) in "${category}" and is now active.`,
+      { category, itemCount: rows.length },
+    ).catch(() => undefined);
     return res.json({ success: true, skillName, itemCount: rows.length });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -22344,6 +22422,77 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
 });
 
 // ── End Daky Learn Routes ─────────────────────────────────────────────────────
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+// GET /api/notifications — list recent notifications with unread count
+app.get('/api/notifications', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  if (!pool) return res.json({ success: true, notifications: [], unreadCount: 0 });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT id, type, title, message, data, is_read, created_at
+       FROM notifications WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 50`,
+      [auth.userId],
+    );
+    const unreadCount = rows.filter((n: any) => !n.is_read).length;
+    return res.json({ success: true, notifications: rows, unreadCount });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PATCH /api/notifications/read-all — mark all as read
+app.patch('/api/notifications/read-all', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  try {
+    await dbQuery(`UPDATE notifications SET is_read = true WHERE user_id = $1`, [auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PATCH /api/notifications/:id/read — mark one as read
+app.patch('/api/notifications/:id/read', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  try {
+    await dbQuery(`UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2`, [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/notifications/:id — dismiss one
+app.delete('/api/notifications/:id', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  try {
+    await dbQuery(`DELETE FROM notifications WHERE id = $1 AND user_id = $2`, [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/notifications — clear all
+app.delete('/api/notifications', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  try {
+    await dbQuery(`DELETE FROM notifications WHERE user_id = $1`, [auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End Notifications ─────────────────────────────────────────────────────────
 
 // GET /api/admin/billing/metrics — MRR, ARR, customer counts
 app.get('/api/admin/billing/metrics', async (req: Request, res: Response) => {

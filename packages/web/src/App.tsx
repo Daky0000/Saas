@@ -22,6 +22,7 @@ import {
   Settings,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
+import NotificationBell from './components/NotificationBell';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
 import Admin from './pages/Admin';
@@ -438,6 +439,12 @@ function AppSidebar({
         )}
       </nav>
 
+      {/* ── Notifications ── */}
+      <div className="border-t border-gray-100 px-3 py-2 flex items-center justify-between">
+        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Notifications</span>
+        <NotificationBell />
+      </div>
+
       {/* ── Settings ── */}
       <div className="border-t border-gray-100">
         <button type="button" onClick={() => go('profile')} className={cls(currentPage === 'profile')}>
@@ -838,7 +845,7 @@ function App() {
               <Menu size={20} />
             </button>
             <span className="text-sm font-bold text-gray-900">Dakyworld Hub</span>
-            <div className="w-8" />
+            <NotificationBell />
           </header>
 
           <main className="flex-1 overflow-auto p-5 md:p-7">{renderPage()}</main>
