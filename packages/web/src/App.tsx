@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import NotificationBell from './components/NotificationBell';
+import OnboardingWizard, { useOnboarding } from './components/OnboardingWizard';
+import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
 import Admin from './pages/Admin';
@@ -389,10 +391,17 @@ function AppSidebar({
                   <div className="ml-[22px] border-l border-gray-100 pl-3 pb-0.5 flex flex-col">
                     <a
                       href={PAGE_PATHS['project-settings']}
-                      onClick={(e) => { e.preventDefault(); go('project-settings'); }}
-                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'project-settings' ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                      onClick={(e) => { e.preventDefault(); sessionStorage.removeItem('proj_settings_tab'); go('project-settings'); }}
+                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'project-settings' && typeof window !== 'undefined' && !window.location.search.includes('tab=team') ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
                     >
                       General
+                    </a>
+                    <a
+                      href={PAGE_PATHS['project-settings']}
+                      onClick={(e) => { e.preventDefault(); sessionStorage.setItem('proj_settings_tab', 'team'); go('project-settings'); onMobileClose?.(); }}
+                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'project-settings' && typeof window !== 'undefined' && window.location.search.includes('tab=team') ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                    >
+                      Team
                     </a>
                     <a
                       href={PAGE_PATHS['tasks']}
@@ -811,6 +820,9 @@ function App() {
     goTasks,
   };
 
+  const showOnboarding = useOnboarding();
+  const guide = PAGE_GUIDES[currentPage];
+
   return (
     <WorkspaceProvider>
     <TemplateEditorProvider>
@@ -854,6 +866,15 @@ function App() {
 
       <AdvancedTemplateCardModal />
       <ChatWidget />
+
+      {/* Per-page quick guide */}
+      {guide && <PageTour key={currentPage} steps={guide.steps} pageTitle={guide.title} />}
+
+      {/* First-time onboarding wizard */}
+      {showOnboarding && (
+        <OnboardingWizard onNavigate={(page) => navigateToPage(page as any)} />
+      )}
+
     </TemplateEditorProvider>
     </WorkspaceProvider>
   );
