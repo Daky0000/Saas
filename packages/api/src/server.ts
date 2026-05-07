@@ -1839,6 +1839,67 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`CREATE INDEX IF NOT EXISTS learned_items_category_idx ON learned_items (category);`).catch(() => undefined);
   // ── End Daky Learn ────────────────────────────────────────────────────────────
 
+  // ── Agent System ──────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_templates (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_key       TEXT NOT NULL UNIQUE,
+      name            TEXT NOT NULL,
+      role            TEXT NOT NULL,
+      icon            TEXT NOT NULL DEFAULT '✦',
+      color           TEXT NOT NULL DEFAULT '#5B6CF9',
+      base_prompt     TEXT NOT NULL DEFAULT '',
+      memory_keywords TEXT[] NOT NULL DEFAULT '{}',
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_agents (
+      id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent_key        TEXT NOT NULL,
+      compiled_skill   TEXT NOT NULL DEFAULT '',
+      last_compiled_at TIMESTAMPTZ,
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, agent_key)
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_activity (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent_key     TEXT NOT NULL,
+      agent_name    TEXT NOT NULL DEFAULT '',
+      activity_type TEXT NOT NULL DEFAULT 'report',
+      title         TEXT NOT NULL,
+      content       TEXT NOT NULL,
+      is_read       BOOLEAN NOT NULL DEFAULT false,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_activity_user_idx ON agent_activity (user_id, created_at DESC);`).catch(() => undefined);
+  // Seed default agent templates (skip if already exist)
+  await pool.query(`
+    INSERT INTO agent_templates (agent_key, name, role, icon, color, base_prompt, memory_keywords) VALUES
+    ('daky', 'Daky', 'Orchestrator & Strategist', '✦', '#5B6CF9',
+     'You are Daky, the orchestrating AI strategist of the Dakyworld Hub marketing team. You have 55 years of expertise across all marketing disciplines. You synthesize insights from your specialist team into clear, actionable guidance. When given team analyses, weave them into a unified, decisive recommendation.',
+     '{}'),
+    ('nova', 'Nova', 'Creative Director', '◉', '#EC4899',
+     'You are Nova, the Creative Director of the Dakyworld Hub marketing team. You specialize in brand voice, visual direction, content ideation, and audience engagement. You see every piece of content as an opportunity to reinforce identity and create emotional connection.',
+     '{brand,voice,visual,content,product,audience}'),
+    ('sage', 'Sage', 'Strategy Analyst', '◈', '#10B981',
+     'You are Sage, the Strategy Analyst of the Dakyworld Hub marketing team. You specialize in market positioning, competitive analysis, campaign strategy, and goal-setting. You translate business goals into winning marketing strategies.',
+     '{goal,competit,strategy,industry,market,target,campaign}'),
+    ('aria', 'Aria', 'Analytics & Performance', '⊕', '#F59E0B',
+     'You are Aria, the Analytics & Performance specialist of the Dakyworld Hub marketing team. You specialize in KPI tracking, performance insights, business metrics, and ROI analysis. Every recommendation you make is grounded in data.',
+     '{analytic,performance,kpi,metric,business}'),
+    ('flux', 'Flux', 'Automation & Workflows', '⟳', '#8B5CF6',
+     'You are Flux, the Automation & Workflow specialist of the Dakyworld Hub marketing team. You specialize in platform integrations, scheduling automation, workflow optimization, and tool orchestration across social channels.',
+     '{automat,workflow,platform,social,schedule}')
+    ON CONFLICT (agent_key) DO NOTHING;
+  `).catch(() => undefined);
+  // ── End Agent System ──────────────────────────────────────────────────────────
+
   // ── End User Memory ───────────────────────────────────────────────────────────
 
   // ─── Workspace & Organizations ────────────────────────────────────────────────
@@ -3202,6 +3263,79 @@ async function requireOrgMembership(
   return { userId: auth.userId, role: rows[0].role as string };
 }
 
+// ── Agent System Definitions & Helpers ───────────────────────────────────────
+
+const AGENT_DEFS: Record<string, { name: string; role: string; icon: string; color: string; memoryKeywords: string[] }> = {
+  daky: { name: 'Daky', role: 'Orchestrator & Strategist',  icon: '✦', color: '#5B6CF9', memoryKeywords: [] },
+  nova: { name: 'Nova', role: 'Creative Director',          icon: '◉', color: '#EC4899', memoryKeywords: ['brand','voice','visual','content','product','audience'] },
+  sage: { name: 'Sage', role: 'Strategy Analyst',           icon: '◈', color: '#10B981', memoryKeywords: ['goal','competit','strategy','industry','market','target','campaign'] },
+  aria: { name: 'Aria', role: 'Analytics & Performance',    icon: '⊕', color: '#F59E0B', memoryKeywords: ['analytic','performance','kpi','metric','business'] },
+  flux: { name: 'Flux', role: 'Automation & Workflows',     icon: '⟳', color: '#8B5CF6', memoryKeywords: ['automat','workflow','platform','social','schedule'] },
+};
+
+async function provisionUserAgents(userId: string): Promise<void> {
+  if (!pool) return;
+  for (const key of Object.keys(AGENT_DEFS)) {
+    await dbQuery(
+      `INSERT INTO user_agents (user_id, agent_key, compiled_skill) VALUES ($1, $2, '') ON CONFLICT (user_id, agent_key) DO NOTHING`,
+      [userId, key]
+    ).catch(() => undefined);
+  }
+}
+
+async function compileAgentSkill(userId: string, agentKey: string): Promise<void> {
+  if (!pool) return;
+  const def = AGENT_DEFS[agentKey];
+  if (!def) return;
+  try {
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return;
+
+    let memoryRows: any[] = [];
+    if (def.memoryKeywords.length > 0) {
+      const conditions = def.memoryKeywords.map((_, i) => `(category ILIKE $${i + 2} OR title ILIKE $${i + 2} OR content ILIKE $${i + 2})`).join(' OR ');
+      const { rows } = await dbQuery(
+        `SELECT category, title, content FROM user_memories WHERE user_id=$1 AND (${conditions}) ORDER BY category, sort_order, created_at LIMIT 30`,
+        [userId, ...def.memoryKeywords.map((k) => `%${k}%`)]
+      );
+      memoryRows = rows;
+    } else {
+      const { rows } = await dbQuery(
+        `SELECT category, title, content FROM user_memories WHERE user_id=$1 ORDER BY category, sort_order, created_at LIMIT 60`,
+        [userId]
+      );
+      memoryRows = rows;
+    }
+
+    if (memoryRows.length === 0) {
+      await dbQuery(`UPDATE user_agents SET compiled_skill='', last_compiled_at=NOW() WHERE user_id=$1 AND agent_key=$2`, [userId, agentKey]);
+      return;
+    }
+
+    const memText = memoryRows.map((r: any) => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
+    const client = new Anthropic({ apiKey });
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      messages: [{
+        role: 'user',
+        content: `You are ${def.name} (${def.role}) on a marketing team. Below is the user's brand/business memory. Write a concise 3-5 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty. Be specific and useful — this will be injected into your system prompt.\n\nUser memory:\n${memText}\n\nSkill brief:`
+      }]
+    });
+    const skill = resp.content[0]?.type === 'text' ? resp.content[0].text.trim() : '';
+    await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [skill, userId, agentKey]);
+  } catch { /* non-fatal */ }
+}
+
+async function triggerAgentCompilation(userId: string): Promise<void> {
+  for (const key of Object.keys(AGENT_DEFS)) {
+    compileAgentSkill(userId, key).catch(() => undefined);
+  }
+}
+
+// ── End Agent Helpers ─────────────────────────────────────────────────────────
+
 const authRegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -3252,6 +3386,7 @@ app.post('/api/auth/register', validateBody(authRegisterSchema), async (req: Req
     }
 
     const user = await createUser(name, username, email, password);
+    provisionUserAgents(user.id).catch(() => undefined);
     const token = signToken(user.id, user.email);
 
     return res.json({
@@ -21000,6 +21135,178 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 
 // ─── End AI Chat ───────────────────────────────────────────────────────────────
 
+// ── Multi-Agent Orchestration ─────────────────────────────────────────────────
+
+// POST /api/ai/orchestrate — classify intent, return direct or plan
+app.post('/api/ai/orchestrate', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { messages } = req.body as { messages: Array<{ role: 'user' | 'assistant'; content: string }> };
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, error: 'messages required' });
+    }
+
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.json({ type: 'direct' });
+
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+
+    const client = new Anthropic({ apiKey });
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      system: `You are a routing assistant for a marketing AI team. Decide if a user message requires a coordinated multi-agent response from specialist agents (Nova=creative director, Sage=strategy analyst, Aria=analytics, Flux=automation) or can be handled directly by the main assistant.
+
+Return ONLY valid JSON. No markdown fences, no explanation.
+
+If single agent: {"type":"direct"}
+
+If multi-agent (complex campaign, brand strategy, platform automation, multi-domain analysis): {"type":"plan","summary":"one sentence describing the overall task","agents":[{"key":"nova","name":"Nova","icon":"◉","color":"#EC4899","task":"what Nova should focus on"},{"key":"sage","name":"Sage","icon":"◈","color":"#10B981","task":"..."}]}
+
+Rules:
+- Include only genuinely relevant agents (2-4 max)
+- Simple post requests, quick questions, single-domain tasks → direct
+- Brand + strategy + analytics + automation tasks → plan`,
+      messages: [{ role: 'user', content: `User request: "${lastUserMsg.slice(0, 600)}"` }]
+    });
+
+    const raw = resp.content[0]?.type === 'text' ? resp.content[0].text.trim() : '{"type":"direct"}';
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.type === 'plan' && Array.isArray(parsed.agents) && parsed.agents.length >= 2) {
+        return res.json(parsed);
+      }
+    } catch { /* fall through */ }
+    return res.json({ type: 'direct' });
+  } catch {
+    return res.json({ type: 'direct' });
+  }
+});
+
+// POST /api/ai/execute-plan — SSE: run enabled agents in parallel, Daky synthesizes
+app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const { messages, plan } = req.body as {
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+      plan: { summary: string; agents: Array<{ key: string; name: string; icon: string; color: string; task: string; enabled: boolean }> };
+    };
+
+    if (!Array.isArray(messages) || !plan?.agents) {
+      return res.status(400).json({ success: false, error: 'messages and plan required' });
+    }
+
+    const { model: cfgModel, encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    const client = new Anthropic({ apiKey });
+    const enabledAgents = plan.agents.filter((a) => a.enabled);
+    const conversationHistory = messages.slice(-10).map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: String(m.content || '').slice(0, 3000),
+    }));
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+
+    // Fetch user memory
+    let allMemory: any[] = [];
+    if (pool) {
+      const { rows } = await dbQuery(
+        `SELECT category, title, content FROM user_memories WHERE user_id=$1 ORDER BY category, sort_order, created_at LIMIT 60`,
+        [auth.userId]
+      );
+      allMemory = rows;
+    }
+
+    // Fetch compiled agent skills + templates
+    const [{ rows: agentRows }, { rows: templateRows }] = await Promise.all([
+      dbQuery(`SELECT agent_key, compiled_skill FROM user_agents WHERE user_id=$1`, [auth.userId]),
+      dbQuery(`SELECT agent_key, base_prompt FROM agent_templates WHERE agent_key = ANY($1)`, [enabledAgents.map((a) => a.key)]),
+    ]);
+    const skillMap: Record<string, string> = {};
+    for (const r of agentRows) skillMap[r.agent_key] = r.compiled_skill;
+    const templateMap: Record<string, string> = {};
+    for (const r of templateRows) templateMap[r.agent_key] = r.base_prompt;
+
+    // Run agents in parallel
+    send({ type: 'agents_start', count: enabledAgents.length });
+    const agentResults: Array<{ key: string; name: string; icon: string; color: string; task: string; analysis: string }> = [];
+
+    await Promise.all(enabledAgents.map(async (agent) => {
+      send({ type: 'agent_start', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color });
+      try {
+        const def = AGENT_DEFS[agent.key];
+        const basePrompt = templateMap[agent.key] || (def ? `You are ${def.name}, ${def.role} on the Dakyworld Hub marketing team.` : `You are ${agent.name}.`);
+        const skill = skillMap[agent.key] || '';
+        const agentSystem = `${basePrompt}${skill ? `\n\nWhat you know about this user:\n${skill}` : ''}\n\nYour specific task: ${agent.task}\n\nGive a concise expert analysis (3-5 sentences or a brief bullet list). No intros or sign-offs. Pure insight.`;
+
+        const agentResp = await client.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 350,
+          system: agentSystem,
+          messages: [{ role: 'user', content: lastUserMsg.slice(0, 1000) }]
+        });
+        const analysis = agentResp.content[0]?.type === 'text' ? agentResp.content[0].text.trim() : '';
+        agentResults.push({ key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, task: agent.task, analysis });
+        send({ type: 'agent_done', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, analysis });
+      } catch {
+        send({ type: 'agent_done', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, analysis: '' });
+      }
+    }));
+
+    // Daky synthesizes
+    send({ type: 'synthesis_start' });
+    const userMemBlock = allMemory.length > 0
+      ? '## ABOUT THIS USER\n' + allMemory.map((r: any) => `[${r.category}] ${r.title}: ${r.content}`).slice(0, 30).join('\n')
+      : '## ABOUT THIS USER\nNo personalization data yet.';
+
+    const teamContext = agentResults
+      .filter((r) => r.analysis)
+      .map((r) => `**${r.name}:** ${r.analysis}`)
+      .join('\n\n');
+
+    const synthSystem = `${AI_SYSTEM_PROMPT_DEFAULT.replace('{USER_MEMORY}', userMemBlock)}\n\n${AI_CORE_RULES}`;
+    const synthMessages: Anthropic.MessageParam[] = [
+      ...conversationHistory.slice(0, -1),
+      {
+        role: 'user',
+        content: `${lastUserMsg}\n\n---\nYour specialist team has analyzed this:\n\n${teamContext}\n\nSynthesize their insights into one unified, decisive recommendation. Be the orchestrator — build on their analyses, don't just repeat them.`
+      }
+    ];
+
+    const finalStream = await client.messages.stream({
+      model: cfgModel,
+      max_tokens: 1024,
+      system: synthSystem,
+      messages: synthMessages,
+    });
+
+    for await (const chunk of finalStream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+        send({ type: 'text', text: chunk.delta.text });
+      }
+    }
+
+    send({ type: 'done' });
+    res.end();
+  } catch (e: any) {
+    if (!res.headersSent) return res.status(500).json({ success: false, error: e?.message || 'Execute plan failed' });
+    res.end();
+  }
+});
+
+// ── End Multi-Agent Orchestration ─────────────────────────────────────────────
+
 // ─── Billing Routes ────────────────────────────────────────────────────────────
 
 // GET /api/billing/subscription — current plan + usage + subscription status
@@ -21197,6 +21504,7 @@ app.post('/api/memory', async (req: Request, res: Response) => {
        RETURNING id, category, title, content, source, created_at`,
       [auth.userId, category.trim(), title.trim(), content.trim(), source]
     );
+    triggerAgentCompilation(auth.userId).catch(() => undefined);
     return res.json({ success: true, memory: row.rows[0] });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -21217,6 +21525,7 @@ app.put('/api/memory/:id', async (req: Request, res: Response) => {
       [title.trim(), content.trim(), id, auth.userId]
     );
     if (!row.rows[0]) return res.status(404).json({ success: false, error: 'Memory not found' });
+    triggerAgentCompilation(auth.userId).catch(() => undefined);
     return res.json({ success: true, memory: row.rows[0] });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -21230,11 +21539,108 @@ app.delete('/api/memory/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     await dbQuery(`DELETE FROM user_memories WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
+    triggerAgentCompilation(auth.userId).catch(() => undefined);
     return res.json({ success: true });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
 });
+
+// ── Agent Routes ──────────────────────────────────────────────────────────────
+
+// GET /api/agents — list user's agents with compiled skills
+app.get('/api/agents', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  try {
+    await provisionUserAgents(auth.userId);
+    const { rows: agentRows } = await dbQuery(
+      `SELECT ua.agent_key, ua.compiled_skill, ua.last_compiled_at,
+              at2.name, at2.role, at2.icon, at2.color, at2.base_prompt, at2.memory_keywords
+       FROM user_agents ua
+       LEFT JOIN agent_templates at2 ON at2.agent_key = ua.agent_key
+       WHERE ua.user_id = $1 ORDER BY ua.created_at`,
+      [auth.userId]
+    );
+    return res.json({ success: true, agents: agentRows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/agents/compile — force recompile all agents for user
+app.post('/api/agents/compile', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  triggerAgentCompilation(auth.userId).catch(() => undefined);
+  return res.json({ success: true, message: 'Compilation started' });
+});
+
+// GET /api/agent-activity — activity feed for dashboard
+app.get('/api/agent-activity', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT id, agent_key, agent_name, activity_type, title, content, is_read, created_at
+       FROM agent_activity WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20`,
+      [auth.userId]
+    );
+    const unread = rows.filter((r: any) => !r.is_read).length;
+    return res.json({ success: true, activities: rows, unread });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PATCH /api/agent-activity/:id/read — mark as read
+app.patch('/api/agent-activity/:id/read', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  await dbQuery(`UPDATE agent_activity SET is_read=true WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]).catch(() => undefined);
+  return res.json({ success: true });
+});
+
+// DELETE /api/agent-activity/:id — delete activity item
+app.delete('/api/agent-activity/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  await dbQuery(`DELETE FROM agent_activity WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]).catch(() => undefined);
+  return res.json({ success: true });
+});
+
+// GET /api/admin/agent-templates — list all 5 templates (admin only)
+app.get('/api/admin/agent-templates', async (req: Request, res: Response) => {
+  const auth = requireAdmin(req, res);
+  if (!auth) return;
+  try {
+    const { rows } = await dbQuery(`SELECT * FROM agent_templates ORDER BY agent_key`, []);
+    return res.json({ success: true, templates: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/admin/agent-templates/:key — update a template's prompt (admin only)
+app.put('/api/admin/agent-templates/:key', async (req: Request, res: Response) => {
+  const auth = requireAdmin(req, res);
+  if (!auth) return;
+  const { key } = req.params;
+  const { base_prompt } = req.body as { base_prompt: string };
+  if (!base_prompt?.trim()) return res.status(400).json({ success: false, error: 'base_prompt required' });
+  if (!AGENT_DEFS[key]) return res.status(404).json({ success: false, error: 'Unknown agent key' });
+  try {
+    const { rows } = await dbQuery(
+      `UPDATE agent_templates SET base_prompt=$1, updated_at=NOW() WHERE agent_key=$2 RETURNING *`,
+      [base_prompt.trim(), key]
+    );
+    return res.json({ success: true, template: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End Agent Routes ──────────────────────────────────────────────────────────
 
 // POST /api/memory/generate — AI-generate memories from wizard input
 app.post('/api/memory/generate', async (req: Request, res: Response) => {

@@ -57,7 +57,23 @@ type SchedulerMessage = {
   postContent?: string;
   submitted: boolean;
 };
-type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage;
+type PlanAgent = {
+  key: string;
+  name: string;
+  icon: string;
+  color: string;
+  task: string;
+  enabled: boolean;
+};
+type PlanMessage = {
+  kind: 'plan';
+  id: string;
+  summary: string;
+  agents: PlanAgent[];
+  status: 'pending' | 'executing' | 'done';
+  agentStatuses?: Record<string, { running: boolean; analysis: string }>;
+};
+type Message = TextMessage | ToolMessage | FormMessage | SchedulerMessage | PlanMessage;
 
 // ── Form parsing ─────────────────────────────────────────────────────────────
 
@@ -629,6 +645,135 @@ function ToolCard({ msg }: { msg: ToolMessage }) {
   return null;
 }
 
+// ── Plan card ─────────────────────────────────────────────────────────────────
+
+function PlanCard({
+  msg,
+  onExecute,
+  onCancel,
+}: {
+  msg: PlanMessage;
+  onExecute: (planId: string, agents: PlanAgent[]) => void;
+  onCancel: (planId: string) => void;
+}) {
+  const [agents, setAgents] = useState<PlanAgent[]>(msg.agents);
+  const enabledCount = agents.filter((a) => a.enabled).length;
+  const isExecuting = msg.status === 'executing';
+  const isDone = msg.status === 'done';
+
+  const toggle = (key: string) => {
+    if (isExecuting || isDone) return;
+    setAgents((prev) => prev.map((a) => (a.key === key ? { ...a, enabled: !a.enabled } : a)));
+  };
+
+  return (
+    <div className="rounded-xl border border-indigo-100 bg-white overflow-hidden shadow-sm text-xs">
+      {/* Header */}
+      <div className="px-3.5 py-2.5 border-b border-indigo-50" style={{ background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-base">✦</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-bold text-indigo-800">Team Analysis</p>
+            <p className="text-[10px] text-indigo-500 leading-snug">{msg.summary}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Agents */}
+      <div className="px-3.5 py-3 space-y-2">
+        {agents.map((agent) => {
+          const status = msg.agentStatuses?.[agent.key];
+          const isRunning = status?.running;
+          const hasResult = status?.analysis;
+          return (
+            <div
+              key={agent.key}
+              className={`flex items-start gap-2.5 rounded-lg border p-2 transition-all ${
+                agent.enabled ? 'border-slate-200 bg-white' : 'border-slate-100 bg-slate-50 opacity-50'
+              }`}
+            >
+              <div
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-bold"
+                style={{ background: `${agent.color}18`, color: agent.color }}
+              >
+                {agent.icon}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-bold" style={{ color: agent.color }}>{agent.name}</span>
+                  {isRunning && (
+                    <span className="flex gap-0.5">
+                      {[0, 1, 2].map((i) => (
+                        <span key={i} className="h-1 w-1 rounded-full animate-bounce"
+                          style={{ background: agent.color, animationDelay: `${i * 0.15}s` }} />
+                      ))}
+                    </span>
+                  )}
+                  {hasResult && !isRunning && <span className="text-emerald-500 text-[10px]">✓</span>}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-snug">{agent.task}</p>
+                {hasResult && (
+                  <p className="mt-1 text-[10px] text-slate-700 leading-snug line-clamp-2">{hasResult}</p>
+                )}
+              </div>
+              {!isExecuting && !isDone && (
+                <button
+                  type="button"
+                  onClick={() => toggle(agent.key)}
+                  className={`shrink-0 flex h-4 w-7 items-center rounded-full transition-colors ${
+                    agent.enabled ? 'bg-indigo-500' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
+                      agent.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Actions */}
+      {!isDone && (
+        <div className="px-3.5 pb-3 flex gap-2">
+          {isExecuting ? (
+            <div className="flex items-center gap-2 text-[11px] text-indigo-600 font-medium">
+              <span className="flex gap-0.5">
+                {[0, 1, 2].map((i) => (
+                  <span key={i} className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </span>
+              Team at work…
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={enabledCount === 0}
+                onClick={() => onExecute(msg.id, agents)}
+                className="flex-1 rounded-xl bg-indigo-600 py-2 text-[11px] font-bold text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+              >
+                Execute Plan
+              </button>
+              <button
+                type="button"
+                onClick={() => onCancel(msg.id)}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Suggestion cards ──────────────────────────────────────────────────────────
 
 const SUGGESTIONS = [
@@ -715,6 +860,35 @@ export default function ChatWidget() {
     try {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
+
+      // Quick intent check — haiku classifies in ~200ms
+      let usePlan = false;
+      let planData: any = null;
+      try {
+        const orchRes = await fetch(`${getApiBaseUrl()}/api/ai/orchestrate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ messages: history }),
+          signal: ctrl.signal,
+        });
+        if (orchRes.ok) {
+          const orchJson = await orchRes.json();
+          if (orchJson.type === 'plan' && Array.isArray(orchJson.agents) && orchJson.agents.length >= 2) {
+            usePlan = true;
+            planData = orchJson;
+          }
+        }
+      } catch { /* proceed direct on any error */ }
+
+      if (usePlan) {
+        const planAgents: PlanAgent[] = planData.agents.map((a: any) => ({ ...a, enabled: true }));
+        setMessages((prev) => [
+          ...prev.filter((m) => !(m.kind === 'text' && m.id === assistantId && m.content === '')),
+          { kind: 'plan', id: assistantId, summary: planData.summary || '', agents: planAgents, status: 'pending' } satisfies PlanMessage,
+        ]);
+        setLoading(false);
+        return;
+      }
 
       const res = await fetch(`${getApiBaseUrl()}/api/ai/chat`, {
         method: 'POST',
@@ -815,6 +989,71 @@ export default function ChatWidget() {
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
   };
+
+  // ── Execute plan ──────────────────────────────────────────────────────────
+
+  const executePlan = useCallback(async (planId: string, planAgents: PlanAgent[]) => {
+    const planMsg = messages.find((m) => m.id === planId) as PlanMessage | undefined;
+    if (!planMsg) return;
+    const token = localStorage.getItem('auth_token');
+    const history = messages.filter((m): m is TextMessage => m.kind === 'text').map(({ role, content }) => ({ role, content }));
+
+    setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan' ? { ...m, status: 'executing', agents: planAgents } : m));
+    setLoading(true);
+    const synthId = crypto.randomUUID();
+    setMessages((prev) => [...prev, { kind: 'text', id: synthId, role: 'assistant', content: '' } satisfies TextMessage]);
+
+    try {
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const res = await fetch(`${getApiBaseUrl()}/api/ai/execute-plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ messages: history, plan: { summary: planMsg.summary, agents: planAgents } }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error('Execute plan failed');
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6).trim()) as any;
+            if (ev.type === 'agent_start') {
+              setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan'
+                ? { ...m, agentStatuses: { ...(m.agentStatuses ?? {}), [ev.key]: { running: true, analysis: '' } } } : m));
+            } else if (ev.type === 'agent_done') {
+              setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan'
+                ? { ...m, agentStatuses: { ...(m.agentStatuses ?? {}), [ev.key]: { running: false, analysis: ev.analysis || '' } } } : m));
+            } else if (ev.type === 'text' && ev.text) {
+              setMessages((prev) => prev.map((m) => m.id === synthId && m.kind === 'text' ? { ...m, content: m.content + ev.text } : m));
+            } else if (ev.type === 'done') {
+              setMessages((prev) => prev.map((m) => m.id === planId && m.kind === 'plan' ? { ...m, status: 'done' } : m));
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        setMessages((prev) => prev.map((m) => m.id === synthId && m.kind === 'text' ? { ...m, content: err?.message || 'Plan execution failed.' } : m));
+      }
+    } finally {
+      setLoading(false);
+      abortRef.current = null;
+    }
+  }, [messages]);
+
+  const cancelPlan = useCallback((planId: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== planId));
+  }, []);
 
   // ── Form submit ───────────────────────────────────────────────────────────
 
@@ -986,6 +1225,14 @@ export default function ChatWidget() {
                             );
                             void send(`Schedule for ${iso} (${label})`);
                           }}
+                        />
+                      </div>
+                    ) : msg.kind === 'plan' ? (
+                      <div className="pl-9">
+                        <PlanCard
+                          msg={msg}
+                          onExecute={(planId, agents) => void executePlan(planId, agents)}
+                          onCancel={cancelPlan}
                         />
                       </div>
                     ) : (

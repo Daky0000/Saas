@@ -14,6 +14,7 @@ import AdminAISkills from '../components/admin/AdminAISkills';
 import AdminBillingDashboard from '../components/admin/AdminBillingDashboard';
 import AdminApify from '../components/admin/AdminApify';
 import AdminLearn from '../components/admin/AdminLearn';
+import AdminAgents from '../components/admin/AdminAgents';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -40,7 +41,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'ai-skills'
     | 'billing'
     | 'apify'
-    | 'learn';
+    | 'learn'
+    | 'agents';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -63,6 +65,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     billing: '/admin/billing',
     apify: '/admin/apify',
     learn: '/admin/learn',
+    agents: '/admin/agents',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -73,7 +76,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn');
+  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents');
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -110,10 +113,11 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'ai-config', label: 'Configuration', icon: Bot },
     { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
     { id: 'learn', label: 'Daky Learn', icon: BookOpen },
+    { id: 'agents', label: 'Agent Team', icon: Users },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn';
+  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents';
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -122,7 +126,7 @@ const Admin = ({ currentUser }: AdminProps) => {
       if (tab) {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
-        setAiOpen(tab.startsWith('ai-') || tab === 'learn');
+        setAiOpen(tab.startsWith('ai-') || tab === 'learn' || tab === 'agents');
         setApifyOpen(tab === 'apify');
       }
     };
@@ -366,6 +370,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'billing' && <AdminBillingDashboard />}
             {activeTab === 'apify' && <AdminApify />}
             {activeTab === 'learn' && <AdminLearn />}
+            {activeTab === 'agents' && <AdminAgents />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>

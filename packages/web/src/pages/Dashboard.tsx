@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
+  Bell,
   Calendar,
   CheckCircle2,
   Clock,
@@ -15,6 +16,7 @@ import {
   Sparkles,
   TrendingUp,
   Users,
+  X,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
 import { blogService, type BlogPost } from '../services/blogService';
@@ -137,6 +139,128 @@ function QuickAction({
       </div>
       <span className="text-[12px] font-semibold text-slate-700">{label}</span>
     </button>
+  );
+}
+
+// ── Agent Activity Feed ───────────────────────────────────────────────────────
+
+type AgentActivity = {
+  id: string;
+  agent_key: string;
+  agent_name: string;
+  activity_type: string;
+  title: string;
+  content: string;
+  is_read: boolean;
+  created_at: string;
+};
+
+const AGENT_COLORS: Record<string, string> = {
+  daky: '#5B6CF9', nova: '#EC4899', sage: '#10B981', aria: '#F59E0B', flux: '#8B5CF6',
+};
+const AGENT_ICONS: Record<string, string> = {
+  daky: '✦', nova: '◉', sage: '◈', aria: '⊕', flux: '⟳',
+};
+
+function AgentActivityFeed() {
+  const [activities, setActivities] = useState<AgentActivity[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/agent-activity`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) { setActivities(d.activities); setUnread(d.unread ?? 0); }
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const markRead = (id: string) => {
+    fetch(`${API_BASE_URL}/api/agent-activity/${id}/read`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tok()}` },
+    }).catch(() => undefined);
+    setActivities((prev) => prev.map((a) => a.id === id ? { ...a, is_read: true } : a));
+    setUnread((n) => Math.max(0, n - 1));
+  };
+
+  const dismiss = (id: string) => {
+    fetch(`${API_BASE_URL}/api/agent-activity/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tok()}` },
+    }).catch(() => undefined);
+    setActivities((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Agents</p>
+          <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+            Team Activity
+            {unread > 0 && (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1.5 text-[10px] font-bold text-white">
+                {unread}
+              </span>
+            )}
+          </h3>
+        </div>
+        <Bell size={15} className="text-slate-400" />
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 py-4 text-xs text-slate-400">
+          <Loader2 size={13} className="animate-spin" /> Loading…
+        </div>
+      ) : activities.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center">
+          <p className="text-xs text-slate-400">No agent activity yet.</p>
+          <p className="mt-1 text-[11px] text-slate-300">Your team will surface insights here automatically.</p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {activities.slice(0, 5).map((a) => {
+            const color = AGENT_COLORS[a.agent_key] || '#5B6CF9';
+            const icon = AGENT_ICONS[a.agent_key] || '✦';
+            return (
+              <li
+                key={a.id}
+                onClick={() => !a.is_read && markRead(a.id)}
+                className={`group relative flex items-start gap-3 rounded-xl px-3 py-2.5 transition-colors cursor-default ${
+                  a.is_read ? 'bg-white hover:bg-slate-50' : 'bg-indigo-50/40 hover:bg-indigo-50'
+                }`}
+              >
+                {!a.is_read && (
+                  <span className="absolute left-1 top-1/2 -translate-y-1/2 h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                )}
+                <div
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-sm font-bold mt-0.5"
+                  style={{ background: `${color}18`, color }}
+                >
+                  {icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-slate-800 leading-snug">{a.title}</p>
+                  <p className="text-[11px] text-slate-500 leading-snug line-clamp-2 mt-0.5">{a.content}</p>
+                  <p className="text-[10px] text-slate-400 mt-1">{a.agent_name} · {relativeDate(a.created_at)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); dismiss(a.id); }}
+                  className="shrink-0 opacity-0 group-hover:opacity-100 flex h-5 w-5 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-all"
+                >
+                  <X size={11} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -602,6 +726,8 @@ export default function Dashboard({ currentUser }: DashboardProps) {
                   )}
                 </div>
               )}
+              {/* Agent Activity */}
+              <AgentActivityFeed />
             </div>
           </div>
 
