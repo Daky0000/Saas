@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import NotificationBell from './components/NotificationBell';
-import OnboardingWizard, { useOnboarding } from './components/OnboardingWizard';
+import OnboardingWizard from './components/OnboardingWizard';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
@@ -783,6 +783,7 @@ function App() {
     setIsAuthenticated(true);
     const storedUser = setStoredUser(user);
     setAuthUser(storedUser);
+    if (!localStorage.getItem('dw_onboarded')) setShowOnboarding(true);
     navigateToPage(getDefaultPageForUser(storedUser), true);
   };
 
@@ -871,7 +872,7 @@ function App() {
     goTasks,
   };
 
-  const showOnboarding = useOnboarding();
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const guide = PAGE_GUIDES[currentPage];
   const [pendingTour, setPendingTour] = useState(false);
 
@@ -934,7 +935,8 @@ function App() {
       {showOnboarding && (
         <OnboardingWizard
           onNavigate={(page) => navigateToPage(page as any)}
-          onComplete={() => setPendingTour(true)}
+          onComplete={() => { setShowOnboarding(false); setPendingTour(true); }}
+          onDismiss={() => setShowOnboarding(false)}
         />
       )}
 

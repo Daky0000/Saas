@@ -84,13 +84,11 @@ const STEPS: Step[] = [
 type Props = {
   onNavigate: (page: string) => void;
   onComplete?: () => void;
+  onDismiss?: () => void;
 };
 
-export function useOnboarding() {
-  return !localStorage.getItem(STORAGE_KEY);
-}
 
-export default function OnboardingWizard({ onNavigate, onComplete }: Props) {
+export default function OnboardingWizard({ onNavigate, onComplete, onDismiss }: Props) {
   const [step, setStep] = useState(0);
   const [visible, setVisible] = useState(true);
 
@@ -102,6 +100,7 @@ export default function OnboardingWizard({ onNavigate, onComplete }: Props) {
     localStorage.setItem(STORAGE_KEY, '1');
     setVisible(false);
     if (completed) onComplete?.();
+    else onDismiss?.();
   };
 
   const next = () => {
