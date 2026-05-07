@@ -6,12 +6,14 @@ import {
   Calendar,
   CheckCheck,
   FileText,
+  Mail,
   Plug,
   RefreshCw,
   Send,
   Sparkles,
   Star,
   Trash2,
+  UserPlus,
   X,
   Zap,
 } from 'lucide-react';
@@ -42,6 +44,8 @@ const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: st
   memory_saved:      { icon: Brain,     color: 'text-amber-600',   bg: 'bg-amber-50' },
   skill_compiled:    { icon: Sparkles,  color: 'text-emerald-600', bg: 'bg-emerald-50' },
   agent_activity:    { icon: Bot,       color: 'text-purple-600',  bg: 'bg-purple-50' },
+  team_invite:       { icon: UserPlus,  color: 'text-pink-600',    bg: 'bg-pink-50' },
+  member_joined:     { icon: Mail,      color: 'text-teal-600',    bg: 'bg-teal-50' },
 };
 
 function getMeta(type: string) {

@@ -23001,6 +23001,32 @@ app.post('/api/organizations/:orgId/invite', async (req: Request, res: Response)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [invId, orgId, email.trim().toLowerCase(), role, token, membership.userId, expiresAt]
     );
+
+    // Fetch org + inviter names for the notification
+    const { rows: orgRows } = await dbQuery(
+      `SELECT o.name AS org_name, u.full_name AS inviter_name
+       FROM organizations o, users u
+       WHERE o.id = $1 AND u.id = $2`,
+      [orgId, membership.userId]
+    );
+    const orgName = orgRows[0]?.org_name ?? 'an organisation';
+    const inviterName = orgRows[0]?.inviter_name ?? 'Someone';
+
+    // If the invited email already has an account, send an in-app notification
+    const { rows: invitedUser } = await dbQuery(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+      [email.trim()]
+    );
+    if (invitedUser.length) {
+      createNotification(
+        invitedUser[0].id,
+        'team_invite',
+        `You've been invited to ${orgName}`,
+        `${inviterName} invited you to join ${orgName} as ${role}. Open Project Settings → Team to accept.`,
+        { token, orgId, role },
+      );
+    }
+
     res.json({ success: true, inviteToken: token, inviteLink: `/invite/${token}` });
   } catch (e) {
     res.status(500).json({ success: false, error: 'Failed to send invitation' });
@@ -23091,6 +23117,24 @@ app.post('/api/invitations/:token/accept', async (req: Request, res: Response) =
       [randomUUID(), inv.org_id, auth.userId, inv.role]
     );
     await dbQuery(`UPDATE organization_invitations SET accepted_at = NOW() WHERE token = $1`, [token]);
+
+    // Notify the inviter that the user accepted
+    const { rows: joinedRows } = await dbQuery(
+      `SELECT full_name, email FROM users WHERE id = $1`, [auth.userId]
+    );
+    const { rows: orgNameRows } = await dbQuery(
+      `SELECT name FROM organizations WHERE id = $1`, [inv.org_id]
+    );
+    const joinedName = joinedRows[0]?.full_name || joinedRows[0]?.email || 'Someone';
+    const orgName = orgNameRows[0]?.name ?? 'your organisation';
+    createNotification(
+      inv.invited_by_user_id,
+      'member_joined',
+      `${joinedName} joined ${orgName}`,
+      `${joinedName} accepted your invitation and is now a ${inv.role} in ${orgName}.`,
+      { userId: auth.userId, orgId: inv.org_id },
+    );
+
     res.json({ success: true, orgId: inv.org_id });
   } catch (e) {
     res.status(500).json({ success: false, error: 'Failed to accept invitation' });
