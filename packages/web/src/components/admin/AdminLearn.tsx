@@ -82,6 +82,25 @@ export default function AdminLearn() {
 
   // Detail modal
   const [detailItem, setDetailItem] = useState<LearnedItem | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const handleAnalyze = async (item: LearnedItem) => {
+    setAnalyzing(true);
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/learn/${item.id}/analyze`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok()}` },
+      });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error || 'Analysis failed');
+      setDetailItem(d.item);
+      setItems((prev) => prev.map((i) => i.id === d.item.id ? d.item : i));
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -506,19 +525,41 @@ export default function AdminLearn() {
               {/* How it helps your SaaS */}
               {detailItem.saas_application ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Rocket size={13} className="text-emerald-600" />
-                    <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide">How this helps your SaaS</p>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Rocket size={13} className="text-emerald-600" />
+                      <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide">How this helps your SaaS</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleAnalyze(detailItem)}
+                      disabled={analyzing}
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                    >
+                      {analyzing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                      {analyzing ? 'Analysing…' : 'Refresh'}
+                    </button>
                   </div>
                   <p className="text-sm text-emerald-900 leading-relaxed">{detailItem.saas_application}</p>
                 </div>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Rocket size={13} className="text-slate-400" />
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">How this helps your SaaS</p>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <Rocket size={13} className="text-slate-400" />
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">How this helps your SaaS</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-400 italic">Not available for this item — re-add the URL to generate this insight.</p>
+                  <p className="text-xs text-slate-400 mb-3">Deep insight not yet generated for this item.</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalyze(detailItem)}
+                    disabled={analyzing}
+                    className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 transition-colors disabled:opacity-60"
+                  >
+                    {analyzing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {analyzing ? 'Analysing content…' : 'Generate insights with AI'}
+                  </button>
                 </div>
               )}
             </div>

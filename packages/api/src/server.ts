@@ -22096,6 +22096,75 @@ app.delete('/api/learn/:id', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/learn/:id/analyze — deep-analyze an existing item and fill in saas_application
+app.post('/api/learn/:id/analyze', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { rows } = await dbQuery(
+      `SELECT id, title, url, summary, key_points, raw_content FROM learned_items WHERE id = $1`,
+      [req.params.id],
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Item not found' });
+    const item = rows[0];
+
+    const cfg = await getAIConfig();
+    const apiKey = resolveActiveKey(cfg);
+    if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
+
+    const fastModel = cfg.provider === 'google'
+      ? (GEMINI_MODELS.includes(cfg.model) ? cfg.model : 'gemini-2.0-flash')
+      : 'claude-haiku-4-5-20251001';
+
+    const contentSnippet = (item.raw_content || '').slice(0, 10000);
+    const keyPointsText = (item.key_points as string[]).map((p: string, i: number) => `${i + 1}. ${p}`).join('\n');
+
+    const analysisPrompt = `You are a senior SaaS marketing strategist with deep expertise in content analysis. Analyze the following piece of content and produce a structured insight report.
+
+Content title: ${item.title}
+URL: ${item.url}
+Existing summary: ${item.summary}
+Key points already extracted:
+${keyPointsText}
+
+Full page content (first 10,000 chars):
+${contentSnippet || '(not available — work from title, URL, and key points above)'}
+
+Produce a JSON object with ONLY these two fields:
+{
+  "key_points": ["specific, actionable insight 1", "insight 2", "insight 3", "insight 4", "insight 5", "insight 6"],
+  "saas_application": "3-4 sentences explaining CONCRETELY how this content's lessons apply to growing and marketing a SaaS product. Reference the specific insights. Be direct and actionable — not generic."
+}
+
+Rules:
+- key_points: 5-7 specific, non-obvious takeaways. Each should be a complete sentence stating what was learned.
+- saas_application: link the learnings to SaaS marketing tactics (social content, user acquisition, retention, positioning, etc.). Name specific tactics the SaaS could adopt.
+- Return ONLY valid JSON. No markdown, no extra text.`;
+
+    const raw = await callAINonStreaming(cfg.provider, apiKey, fastModel, 'You are a SaaS marketing analyst. Return only valid JSON.', analysisPrompt, 1000);
+    let parsed: any = {};
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    } catch { /* fallback to original */ }
+
+    const newKeyPoints = Array.isArray(parsed.key_points) && parsed.key_points.length > 0
+      ? parsed.key_points
+      : item.key_points;
+    const newSaasApplication = parsed.saas_application || '';
+
+    const { rows: [updated] } = await dbQuery(
+      `UPDATE learned_items SET key_points = $1, saas_application = $2 WHERE id = $3
+       RETURNING id, title, url, source_type, summary, key_points, saas_application, category, labels, created_at`,
+      [newKeyPoints, newSaasApplication, item.id],
+    );
+
+    return res.json({ success: true, item: updated });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // POST /api/learn/compile — compile all items in a category into an AI skill
 app.post('/api/learn/compile', async (req: Request, res: Response) => {
   try {
