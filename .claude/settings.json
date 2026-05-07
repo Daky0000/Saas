@@ -53,7 +53,10 @@
       "Bash(npm --workspace @contentflow/api install stripe)",
       "WebFetch(domain:docs.apify.com)",
       "Bash(cd /d d:\\\\Saas)",
-      "Bash(find . -type f -name \"*apify*\")"
+      "Bash(find . -type f -name \"*apify*\")",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(curl -s -L \"https://api.anthropic.com/v1/design/h/-ib7O_ZSABEMHHCHIxg2dw?open_file=Dakyworld+Hub+Landing.html\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(curl -s -L \"https://api.anthropic.com/v1/design/h/-ib7O_ZSABEMHHCHIxg2dw?open_file=Dakyworld+Hub+Landing.html\" -H \"Accept-Encoding: identity\" -H \"User-Agent: Mozilla/5.0\")"
     ],
     "additionalDirectories": [
       "d:\\skills\\user\\db-cleanup",
