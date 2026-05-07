@@ -5203,6 +5203,92 @@ async function createNotification(
   }
 }
 
+async function getUserSaaSContext(userId: string): Promise<string> {
+  if (!pool) return '';
+  const parts: string[] = [];
+  try {
+    // Social connections
+    const { rows: socials } = await dbQuery(
+      `SELECT platform, account_name, handle, followers, connected
+       FROM social_accounts WHERE user_id = $1 ORDER BY platform`,
+      [userId]
+    );
+    if (socials.length > 0) {
+      const lines = socials.map((s: any) => {
+        const label = s.account_name || s.handle || s.platform;
+        const fol = s.followers ? ` (${s.followers.toLocaleString()} followers)` : '';
+        return `  ${s.connected ? '✅' : '❌'} ${s.platform}: ${label}${fol}${s.connected ? '' : ' — DISCONNECTED'}`;
+      });
+      parts.push(`### Social Accounts\n${lines.join('\n')}`);
+    } else {
+      parts.push('### Social Accounts\nNone connected yet.');
+    }
+
+    // Projects & orgs the user belongs to
+    const { rows: projects } = await dbQuery(
+      `SELECT p.id, p.name AS project_name, o.name AS org_name, om.role
+       FROM projects p
+       JOIN organizations o ON o.id = p.org_id
+       JOIN organization_memberships om ON om.org_id = p.org_id AND om.user_id = $1
+       ORDER BY p.created_at`,
+      [userId]
+    );
+    if (projects.length > 0) {
+      const lines = projects.map((p: any) => `  • ${p.org_name} / ${p.project_name} (${p.role}) [project_id:${p.id}]`);
+      parts.push(`### Workspaces & Projects\n${lines.join('\n')}`);
+    } else {
+      parts.push('### Workspaces & Projects\nNo projects yet.');
+    }
+
+    // Open tasks assigned to the user
+    const { rows: tasks } = await dbQuery(
+      `SELECT t.id, t.title, t.status, t.priority, t.due_date, p.name AS project_name
+       FROM tasks t
+       JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = $1
+       JOIN projects p ON p.id = t.project_id
+       WHERE t.status != 'done'
+       ORDER BY t.due_date ASC NULLS LAST, t.priority DESC
+       LIMIT 20`,
+      [userId]
+    );
+    if (tasks.length > 0) {
+      const lines = tasks.map((t: any) => {
+        const due = t.due_date ? ` due:${new Date(t.due_date).toLocaleDateString('en-GB')}` : '';
+        return `  • [${t.status.toUpperCase()}][${t.priority}]${due} "${t.title}" — ${t.project_name} [task_id:${t.id}]`;
+      });
+      parts.push(`### My Open Tasks (${tasks.length})\n${lines.join('\n')}`);
+    } else {
+      parts.push('### My Open Tasks\nNo open tasks assigned.');
+    }
+
+    // Upcoming scheduled posts
+    const { rows: scheduled } = await dbQuery(
+      `SELECT title, scheduled_at FROM blog_posts
+       WHERE user_id = $1 AND status = 'scheduled' AND scheduled_at > NOW()
+       ORDER BY scheduled_at ASC LIMIT 5`,
+      [userId]
+    );
+    if (scheduled.length > 0) {
+      const lines = scheduled.map((p: any) => `  • "${p.title}" — ${new Date(p.scheduled_at).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}`);
+      parts.push(`### Upcoming Scheduled Posts\n${lines.join('\n')}`);
+    }
+
+    // Recent draft count
+    const { rows: draftCount } = await dbQuery(
+      `SELECT COUNT(*)::int AS n FROM blog_posts WHERE user_id=$1 AND status='draft'`,
+      [userId]
+    );
+    if (draftCount[0]?.n > 0) {
+      parts.push(`### Drafts\n  ${draftCount[0].n} draft(s) saved.`);
+    }
+
+  } catch (e) {
+    console.error('getUserSaaSContext error:', e);
+  }
+  if (parts.length === 0) return '';
+  return `## YOUR LIVE SAAS STATE (as of this message)\n${parts.join('\n\n')}`;
+}
+
 async function getEnabledPlatformSlugs(): Promise<string[]> {
   if (!pool) return [];
   const result = await dbQuery(`SELECT platform FROM platform_configs WHERE enabled = true`);
@@ -21063,6 +21149,51 @@ const AI_TOOLS: Anthropic.Tool[] = [
       properties: {},
     },
   },
+  {
+    name: 'get_my_tasks',
+    description: "Fetch the user's tasks. Use when asked about tasks, to-dos, what to work on next, or to check task status. The live state already shows open tasks — call this for filtered/complete lists.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Filter: todo | in_progress | review | done | open (default, all non-done) | all' },
+      },
+    },
+  },
+  {
+    name: 'update_task_status',
+    description: "Update a task's status. Use when user says 'mark done', 'complete', 'move to review', 'start working on', etc. Requires task_id from the live state or get_my_tasks.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'UUID of the task (shown in live state as [task_id:…])' },
+        status: { type: 'string', description: 'New status: todo | in_progress | review | done' },
+      },
+      required: ['task_id', 'status'],
+    },
+  },
+  {
+    name: 'create_task',
+    description: "Create a new task and assign it to the user. Use when asked to add, create, or log a task or to-do item.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Task title' },
+        description: { type: 'string', description: 'Optional detail or notes' },
+        priority: { type: 'string', description: 'low | medium | high | urgent (default: medium)' },
+        due_date: { type: 'string', description: 'YYYY-MM-DD if a date was mentioned' },
+        project_id: { type: 'string', description: 'Optional: specific project UUID from live state. If omitted, uses the first project.' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'get_my_projects',
+    description: "List the user's projects and workspaces with open task counts. Use when asked about projects, workspaces, or to pick a project for a task.",
+    input_schema: {
+      type: 'object',
+      properties: {},
+    },
+  },
 ];
 
 function aiToolLabel(name: string, input: any): string {
@@ -21071,6 +21202,10 @@ function aiToolLabel(name: string, input: any): string {
     case 'schedule_post': return `Scheduling post: "${input?.title || 'untitled'}"`;
     case 'get_recent_posts': return 'Fetching your posts…';
     case 'get_connected_platforms': return 'Checking connected platforms…';
+    case 'get_my_tasks': return 'Fetching your tasks…';
+    case 'update_task_status': return `Marking task as ${input?.status ?? 'updated'}…`;
+    case 'create_task': return `Creating task: "${input?.title || 'untitled'}"…`;
+    case 'get_my_projects': return 'Fetching your projects…';
     default: return `Running ${name}…`;
   }
 }
@@ -21175,6 +21310,111 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
       }));
       return { connected };
     }
+    case 'get_my_tasks': {
+      const sf = String(input?.status || 'open').toLowerCase();
+      let cond = '';
+      if (sf === 'open') cond = `AND t.status != 'done'`;
+      else if (sf !== 'all') cond = `AND t.status = '${sf.replace(/'/g, "''")}'`;
+      const { rows } = await dbQuery(
+        `SELECT t.id, t.title, t.status, t.priority, t.due_date, p.name AS project_name, o.name AS org_name
+         FROM tasks t
+         JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = $1
+         JOIN projects p ON p.id = t.project_id
+         JOIN organizations o ON o.id = p.org_id
+         WHERE 1=1 ${cond}
+         ORDER BY t.due_date ASC NULLS LAST, t.updated_at DESC LIMIT 25`,
+        [userId]
+      );
+      return { tasks: rows };
+    }
+    case 'update_task_status': {
+      const taskId = String(input?.task_id || '');
+      const newStatus = String(input?.status || '').toLowerCase();
+      if (!['todo','in_progress','review','done'].includes(newStatus)) {
+        throw new Error('Invalid status. Use: todo | in_progress | review | done');
+      }
+      const { rows: check } = await dbQuery(
+        `SELECT t.id, t.title, t.status, t.project_id
+         FROM tasks t
+         WHERE t.id = $1 AND (
+           EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = $2)
+           OR EXISTS (
+             SELECT 1 FROM organization_memberships om
+             JOIN projects p ON p.org_id = om.org_id
+             WHERE p.id = t.project_id AND om.user_id = $2 AND om.role IN ('owner','admin')
+           )
+         )`,
+        [taskId, userId]
+      );
+      if (!check.length) throw new Error('Task not found or you do not have permission to update it');
+      const task = check[0];
+      const { rows: newPos } = await dbQuery(
+        `SELECT COALESCE(MAX(position),0)+1 AS next FROM tasks WHERE project_id=$1 AND status=$2`,
+        [task.project_id, newStatus]
+      );
+      await dbQuery(
+        `UPDATE tasks SET status=$1, position=$2, updated_at=NOW() WHERE id=$3`,
+        [newStatus, newPos[0].next, taskId]
+      );
+      void logTaskActivity(task.project_id, userId, 'status_changed', taskId, { from: task.status, to: newStatus });
+      if (newStatus === 'done') {
+        createNotification(userId, 'agent_activity',
+          'Task completed ✓',
+          `"${task.title}" marked as done.`,
+          { taskId },
+        ).catch(() => undefined);
+      }
+      return { success: true, task_id: taskId, title: task.title, old_status: task.status, new_status: newStatus };
+    }
+    case 'create_task': {
+      const title = String(input?.title || '').trim().slice(0, 255);
+      if (!title) throw new Error('Task title is required');
+      const description = String(input?.description || '');
+      const priority = ['low','medium','high','urgent'].includes(input?.priority) ? input.priority : 'medium';
+      const dueDate = input?.due_date || null;
+      // Resolve project: prefer explicit project_id, else first project the user belongs to
+      let projectId = input?.project_id ? String(input.project_id) : null;
+      if (!projectId) {
+        const { rows: projs } = await dbQuery(
+          `SELECT p.id FROM projects p
+           JOIN organization_memberships om ON om.org_id = p.org_id AND om.user_id = $1
+           ORDER BY p.created_at ASC LIMIT 1`,
+          [userId]
+        );
+        if (!projs.length) throw new Error('No project found. Create a project first.');
+        projectId = projs[0].id;
+      }
+      const { rows: posRows } = await dbQuery(
+        `SELECT COALESCE(MAX(position),0)+1 AS next FROM tasks WHERE project_id=$1 AND status='todo'`,
+        [projectId]
+      );
+      const taskId = randomUUID();
+      const { rows } = await dbQuery(
+        `INSERT INTO tasks (id, project_id, title, description, status, priority, position, due_date, created_by)
+         VALUES ($1,$2,$3,$4,'todo',$5,$6,$7,$8) RETURNING id, title, status, priority`,
+        [taskId, projectId, title, description, priority, posRows[0].next, dueDate, userId]
+      );
+      await dbQuery(
+        `INSERT INTO task_assignees (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        [taskId, userId]
+      );
+      void logTaskActivity(projectId, userId, 'created', taskId, { title });
+      return { success: true, task: rows[0] };
+    }
+    case 'get_my_projects': {
+      const { rows } = await dbQuery(
+        `SELECT p.id, p.name AS project_name, o.name AS org_name, om.role,
+           (SELECT COUNT(*)::int FROM tasks t
+            JOIN task_assignees ta ON ta.task_id=t.id
+            WHERE ta.user_id=$1 AND t.project_id=p.id AND t.status!='done') AS my_open_tasks
+         FROM projects p
+         JOIN organizations o ON o.id = p.org_id
+         JOIN organization_memberships om ON om.org_id = p.org_id AND om.user_id = $1
+         ORDER BY p.created_at`,
+        [userId]
+      );
+      return { projects: rows };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -21226,8 +21466,10 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       } catch { /* non-fatal */ }
     }
 
+    const saasContext = await getUserSaaSContext(auth.userId);
+
     const basePrompt = (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', userMemoryBlock);
-    const activeSystemPrompt = [basePrompt, AI_CORE_RULES, skillsPrompt].filter(Boolean).join('\n\n');
+    const activeSystemPrompt = [basePrompt, saasContext, AI_CORE_RULES, skillsPrompt].filter(Boolean).join('\n\n');
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
