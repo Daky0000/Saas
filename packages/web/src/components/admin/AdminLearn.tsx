@@ -1,12 +1,12 @@
 import {
   BookOpen,
   Calendar,
-  ChevronDown,
-  ChevronUp,
   ExternalLink,
   Filter,
+  Lightbulb,
   Loader2,
   Plus,
+  Rocket,
   Search,
   Sparkles,
   Tag,
@@ -29,6 +29,7 @@ type LearnedItem = {
   source_type: 'article' | 'video';
   summary: string;
   key_points: string[];
+  saas_application: string;
   category: string;
   labels: string[];
   created_at: string;
@@ -79,8 +80,8 @@ export default function AdminLearn() {
   const [compiling, setCompiling] = useState<string | null>(null);
   const [compileSuccess, setCompileSuccess] = useState<string | null>(null);
 
-  // Expanded cards
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Detail modal
+  const [detailItem, setDetailItem] = useState<LearnedItem | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -166,14 +167,6 @@ export default function AdminLearn() {
       setCompileSuccess(`"${d.skillName}" skill updated — ${d.itemCount} item(s) compiled.`);
     } catch (e: any) { setCompileSuccess(`Error: ${e.message}`); }
     finally { setCompiling(null); }
-  };
-
-  const toggleExpand = (id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
   };
 
   // Group items by category for the compile section
@@ -310,9 +303,7 @@ export default function AdminLearn() {
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => {
-            const isExpanded = expanded.has(item.id);
-            return (
+          {items.map((item) => (
               <div key={item.id} className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                 <div className="flex items-start gap-4 px-5 py-4">
                   <div className="mt-0.5 shrink-0 rounded-lg bg-slate-100 p-2">
@@ -346,10 +337,10 @@ export default function AdminLearn() {
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => toggleExpand(item.id)}
-                      className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                      onClick={() => setDetailItem(item)}
+                      className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-50 transition-colors"
                     >
-                      {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                      View details
                     </button>
                     <button
                       type="button"
@@ -360,23 +351,8 @@ export default function AdminLearn() {
                     </button>
                   </div>
                 </div>
-
-                {isExpanded && item.key_points.length > 0 && (
-                  <div className="border-t border-slate-100 bg-slate-50 px-5 py-3">
-                    <p className="text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Key Insights</p>
-                    <ul className="space-y-1">
-                      {item.key_points.map((pt, i) => (
-                        <li key={i} className="flex items-start gap-2 text-xs text-slate-700">
-                          <span className="mt-0.5 shrink-0 rounded-full bg-violet-200 w-4 h-4 flex items-center justify-center text-[10px] font-bold text-violet-700">{i + 1}</span>
-                          {pt}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </div>
-            );
-          })}
+          ))}
         </div>
       )}
 
@@ -446,6 +422,114 @@ export default function AdminLearn() {
                 className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-violet-600 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 transition-colors disabled:opacity-60"
               >
                 {adding ? <><Loader2 size={14} className="animate-spin" /> Analysing…</> : <><Sparkles size={14} /> Add & Learn</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail modal */}
+      {detailItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setDetailItem(null)}>
+          <div
+            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-100 bg-white">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="shrink-0 rounded-lg bg-slate-100 p-2">
+                  {detailItem.source_type === 'video' ? <Video size={15} className="text-slate-600" /> : <BookOpen size={15} className="text-slate-600" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-black text-slate-900 leading-snug">{detailItem.title}</p>
+                  <a
+                    href={detailItem.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-violet-600 hover:underline mt-0.5 truncate"
+                  >
+                    <ExternalLink size={10} />
+                    {detailItem.url}
+                  </a>
+                </div>
+              </div>
+              <button type="button" onClick={() => setDetailItem(null)} className="shrink-0 rounded-lg p-1.5 hover:bg-slate-100 text-slate-500">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              {/* Meta */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${categoryColor(detailItem.category)}`}>{detailItem.category}</span>
+                {detailItem.labels.map((l) => (
+                  <span key={l} className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                    <Tag size={9} />{l}
+                  </span>
+                ))}
+                <span className="flex items-center gap-1 text-xs text-slate-400 ml-auto">
+                  <Calendar size={10} />
+                  {new Date(detailItem.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              </div>
+
+              {/* What it's about */}
+              {detailItem.summary && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <BookOpen size={13} className="text-slate-500" />
+                    <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">What it's about</p>
+                  </div>
+                  <p className="text-sm text-slate-700 leading-relaxed">{detailItem.summary}</p>
+                </div>
+              )}
+
+              {/* What was learned */}
+              {detailItem.key_points.length > 0 && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Lightbulb size={13} className="text-violet-600" />
+                    <p className="text-xs font-bold text-violet-700 uppercase tracking-wide">What was learned</p>
+                  </div>
+                  <ul className="space-y-2">
+                    {detailItem.key_points.map((pt, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-sm text-violet-900">
+                        <span className="mt-0.5 shrink-0 flex h-5 w-5 items-center justify-center rounded-full bg-violet-200 text-[10px] font-bold text-violet-700">{i + 1}</span>
+                        {pt}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* How it helps your SaaS */}
+              {detailItem.saas_application ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Rocket size={13} className="text-emerald-600" />
+                    <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide">How this helps your SaaS</p>
+                  </div>
+                  <p className="text-sm text-emerald-900 leading-relaxed">{detailItem.saas_application}</p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Rocket size={13} className="text-slate-400" />
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">How this helps your SaaS</p>
+                  </div>
+                  <p className="text-xs text-slate-400 italic">Not available for this item — re-add the URL to generate this insight.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDetailItem(null)}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

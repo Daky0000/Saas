@@ -1838,6 +1838,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     );
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS learned_items_category_idx ON learned_items (category);`).catch(() => undefined);
+  await pool.query(`ALTER TABLE learned_items ADD COLUMN IF NOT EXISTS saas_application TEXT NOT NULL DEFAULT ''`).catch(() => undefined);
   // ── End Daky Learn ────────────────────────────────────────────────────────────
 
   // ── Agent System ──────────────────────────────────────────────────────────────
@@ -21965,7 +21966,7 @@ app.get('/api/learn', async (req: Request, res: Response) => {
     if (to) { conditions.push(`created_at <= $${idx}`); params.push(to); idx++; }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const { rows } = await dbQuery(
-      `SELECT id, title, url, source_type, summary, key_points, category, labels, created_at FROM learned_items ${where} ORDER BY created_at DESC`,
+      `SELECT id, title, url, source_type, summary, key_points, saas_application, category, labels, created_at FROM learned_items ${where} ORDER BY created_at DESC`,
       params
     );
     return res.json({ success: true, items: rows });
@@ -22000,8 +22001,8 @@ app.post('/api/learn', async (req: Request, res: Response) => {
     const { url, category, labels } = req.body as { url: string; category?: string; labels?: string[] };
     if (!url || !url.startsWith('http')) return res.status(400).json({ success: false, error: 'Valid URL required' });
 
-    const { model: cfgModel, encryptedKey } = await getAIConfig();
-    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    const learnCfg = await getAIConfig();
+    const apiKey = resolveActiveKey(learnCfg);
     if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
 
     // Detect YouTube vs article
@@ -22029,30 +22030,31 @@ app.post('/api/learn', async (req: Request, res: Response) => {
         .slice(0, 12000);
     } catch { /* non-fatal — AI will work from URL alone */ }
 
-    // Use claude-haiku to extract learnings
-    const client = new Anthropic({ apiKey });
-    const extraction = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1200,
-      system: `You are an expert social media marketing knowledge extractor. Given a URL and optional page content, extract the key marketing learnings in structured JSON.
+    // Use fast model to extract learnings
+    const learnFastModel = learnCfg.provider === 'google'
+      ? (GEMINI_MODELS.includes(learnCfg.model) ? learnCfg.model : 'gemini-2.0-flash')
+      : 'claude-haiku-4-5-20251001';
+
+    let extracted: any = {};
+    try {
+      const raw = await callAINonStreaming(
+        learnCfg.provider,
+        apiKey,
+        learnFastModel,
+        `You are an expert social media marketing knowledge extractor. Given a URL and optional page content, extract the key marketing learnings in structured JSON.
 
 Return ONLY valid JSON in this exact shape:
 {
   "title": "concise title under 80 chars",
-  "summary": "2-3 sentence summary of what this teaches",
-  "key_points": ["actionable insight 1", "actionable insight 2", "actionable insight 3", "insight 4", "insight 5"],
+  "summary": "2-3 sentence overview of what this content is about",
+  "key_points": ["specific new thing learned 1", "specific new thing learned 2", "specific new thing learned 3", "new insight 4", "new insight 5"],
+  "saas_application": "2-3 sentences on how these learnings can be directly applied to improve a SaaS product's marketing, social media strategy, or growth. Be concrete and actionable.",
   "category": "one of: Content Strategy | Audience Growth | Platform Algorithms | Brand Voice | Analytics | Engagement | Copywriting | Visual Design | Scheduling | General",
   "labels": ["label1", "label2", "label3"]
 }`,
-      messages: [{
-        role: 'user',
-        content: `URL: ${url}\n\nPage content (first 12000 chars):\n${rawContent || '(could not fetch — extract from URL context only)'}`,
-      }],
-    });
-
-    let extracted: any = {};
-    try {
-      const raw = extraction.content[0].type === 'text' ? extraction.content[0].text : '';
+        `URL: ${url}\n\nPage content (first 12000 chars):\n${rawContent || '(could not fetch — extract from URL context only)'}`,
+        1500,
+      );
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
     } catch { /* use defaults */ }
@@ -22061,14 +22063,15 @@ Return ONLY valid JSON in this exact shape:
     const finalLabels = labels?.length ? labels : (extracted.labels || []);
 
     const { rows: [item] } = await dbQuery(
-      `INSERT INTO learned_items (title, url, source_type, summary, key_points, category, labels, raw_content)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, title, url, source_type, summary, key_points, category, labels, created_at`,
+      `INSERT INTO learned_items (title, url, source_type, summary, key_points, saas_application, category, labels, raw_content)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, title, url, source_type, summary, key_points, saas_application, category, labels, created_at`,
       [
         extracted.title || url,
         url,
         source_type,
         extracted.summary || '',
         extracted.key_points || [],
+        extracted.saas_application || '',
         finalCategory,
         finalLabels,
         rawContent.slice(0, 8000),
@@ -22108,9 +22111,9 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
     );
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No items in this category' });
 
-    const { model: cfgModel, encryptedKey } = await getAIConfig();
-    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
-    if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
+    const aiCfgCompile = await getAIConfig();
+    const compileKey = resolveActiveKey(aiCfgCompile);
+    if (!compileKey) return res.status(503).json({ success: false, error: 'AI not configured' });
 
     // Compile all key points into a single skill prompt
     const knowledgeBlob = rows.map((r: any) => {
@@ -22118,18 +22121,18 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
       return `### ${r.title}\n${r.summary}\n${pts}`;
     }).join('\n\n');
 
-    const client = new Anthropic({ apiKey });
-    const compilation = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
-      system: 'You are a system prompt engineer. Given a collection of marketing learnings in a category, write a concise, expert skill block that Daky (an AI social media marketing butler) should internalize and apply. Write in directive second-person ("When you..."). Be specific, not generic. Output ONLY the skill prompt text — no JSON, no headers.',
-      messages: [{
-        role: 'user',
-        content: `Category: ${category}\n\nLearnings:\n${knowledgeBlob}`,
-      }],
-    });
+    const fastModel = aiCfgCompile.provider === 'google'
+      ? (GEMINI_MODELS.includes(aiCfgCompile.model) ? aiCfgCompile.model : 'gemini-2.0-flash')
+      : 'claude-haiku-4-5-20251001';
 
-    const compiledPrompt = compilation.content[0].type === 'text' ? compilation.content[0].text : '';
+    const compiledPrompt = await callAINonStreaming(
+      aiCfgCompile.provider,
+      compileKey,
+      fastModel,
+      'You are a system prompt engineer. Given a collection of marketing learnings in a category, write a concise, expert skill block that Daky (an AI social media marketing butler) should internalize and apply. Write in directive second-person ("When you..."). Be specific, not generic. Output ONLY the skill prompt text — no JSON, no headers.',
+      `Category: ${category}\n\nLearnings:\n${knowledgeBlob}`,
+      1500,
+    );
 
     // Upsert as an AI skill (replace existing compiled skill for this category)
     const skillName = `Learned: ${category}`;
@@ -22141,8 +22144,8 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
       );
     } else {
       await dbQuery(
-        `INSERT INTO ai_skills (name, description, system_prompt, scope, enabled, sort_order) VALUES ($1,$2,$3,'all',true,100)`,
-        [skillName, `Auto-compiled from ${rows.length} learned item(s) in "${category}"`, compiledPrompt]
+        `INSERT INTO ai_skills (id, name, description, system_prompt, scope, enabled, sort_order) VALUES ($1,$2,$3,$4,'all',true,100)`,
+        [randomUUID(), skillName, `Auto-compiled from ${rows.length} learned item(s) in "${category}"`, compiledPrompt]
       );
     }
 
