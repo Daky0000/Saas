@@ -5123,6 +5123,7 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
       `Your ${platformLabel} account (@${handle}) has been connected successfully.`,
       { platform: platformId, handle: String(handle) },
     ).catch(() => undefined);
+    void checkTaskActions(userId, 'connect_social');
   } else {
     createNotification(userId, 'social_reconnected',
       `${platformLabel} reconnected`,
@@ -12622,6 +12623,8 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
   });
 
   void checkTaskActions(user.userId, 'create_post');
+  if (status === 'scheduled') void checkTaskActions(user.userId, 'schedule_post');
+  if (status === 'published') void checkTaskActions(user.userId, 'publish_post');
 
   if (status === 'published') {
     try {
@@ -21016,6 +21019,12 @@ IMPORTANT: Always check the LIVE SAAS STATE section for each platform's connecti
 
 After every tool use, confirm in one sentence and offer a clear next step.
 
+### Task auto-progression
+When a tool result includes a non-empty `tasks_progressed` array, always mention it concisely. Examples:
+- If status is "done": "✓ Your task **"[title]"** has been completed automatically."
+- If progress is "1/3": "📋 Your task **"[title]"** is now 1/3 of the way there."
+Never skip this — task progress feedback is important to the user.
+
 ---
 
 ## CONTENT CREATION — HOW DAKY WORKS
@@ -21319,12 +21328,14 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
         `"${title}" has been saved as a draft.`,
         { postId: id },
       ).catch(() => undefined);
+      const draftTasksProgressed = await checkTaskActions(userId, 'create_post');
       return {
         success: true,
         action: 'created_draft',
         post: rows[0],
         platforms_connected: platformResult.connected,
         platforms_not_connected: platformResult.missing,
+        tasks_progressed: draftTasksProgressed,
       };
     }
     case 'schedule_post': {
@@ -21348,12 +21359,17 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
         `"${title}" is scheduled for ${schedDate}.`,
         { postId: id, scheduled_at },
       ).catch(() => undefined);
+      const schedTasksProgressed = await Promise.all([
+        checkTaskActions(userId, 'create_post'),
+        checkTaskActions(userId, 'schedule_post'),
+      ]).then(([a, b]) => [...a, ...b]);
       return {
         success: true,
         action: 'scheduled_post',
         post: rows[0],
         platforms_connected: platformResult.connected,
         platforms_not_connected: platformResult.missing,
+        tasks_progressed: schedTasksProgressed,
       };
     }
     case 'get_recent_posts': {
@@ -21469,6 +21485,16 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
         `INSERT INTO task_assignees (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
         [taskId, userId]
       );
+      // Auto-infer task_actions for the newly created task
+      const inferred = inferTaskActions(title);
+      if (inferred.length) {
+        await Promise.all(inferred.map((a) =>
+          dbQuery(
+            `INSERT INTO task_actions (id, task_id, action_type, label, target_count, current_count) VALUES ($1,$2,$3,$4,$5,0)`,
+            [randomUUID(), taskId, a.action_type, a.label, a.target_count]
+          )
+        ));
+      }
       void logTaskActivity(projectId, userId, 'created', taskId, { title });
       return { success: true, task: rows[0] };
     }
@@ -22040,6 +22066,7 @@ app.post('/api/memory', async (req: Request, res: Response) => {
       `"${title.trim()}" added to your personalization memory.`,
       { memoryId: row.rows[0]?.id },
     ).catch(() => undefined);
+    void checkTaskActions(auth.userId, 'save_memory');
     return res.json({ success: true, memory: row.rows[0] });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -23571,12 +23598,43 @@ async function logTaskActivity(
   } catch { /* non-fatal */ }
 }
 
-async function checkTaskActions(userId: string, actionType: string) {
-  if (!hasDatabase()) return;
+/**
+ * Infer task_action rows from a task title using keyword heuristics.
+ * Called automatically on task creation so tasks progress without manual setup.
+ */
+function inferTaskActions(title: string): Array<{ action_type: string; label: string; target_count: number }> {
+  const t = title.toLowerCase();
+  const results: Array<{ action_type: string; label: string; target_count: number }> = [];
+
+  // Extract a target count if the title says "create 3 posts" etc.
+  const numMatch = t.match(/\b(\d+)\b/);
+  const n = numMatch ? Math.min(parseInt(numMatch[1], 10), 50) : 1;
+
+  const check = (actionType: string, label: string, verbs: RegExp, nouns: RegExp) => {
+    if (verbs.test(t) && nouns.test(t)) {
+      results.push({ action_type: actionType, label, target_count: n });
+    }
+  };
+
+  check('create_post',    'Create a post',              /create|write|draft|make|compose|produce/,  /post|content|article|caption|blog|copy|update|tweet|thread/);
+  check('schedule_post',  'Schedule a post',            /schedule|publish|queue|plan/,               /post|content|article|caption|update|tweet/);
+  check('publish_post',   'Publish / go live',          /publish|go\slive|launch|release|push\slive/, /post|content|article|update/);
+  check('connect_social', 'Connect a social account',   /connect|add|link|integrate|set\sup/,        /social|account|platform|twitter|linkedin|instagram|facebook|tiktok|youtube/);
+  check('create_card',    'Create a design card',       /create|design|make|build|produce/,          /card|graphic|visual|banner|image|poster|flyer/);
+  check('save_memory',    'Save a memory / brand item', /add|save|update|fill|set/,                  /memory|brand|profile|personal|about|niche|tone/);
+
+  return results;
+}
+
+async function checkTaskActions(
+  userId: string,
+  actionType: string,
+): Promise<Array<{ task_id: string; title: string; new_status: string; progress: string }>> {
+  if (!hasDatabase()) return [];
+  const progressed: Array<{ task_id: string; title: string; new_status: string; progress: string }> = [];
   try {
-    // Match tasks where user is either a direct assignee OR the supervisor
     const { rows } = await dbQuery(
-      `SELECT DISTINCT ta.id, ta.current_count, ta.target_count, ta.task_id, t.project_id, t.status
+      `SELECT DISTINCT ta.id, ta.current_count, ta.target_count, ta.task_id, t.project_id, t.status, t.title
        FROM task_actions ta
        JOIN tasks t ON t.id = ta.task_id
        WHERE ta.action_type = $2
@@ -23595,14 +23653,27 @@ async function checkTaskActions(userId: string, actionType: string) {
         `SELECT COALESCE(SUM(target_count),0) AS tgt, COALESCE(SUM(LEAST(current_count, target_count)),0) AS cur FROM task_actions WHERE task_id = $1`,
         [row.task_id]
       );
-      if (Number(totals[0].cur) >= Number(totals[0].tgt)) {
+      const isDone = Number(totals[0].cur) >= Number(totals[0].tgt);
+      if (isDone) {
         await dbQuery(`UPDATE tasks SET status = 'done', updated_at = NOW() WHERE id = $1`, [row.task_id]);
         void logTaskActivity(row.project_id, userId, 'status_changed', row.task_id, { from: row.status, to: 'done' });
+        createNotification(userId, 'agent_activity',
+          `Task completed: "${row.title}"`,
+          `Your action automatically completed the task "${row.title}".`,
+          { taskId: row.task_id },
+        ).catch(() => undefined);
       }
+      progressed.push({
+        task_id: row.task_id,
+        title: row.title,
+        new_status: isDone ? 'done' : row.status,
+        progress: `${newCount}/${row.target_count}`,
+      });
     }
   } catch (err) {
     console.error('[checkTaskActions] error:', err);
   }
+  return progressed;
 }
 
 // GET /api/projects/:projectId/tasks
@@ -23670,9 +23741,11 @@ app.post('/api/projects/:projectId/tasks', async (req: Request, res: Response) =
         dbQuery(`INSERT INTO task_label_assignments (task_id, label_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [task.id, lid])
       ),
     ]);
+    // Use explicitly provided actions, or auto-infer from title if none given
+    const actionsToCreate = actions.length > 0 ? actions : inferTaskActions(task.title);
     let savedActions: Record<string, unknown>[] = [];
-    if (actions.length) {
-      const actRows = await Promise.all(actions.map((a) =>
+    if (actionsToCreate.length) {
+      const actRows = await Promise.all(actionsToCreate.map((a) =>
         dbQuery(
           `INSERT INTO task_actions (id, task_id, action_type, label, target_count, current_count) VALUES ($1,$2,$3,$4,$5,0) RETURNING *`,
           [randomUUID(), task.id, a.action_type, a.label, Math.max(1, a.target_count || 1)]
