@@ -189,6 +189,9 @@ function AppSidebar({
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [workspaceCreating, setWorkspaceCreating] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const newProjectRef = useRef<HTMLInputElement>(null);
 
@@ -242,6 +245,24 @@ function AppSidebar({
       setAddingProject(false);
     } finally {
       setCreatingProject(false);
+    }
+  };
+
+  const createWorkspace = async () => {
+    if (!newWorkspaceName.trim()) return;
+    setWorkspaceCreating(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      await fetch(`${(import.meta as any).env?.VITE_API_URL ?? ''}/api/organizations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
+        body: JSON.stringify({ name: newWorkspaceName.trim() }),
+      });
+      await refresh();
+      setNewWorkspaceName('');
+      setCreatingWorkspace(false);
+    } finally {
+      setWorkspaceCreating(false);
     }
   };
 
@@ -346,6 +367,36 @@ function AppSidebar({
               <Plus size={13} />
             </button>
           </div>
+
+          {/* No org — prompt to create workspace */}
+          {!currentOrg && (
+            <div className="ml-4 mr-2 mt-1 mb-1">
+              {creatingWorkspace ? (
+                <div className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-2 py-1.5">
+                  <input
+                    autoFocus
+                    value={newWorkspaceName}
+                    onChange={(e) => setNewWorkspaceName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void createWorkspace(); if (e.key === 'Escape') setCreatingWorkspace(false); }}
+                    placeholder="Workspace name…"
+                    className="flex-1 bg-transparent text-[12px] text-gray-800 placeholder-gray-400 focus:outline-none"
+                  />
+                  {workspaceCreating
+                    ? <span className="text-indigo-400 text-[10px]">…</span>
+                    : <button type="button" onClick={createWorkspace} disabled={!newWorkspaceName.trim()} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-40">Create</button>
+                  }
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setCreatingWorkspace(true)}
+                  className="w-full rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 px-3 py-2 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+                >
+                  + Create your workspace
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Inline new project input */}
           {addingProject && (

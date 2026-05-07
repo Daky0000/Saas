@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 import {
   Bell,
   Bot,
@@ -48,6 +49,7 @@ const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: st
   agent_activity:    { icon: Bot,       color: 'text-purple-600',  bg: 'bg-purple-50' },
   team_invite:       { icon: UserPlus,  color: 'text-pink-600',    bg: 'bg-pink-50' },
   member_joined:     { icon: Mail,      color: 'text-teal-600',    bg: 'bg-teal-50' },
+  invite_declined:   { icon: X,        color: 'text-red-500',     bg: 'bg-red-50' },
 };
 
 function getMeta(type: string) {
@@ -76,6 +78,7 @@ function timeUntil(dateStr: string): string {
 }
 
 export default function NotificationBell() {
+  const { refresh: refreshWorkspace, switchOrg } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -166,10 +169,14 @@ export default function NotificationBell() {
       });
       const d = await r.json();
       if (d.success) {
-        // Remove this notification from local state (backend already deleted it)
         setNotifications((prev) => prev.filter((x) => x.id !== n.id));
         setUnreadCount((c) => (!n.is_read ? Math.max(0, c - 1) : c));
-        if (action === 'accept') void fetchNotifications(); // refresh to catch any new member_joined
+        if (action === 'accept') {
+          // Reload workspace so the new org's projects appear in the sidebar
+          await refreshWorkspace();
+          if (d.orgId) void switchOrg(d.orgId);
+          void fetchNotifications();
+        }
       }
     } finally {
       setActionLoading(null);

@@ -2117,37 +2117,6 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`CREATE INDEX IF NOT EXISTS task_actions_task_idx ON task_actions (task_id);`).catch(() => undefined);
   // ── End Task Management ───────────────────────────────────────────────────────
 
-  // Seed a default personal workspace for every user who doesn't have one yet
-  try {
-    const { rows: usersWithoutOrg } = await pool.query(`
-      SELECT u.id, u.full_name, u.email, u.username
-      FROM users u
-      WHERE NOT EXISTS (
-        SELECT 1 FROM organization_memberships om WHERE om.user_id = u.id
-      )
-      ORDER BY u.created_at ASC
-    `);
-    for (const user of usersWithoutOrg) {
-      const orgId = randomUUID();
-      const projId = randomUUID();
-      const displayName = (user.full_name || user.username || user.email.split('@')[0]).trim();
-      const slug = `${displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40)}-${orgId.substring(0, 6)}`;
-      await pool.query(
-        `INSERT INTO organizations (id, name, slug, description, owner_id) VALUES ($1, $2, $3, '', $4) ON CONFLICT DO NOTHING`,
-        [orgId, `${displayName}'s Workspace`, slug, user.id]
-      );
-      await pool.query(
-        `INSERT INTO organization_memberships (id, org_id, user_id, role) VALUES ($1, $2, $3, 'owner') ON CONFLICT DO NOTHING`,
-        [randomUUID(), orgId, user.id]
-      );
-      await pool.query(
-        `INSERT INTO projects (id, org_id, name, description, created_by_user_id) VALUES ($1, $2, 'Main Project', 'Default project', $3) ON CONFLICT DO NOTHING`,
-        [projId, orgId, user.id]
-      );
-    }
-  } catch (e) {
-    console.warn('Workspace seed skipped:', e);
-  }
   // ── End Workspace Tables ──────────────────────────────────────────────────────
 
   dbReady = true;
@@ -22517,6 +22486,16 @@ app.post('/api/invitations/:token/decline', async (req: Request, res: Response) 
       `DELETE FROM notifications WHERE user_id = $1 AND type = 'team_invite' AND data->>'token' = $2`,
       [auth.userId, token]
     );
+    // Notify the inviter of the decline
+    const { rows: declinerRows } = await dbQuery(`SELECT full_name, email FROM users WHERE id = $1`, [auth.userId]);
+    const declinerName = declinerRows[0]?.full_name || declinerRows[0]?.email || 'Someone';
+    createNotification(
+      inv.invited_by_user_id,
+      'invite_declined',
+      `${declinerName} declined your invitation`,
+      `${declinerName} declined the invitation to join ${inv.org_name}. You can invite them again any time.`,
+      { orgId: inv.org_id },
+    );
     return res.json({ success: true });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -22842,7 +22821,6 @@ app.post('/api/organizations', async (req: Request, res: Response) => {
   if (!name?.trim()) return res.status(400).json({ success: false, error: 'Name is required' });
   try {
     const orgId = randomUUID();
-    const projId = randomUUID();
     const slug = rawSlug?.trim()
       ? rawSlug.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').substring(0, 60)
       : `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40)}-${orgId.substring(0, 6)}`;
@@ -22853,10 +22831,6 @@ app.post('/api/organizations', async (req: Request, res: Response) => {
     await dbQuery(
       `INSERT INTO organization_memberships (id, org_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
       [randomUUID(), orgId, auth.userId]
-    );
-    await dbQuery(
-      `INSERT INTO projects (id, org_id, name, description, created_by_user_id) VALUES ($1, $2, 'Main Project', '', $3)`,
-      [projId, orgId, auth.userId]
     );
     const { rows } = await dbQuery(
       `SELECT o.*, om.role FROM organizations o JOIN organization_memberships om ON om.org_id = o.id AND om.user_id = $1 WHERE o.id = $2`,
