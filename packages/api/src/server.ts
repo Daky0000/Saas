@@ -20921,6 +20921,44 @@ Output nothing. The UI shows a calendar automatically. Wait for "Schedule for [I
 
 ### "Explain why this works"
 Reply with 2–3 bullet points only. Each bullet under 12 words. No intro sentence.
+
+---
+
+## PLATFORM CONNECTION RULES — STRICTLY ENFORCED
+
+Before calling any tool involving a platform, check the LIVE SAAS STATE for that platform's connection status.
+
+### Scenario A — "Publish / schedule to [Platform]" and it is NOT connected
+DO NOT call schedule_post. Instead respond:
+> [Platform] isn't connected yet. Connect it in **Integrations** and I'll schedule it straight away.
+> 1. What would you like to do?
+>    - Create the draft now (I'll publish when I connect)
+>    - Remind me to connect [Platform]
+>    - Cancel
+
+If the user chooses "Create the draft now", call create_draft (no platforms field) and confirm the draft is saved.
+
+### Scenario B — "Draft a post for [Platform]" and it is NOT connected
+Proceed and call create_draft immediately. After the tool result, if platforms_not_connected is non-empty, respond:
+
+Done! Your [Platform] draft is ready — but [Platform] isn't connected, so it can't be published yet.
+
+1. What would you like to do next?
+   - Connect [Platform] in Integrations
+   - Edit the draft
+   - Schedule it for later
+   - Custom
+
+### Scenario C — Tool result contains platforms_not_connected
+If the tool result shows platforms_not_connected is non-empty, always mention it in your response. Say which platforms were skipped and direct the user to Integrations to connect them.
+
+### Scenario D — No social accounts connected at all
+When the live state shows zero connected accounts and the user asks to publish or schedule anything, respond:
+> You haven't connected any social accounts yet. Head to **Integrations** to connect Twitter, LinkedIn, Instagram, Facebook, or TikTok — then come back and I'll handle everything from here.
+> 1. What would you like to do?
+>    - Create the draft first
+>    - Go to Integrations
+>    - Custom
 `;
 
 const AI_SYSTEM_PROMPT_DEFAULT = `You are Daky — the user's dedicated personal social media butler with 55 years of deep, battle-tested expertise in social media marketing, brand strategy, content creation, audience psychology, and platform algorithms. You have guided Fortune 500 brands, solo creators, and everything in between. You know what works, what flops, and exactly why.
@@ -20973,6 +21011,8 @@ Act immediately when intent is clear — never just describe what you could do:
 - "what platforms / accounts connected" → get_connected_platforms
 
 Platform pre-selection: when the user names a platform (e.g. "LinkedIn post", "Instagram caption", "Twitter thread"), set the lowercase platform name in the platforms field. No platform mentioned → omit the field.
+
+IMPORTANT: Always check the LIVE SAAS STATE section for each platform's connection status before calling a publishing tool. Follow the PLATFORM CONNECTION RULES exactly.
 
 After every tool use, confirm in one sentence and offer a clear next step.
 
@@ -21210,16 +21250,34 @@ function aiToolLabel(name: string, input: any): string {
   }
 }
 
-async function preselectPlatformsForPost(postId: string, userId: string, platforms: string[]): Promise<void> {
-  if (!pool || platforms.length === 0) return;
+async function preselectPlatformsForPost(
+  postId: string,
+  userId: string,
+  platforms: string[],
+): Promise<{ connected: string[]; missing: string[] }> {
+  const result = { connected: [] as string[], missing: [] as string[] };
+  if (!pool || platforms.length === 0) return result;
   try {
     const normalized = platforms.map((p) => p.toLowerCase().trim());
-    const expanded = Array.from(new Set(normalized.flatMap((p) => (p === 'x' ? ['twitter', 'x'] : p === 'twitter' ? ['twitter', 'x'] : [p]))));
+    const expanded = Array.from(new Set(normalized.flatMap((p) =>
+      p === 'x' ? ['twitter', 'x'] : p === 'twitter' ? ['twitter', 'x'] : [p]
+    )));
     const { rows: accounts } = await dbQuery(
-      `SELECT id FROM social_accounts WHERE user_id=$1 AND LOWER(platform) = ANY($2::text[])`,
+      `SELECT id, LOWER(platform) AS platform FROM social_accounts
+       WHERE user_id=$1 AND LOWER(platform) = ANY($2::text[]) AND connected = true`,
       [userId, expanded]
     );
-    if (accounts.length === 0) return;
+    const foundPlatforms = new Set(accounts.map((a: any) => a.platform as string));
+    // Determine which requested platforms are missing
+    for (const p of normalized) {
+      const aliases = p === 'x' ? ['x', 'twitter'] : p === 'twitter' ? ['twitter', 'x'] : [p];
+      if (aliases.some((a) => foundPlatforms.has(a))) {
+        result.connected.push(p);
+      } else {
+        result.missing.push(p);
+      }
+    }
+    if (accounts.length === 0) return result;
     const settingId = randomUUID();
     const existing = await dbQuery('SELECT id FROM social_post_settings WHERE post_id=$1', [postId]);
     const settId: string = existing.rows[0]?.id ? String(existing.rows[0].id) : settingId;
@@ -21238,6 +21296,7 @@ async function preselectPlatformsForPost(postId: string, userId: string, platfor
   } catch (e) {
     console.error('preselectPlatformsForPost error:', e);
   }
+  return result;
 }
 
 async function executeAITool(name: string, input: any, userId: string): Promise<any> {
@@ -21254,13 +21313,19 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
          VALUES ($1, $2, $3, $4, $5, $6, 'draft', NOW(), NOW()) RETURNING id, title, status`,
         [id, userId, title, slug, content, excerpt]
       );
-      await preselectPlatformsForPost(id, userId, platforms);
+      const platformResult = await preselectPlatformsForPost(id, userId, platforms);
       createNotification(userId, 'draft_created',
         'Draft created',
         `"${title}" has been saved as a draft.`,
         { postId: id },
       ).catch(() => undefined);
-      return { success: true, action: 'created_draft', post: rows[0] };
+      return {
+        success: true,
+        action: 'created_draft',
+        post: rows[0],
+        platforms_connected: platformResult.connected,
+        platforms_not_connected: platformResult.missing,
+      };
     }
     case 'schedule_post': {
       const title = String(input?.title || 'Untitled').slice(0, 255);
@@ -21276,14 +21341,20 @@ async function executeAITool(name: string, input: any, userId: string): Promise<
          VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, NOW(), NOW()) RETURNING id, title, status, scheduled_at`,
         [id, userId, title, slug, content, excerpt, scheduled_at]
       );
-      await preselectPlatformsForPost(id, userId, platforms);
+      const platformResult = await preselectPlatformsForPost(id, userId, platforms);
       const schedDate = scheduled_at ? new Date(scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
       createNotification(userId, 'post_scheduled',
         'Post scheduled',
         `"${title}" is scheduled for ${schedDate}.`,
         { postId: id, scheduled_at },
       ).catch(() => undefined);
-      return { success: true, action: 'scheduled_post', post: rows[0] };
+      return {
+        success: true,
+        action: 'scheduled_post',
+        post: rows[0],
+        platforms_connected: platformResult.connected,
+        platforms_not_connected: platformResult.missing,
+      };
     }
     case 'get_recent_posts': {
       const limit = Math.min(Number(input?.limit) || 5, 10);
