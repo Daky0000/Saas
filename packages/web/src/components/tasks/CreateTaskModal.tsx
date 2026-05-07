@@ -127,8 +127,8 @@ export default function CreateTaskModal({ projectId, defaultStatus, projectMembe
               </select>
             </div>
             <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Due Date</label>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Due Date & Time</label>
+              <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
                 className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300" />
             </div>
           </div>

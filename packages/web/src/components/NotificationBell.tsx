@@ -6,6 +6,7 @@ import {
   Brain,
   Calendar,
   CheckCheck,
+  Clock,
   FileText,
   Mail,
   Pin,
@@ -50,6 +51,7 @@ const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: st
   team_invite:       { icon: UserPlus,  color: 'text-pink-600',    bg: 'bg-pink-50' },
   member_joined:     { icon: Mail,      color: 'text-teal-600',    bg: 'bg-teal-50' },
   invite_declined:   { icon: X,        color: 'text-red-500',     bg: 'bg-red-50' },
+  task_due_soon:     { icon: Clock,     color: 'text-amber-600',   bg: 'bg-amber-50' },
 };
 
 function getMeta(type: string) {

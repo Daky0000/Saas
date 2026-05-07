@@ -702,7 +702,7 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
               <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Due Date</p>
               <div className="flex items-center gap-1">
                 <Calendar size={12} className="shrink-0 text-gray-400" />
-                <input type="date" value={task.due_date?.slice(0, 10) ?? ''}
+                <input type="datetime-local" value={task.due_date ? task.due_date.slice(0, 16) : ''}
                   onChange={(e) => void patch({ due_date: e.target.value || null })}
                   className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
                 {task.due_date && (

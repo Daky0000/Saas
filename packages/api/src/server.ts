@@ -2013,6 +2013,8 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     );
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS tasks_project_status_idx ON tasks (project_id, status, position);`).catch(() => undefined);
+  // Migrate due_date from DATE to TIMESTAMPTZ to support time-of-day
+  await pool.query(`ALTER TABLE tasks ALTER COLUMN due_date TYPE TIMESTAMPTZ USING due_date::TIMESTAMPTZ;`).catch(() => undefined);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS task_assignees (
@@ -23894,7 +23896,7 @@ app.get('/api/projects/:projectId/task-stats', async (req: Request, res: Respons
   try {
     const [statusCounts, overdue, memberLoad, recent] = await Promise.all([
       dbQuery(`SELECT status, COUNT(*)::int AS count FROM tasks WHERE project_id=$1 GROUP BY status`, [projectId]),
-      dbQuery(`SELECT COUNT(*)::int AS count FROM tasks WHERE project_id=$1 AND due_date < CURRENT_DATE AND status != 'done'`, [projectId]),
+      dbQuery(`SELECT COUNT(*)::int AS count FROM tasks WHERE project_id=$1 AND due_date < NOW() AND status != 'done'`, [projectId]),
       dbQuery(
         `SELECT COALESCE(u.full_name, u.username, u.email) AS name, u.avatar_url AS avatar, COUNT(*)::int AS task_count
          FROM task_assignees ta JOIN tasks t ON t.id=ta.task_id JOIN users u ON u.id=ta.user_id
@@ -24203,10 +24205,56 @@ app.use((req, res) => {
 // Centralized error handling (must be last)
 app.use(errorHandler);
 
+// ── Due-date alert scheduler ───────────────────────────────────────────────────
+// Runs every hour. Sends a notification to each assignee of tasks due in ~24h.
+async function runDueDateAlerts() {
+  try {
+    const { rows } = await pool.query<{
+      task_id: string; title: string; due_date: string;
+      user_id: string; project_id: string;
+    }>(`
+      SELECT t.id AS task_id, t.title, t.due_date, t.project_id,
+             ta.user_id
+      FROM tasks t
+      JOIN task_assignees ta ON ta.task_id = t.id
+      WHERE t.status != 'done'
+        AND t.due_date IS NOT NULL
+        AND t.due_date BETWEEN NOW() + INTERVAL '20 hours' AND NOW() + INTERVAL '28 hours'
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = ta.user_id
+            AND n.type = 'task_due_soon'
+            AND (n.data->>'task_id') = t.id::text
+            AND n.created_at > NOW() - INTERVAL '24 hours'
+        )
+    `);
+    for (const row of rows) {
+      const due = new Date(row.due_date);
+      const formatted = due.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, message, data)
+         VALUES ($1, 'task_due_soon', $2, $3, $4)`,
+        [
+          row.user_id,
+          `Due tomorrow: "${row.title}"`,
+          `Your task is due on ${formatted}. Make sure to complete it in time.`,
+          JSON.stringify({ task_id: row.task_id, project_id: row.project_id }),
+        ]
+      );
+    }
+    if (rows.length > 0) logger.info({ count: rows.length }, 'due_date_alerts_sent');
+  } catch (err) {
+    logger.error({ err }, 'due_date_alert_error');
+  }
+}
+
 // Start server
 if (config.nodeEnv !== 'test') {
   app.listen(PORT, () => {
     logger.info({ port: PORT }, 'api_listening');
+    // Run due-date alerts immediately, then every hour
+    void runDueDateAlerts();
+    setInterval(() => void runDueDateAlerts(), 60 * 60 * 1000);
   });
 }
 

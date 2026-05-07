@@ -88,9 +88,14 @@ export default function TaskCard({ task, isAdmin, onClick }: Props) {
         {/* Meta */}
         <div className="flex items-center gap-2 text-gray-400">
           {task.due_date && (
-            <span className={`flex items-center gap-0.5 text-[10px] font-medium ${isOverdue ? 'text-red-500' : ''}`}>
+            <span className={`flex items-center gap-0.5 text-[10px] font-semibold rounded px-1 py-0.5 ${isOverdue ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
               <Calendar size={10} />
               {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              {task.due_date.length > 10 && (
+                <span className="ml-0.5 opacity-75">
+                  {new Date(task.due_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              )}
             </span>
           )}
           {task.comment_count > 0 && (
