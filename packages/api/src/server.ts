@@ -10448,21 +10448,36 @@ async function callAINonStreaming(
   userMessage: string,
   maxTokens = 400,
 ): Promise<string> {
-  if (provider === 'google') {
-    const effectiveModel = GEMINI_MODELS.includes(model) ? model : (ANTHROPIC_TO_GEMINI[model] ?? 'gemini-2.0-flash');
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: systemPrompt });
-    const result = await gModel.generateContent(userMessage);
-    return result.response.text();
-  } else {
-    const client = new Anthropic({ apiKey });
-    const resp = await client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-    return resp.content[0]?.type === 'text' ? resp.content[0].text : '';
+  try {
+    if (provider === 'google') {
+      const effectiveModel = GEMINI_MODELS.includes(model) ? model : (ANTHROPIC_TO_GEMINI[model] ?? 'gemini-2.0-flash');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: systemPrompt });
+      const result = await gModel.generateContent(userMessage);
+      return result.response.text();
+    } else {
+      const client = new Anthropic({ apiKey });
+      const resp = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      return resp.content[0]?.type === 'text' ? resp.content[0].text : '';
+    }
+  } catch (err: any) {
+    const msg: string = err?.message || String(err);
+    if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('too many requests')) {
+      if (provider === 'google') {
+        throw new Error('Google API quota exceeded. The free tier has a limit of 0 for this project — enable billing at aistudio.google.com to use Gemini.');
+      } else {
+        throw new Error('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.');
+      }
+    }
+    if (msg.includes('401') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('unauthorized')) {
+      throw new Error(`Invalid ${provider === 'google' ? 'Google' : 'Anthropic'} API key. Please check your key and try again.`);
+    }
+    throw err;
   }
 }
 

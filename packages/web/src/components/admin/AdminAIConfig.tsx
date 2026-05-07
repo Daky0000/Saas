@@ -280,7 +280,7 @@ export default function AdminAIConfig() {
                     <ol className="space-y-3 list-none">
                       {[
                         { step: '1', title: 'Open Google AI Studio', body: 'Go to aistudio.google.com — sign in with your Google account.', link: 'https://aistudio.google.com', linkLabel: 'Open AI Studio →' },
-                        { step: '2', title: 'Create an API key', body: 'Click "Get API key" → "Create API key in new project" (or select an existing Google Cloud project). Copy the key that starts with AIza…' },
+                        { step: '2', title: 'Enable billing & create an API key', body: 'Click "Get API key" → select a Google Cloud project with billing enabled (or create one). Keys on free-tier projects have a quota of 0 and will fail. Copy the key that starts with AIza…', link: 'https://console.cloud.google.com/billing', linkLabel: 'Set up billing →' },
                         { step: '3', title: 'Paste it here', body: 'Paste the key into the Google API Key field below, select your preferred Gemini model, and click Save.' },
                       ].map((s) => (
                         <li key={s.step} className="flex gap-3">
@@ -297,9 +297,9 @@ export default function AdminAIConfig() {
                         </li>
                       ))}
                     </ol>
-                    <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 space-y-1">
-                      <p className="font-semibold text-slate-700">Free tier</p>
-                      <p>Google AI Studio has a generous free tier — Gemini 2.0 Flash is free for up to 15 requests/min and 1 million tokens/day at time of writing. No credit card required to start.</p>
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800 space-y-1">
+                      <p className="font-semibold">Billing required</p>
+                      <p>API keys linked to a free-tier Google Cloud project have a quota of 0 and will return a 429 error. You must attach a billing account to your project at console.cloud.google.com/billing. Gemini pricing is pay-per-token and typically very low-cost.</p>
                     </div>
                   </>
                 ) : (
