@@ -1806,10 +1806,12 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       message     TEXT NOT NULL DEFAULT '',
       data        JSONB NOT NULL DEFAULT '{}',
       is_read     BOOLEAN NOT NULL DEFAULT false,
+      pinned      BOOLEAN NOT NULL DEFAULT false,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS notifications_user_id_idx ON notifications (user_id, created_at DESC);`).catch(() => undefined);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;`).catch(() => undefined);
   // ── End Notifications ─────────────────────────────────────────────────────────
 
   // ── Apify ─────────────────────────────────────────────────────────────────────
@@ -5219,12 +5221,13 @@ async function createNotification(
   title: string,
   message: string,
   data: Record<string, any> = {},
+  pinned = false,
 ): Promise<void> {
   if (!pool) return;
   try {
     await dbQuery(
-      `INSERT INTO notifications (user_id, type, title, message, data) VALUES ($1,$2,$3,$4,$5)`,
-      [userId, type, title, message, data],
+      `INSERT INTO notifications (user_id, type, title, message, data, pinned) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [userId, type, title, message, data, pinned],
     );
   } catch (e) {
     console.error('createNotification error:', e);
@@ -22432,9 +22435,9 @@ app.get('/api/notifications', async (req: Request, res: Response) => {
   if (!pool) return res.json({ success: true, notifications: [], unreadCount: 0 });
   try {
     const { rows } = await dbQuery(
-      `SELECT id, type, title, message, data, is_read, created_at
+      `SELECT id, type, title, message, data, is_read, pinned, created_at
        FROM notifications WHERE user_id = $1
-       ORDER BY created_at DESC LIMIT 50`,
+       ORDER BY pinned DESC, created_at DESC LIMIT 50`,
       [auth.userId],
     );
     const unreadCount = rows.filter((n: any) => !n.is_read).length;
@@ -22485,7 +22488,35 @@ app.delete('/api/notifications', async (req: Request, res: Response) => {
   const auth = await requireAuth(req, res);
   if (!auth) return;
   try {
-    await dbQuery(`DELETE FROM notifications WHERE user_id = $1`, [auth.userId]);
+    await dbQuery(`DELETE FROM notifications WHERE user_id = $1 AND pinned = false`, [auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/invitations/:token/decline — decline an invitation
+app.post('/api/invitations/:token/decline', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { token } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT oi.*, o.name AS org_name FROM organization_invitations oi
+       JOIN organizations o ON o.id = oi.org_id WHERE oi.token = $1`,
+      [token]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Invitation not found' });
+    const inv = rows[0];
+    if (inv.accepted_at) return res.status(409).json({ success: false, error: 'Invitation already accepted' });
+    // Mark as declined by setting accepted_at to a sentinel value (null keeps it pending, so we delete it)
+    await dbQuery(`DELETE FROM organization_invitations WHERE token = $1`, [token]);
+    // Remove the pinned notification for this user
+    await dbQuery(
+      `DELETE FROM notifications WHERE user_id = $1 AND type = 'team_invite' AND data->>'token' = $2`,
+      [auth.userId, token]
+    );
     return res.json({ success: true });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -23022,8 +23053,9 @@ app.post('/api/organizations/:orgId/invite', async (req: Request, res: Response)
         invitedUser[0].id,
         'team_invite',
         `You've been invited to ${orgName}`,
-        `${inviterName} invited you to join ${orgName} as ${role}. Open Project Settings → Team to accept.`,
-        { token, orgId, role },
+        `${inviterName} invited you to join ${orgName} as ${role}.`,
+        { token, orgId, role, expiresAt },
+        true, // pinned — stays at top until accepted/declined/expired
       );
     }
 
@@ -23117,6 +23149,11 @@ app.post('/api/invitations/:token/accept', async (req: Request, res: Response) =
       [randomUUID(), inv.org_id, auth.userId, inv.role]
     );
     await dbQuery(`UPDATE organization_invitations SET accepted_at = NOW() WHERE token = $1`, [token]);
+    // Remove the pinned invite notification now that it's resolved
+    await dbQuery(
+      `DELETE FROM notifications WHERE user_id = $1 AND type = 'team_invite' AND data->>'token' = $2`,
+      [auth.userId, token]
+    );
 
     // Notify the inviter that the user accepted
     const { rows: joinedRows } = await dbQuery(

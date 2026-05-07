@@ -7,6 +7,7 @@ import {
   CheckCheck,
   FileText,
   Mail,
+  Pin,
   Plug,
   RefreshCw,
   Send,
@@ -26,6 +27,7 @@ type Notification = {
   message: string;
   data: Record<string, any>;
   is_read: boolean;
+  pinned: boolean;
   created_at: string;
 };
 
@@ -64,10 +66,20 @@ function timeAgo(dateStr: string): string {
   return `${d}d ago`;
 }
 
+function timeUntil(dateStr: string): string {
+  const diff = new Date(dateStr).getTime() - Date.now();
+  if (diff <= 0) return 'expired';
+  const h = Math.floor(diff / 3600000);
+  if (h < 24) return `${h}h left`;
+  const d = Math.floor(h / 24);
+  return `${d}d left`;
+}
+
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -90,7 +102,6 @@ export default function NotificationBell() {
     return () => clearInterval(interval);
   }, [fetchNotifications]);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     function handle(e: MouseEvent) {
@@ -139,9 +150,33 @@ export default function NotificationBell() {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${tok()}` },
     }).catch(() => undefined);
-    setNotifications([]);
-    setUnreadCount(0);
+    // Keep pinned notifications in local state
+    setNotifications((prev) => prev.filter((n) => n.pinned));
+    setUnreadCount(notifications.filter((n) => n.pinned && !n.is_read).length);
   };
+
+  const handleInviteAction = async (n: Notification, action: 'accept' | 'decline') => {
+    const token = n.data?.token as string;
+    if (!token) return;
+    setActionLoading(`${n.id}-${action}`);
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/invitations/${token}/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok()}` },
+      });
+      const d = await r.json();
+      if (d.success) {
+        // Remove this notification from local state (backend already deleted it)
+        setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+        setUnreadCount((c) => (!n.is_read ? Math.max(0, c - 1) : c));
+        if (action === 'accept') void fetchNotifications(); // refresh to catch any new member_joined
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const nonPinnedCount = notifications.filter((n) => !n.pinned).length;
 
   return (
     <div className="relative">
@@ -172,7 +207,7 @@ export default function NotificationBell() {
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <span className="text-sm font-black text-gray-900">Notifications</span>
             <div className="flex items-center gap-1">
-              {notifications.length > 0 && (
+              {nonPinnedCount > 0 && (
                 <>
                   <button
                     type="button"
@@ -203,7 +238,7 @@ export default function NotificationBell() {
           </div>
 
           {/* List */}
-          <div className="max-h-[380px] overflow-y-auto">
+          <div className="max-h-[420px] overflow-y-auto">
             {notifications.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 gap-2">
                 <Bell size={22} className="text-gray-300" />
@@ -211,6 +246,65 @@ export default function NotificationBell() {
               </div>
             ) : (
               notifications.map((n) => {
+                if (n.type === 'team_invite') {
+                  const expired = n.data?.expiresAt && new Date(n.data.expiresAt) < new Date();
+                  return (
+                    <div
+                      key={n.id}
+                      className="border-b border-pink-100 bg-pink-50/60 px-4 py-3"
+                    >
+                      {/* Pin badge */}
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Pin size={10} className="text-pink-400 fill-pink-400" />
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-pink-500">
+                          Team Invitation
+                        </span>
+                        {n.data?.expiresAt && (
+                          <span className={`ml-auto text-[10px] font-semibold ${expired ? 'text-red-400' : 'text-pink-400'}`}>
+                            {timeUntil(n.data.expiresAt)}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex items-start gap-2 mb-3">
+                        <div className="shrink-0 flex h-7 w-7 items-center justify-center rounded-xl bg-pink-100">
+                          <UserPlus size={13} className="text-pink-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-gray-900 leading-snug">{n.title}</p>
+                          <p className="text-[11px] text-gray-600 leading-relaxed mt-0.5">{n.message}</p>
+                          <p className="text-[10px] text-gray-400 mt-1">{timeAgo(n.created_at)}</p>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      {expired ? (
+                        <p className="text-[11px] text-red-400 font-semibold text-center py-1">This invitation has expired</p>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={!!actionLoading}
+                            onClick={() => void handleInviteAction(n, 'decline')}
+                            className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 hover:bg-red-50 hover:border-red-200 hover:text-red-600 disabled:opacity-50 transition-colors"
+                          >
+                            {actionLoading === `${n.id}-decline` ? 'Declining…' : 'Decline'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!!actionLoading}
+                            onClick={() => void handleInviteAction(n, 'accept')}
+                            className="flex-1 rounded-lg bg-pink-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-pink-700 disabled:opacity-50 transition-colors"
+                          >
+                            {actionLoading === `${n.id}-accept` ? 'Joining…' : 'Accept'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 const { icon: Icon, color, bg } = getMeta(n.type);
                 return (
                   <div
