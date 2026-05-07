@@ -78,7 +78,7 @@ function timeUntil(dateStr: string): string {
 }
 
 export default function NotificationBell() {
-  const { refresh: refreshWorkspace, switchOrg } = useWorkspace();
+  const { refresh: refreshWorkspace } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -171,10 +171,11 @@ export default function NotificationBell() {
       if (d.success) {
         setNotifications((prev) => prev.filter((x) => x.id !== n.id));
         setUnreadCount((c) => (!n.is_read ? Math.max(0, c - 1) : c));
-        if (action === 'accept') {
-          // Reload workspace so the new org's projects appear in the sidebar
+        if (action === 'accept' && d.orgId) {
+          // Write the target org into localStorage before refresh so WorkspaceContext
+          // switches to it automatically (avoids stale-closure issue with switchOrg)
+          localStorage.setItem('workspace_state', JSON.stringify({ orgId: d.orgId, projectId: null }));
           await refreshWorkspace();
-          if (d.orgId) void switchOrg(d.orgId);
           void fetchNotifications();
         }
       }

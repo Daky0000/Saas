@@ -135,14 +135,20 @@ export default function ProjectSettings() {
 
   const deleteProject = async () => {
     setDeleting(true);
+    setError('');
     try {
-      await fetch(`${API_BASE_URL}/api/organizations/${currentOrg.id}/projects/${currentProject.id}`, {
+      const r = await fetch(`${API_BASE_URL}/api/organizations/${currentOrg.id}/projects/${currentProject.id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${tok()}` },
       });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error || 'Delete failed');
       await refresh();
       window.history.pushState({}, '', '/dashboard');
       window.dispatchEvent(new PopStateEvent('popstate'));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+      setConfirmDelete(false);
     } finally { setDeleting(false); }
   };
 

@@ -23220,10 +23220,6 @@ app.delete('/api/organizations/:orgId/projects/:projectId', async (req: Request,
   const membership = await requireOrgMembership(req, res, orgId, 'admin');
   if (!membership) return;
   try {
-    const { rows: cnt } = await dbQuery(`SELECT COUNT(*)::int AS n FROM projects WHERE org_id = $1`, [orgId]);
-    if (cnt[0].n <= 1) {
-      return res.status(409).json({ success: false, error: 'Cannot delete the last project in an organization' });
-    }
     await dbQuery(`DELETE FROM projects WHERE id = $1 AND org_id = $2`, [projectId, orgId]);
     res.json({ success: true });
   } catch (e) {
