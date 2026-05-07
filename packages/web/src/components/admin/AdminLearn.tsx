@@ -16,6 +16,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { getApiBaseUrl } from '../../utils/apiBase';
+
+function tok() {
+  return localStorage.getItem('auth_token') ?? '';
+}
 
 type LearnedItem = {
   id: string;
@@ -81,7 +86,7 @@ export default function AdminLearn() {
 
   const fetchMeta = async () => {
     try {
-      const r = await fetch('/api/learn/meta', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const r = await fetch(`${getApiBaseUrl()}/api/learn/meta`, { headers: { Authorization: `Bearer ${tok()}` } });
       const d = await r.json();
       if (d.success) { setCategories(d.categories); setLabels(d.labels); }
     } catch { /* non-fatal */ }
@@ -97,7 +102,7 @@ export default function AdminLearn() {
       if (filterLabel) params.set('label', filterLabel);
       if (filterFrom) params.set('from', filterFrom);
       if (filterTo) params.set('to', filterTo);
-      const r = await fetch(`/api/learn?${params}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const r = await fetch(`${getApiBaseUrl()}/api/learn?${params}`, { headers: { Authorization: `Bearer ${tok()}` } });
       const d = await r.json();
       if (d.success) setItems(d.items);
       else setError(d.error || 'Failed to load');
@@ -118,9 +123,9 @@ export default function AdminLearn() {
     setAdding(true);
     setAddError('');
     try {
-      const r = await fetch('/api/learn', {
+      const r = await fetch(`${getApiBaseUrl()}/api/learn`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({
           url: addUrl.trim(),
           category: addCategory.trim() || undefined,
@@ -142,7 +147,7 @@ export default function AdminLearn() {
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this learned item?')) return;
     try {
-      await fetch(`/api/learn/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      await fetch(`${getApiBaseUrl()}/api/learn/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tok()}` } });
       setItems((prev) => prev.filter((i) => i.id !== id));
     } catch { /* ignore */ }
   };
@@ -151,9 +156,9 @@ export default function AdminLearn() {
     setCompiling(category);
     setCompileSuccess(null);
     try {
-      const r = await fetch('/api/learn/compile', {
+      const r = await fetch(`${getApiBaseUrl()}/api/learn/compile`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({ category }),
       });
       const d = await r.json();
