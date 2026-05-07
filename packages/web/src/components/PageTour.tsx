@@ -20,6 +20,9 @@ type Props = {
   steps: TourStep[];
   pageTitle?: string;
   pageKey?: string;
+  /** When true, opens the tour immediately (used after onboarding completes). */
+  forceStart?: boolean;
+  onForceStartConsumed?: () => void;
 };
 
 type Rect = { left: number; top: number; width: number; height: number; right: number; bottom: number };
@@ -482,20 +485,30 @@ function TourOverlay({ steps, onClose }: { steps: TourStep[]; onClose: (skipped:
 
 // ── Main export ────────────────────────────────────────────────────────────────
 
-export default function PageTour({ steps, pageTitle, pageKey }: Props) {
+export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForceStartConsumed }: Props) {
   const storageKey = `tour_seen_${pageKey ?? pageTitle?.toLowerCase().replace(/\s+/g, '-') ?? 'page'}`;
   const [active, setActive] = useState(false);
   const [everSeen, setEverSeen] = useState(() => localStorage.getItem(storageKey) === '1');
 
+  // Auto-start on first visit (only when not triggered by forceStart, to avoid double-fire)
   useEffect(() => {
-    if (!everSeen && steps.length > 0) {
+    if (!forceStart && !everSeen && steps.length > 0) {
       const t = setTimeout(() => setActive(true), 450);
       return () => clearTimeout(t);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // forceStart: triggered after onboarding completes
+  useEffect(() => {
+    if (forceStart && steps.length > 0) {
+      const t = setTimeout(() => setActive(true), 300);
+      return () => clearTimeout(t);
+    }
+  }, [forceStart, steps.length]);
+
   const handleClose = (skipped: boolean) => {
     setActive(false);
+    onForceStartConsumed?.();
     if (!skipped) {
       localStorage.setItem(storageKey, '1');
       setEverSeen(true);

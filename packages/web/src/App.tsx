@@ -873,6 +873,7 @@ function App() {
 
   const showOnboarding = useOnboarding();
   const guide = PAGE_GUIDES[currentPage];
+  const [pendingTour, setPendingTour] = useState(false);
 
   return (
     <WorkspaceProvider>
@@ -919,11 +920,22 @@ function App() {
       <ChatWidget />
 
       {/* Per-page quick guide */}
-      {guide && <PageTour key={currentPage} steps={guide.steps} pageTitle={guide.title} />}
+      {guide && (
+        <PageTour
+          key={currentPage}
+          steps={guide.steps}
+          pageTitle={guide.title}
+          forceStart={pendingTour}
+          onForceStartConsumed={() => setPendingTour(false)}
+        />
+      )}
 
-      {/* First-time onboarding wizard */}
+      {/* First-time onboarding wizard (full-screen, shown before tour) */}
       {showOnboarding && (
-        <OnboardingWizard onNavigate={(page) => navigateToPage(page as any)} />
+        <OnboardingWizard
+          onNavigate={(page) => navigateToPage(page as any)}
+          onComplete={() => setPendingTour(true)}
+        />
       )}
 
     </TemplateEditorProvider>
