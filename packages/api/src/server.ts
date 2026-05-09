@@ -1193,13 +1193,12 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   // ─── Seed: Solo Leveling promotional poster template ──────────────────────
   try {
     const SOLO_LEVELING_ID = 'a1b2c3d4-0001-4000-8000-solo1eveling1';
-    const { rows: slRows } = await pool.query<{ id: string }>(
-      'SELECT id FROM card_templates WHERE id = $1 LIMIT 1', [SOLO_LEVELING_ID]
-    );
-    if (slRows.length === 0) {
+    // Always upsert so a previously wrong-format row gets corrected
+    {
       const now = new Date().toISOString();
       const imageUrl = 'https://d8j0ntlcm91z4.cloudfront.net/user_3DSPVF70hppaORlPqQfWVzMK0VX/hf_20260509_180211_c9c8fcf9-10fd-4e0e-9bfa-c6254a39fa8f.png';
-      const designData = {
+      // Must use FabricDesignData wrapper so isFabricDesign() returns true in the frontend
+      const fabricJson = {
         version: '5.3.0',
         background: '#050510',
         width: 1080,
@@ -1295,9 +1294,16 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
           },
         ],
       };
+      const designData = {
+        fabricVersion: true as const,
+        canvasWidth: 1080,
+        canvasHeight: 1350,
+        fabricJson,
+      };
       await pool.query(
         `INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET design_data = EXCLUDED.design_data, cover_image_url = EXCLUDED.cover_image_url, updated_at = EXCLUDED.updated_at`,
         [
           SOLO_LEVELING_ID,
           'Solo Leveling — Shadow Monarch',
@@ -1308,7 +1314,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
           now, now,
         ]
       );
-      console.log('Seeded Solo Leveling card template.');
+      console.log('Solo Leveling card template upserted.');
     }
   } catch (e) {
     console.warn('Solo Leveling template seed skipped:', e);

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Pencil, Trash2, Clock, Sparkles, Wand2, Image, LayoutTemplate,
   CheckCircle2, Loader2, RefreshCw, ChevronRight, Download, Edit3,
-  AlertCircle, ExternalLink, Layers,
+  AlertCircle, ExternalLink, Layers, Lock,
 } from 'lucide-react';
 import AdvancedTemplateCard from '../components/AdvancedTemplateCard';
 import { cloneCardTemplate } from '../data/cardTemplates';
@@ -742,7 +742,12 @@ const Cards = () => {
       setEditingDesign(null);
       setBuilderOpen(true);
     } else {
-      setSelectedTemplate(cloneCardTemplate(template.designData as CardTemplate));
+      const dd = template.designData as unknown as Record<string, unknown>;
+      // Only open old editor when it's a proper CardTemplate (has elements array)
+      if (Array.isArray(dd?.elements)) {
+        setSelectedTemplate(cloneCardTemplate(template.designData as CardTemplate));
+      }
+      // Otherwise (AI image / raw JSON with no canvas data) — nothing to open
     }
   };
 
@@ -917,24 +922,37 @@ const Cards = () => {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {publishedTemplates.map((template) => (
-                <button key={template.id} type="button" onClick={() => handleSelectPublishedTemplate(template)} className="group text-left focus:outline-none">
+              {publishedTemplates.map((template) => {
+                const dd = template.designData as unknown as Record<string, unknown>;
+                const isEditable = isFabricDesign(template.designData) || Array.isArray(dd?.elements);
+                return (
+                <button key={template.id} type="button" onClick={() => handleSelectPublishedTemplate(template)} className="group text-left focus:outline-none" disabled={!isEditable}>
                   <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-100 shadow-sm transition duration-300 group-hover:shadow-lg">
                     {template.coverImageUrl ? (
                       <img src={template.coverImageUrl} alt={template.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
                     ) : (
                       <div className="flex h-full items-center justify-center text-slate-400"><span className="text-sm">No preview</span></div>
                     )}
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-200 group-hover:bg-black/40 group-hover:opacity-100">
-                      <span className="rounded-full bg-white px-5 py-2 text-sm font-bold text-slate-900 shadow-md">Use Template</span>
-                    </div>
+                    {/* Not Editable badge */}
+                    {!isEditable && (
+                      <div className="absolute right-2 top-2 flex items-center gap-1 rounded-lg bg-black/70 px-2 py-1 backdrop-blur-sm">
+                        <Lock size={9} className="text-white/80 shrink-0" />
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-white/90">Not Editable</span>
+                      </div>
+                    )}
+                    {isEditable && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-200 group-hover:bg-black/40 group-hover:opacity-100">
+                        <span className="rounded-full bg-white px-5 py-2 text-sm font-bold text-slate-900 shadow-md">Use Template</span>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-2.5 px-0.5">
                     <p className="truncate text-sm font-semibold text-slate-900">{template.name}</p>
                     {template.description && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{template.description}</p>}
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
