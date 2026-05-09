@@ -1840,6 +1840,22 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   // ── End Apify ─────────────────────────────────────────────────────────────────
 
+  // ── Higgsfield ────────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS higgsfield_generations (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      type         TEXT NOT NULL DEFAULT 'image',
+      model        TEXT NOT NULL DEFAULT '',
+      prompt       TEXT NOT NULL DEFAULT '',
+      params       JSONB,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      result_url   TEXT,
+      error        TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  // ── End Higgsfield ────────────────────────────────────────────────────────────
+
   // ── Daky Learn ────────────────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS learned_items (
@@ -23138,6 +23154,199 @@ app.get('/api/admin/apify/runs', async (req: Request, res: Response) => {
 });
 
 // ── End Apify Admin Routes ─────────────────────────────────────────────────────
+
+// ─── Higgsfield Admin Routes ───────────────────────────────────────────────────
+
+async function getHiggsfieldConfig(): Promise<{ apiKey: string; baseUrl: string } | null> {
+  try {
+    const r = await dbQuery<{ config: Record<string, string> }>(
+      `SELECT config FROM platform_configs WHERE platform = 'higgsfield' AND enabled = true LIMIT 1`
+    );
+    const cfg = r.rows[0]?.config;
+    if (!cfg?.apiKey) return null;
+    return {
+      apiKey: cfg.apiKey,
+      baseUrl: (cfg.baseUrl || 'https://api.higgsfield.ai').replace(/\/$/, ''),
+    };
+  } catch { return null; }
+}
+
+// GET /api/admin/higgsfield/status — verify API key works
+app.get('/api/admin/higgsfield/status', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.json({ connected: false });
+  try {
+    const resp = await axios.get(`${cfg.baseUrl}/v1/user/me`, {
+      headers: { Authorization: `Bearer ${cfg.apiKey}` },
+      validateStatus: () => true,
+      timeout: 8000,
+    });
+    if (resp.status === 200) {
+      const d = resp.data ?? {};
+      return res.json({
+        connected: true,
+        username: d.username || d.email || d.name || '',
+        credits: d.credits ?? d.credit_balance ?? null,
+      });
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      return res.json({ connected: false, error: 'Invalid API key' });
+    }
+    return res.json({ connected: false, error: `API returned ${resp.status}` });
+  } catch (e: any) {
+    return res.json({ connected: false, error: e?.message || 'Connection failed' });
+  }
+});
+
+// POST /api/admin/higgsfield/generate/image — generate an image
+app.post('/api/admin/higgsfield/generate/image', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.status(400).json({ error: 'Higgsfield API key not configured' });
+
+  const {
+    prompt = '',
+    model = 'soul-2',
+    negative_prompt = '',
+    aspect_ratio = '1:1',
+    width,
+    height,
+    steps,
+    guidance_scale,
+  } = req.body as Record<string, any>;
+
+  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  const genId = randomUUID();
+  await dbQuery(
+    `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
+     VALUES ($1, 'image', $2, $3, $4, 'pending')`,
+    [genId, model, prompt.trim(), JSON.stringify({ negative_prompt, aspect_ratio, width, height, steps, guidance_scale })]
+  ).catch(() => undefined);
+
+  try {
+    const payload: Record<string, any> = { prompt: prompt.trim(), model };
+    if (negative_prompt) payload.negative_prompt = negative_prompt;
+    if (aspect_ratio) payload.aspect_ratio = aspect_ratio;
+    if (width) payload.width = width;
+    if (height) payload.height = height;
+    if (steps) payload.steps = steps;
+    if (guidance_scale) payload.guidance_scale = guidance_scale;
+
+    const resp = await axios.post(`${cfg.baseUrl}/v1/generate/image`, payload, {
+      headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+      timeout: 60000,
+    });
+
+    if (resp.status >= 400) {
+      const errMsg = resp.data?.error || resp.data?.message || `API error ${resp.status}`;
+      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(400).json({ error: errMsg });
+    }
+
+    const resultUrl = resp.data?.url || resp.data?.image_url || resp.data?.output?.[0] || null;
+    await dbQuery(
+      `UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`,
+      [resultUrl, genId]
+    ).catch(() => undefined);
+
+    return res.json({ success: true, id: genId, url: resultUrl, raw: resp.data });
+  } catch (e: any) {
+    const errMsg = e?.message || 'Generation failed';
+    await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+    return res.status(500).json({ error: errMsg });
+  }
+});
+
+// POST /api/admin/higgsfield/generate/video — generate a video
+app.post('/api/admin/higgsfield/generate/video', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.status(400).json({ error: 'Higgsfield API key not configured' });
+
+  const {
+    prompt = '',
+    model = 'kling-3',
+    image_url,
+    duration,
+    aspect_ratio = '16:9',
+  } = req.body as Record<string, any>;
+
+  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  const genId = randomUUID();
+  await dbQuery(
+    `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
+     VALUES ($1, 'video', $2, $3, $4, 'pending')`,
+    [genId, model, prompt.trim(), JSON.stringify({ image_url, duration, aspect_ratio })]
+  ).catch(() => undefined);
+
+  try {
+    const payload: Record<string, any> = { prompt: prompt.trim(), model };
+    if (image_url) payload.image_url = image_url;
+    if (duration) payload.duration = duration;
+    if (aspect_ratio) payload.aspect_ratio = aspect_ratio;
+
+    const resp = await axios.post(`${cfg.baseUrl}/v1/generate/video`, payload, {
+      headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+      timeout: 120000,
+    });
+
+    if (resp.status >= 400) {
+      const errMsg = resp.data?.error || resp.data?.message || `API error ${resp.status}`;
+      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(400).json({ error: errMsg });
+    }
+
+    const resultUrl = resp.data?.url || resp.data?.video_url || resp.data?.output?.[0] || null;
+    const status = resultUrl ? 'completed' : 'processing';
+    const jobId = resp.data?.id || resp.data?.job_id || null;
+    await dbQuery(
+      `UPDATE higgsfield_generations SET status=$1, result_url=$2 WHERE id=$3`,
+      [status, resultUrl ?? jobId, genId]
+    ).catch(() => undefined);
+
+    return res.json({ success: true, id: genId, url: resultUrl, job_id: jobId, status, raw: resp.data });
+  } catch (e: any) {
+    const errMsg = e?.message || 'Generation failed';
+    await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+    return res.status(500).json({ error: errMsg });
+  }
+});
+
+// GET /api/admin/higgsfield/generations — list past generations
+app.get('/api/admin/higgsfield/generations', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ generations: [] });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM higgsfield_generations ORDER BY created_at DESC LIMIT 100`
+    );
+    return res.json({ generations: rows });
+  } catch {
+    return res.status(500).json({ error: 'Failed to fetch generations' });
+  }
+});
+
+// DELETE /api/admin/higgsfield/generations/:id — delete a generation record
+app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  await dbQuery(`DELETE FROM higgsfield_generations WHERE id=$1`, [req.params.id]).catch(() => undefined);
+  return res.json({ success: true });
+});
+
+// ── End Higgsfield Admin Routes ────────────────────────────────────────────────
 
 // ─── Workspace / Organization Routes ───────────────────────────────────────────
 
