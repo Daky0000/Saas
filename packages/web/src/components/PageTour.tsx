@@ -12,6 +12,13 @@ export type TourStep = {
   placement?: 'center' | 'top' | 'bottom' | 'left' | 'right';
   illu?: IlluKind;
   cta?: string;
+  /**
+   * CSS selector of an element to click before showing this step.
+   * Use to open tabs/accordions before spotlighting their content.
+   * If action === target (self-action), always clicks (nav tabs).
+   * If action !== target, clicks only when target is not yet in the DOM (smart toggle-safe).
+   */
+  action?: string;
 };
 
 type IlluKind = 'rocket' | 'nav' | 'tap' | 'chart' | 'pulse' | 'spark' | 'check' | 'mail' | 'memory';
@@ -249,16 +256,47 @@ function TourOverlay({ steps, onClose }: { steps: TourStep[]; onClose: (skipped:
   const [rect, setRect] = useState<Rect | null>(null);
   const [pos, setPos] = useState({ left: 200, top: 200, arrow: null as string | null, arrowX: 0, arrowY: 0 });
   const [vw, vh] = useViewport();
+  const [actionDone, setActionDone] = useState(true);
   const cardRef = useRef<HTMLDivElement>(null);
   const step = steps[idx];
 
+  // Perform action (open tab/accordion) before spotlighting the target
+  useEffect(() => {
+    const s = steps[idx];
+    if (!s?.action) { setActionDone(true); return; }
+
+    setActionDone(false);
+
+    // Self-action (action === target): always click (e.g. nav tab buttons always in DOM).
+    // Cross-action (action !== target): only click if the target isn't already visible.
+    const isSelfAction = s.action === s.target;
+    const targetAlreadyVisible = !isSelfAction && !!s.target && !!document.querySelector(s.target);
+
+    if (!targetAlreadyVisible) {
+      const el = document.querySelector(s.action) as HTMLElement | null;
+      el?.click();
+    }
+
+    const delay = targetAlreadyVisible ? 0 : 420;
+    const t = setTimeout(() => setActionDone(true), delay);
+    return () => clearTimeout(t);
+  }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const getTargetRect = useCallback((): Rect | null => {
+    if (!actionDone) return null;
     if (!step?.target) return null;
     const el = document.querySelector(step.target);
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { left: r.left, top: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
-  }, [step?.target]);
+  }, [step?.target, actionDone]);
+
+  // Scroll spotlight target into view
+  useEffect(() => {
+    if (!actionDone || !step?.target) return;
+    const el = document.querySelector(step.target);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [actionDone, step?.target, idx]);
 
   useLayoutEffect(() => {
     const update = () => setRect(getTargetRect());
@@ -539,7 +577,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   dashboard: {
     title: 'Dashboard',
     steps: [
-      { emoji: '🏠', illu: 'rocket', title: 'Your command centre', description: 'The dashboard shows your key stats, scheduled posts, upcoming tasks, and live activity from your AI agent team.' },
+      { emoji: '🏠', illu: 'rocket', title: 'Your command centre', description: 'The dashboard shows your key stats, scheduled posts, upcoming tasks, and live activity from your AI agent team.', target: '[data-tour-id="nav-dashboard"]', placement: 'right' },
       { emoji: '📊', illu: 'chart', title: 'Stats at a glance', description: 'The top row shows your total posts, scheduled items, and connected social accounts. Click any card to drill into that section.' },
       { emoji: '🤖', illu: 'spark', title: 'Agent activity feed', description: 'The right column shows what your agents (Nova, Sage, Aria, Flux) are learning and doing for your brand in real time.' },
       { emoji: '💬', illu: 'check', title: 'Chat with Daky', description: 'Click the chat bubble in the bottom-right corner to open your AI marketing butler. Ask anything — content ideas, strategies, analytics.', cta: 'Get started' },
@@ -548,7 +586,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   posts: {
     title: 'Posts',
     steps: [
-      { emoji: '✍️', illu: 'tap', title: 'Create your first post', description: 'Click "New Post" to open the editor. Write your content, add images, and choose which social accounts to publish to.' },
+      { emoji: '✍️', illu: 'tap', title: 'Create your first post', description: 'Click "New Post" to open the editor. Write your content, add images, and choose which social accounts to publish to.', target: '[data-tour-id="nav-content"]', placement: 'right' },
       { emoji: '📅', illu: 'chart', title: 'Schedule for later', description: 'Instead of publishing immediately, pick a date and time to schedule your post. It will be queued and published automatically.' },
       { emoji: '🔄', illu: 'pulse', title: 'Platform previews', description: 'Each platform (Twitter, LinkedIn, Instagram) has character limits and format rules. The editor shows a live preview per platform.' },
       { emoji: '🤖', illu: 'spark', title: 'AI-assisted writing', description: 'Open the Daky chat and say "Write me a LinkedIn post about X" — the AI will create a draft you can edit and schedule directly.', cta: 'Got it' },
@@ -575,7 +613,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   integrations: {
     title: 'Integrations',
     steps: [
-      { emoji: '🔌', illu: 'nav', title: 'Connect your socials', description: 'Connect Twitter/X, Instagram, LinkedIn, Facebook, and more. Each connection enables scheduling, publishing, and AI insights for that platform.' },
+      { emoji: '🔌', illu: 'nav', title: 'Connect your socials', description: 'Connect Twitter/X, Instagram, LinkedIn, Facebook, and more. Each connection enables scheduling, publishing, and AI insights for that platform.', target: '[data-tour-id="nav-integrations"]', placement: 'right' },
       { emoji: '🔐', illu: 'tap', title: 'OAuth login', description: "Clicking \"Connect\" opens a secure OAuth flow on the platform's website. You approve access — no passwords are stored." },
       { emoji: '🧠', illu: 'memory', title: 'Auto memory', description: 'On first connection, your profile (handle, follower count, bio) is automatically saved to your Memory so agents know your social presence.' },
       { emoji: '♻️', illu: 'check', title: 'Refresh tokens', description: 'Tokens expire over time. If a platform shows "Reconnect", click it to refresh your token without losing any settings.', cta: 'Got it' },
@@ -584,7 +622,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   analytics: {
     title: 'Analytics',
     steps: [
-      { emoji: '📈', illu: 'chart', title: 'Performance overview', description: 'View publishing trends, engagement metrics, and growth data across all your connected social accounts in one place.' },
+      { emoji: '📈', illu: 'chart', title: 'Performance overview', description: 'View publishing trends, engagement metrics, and growth data across all your connected social accounts in one place.', target: '[data-tour-id="nav-analytics"]', placement: 'right' },
       { emoji: '📆', illu: 'tap', title: 'Date range filter', description: 'Use the date picker to compare performance across different time periods — last 7 days, last month, or a custom range.' },
       { emoji: '🤖', illu: 'spark', title: 'Ask Aria', description: 'Open the Daky chat and ask "What do my analytics say?" — Aria, the analytics agent, will interpret your numbers and suggest improvements.', cta: 'Got it' },
     ],
@@ -592,7 +630,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   cards: {
     title: 'Cards',
     steps: [
-      { emoji: '🎨', illu: 'tap', title: 'Visual card builder', description: 'Create stunning social media graphics, announcement cards, and promotional visuals using the drag-and-drop canvas editor.' },
+      { emoji: '🎨', illu: 'tap', title: 'Visual card builder', description: 'Create stunning social media graphics, announcement cards, and promotional visuals using the drag-and-drop canvas editor.', target: '[data-tour-id="nav-content"]', placement: 'right' },
       { emoji: '📐', illu: 'pulse', title: 'Canvas presets', description: 'Choose from preset sizes for Instagram (1080×1080), LinkedIn, Twitter, TikTok, or set a custom canvas size.' },
       { emoji: '🖼️', illu: 'nav', title: 'Add elements', description: 'Use the left panel to add text, shapes, images, and lines. The right panel lets you control position, size, color, and font.' },
       { emoji: '💾', illu: 'check', title: 'Export your design', description: 'Click "Export" to download your card as PNG or JPG at high resolution. Save designs to your library for re-use.', cta: 'Got it' },
@@ -601,7 +639,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   mailing: {
     title: 'Mailing',
     steps: [
-      { emoji: '📧', illu: 'mail', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write your content in the rich-text editor or use Daky to generate copy.' },
+      { emoji: '📧', illu: 'mail', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write your content in the rich-text editor or use Daky to generate copy.', target: '[data-tour-id="nav-mailing"]', placement: 'right' },
       { emoji: '👥', illu: 'nav', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.' },
       { emoji: '📊', illu: 'chart', title: 'Campaign analytics', description: 'After sending, track open rates, click rates, and unsubscribes directly in the campaign detail view.', cta: 'Got it' },
     ],
@@ -609,7 +647,7 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   campaign: {
     title: 'Campaigns',
     steps: [
-      { emoji: '🎯', illu: 'rocket', title: 'What is a campaign?', description: 'A campaign groups related posts, emails, and tasks under a single goal (e.g. a product launch or seasonal promotion).' },
+      { emoji: '🎯', illu: 'rocket', title: 'What is a campaign?', description: 'A campaign groups related posts, emails, and tasks under a single goal (e.g. a product launch or seasonal promotion).', target: '[data-tour-id="nav-campaign"]', placement: 'right' },
       { emoji: '➕', illu: 'tap', title: 'Create a campaign', description: 'Click "New Campaign", set a name, goal, start/end date, and add the content pieces you want to track together.' },
       { emoji: '📌', illu: 'pulse', title: 'Track progress', description: 'The campaign overview shows which content is drafted, scheduled, and live — giving you a full picture of your campaign status.', cta: 'Got it' },
     ],
@@ -626,17 +664,17 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   admin: {
     title: 'Admin',
     steps: [
-      { emoji: '🤖', illu: 'spark', title: 'AI Configuration', description: 'Set your Anthropic or Google Gemini API key, choose the model, and customise the system prompt that Daky uses for all responses.' },
-      { emoji: '🧑‍🤝‍🧑', illu: 'nav', title: 'User management', description: 'View all registered users, their plans, and last active dates. You can promote users to admin or suspend accounts.' },
-      { emoji: '💳', illu: 'chart', title: 'Billing metrics', description: 'See MRR, ARR, active subscriptions, and recent transactions. Drill into individual payments from the Transactions tab.' },
-      { emoji: '🎓', illu: 'memory', title: 'Daky Learn', description: 'Add article and video URLs for Daky to extract marketing insights from. Compile them into AI skills that improve all user responses.' },
-      { emoji: '🧠', illu: 'pulse', title: 'Agent Team', description: 'Edit the base system prompt for each of the 5 agents (Daky, Nova, Sage, Aria, Flux). Changes take effect on the next compilation.', cta: 'Got it' },
+      { emoji: '🧑‍🤝‍🧑', illu: 'nav', title: 'User Management', description: 'View all registered users, their plans, and last active dates. You can promote users to admin or suspend accounts from here.', action: '[data-tour-id="admin-tab-users"]', target: '[data-tour-id="admin-tab-users"]', placement: 'right' },
+      { emoji: '💳', illu: 'chart', title: 'Billing & Subscriptions', description: 'See MRR, ARR, active subscriptions, and recent transactions. Drill into individual payments from the Subscriptions tab.', action: '[data-tour-id="admin-tab-billing"]', target: '[data-tour-id="admin-tab-billing"]', placement: 'right' },
+      { emoji: '🤖', illu: 'spark', title: 'AI Configuration', description: 'Set your Anthropic or Google Gemini API key, choose the model, and customise the system prompt that Daky uses for all responses.', action: '[data-tour-id="admin-accordion-ai"]', target: '[data-tour-id="admin-tab-ai-config"]', placement: 'right' },
+      { emoji: '🎓', illu: 'memory', title: 'Daky Learn', description: 'Add article and video URLs for Daky to extract marketing insights from. Compile them into AI skills that improve all user responses.', action: '[data-tour-id="admin-accordion-ai"]', target: '[data-tour-id="admin-tab-learn"]', placement: 'right' },
+      { emoji: '🧠', illu: 'pulse', title: 'Agent Team', description: 'Edit the base system prompt for each of the 5 agents (Daky, Nova, Sage, Aria, Flux). Changes take effect on the next compilation.', action: '[data-tour-id="admin-accordion-ai"]', target: '[data-tour-id="admin-tab-agents"]', placement: 'right', cta: 'Got it' },
     ],
   },
   billing: {
     title: 'Billing',
     steps: [
-      { emoji: '💳', illu: 'chart', title: 'Your current plan', description: 'This page shows your active subscription, next billing date, and the features included in your plan.' },
+      { emoji: '💳', illu: 'chart', title: 'Your current plan', description: 'This page shows your active subscription, next billing date, and the features included in your plan.', target: '[data-tour-id="nav-billing"]', placement: 'right' },
       { emoji: '⬆️', illu: 'rocket', title: 'Upgrade', description: 'Click "Upgrade" to move to a higher tier and unlock more posts, agents, team seats, and analytics.' },
       { emoji: '🔄', illu: 'check', title: 'Manage subscription', description: 'Cancel, pause, or change your plan at any time. Changes take effect at the end of your current billing period.', cta: 'Got it' },
     ],

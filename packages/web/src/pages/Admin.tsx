@@ -91,17 +91,17 @@ const Admin = ({ currentUser }: AdminProps) => {
   };
 
   const adminItems = [
-    { id: 'users', label: 'User Management', icon: Users, active: true },
+    { id: 'users', label: 'User Management', icon: Users, active: true, tourId: 'admin-tab-users' },
     { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true },
     { id: 'cards', label: 'Card Templates', icon: Image, active: true },
     { id: 'payments', label: 'Payments', icon: CreditCard, active: true },
-    { id: 'billing', label: 'Subscriptions', icon: Receipt, active: true },
+    { id: 'billing', label: 'Subscriptions', icon: Receipt, active: true, tourId: 'admin-tab-billing' },
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
-  ];
+  ] as { id: AdminTab; label: string; icon: React.ElementType; active: boolean; tourId?: string }[];
 
   const pagesItems: { id: AdminTab; label: string }[] = [
     { id: 'pages-home', label: 'Homepage' },
@@ -157,6 +157,7 @@ const Admin = ({ currentUser }: AdminProps) => {
               key={item.id}
               type="button"
               disabled={!item.active}
+              {...(item.tourId ? { 'data-tour-id': item.tourId } : {})}
               onClick={() => item.active && navigateTab(item.id as AdminTab)}
               className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
                 activeTab === item.id && item.active
@@ -176,6 +177,7 @@ const Admin = ({ currentUser }: AdminProps) => {
         <div>
           <button
             type="button"
+            data-tour-id="admin-accordion-ai"
             onClick={() => setAiOpen((prev) => !prev)}
             className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
               isAIActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
@@ -193,10 +195,16 @@ const Admin = ({ currentUser }: AdminProps) => {
             <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
               {aiItems.map((item) => {
                 const Icon = item.icon;
+                const tourIdMap: Partial<Record<typeof item.id, string>> = {
+                  'ai-config': 'admin-tab-ai-config',
+                  'learn': 'admin-tab-learn',
+                  'agents': 'admin-tab-agents',
+                };
                 return (
                   <button
                     key={item.id}
                     type="button"
+                    {...(tourIdMap[item.id] ? { 'data-tour-id': tourIdMap[item.id] } : {})}
                     onClick={() => navigateTab(item.id)}
                     className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                       activeTab === item.id

@@ -313,7 +313,7 @@ function AppSidebar({
       <nav className="flex-1 overflow-y-auto py-2 flex flex-col">
 
         {/* Dashboard */}
-        <button type="button" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
+        <button type="button" data-tour-id="nav-dashboard" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
           <BarChart4 size={15} className="shrink-0" />
           <span className="flex-1 text-left">Dashboard</span>
         </button>
@@ -327,6 +327,7 @@ function AppSidebar({
         {/* Content (Posts + Automation + Media + Cards) */}
         <button
           type="button"
+          data-tour-id="nav-content"
           onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
           className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards')}
         >
@@ -349,7 +350,7 @@ function AppSidebar({
         )}
 
         {/* Analytics */}
-        <button type="button" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
+        <button type="button" data-tour-id="nav-analytics" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
           <TrendingUp size={15} className="shrink-0" />
           <span className="flex-1 text-left">Analytics</span>
         </button>
@@ -470,19 +471,19 @@ function AppSidebar({
 
         {/* ── Bottom nav items ── */}
         <div className="mt-2 border-t border-gray-100 pt-2">
-          <button type="button" onClick={() => go('mailing')} className={cls(currentPage === 'mailing')}>
+          <button type="button" data-tour-id="nav-mailing" onClick={() => go('mailing')} className={cls(currentPage === 'mailing')}>
             <Mail size={15} className="shrink-0" />
             <span className="flex-1 text-left">Mailing</span>
           </button>
-          <button type="button" onClick={() => go('campaign')} className={cls(currentPage === 'campaign')}>
+          <button type="button" data-tour-id="nav-campaign" onClick={() => go('campaign')} className={cls(currentPage === 'campaign')}>
             <Megaphone size={15} className="shrink-0" />
             <span className="flex-1 text-left">Campaigns</span>
           </button>
-          <button type="button" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
+          <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
             <Waypoints size={15} className="shrink-0" />
             <span className="flex-1 text-left">Integrations</span>
           </button>
-          <button type="button" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
+          <button type="button" data-tour-id="nav-billing" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
             <CreditCard size={15} className="shrink-0" />
             <span className="flex-1 text-left">Billing</span>
           </button>
@@ -491,7 +492,7 @@ function AppSidebar({
         {/* Admin */}
         {authUser?.role === 'admin' && (
           <div className="border-t border-gray-100 pt-2 mt-1">
-            <button type="button" onClick={() => go('admin')} className={cls(currentPage === 'admin')}>
+            <button type="button" data-tour-id="nav-admin" onClick={() => go('admin')} className={cls(currentPage === 'admin')}>
               <Shield size={15} className="shrink-0" />
               <span className="flex-1 text-left">Admin</span>
             </button>
