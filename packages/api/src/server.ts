@@ -1190,6 +1190,131 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     console.warn('Card template seed skipped:', e);
   }
 
+  // ─── Seed: Solo Leveling promotional poster template ──────────────────────
+  try {
+    const SOLO_LEVELING_ID = 'a1b2c3d4-0001-4000-8000-solo1eveling1';
+    const { rows: slRows } = await pool.query<{ id: string }>(
+      'SELECT id FROM card_templates WHERE id = $1 LIMIT 1', [SOLO_LEVELING_ID]
+    );
+    if (slRows.length === 0) {
+      const now = new Date().toISOString();
+      const imageUrl = 'https://d8j0ntlcm91z4.cloudfront.net/user_3DSPVF70hppaORlPqQfWVzMK0VX/hf_20260509_180211_c9c8fcf9-10fd-4e0e-9bfa-c6254a39fa8f.png';
+      const designData = {
+        version: '5.3.0',
+        background: '#050510',
+        width: 1080,
+        height: 1350,
+        objects: [
+          {
+            type: 'image', version: '5.3.0',
+            originX: 'left', originY: 'top',
+            left: 0, top: 0,
+            width: 1856, height: 2304,
+            scaleX: 1080 / 1856, scaleY: 1350 / 2304,
+            angle: 0, flipX: false, flipY: false, opacity: 1,
+            fill: 'rgb(0,0,0)', stroke: null, strokeWidth: 0,
+            strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+            strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+            shadow: null, visible: true, backgroundColor: '',
+            fillRule: 'nonzero', paintFirst: 'fill',
+            globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+            cropX: 0, cropY: 0,
+            src: imageUrl,
+            crossOrigin: 'anonymous', filters: [],
+          },
+          {
+            type: 'rect', version: '5.3.0',
+            originX: 'left', originY: 'top',
+            left: 0, top: 900, width: 1080, height: 450,
+            fill: 'rgba(5,5,16,0.72)', stroke: null, strokeWidth: 0,
+            strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+            strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+            angle: 0, flipX: false, flipY: false, opacity: 1,
+            shadow: null, visible: true, backgroundColor: '',
+            fillRule: 'nonzero', paintFirst: 'fill',
+            globalCompositeOperation: 'source-over', skewX: 0, skewY: 0, rx: 0, ry: 0,
+          },
+          {
+            type: 'textbox', version: '5.3.0',
+            originX: 'center', originY: 'center',
+            left: 540, top: 990, width: 960,
+            text: 'SOLO LEVELING',
+            fontSize: 88, fontFamily: 'Inter', fontWeight: '900', fontStyle: 'normal',
+            fill: '#ffffff', stroke: null, strokeWidth: 1,
+            strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+            strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+            angle: 0, flipX: false, flipY: false, opacity: 1,
+            shadow: { color: 'rgba(120,80,255,0.7)', blur: 28, offsetX: 0, offsetY: 0 },
+            visible: true, backgroundColor: '',
+            fillRule: 'nonzero', paintFirst: 'fill',
+            globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+            textAlign: 'center', lineHeight: 1.16, charSpacing: 320,
+            styles: [], direction: 'ltr', pathStartOffset: 0,
+            pathSide: 'left', pathAlign: 'baseline',
+            overline: false, underline: false, linethrough: false,
+            textBackgroundColor: '', splitByGrapheme: false,
+          },
+          {
+            type: 'textbox', version: '5.3.0',
+            originX: 'center', originY: 'center',
+            left: 540, top: 1100, width: 760,
+            text: 'ARISE',
+            fontSize: 52, fontFamily: 'Inter', fontWeight: '300', fontStyle: 'italic',
+            fill: '#a78bfa', stroke: null, strokeWidth: 1,
+            strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+            strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+            angle: 0, flipX: false, flipY: false, opacity: 1,
+            shadow: { color: 'rgba(120,80,255,0.5)', blur: 18, offsetX: 0, offsetY: 0 },
+            visible: true, backgroundColor: '',
+            fillRule: 'nonzero', paintFirst: 'fill',
+            globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+            textAlign: 'center', lineHeight: 1.16, charSpacing: 600,
+            styles: [], direction: 'ltr', pathStartOffset: 0,
+            pathSide: 'left', pathAlign: 'baseline',
+            overline: false, underline: false, linethrough: false,
+            textBackgroundColor: '', splitByGrapheme: false,
+          },
+          {
+            type: 'textbox', version: '5.3.0',
+            originX: 'center', originY: 'center',
+            left: 540, top: 1280, width: 900,
+            text: 'Edit your promotional text here',
+            fontSize: 28, fontFamily: 'Inter', fontWeight: '400', fontStyle: 'normal',
+            fill: 'rgba(200,180,255,0.7)', stroke: null, strokeWidth: 1,
+            strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+            strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+            angle: 0, flipX: false, flipY: false, opacity: 1,
+            shadow: null, visible: true, backgroundColor: '',
+            fillRule: 'nonzero', paintFirst: 'fill',
+            globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+            textAlign: 'center', lineHeight: 1.4, charSpacing: 80,
+            styles: [], direction: 'ltr', pathStartOffset: 0,
+            pathSide: 'left', pathAlign: 'baseline',
+            overline: false, underline: false, linethrough: false,
+            textBackgroundColor: '', splitByGrapheme: false,
+          },
+        ],
+      };
+      await pool.query(
+        `INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          SOLO_LEVELING_ID,
+          'Solo Leveling — Shadow Monarch',
+          'Dark fantasy promotional poster (1080×1350 · 4:5 Facebook portrait). Shadow Monarch silhouette with glowing purple eyes and cinematic lighting. Generated with Higgsfield Nano Banana Pro 2K.',
+          JSON.stringify(designData),
+          imageUrl,
+          true,
+          now, now,
+        ]
+      );
+      console.log('Seeded Solo Leveling card template.');
+    }
+  } catch (e) {
+    console.warn('Solo Leveling template seed skipped:', e);
+  }
+  // ── end Solo Leveling seed ─────────────────────────────────────────────────
+
   // ─── Mailing Module (additive only) ────────────────────────────────────────
 
   await pool.query(`

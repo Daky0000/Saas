@@ -1,4 +1,4 @@
-import { MessageSquare, Paperclip, Calendar } from 'lucide-react';
+import { MessageSquare, Paperclip, Calendar, AlertTriangle } from 'lucide-react';
 import { Task, PRIORITY_COLORS, PRIORITY_LABELS } from '../taskTypes';
 
 type Props = { task: Task; isAdmin: boolean; onClick: () => void };
@@ -45,6 +45,14 @@ export default function TaskCard({ task, isAdmin, onClick }: Props) {
           {labels.length > 3 && (
             <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">+{labels.length - 3}</span>
           )}
+        </div>
+      )}
+
+      {/* Overdue badge */}
+      {isOverdue && (
+        <div className="mb-2 flex items-center gap-1 rounded-md bg-red-100 px-1.5 py-0.5 w-fit">
+          <AlertTriangle size={9} className="text-red-500 shrink-0" />
+          <span className="text-[9px] font-black uppercase tracking-widest text-red-600">Overdue</span>
         </div>
       )}
 
