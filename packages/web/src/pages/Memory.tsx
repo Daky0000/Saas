@@ -527,6 +527,7 @@ export default function Memory() {
           </button>
           <button
             type="button"
+            data-tour-id="btn-generate-memory"
             onClick={() => setShowGenerate(true)}
             className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
           >
@@ -586,6 +587,7 @@ export default function Memory() {
       )}
 
       {/* Categories */}
+      <div data-tour-id="memory-categories" className="space-y-4">
       {grouped.map(({ category, label, fields }) => {
         const isExpanded = expandedCategories.has(category);
         const isAdding = addingTo === category;
@@ -688,6 +690,7 @@ export default function Memory() {
           </div>
         );
       })}
+      </div>
 
       {showGenerate && (
         <GenerateModal

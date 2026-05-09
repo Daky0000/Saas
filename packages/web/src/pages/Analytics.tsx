@@ -198,7 +198,7 @@ export default function Analytics() {
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div data-tour-id="analytics-filters" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <select
             value={selectedPreset}
             onChange={(e) => handlePresetChange(e.target.value as AnalyticsRangePreset)}
@@ -372,7 +372,7 @@ export default function Analytics() {
                 {dashboard.summaryNote}
               </div>
             )}
-            <div className="grid gap-4 lg:grid-cols-4">
+            <div data-tour-id="analytics-stats" className="grid gap-4 lg:grid-cols-4">
               {cards.map((card) => (
                 <KpiCard key={card.label} label={card.label} value={card.value} trend={card.trend}
                   icon={card.icon} valueType={card.valueType} subtext={card.subtext} />

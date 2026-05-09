@@ -197,7 +197,7 @@ function AgentActivityFeed() {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div data-tour-id="dashboard-agent-activity" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Agents</p>
@@ -416,7 +416,7 @@ export default function Dashboard({ currentUser }: DashboardProps) {
       {!loading && !error && (
         <>
           {/* ── Quick actions ── */}
-          <div>
+          <div data-tour-id="dashboard-quick-actions">
             <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Quick Actions</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <QuickAction icon={Edit3} label="New Post" color="#6366f1" onClick={() => navigate('/posts')} />
@@ -427,7 +427,7 @@ export default function Dashboard({ currentUser }: DashboardProps) {
           </div>
 
           {/* ── Stat cards ── */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div data-tour-id="dashboard-stats" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <StatCard
               label="Total Posts"
               value={posts.length}

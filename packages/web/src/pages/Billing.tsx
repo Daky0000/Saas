@@ -247,7 +247,7 @@ export default function Billing() {
       )}
 
       {/* Current plan card */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
+      <div data-tour-id="billing-plan-card" className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Current Plan</p>
@@ -284,6 +284,7 @@ export default function Billing() {
           {!isPaid && (
             <button
               type="button"
+              data-tour-id="btn-upgrade"
               onClick={goToPricing}
               className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
             >

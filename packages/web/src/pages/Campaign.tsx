@@ -445,11 +445,11 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
       {showBuilder && <BuilderWizard onClose={() => setShowBuilder(false)} onDone={c => { setCampaigns(prev => [c, ...prev]); setShowBuilder(false); }} />}
       <div className="mb-6 flex items-center justify-between">
         <div className="text-sm text-slate-500">{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</div>
-        <button onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+        <button data-tour-id="btn-new-campaign" onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
           <Plus size={14} /> New Campaign
         </button>
       </div>
-      <div className="space-y-3">
+      <div data-tour-id="campaigns-list" className="space-y-3">
         {campaigns.map(c => (
           <div key={c.id} className="group flex items-center gap-5 rounded-2xl border border-slate-200 bg-white px-6 py-5 hover:border-slate-300 transition-all">
             <div className="flex-1 min-w-0">

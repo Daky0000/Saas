@@ -787,6 +787,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             const activeItems = activeTab === 'cms' ? cms : activeTab === 'social' ? social : marketing;
             return (
               <section
+                data-tour-id="integrations-cards"
                 className="space-y-4"
                 role="tabpanel"
                 id={`integrations-panel-${activeConfig.id}`}

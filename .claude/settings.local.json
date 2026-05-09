@@ -48,7 +48,24 @@
       "Bash(xargs grep:*)",
       "Bash(git push:*)",
       "Bash(grep -v \"^\\\\s*//\")",
-      "Bash(grep -rn \"LINKEDIN\\\\|linkedin\" .env*)"
+      "Bash(grep -rn \"LINKEDIN\\\\|linkedin\" .env*)",
+      "Bash(curl -s -L \"https://api.anthropic.com/v1/design/h/-ib7O_ZSABEMHHCHIxg2dw?open_file=Dakyworld+Hub+Landing.html\" --compressed -H \"Accept: text/html,*/*\" -H \"User-Agent: Mozilla/5.0\" -o \"C:/Users/ASUS/tmp_design.html\")",
+      "Read(//c/Users/ASUS/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -L \"https://api.anthropic.com/v1/design/h/CnpxQrgnoJusT_GEswblXA?open_file=Auth.html\" -o C:\\\\Users\\\\ASUS\\\\tmp_auth_design.bin)",
+      "Bash(curl -L \"https://api.anthropic.com/v1/design/h/CnpxQrgnoJusT_GEswblXA?open_file=Auth.html\" -o \"C:/Users/ASUS/tmp_auth_design.bin\")",
+      "Bash(Get-ChildItem -Path \"d:\\\\Saas\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(cd /d)",
+      "Bash(dir Saas /B)",
+      "Bash(grep -n '`[a-zA-Z_]' \"D:\\\\Saas\\\\packages\\\\api\\\\src\\\\server.ts\")",
+      "Bash(copy webfetch-1778187168630-nvfpwl.bin design.gz)",
+      "Bash(python)",
+      "WebFetch(domain:higgsfield.ai)",
+      "PowerShell(Get-ChildItem -Path \"d:\\\\Saas\\\\src\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName | Format-Table -AutoSize -Wrap)",
+      "WebFetch(domain:reactjs.org)",
+      "WebFetch(domain:legacy.reactjs.org)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

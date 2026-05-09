@@ -704,6 +704,7 @@ function PostsList({
         </select>
         <button
           type="button"
+          data-tour-id="btn-new-post"
           onClick={onNew}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
         >
@@ -711,7 +712,7 @@ function PostsList({
         </button>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      <div data-tour-id="posts-list" className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center px-4 py-3 border-b border-slate-100 text-xs font-bold text-slate-500">
           <input
             type="checkbox"

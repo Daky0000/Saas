@@ -577,17 +577,17 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   dashboard: {
     title: 'Dashboard',
     steps: [
-      { emoji: '🏠', illu: 'rocket', title: 'Your command centre', description: 'The dashboard shows your key stats, scheduled posts, upcoming tasks, and live activity from your AI agent team.', target: '[data-tour-id="nav-dashboard"]', placement: 'right' },
-      { emoji: '📊', illu: 'chart', title: 'Stats at a glance', description: 'The top row shows your total posts, scheduled items, and connected social accounts. Click any card to drill into that section.' },
-      { emoji: '🤖', illu: 'spark', title: 'Agent activity feed', description: 'The right column shows what your agents (Nova, Sage, Aria, Flux) are learning and doing for your brand in real time.' },
+      { emoji: '🏠', illu: 'rocket', title: 'Your command centre', description: 'The dashboard shows your key stats, scheduled posts, upcoming tasks, and live activity from your AI agent team.', target: '[data-tour-id="dashboard-quick-actions"]', placement: 'bottom' },
+      { emoji: '📊', illu: 'chart', title: 'Stats at a glance', description: 'The top row shows your total posts, scheduled items, and connected social accounts. Click any card to drill into that section.', target: '[data-tour-id="dashboard-stats"]', placement: 'bottom' },
+      { emoji: '🤖', illu: 'spark', title: 'Agent activity feed', description: 'The right column shows what your agents (Nova, Sage, Aria, Flux) are learning and doing for your brand in real time.', target: '[data-tour-id="dashboard-agent-activity"]', placement: 'left' },
       { emoji: '💬', illu: 'check', title: 'Chat with Daky', description: 'Click the chat bubble in the bottom-right corner to open your AI marketing butler. Ask anything — content ideas, strategies, analytics.', cta: 'Get started' },
     ],
   },
   posts: {
     title: 'Posts',
     steps: [
-      { emoji: '✍️', illu: 'tap', title: 'Create your first post', description: 'Click "New Post" to open the editor. Write your content, add images, and choose which social accounts to publish to.', target: '[data-tour-id="nav-content"]', placement: 'right' },
-      { emoji: '📅', illu: 'chart', title: 'Schedule for later', description: 'Instead of publishing immediately, pick a date and time to schedule your post. It will be queued and published automatically.' },
+      { emoji: '✍️', illu: 'tap', title: 'Create your first post', description: 'Click "Add Post" to open the editor. Write your content, add images, and choose which social accounts to publish to.', target: '[data-tour-id="btn-new-post"]', placement: 'bottom' },
+      { emoji: '📅', illu: 'chart', title: 'Your post library', description: 'All your posts appear here — draft, scheduled, published, and archived. Click any post to edit or reschedule it.', target: '[data-tour-id="posts-list"]', placement: 'top' },
       { emoji: '🔄', illu: 'pulse', title: 'Platform previews', description: 'Each platform (Twitter, LinkedIn, Instagram) has character limits and format rules. The editor shows a live preview per platform.' },
       { emoji: '🤖', illu: 'spark', title: 'AI-assisted writing', description: 'Open the Daky chat and say "Write me a LinkedIn post about X" — the AI will create a draft you can edit and schedule directly.', cta: 'Got it' },
     ],
@@ -604,16 +604,16 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   memory: {
     title: 'Memory',
     steps: [
-      { emoji: '🧠', illu: 'memory', title: 'Your brand memory', description: 'Memory items are facts about your brand that Daky and all 5 agents read before every response. The more you add, the better the advice.' },
-      { emoji: '➕', illu: 'tap', title: 'Add a memory item', description: 'Click "Add Memory" and write anything relevant — your niche, target audience, tone of voice, key products, competitors, or campaign goals.' },
-      { emoji: '🤖', illu: 'spark', title: 'AI-generated memory', description: 'Click "Generate with AI" to let Daky ask you questions and automatically fill in your brand profile based on your answers.' },
+      { emoji: '🧠', illu: 'memory', title: 'Your brand memory', description: 'Memory items are facts about your brand that Daky and all 5 agents read before every response. The more you add, the better the advice.', target: '[data-tour-id="memory-categories"]', placement: 'top' },
+      { emoji: '➕', illu: 'tap', title: 'Add a memory item', description: 'Click the "Add" button inside any category to write anything relevant — your niche, target audience, tone of voice, key products, or campaign goals.' },
+      { emoji: '🤖', illu: 'spark', title: 'AI-generated memory', description: 'Click "Generate with AI" to let Daky ask you questions and automatically fill in your brand profile based on your answers.', target: '[data-tour-id="btn-generate-memory"]', placement: 'bottom' },
       { emoji: '⚡', illu: 'check', title: 'Agent compilation', description: 'Every time you save a memory item, all 5 agents automatically recompile their skills — so the next chat is already smarter.', cta: 'Got it' },
     ],
   },
   integrations: {
     title: 'Integrations',
     steps: [
-      { emoji: '🔌', illu: 'nav', title: 'Connect your socials', description: 'Connect Twitter/X, Instagram, LinkedIn, Facebook, and more. Each connection enables scheduling, publishing, and AI insights for that platform.', target: '[data-tour-id="nav-integrations"]', placement: 'right' },
+      { emoji: '🔌', illu: 'nav', title: 'Connect your socials', description: 'Connect Twitter/X, Instagram, LinkedIn, Facebook, and more. Each connection enables scheduling, publishing, and AI insights for that platform.', target: '[data-tour-id="integrations-cards"]', placement: 'top' },
       { emoji: '🔐', illu: 'tap', title: 'OAuth login', description: "Clicking \"Connect\" opens a secure OAuth flow on the platform's website. You approve access — no passwords are stored." },
       { emoji: '🧠', illu: 'memory', title: 'Auto memory', description: 'On first connection, your profile (handle, follower count, bio) is automatically saved to your Memory so agents know your social presence.' },
       { emoji: '♻️', illu: 'check', title: 'Refresh tokens', description: 'Tokens expire over time. If a platform shows "Reconnect", click it to refresh your token without losing any settings.', cta: 'Got it' },
@@ -622,15 +622,15 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   analytics: {
     title: 'Analytics',
     steps: [
-      { emoji: '📈', illu: 'chart', title: 'Performance overview', description: 'View publishing trends, engagement metrics, and growth data across all your connected social accounts in one place.', target: '[data-tour-id="nav-analytics"]', placement: 'right' },
-      { emoji: '📆', illu: 'tap', title: 'Date range filter', description: 'Use the date picker to compare performance across different time periods — last 7 days, last month, or a custom range.' },
+      { emoji: '📈', illu: 'chart', title: 'Performance overview', description: 'View publishing trends, engagement metrics, and growth data across all your connected social accounts in one place.', target: '[data-tour-id="analytics-stats"]', placement: 'bottom' },
+      { emoji: '📆', illu: 'tap', title: 'Date range filter', description: 'Use the date picker to compare performance across different time periods — last 7 days, last month, or a custom range.', target: '[data-tour-id="analytics-filters"]', placement: 'bottom' },
       { emoji: '🤖', illu: 'spark', title: 'Ask Aria', description: 'Open the Daky chat and ask "What do my analytics say?" — Aria, the analytics agent, will interpret your numbers and suggest improvements.', cta: 'Got it' },
     ],
   },
   cards: {
     title: 'Cards',
     steps: [
-      { emoji: '🎨', illu: 'tap', title: 'Visual card builder', description: 'Create stunning social media graphics, announcement cards, and promotional visuals using the drag-and-drop canvas editor.', target: '[data-tour-id="nav-content"]', placement: 'right' },
+      { emoji: '🎨', illu: 'tap', title: 'Visual card builder', description: 'Create stunning social media graphics, announcement cards, and promotional visuals using the drag-and-drop canvas editor.' },
       { emoji: '📐', illu: 'pulse', title: 'Canvas presets', description: 'Choose from preset sizes for Instagram (1080×1080), LinkedIn, Twitter, TikTok, or set a custom canvas size.' },
       { emoji: '🖼️', illu: 'nav', title: 'Add elements', description: 'Use the left panel to add text, shapes, images, and lines. The right panel lets you control position, size, color, and font.' },
       { emoji: '💾', illu: 'check', title: 'Export your design', description: 'Click "Export" to download your card as PNG or JPG at high resolution. Save designs to your library for re-use.', cta: 'Got it' },
@@ -639,16 +639,16 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   mailing: {
     title: 'Mailing',
     steps: [
-      { emoji: '📧', illu: 'mail', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write your content in the rich-text editor or use Daky to generate copy.', target: '[data-tour-id="nav-mailing"]', placement: 'right' },
-      { emoji: '👥', illu: 'nav', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.' },
+      { emoji: '📧', illu: 'mail', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write your content in the rich-text editor or use Daky to generate copy.', target: '[data-tour-id="btn-new-email-campaign"]', placement: 'bottom' },
+      { emoji: '👥', illu: 'nav', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.', target: '[data-tour-id="mailing-contacts"]', placement: 'top' },
       { emoji: '📊', illu: 'chart', title: 'Campaign analytics', description: 'After sending, track open rates, click rates, and unsubscribes directly in the campaign detail view.', cta: 'Got it' },
     ],
   },
   campaign: {
     title: 'Campaigns',
     steps: [
-      { emoji: '🎯', illu: 'rocket', title: 'What is a campaign?', description: 'A campaign groups related posts, emails, and tasks under a single goal (e.g. a product launch or seasonal promotion).', target: '[data-tour-id="nav-campaign"]', placement: 'right' },
-      { emoji: '➕', illu: 'tap', title: 'Create a campaign', description: 'Click "New Campaign", set a name, goal, start/end date, and add the content pieces you want to track together.' },
+      { emoji: '🎯', illu: 'rocket', title: 'What is a campaign?', description: 'A campaign groups related posts, emails, and tasks under a single goal (e.g. a product launch or seasonal promotion).', target: '[data-tour-id="campaigns-list"]', placement: 'top' },
+      { emoji: '➕', illu: 'tap', title: 'Create a campaign', description: 'Click "New Campaign", set a name, goal, start/end date, and add the content pieces you want to track together.', target: '[data-tour-id="btn-new-campaign"]', placement: 'bottom' },
       { emoji: '📌', illu: 'pulse', title: 'Track progress', description: 'The campaign overview shows which content is drafted, scheduled, and live — giving you a full picture of your campaign status.', cta: 'Got it' },
     ],
   },
@@ -674,8 +674,8 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   billing: {
     title: 'Billing',
     steps: [
-      { emoji: '💳', illu: 'chart', title: 'Your current plan', description: 'This page shows your active subscription, next billing date, and the features included in your plan.', target: '[data-tour-id="nav-billing"]', placement: 'right' },
-      { emoji: '⬆️', illu: 'rocket', title: 'Upgrade', description: 'Click "Upgrade" to move to a higher tier and unlock more posts, agents, team seats, and analytics.' },
+      { emoji: '💳', illu: 'chart', title: 'Your current plan', description: 'This card shows your active subscription, next billing date, and usage for the current period.', target: '[data-tour-id="billing-plan-card"]', placement: 'top' },
+      { emoji: '⬆️', illu: 'rocket', title: 'Upgrade', description: 'Click "Upgrade plan" to move to a higher tier and unlock more posts, agents, team seats, and analytics.', target: '[data-tour-id="btn-upgrade"]', placement: 'top' },
       { emoji: '🔄', illu: 'check', title: 'Manage subscription', description: 'Cancel, pause, or change your plan at any time. Changes take effect at the end of your current billing period.', cta: 'Got it' },
     ],
   },
