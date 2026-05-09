@@ -1690,6 +1690,217 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   }
   // ── end Social Media Templates seed ────────────────────────────────────────
 
+  // ── 10 Editable Card Templates ─────────────────────────────────────────────
+  try {
+    const _r = (l:number,t:number,w:number,h:number,fill:string,ex:Record<string,unknown>={})=>({type:'rect',left:l,top:t,width:w,height:h,fill,stroke:null,strokeWidth:1,strokeDashArray:null,strokeLineCap:'butt',strokeDashOffset:0,strokeLineJoin:'miter',strokeUniform:false,strokeMiterLimit:4,selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,flipX:false,flipY:false,skewX:0,skewY:0,rx:0,ry:0,...ex});
+    const _t = (text:string,l:number,t:number,w:number,sz:number,ex:Record<string,unknown>={})=>({type:'textbox',text,left:l,top:t,width:w,fontSize:sz,fontFamily:'Arial',fontWeight:'normal',fill:'#FFFFFF',textAlign:'left',selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,underline:false,overline:false,linethrough:false,charSpacing:0,lineHeight:1.2,splitByGrapheme:false,styles:{},strokeWidth:0,stroke:null,backgroundColor:'',textBackgroundColor:'',...ex});
+    const _c = (cx:number,cy:number,r:number,ex:Record<string,unknown>={})=>({type:'circle',radius:r,left:cx-r,top:cy-r,fill:'#FFFFFF',stroke:null,strokeWidth:1,strokeDashArray:null,strokeLineCap:'butt',strokeDashOffset:0,strokeLineJoin:'miter',strokeUniform:false,strokeMiterLimit:4,selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,flipX:false,flipY:false,skewX:0,skewY:0,...ex});
+    const _p = (path:unknown[][],stroke:string,sw:number,ex:Record<string,unknown>={})=>({type:'path',path,fill:'',stroke,strokeWidth:sw,strokeDashArray:null,strokeLineCap:'round',strokeDashOffset:0,strokeLineJoin:'round',strokeUniform:false,strokeMiterLimit:4,left:0,top:0,selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,flipX:false,flipY:false,skewX:0,skewY:0,...ex});
+    const _w=(j:unknown,h=1350)=>({fabricVersion:true as const,canvasWidth:1080,canvasHeight:h,fabricJson:j});
+
+    // ── T1: Finance — Dark Hero ───────────────────────────────────────────────
+    const t01={version:'5.3.0',background:'#0D4A2C',objects:[
+      _r(0,0,1080,1350,'#0D4A2C'),
+      _r(560,120,480,700,'#0A3D22',{rx:20,ry:20}),
+      _t('PHOTO AREA',650,430,280,18,{fill:'#1A6B3C',textAlign:'center',fontWeight:'bold',charSpacing:200}),
+      _t('@yourbrand',60,52,260,15,{fill:'rgba(255,255,255,0.45)',charSpacing:80}),
+      _t('financial consulting',720,52,300,15,{fill:'rgba(255,255,255,0.4)',textAlign:'right'}),
+      _r(40,850,720,440,'#FFFFFF',{rx:24,ry:24,stroke:null,strokeWidth:0}),
+      _t('Seu futuro\nfinanceiro\nmais perto!',80,892,640,52,{fill:'#0D2E1A',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.05,charSpacing:-10}),
+      _t('Com planejamento e estratégia, você conquista estabilidade e realiza seus sonhos.',80,1072,640,20,{fill:'#4A6B55',lineHeight:1.55}),
+      _c(722,910,44,{fill:'#F5C518',stroke:'#FFFFFF',strokeWidth:4,strokeDashArray:null}),
+      _t('✓',700,891,44,32,{fill:'#0D4A2C',fontWeight:'bold',textAlign:'center'}),
+      _r(80,1150,250,54,'#0D4A2C',{rx:27,ry:27,stroke:null,strokeWidth:0}),
+      _t('Saiba mais →',80,1164,250,17,{fill:'#FFFFFF',fontWeight:'bold',textAlign:'center'}),
+      _t('▶  avante capital',80,1298,300,20,{fill:'#FFFFFF',fontWeight:'bold'}),
+    ]};
+
+    // ── T2: Finance — Financial Freedom (Light BG) ────────────────────────────
+    const t02={version:'5.3.0',background:'#F5F0E8',objects:[
+      _r(0,0,1080,1350,'#F5F0E8'),
+      _p([['M',0,0],['L',1080,0],['L',1080,700],['L',0,900],['Z']],'',0,{fill:'#0D4A2C',stroke:null}),
+      _t('@yourbrand',60,48,240,15,{fill:'rgba(255,255,255,0.6)',charSpacing:80}),
+      _t('financial consulting',720,48,300,15,{fill:'rgba(255,255,255,0.55)',textAlign:'right'}),
+      _r(60,180,180,36,'#F5C518',{rx:18,ry:18,stroke:null,strokeWidth:0}),
+      _t('DESTAQUE',68,189,164,14,{fill:'#0D4A2C',fontWeight:'bold',textAlign:'center',charSpacing:150}),
+      _t('Independência\nfinanceira\nao seu alcance!',60,250,820,96,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.0,charSpacing:-15}),
+      _t('Comece agora a construir um patrimônio sólido\ne seguro para o futuro.',60,560,680,24,{fill:'rgba(255,255,255,0.75)',lineHeight:1.55}),
+      _r(60,900,820,360,'#FFFFFF',{rx:24,ry:24,stroke:null,strokeWidth:0}),
+      _t('Comece agora a construir um patrimônio sólido e seguro para o futuro. Nossa equipe está pronta para te ajudar.',100,940,740,22,{fill:'#0D2E1A',lineHeight:1.6}),
+      _t('▶  avante capital',100,1180,280,22,{fill:'#0D4A2C',fontWeight:'bold'}),
+      _t('consultoria financeira',100,1210,360,15,{fill:'#4A6B55'}),
+    ]};
+
+    // ── T3: Finance — Smart Money Bold ────────────────────────────────────────
+    const t03={version:'5.3.0',background:'#0D4A2C',objects:[
+      _r(0,0,1080,1350,'#0D4A2C'),
+      _r(0,0,1080,1350,'rgba(0,50,20,0.4)',{angle:0}),
+      _t('@yourbrand',60,52,260,15,{fill:'rgba(255,255,255,0.45)',charSpacing:80}),
+      _t('financial consulting',720,52,300,15,{fill:'rgba(255,255,255,0.4)',textAlign:'right'}),
+      _r(60,220,8,180,'#F5C518',{rx:4,ry:4,stroke:null,strokeWidth:0}),
+      _t('Seu dinheiro\nmerece uma\ngestão\ninteligente!',90,220,820,96,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.0,charSpacing:-15,
+        styles:{'1':{'0':{fill:'#F5C518'},'1':{fill:'#F5C518'},'2':{fill:'#F5C518'},'3':{fill:'#F5C518'},'4':{fill:'#F5C518'},'5':{fill:'#F5C518'}}}}),
+      _r(60,660,960,3,'rgba(255,255,255,0.15)',{stroke:null,strokeWidth:0}),
+      _r(60,700,820,200,'rgba(255,255,255,0.06)',{rx:20,ry:20,stroke:'rgba(255,255,255,0.1)',strokeWidth:1,strokeDashArray:null}),
+      _t('Controle, organize e multiplique seus recursos com um planejamento eficiente. Nossa consultoria te guia em cada passo.',100,730,740,22,{fill:'rgba(255,255,255,0.75)',lineHeight:1.6}),
+      _t('▶  avante capital',60,1300,300,20,{fill:'#F5C518',fontWeight:'bold'}),
+    ]};
+
+    // ── T4: Finance — Business Question Card ─────────────────────────────────
+    const t04={version:'5.3.0',background:'#F0EDE4',objects:[
+      _r(0,0,1080,1350,'#F0EDE4'),
+      _r(0,0,1080,1350,'rgba(13,74,44,0.04)'),
+      _t('@yourbrand',60,52,260,15,{fill:'rgba(13,46,26,0.4)',charSpacing:80}),
+      _t('financial consulting',720,52,300,15,{fill:'rgba(13,46,26,0.35)',textAlign:'right'}),
+      _r(60,160,960,880,'#FFFFFF',{rx:28,ry:28,stroke:'rgba(13,74,44,0.08)',strokeWidth:1,strokeDashArray:null}),
+      _t('MEI, Simples\nNacional ou\nLucro\nPresumido?',100,220,760,76,{fill:'#0D2E1A',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.05,charSpacing:-10}),
+      _r(100,590,56,56,'#F5C518',{rx:28,ry:28,stroke:null,strokeWidth:0}),
+      _t('▼',100,600,56,28,{fill:'#0D4A2C',fontWeight:'bold',textAlign:'center'}),
+      _r(100,680,760,290,'rgba(13,74,44,0.04)',{rx:16,ry:16,stroke:'rgba(13,74,44,0.08)',strokeWidth:1,strokeDashArray:null}),
+      _t('Escolher o regime tributário certo pode fazer toda a diferença nos seus ganhos. Fale com um especialista.',140,710,690,22,{fill:'#4A6B55',lineHeight:1.6}),
+      _t('▶  avante capital',100,1090,280,22,{fill:'#0D4A2C',fontWeight:'bold'}),
+      _t('consultoria financeira',100,1122,360,15,{fill:'rgba(13,46,26,0.4)'}),
+    ]};
+
+    // ── T5: Finance — CTA / Formalize ────────────────────────────────────────
+    const t05={version:'5.3.0',background:'#0D4A2C',objects:[
+      _r(0,0,1080,1350,'#0D4A2C'),
+      _p([['M',600,0],['C',800,200,1100,100,1080,400],['L',1080,0],['Z']],'',0,{fill:'rgba(255,255,255,0.04)',stroke:null}),
+      _t('@yourbrand',60,52,260,15,{fill:'rgba(255,255,255,0.45)',charSpacing:80}),
+      _t('financial consulting',720,52,300,15,{fill:'rgba(255,255,255,0.4)',textAlign:'right'}),
+      _r(60,200,60,60,'#F5C518',{rx:30,ry:30,stroke:null,strokeWidth:0}),
+      _t('▶',60,213,60,30,{fill:'#0D4A2C',fontWeight:'bold',textAlign:'center'}),
+      _t('Formalize seu\nnegócio com\nsegurança!',60,290,820,96,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.0,charSpacing:-15}),
+      _t('A nossa consultoria cuida de toda a burocracia para você focar no crescimento da sua empresa.',60,610,760,24,{fill:'rgba(255,255,255,0.72)',lineHeight:1.55}),
+      _r(60,720,320,3,'rgba(255,255,255,0.2)',{stroke:null,strokeWidth:0}),
+      _r(60,760,280,62,'#F5C518',{rx:31,ry:31,stroke:null,strokeWidth:0}),
+      _t('Saiba mais',60,776,280,20,{fill:'#0D4A2C',fontWeight:'bold',textAlign:'center'}),
+      _t('▶  avante capital',60,1300,300,20,{fill:'#FFFFFF',fontWeight:'bold'}),
+    ]};
+
+    // ── T6: Creator — Inner Card Dark ─────────────────────────────────────────
+    const t06={version:'5.3.0',background:'#0B1F18',objects:[
+      _r(0,0,1080,1350,'#0B1F18'),
+      _r(70,140,940,1060,'#0F2A1E',{rx:28,ry:28,stroke:'rgba(255,255,255,0.15)',strokeWidth:2,strokeDashArray:null}),
+      _c(138,232,28,{fill:'#3AE53A',stroke:null}),
+      _t('✦',121,215,34,20,{fill:'#0B1F18',fontWeight:'bold',textAlign:'center'}),
+      _t('YourBrand',184,216,240,22,{fill:'#FFFFFF',fontWeight:'bold'}),
+      _t('• • •',868,218,108,20,{fill:'rgba(255,255,255,0.4)',textAlign:'right',charSpacing:80}),
+      _t('yourbrand.com',740,252,278,14,{fill:'rgba(255,255,255,0.28)',textAlign:'right'}),
+      _t('Empowering\nCreators,\nMaximizing\nEarnings.',110,345,800,88,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.05,charSpacing:-15,
+        styles:{'1':{'0':{fill:'#3AE53A'},'1':{fill:'#3AE53A'},'2':{fill:'#3AE53A'},'3':{fill:'#3AE53A'},'4':{fill:'#3AE53A'},'5':{fill:'#3AE53A'},'6':{fill:'#3AE53A'},'7':{fill:'#3AE53A'}}}}),
+      _t('Provides a streamlined ecosystem where creators can manage brand partnerships, exclusive memberships, and content licensing — all in one place.',110,820,800,22,{fill:'rgba(255,255,255,0.48)',lineHeight:1.6}),
+      _r(110,1138,148,4,'#FFFFFF',{rx:2,ry:2,stroke:null,strokeWidth:0}),
+      _r(268,1140,54,2,'rgba(255,255,255,0.22)',{rx:1,ry:1,stroke:null,strokeWidth:0}),
+      _r(332,1140,54,2,'rgba(255,255,255,0.22)',{rx:1,ry:1,stroke:null,strokeWidth:0}),
+      _r(826,1138,66,4,'rgba(255,255,255,0.22)',{rx:2,ry:2,stroke:null,strokeWidth:0}),
+      _r(902,1138,24,4,'rgba(255,255,255,0.22)',{rx:2,ry:2,stroke:null,strokeWidth:0}),
+    ]};
+
+    // ── T7: Stats Showcase — Big Number ──────────────────────────────────────
+    const t07={version:'5.3.0',background:'#0A1A12',objects:[
+      _r(0,0,1080,1350,'#0A1A12'),
+      _p([['M',0,600],['C',300,400,780,800,1080,600]],'rgba(58,229,58,0.12)',80,{strokeLineCap:'round',strokeLineJoin:'round'}),
+      _t('@yourbrand',60,52,260,15,{fill:'rgba(255,255,255,0.4)',charSpacing:80}),
+      _t('brand.com',780,52,260,15,{fill:'rgba(255,255,255,0.35)',textAlign:'right'}),
+      _t('DID YOU\nKNOW?',60,200,700,22,{fill:'#3AE53A',fontWeight:'bold',charSpacing:300,lineHeight:1.4}),
+      _t('%70',60,320,800,260,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',charSpacing:-30,lineHeight:1.0}),
+      _t('of businesses that invest in financial\nplanning grow 3× faster in 5 years.',60,620,760,28,{fill:'rgba(255,255,255,0.65)',lineHeight:1.5}),
+      _r(60,730,960,2,'rgba(58,229,58,0.2)',{stroke:null,strokeWidth:0}),
+      _r(60,770,280,100,'rgba(58,229,58,0.08)',{rx:16,ry:16,stroke:'rgba(58,229,58,0.2)',strokeWidth:1,strokeDashArray:null}),
+      _t('3× Growth',80,800,240,22,{fill:'#3AE53A',fontWeight:'bold',textAlign:'center'}),
+      _r(380,770,280,100,'rgba(58,229,58,0.08)',{rx:16,ry:16,stroke:'rgba(58,229,58,0.2)',strokeWidth:1,strokeDashArray:null}),
+      _t('5 Year Plan',400,800,240,22,{fill:'#3AE53A',fontWeight:'bold',textAlign:'center'}),
+      _r(700,770,280,100,'rgba(58,229,58,0.08)',{rx:16,ry:16,stroke:'rgba(58,229,58,0.2)',strokeWidth:1,strokeDashArray:null}),
+      _t('Proven ROI',720,800,240,22,{fill:'#3AE53A',fontWeight:'bold',textAlign:'center'}),
+      _t('Source: Global Business Finance Report 2024',60,1298,960,14,{fill:'rgba(255,255,255,0.3)',textAlign:'center'}),
+    ]};
+
+    // ── T8: VS Comparison Split (1080×1080) ───────────────────────────────────
+    const t08={version:'5.3.0',background:'#39FF14',objects:[
+      _r(0,0,1080,1080,'#39FF14'),
+      {type:'path',path:[['M',0,0],['L',560,0],['L',460,1080],['L',0,1080],['Z']],fill:'#111111',stroke:null,strokeWidth:0,strokeDashArray:null,strokeLineCap:'butt',strokeDashOffset:0,strokeLineJoin:'miter',strokeUniform:false,strokeMiterLimit:4,selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,flipX:false,flipY:false,skewX:0,skewY:0,left:0,top:0},
+      _t('W yourbrand',40,38,260,26,{fill:'#39FF14',fontWeight:'bold'}),
+      _t('www.yourbrand.com',600,40,440,17,{fill:'#111111',textAlign:'right'}),
+      _r(490,90,112,210,'#39FF14',{rx:56,ry:56,stroke:'#111111',strokeWidth:3,strokeDashArray:null}),
+      _t('SEO',494,148,104,30,{fill:'#111111',fontWeight:'bold',textAlign:'center'}),
+      _r(490,730,112,210,'#111111',{rx:56,ry:56,stroke:'#39FF14',strokeWidth:2,strokeDashArray:null}),
+      _t('PPC',494,788,104,30,{fill:'#39FF14',fontWeight:'bold',textAlign:'center'}),
+      _r(535,295,2,420,'rgba(255,255,255,0.2)',{stroke:null,strokeWidth:0}),
+      _t('VS',490,450,102,38,{fill:'#FFFFFF',fontWeight:'bold',textAlign:'center'}),
+      _t('• Organic Positions\n• Traffic Over Time\n• Long-Term Results\n• Ongoing Process\n• Improves Visibility\n• Free / Lower Cost',36,252,420,24,{fill:'#FFFFFF',lineHeight:1.88}),
+      _t('• Paid Positions\n• Immediate Traffic\n• Immediate Results\n• One-Time Setup\n• Improves Sales\n• Only Paid',588,252,450,24,{fill:'#111111',lineHeight:1.88}),
+      _t('✉ info@yourbrand.com\n☎ +971 00 000 0000',36,942,380,18,{fill:'rgba(255,255,255,0.5)',lineHeight:1.7}),
+      _t('Follow us @yourbrand',610,982,430,17,{fill:'#111111',textAlign:'right'}),
+    ]};
+
+    // ── T9: Feature Checklist Dark ────────────────────────────────────────────
+    const t09={version:'5.3.0',background:'#0A1F18',objects:[
+      _r(0,0,1080,1350,'#0A1F18'),
+      _p([['M',-80,820],['C',220,630,860,1060,1200,750]],'rgba(58,229,58,0.07)',70,{strokeLineCap:'round',strokeLineJoin:'round'}),
+      _c(76,76,26,{fill:'#3AE53A',stroke:null}),
+      _t('✦',59,59,34,20,{fill:'#0A1F18',fontWeight:'bold',textAlign:'center'}),
+      _t('YourBrand',116,58,280,22,{fill:'#FFFFFF',fontWeight:'bold'}),
+      _t('30 September 2024',750,60,290,17,{fill:'rgba(255,255,255,0.3)',textAlign:'right'}),
+      _t('What did we\nimplement?',60,195,760,88,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.05,charSpacing:-15}),
+      _r(60,500,960,158,'rgba(58,229,58,0.07)',{rx:20,ry:20,stroke:'rgba(58,229,58,0.16)',strokeWidth:1,strokeDashArray:null}),
+      _c(120,579,28,{fill:'#3AE53A',stroke:null}),
+      _t('✓',102,561,36,22,{fill:'#0A1F18',fontWeight:'bold',textAlign:'center'}),
+      _t('Improve delivery time',168,542,660,26,{fill:'#FFFFFF',fontWeight:'bold'}),
+      _t('We changed to another supplier for your underperforming product.',168,574,780,21,{fill:'rgba(255,255,255,0.44)',lineHeight:1.4}),
+      _r(60,678,960,158,'rgba(58,229,58,0.07)',{rx:20,ry:20,stroke:'rgba(58,229,58,0.16)',strokeWidth:1,strokeDashArray:null}),
+      _c(120,757,28,{fill:'#3AE53A',stroke:null}),
+      _t('✓',102,739,36,22,{fill:'#0A1F18',fontWeight:'bold',textAlign:'center'}),
+      _t('Improve processing time',168,720,660,26,{fill:'#FFFFFF',fontWeight:'bold'}),
+      _t('We changed to another supplier for your underperforming product.',168,752,780,21,{fill:'rgba(255,255,255,0.44)',lineHeight:1.4}),
+      _r(60,856,960,158,'rgba(58,229,58,0.07)',{rx:20,ry:20,stroke:'rgba(58,229,58,0.16)',strokeWidth:1,strokeDashArray:null}),
+      _c(120,935,28,{fill:'#3AE53A',stroke:null}),
+      _t('✓',102,917,36,22,{fill:'#0A1F18',fontWeight:'bold',textAlign:'center'}),
+      _t('Improve price & margins',168,898,660,26,{fill:'#FFFFFF',fontWeight:'bold'}),
+      _t('We changed to another supplier for your underperforming product.',168,930,780,21,{fill:'rgba(255,255,255,0.44)',lineHeight:1.4}),
+      _c(990,1285,46,{fill:'',stroke:'rgba(255,255,255,0.25)',strokeWidth:2,strokeDashArray:null}),
+      _t('→',968,1265,44,28,{fill:'#FFFFFF',textAlign:'center'}),
+    ]};
+
+    // ── T10: Agency — Diagonal Tape ───────────────────────────────────────────
+    const t10={version:'5.3.0',background:'#0B1E15',objects:[
+      _r(0,0,1080,1350,'#0B1E15'),
+      _r(-140,320,1440,90,'#00E8A2',{angle:-15,rx:0,ry:0,stroke:null,strokeWidth:0}),
+      _t('YourAgency  ✦  Design & Product Agency  ✦  YourAgency  ✦  Design & Products',-96,342,1380,22,{fill:'#0B1E15',fontWeight:'bold',charSpacing:18,angle:-15}),
+      _r(-140,502,1440,90,'#00E8A2',{angle:-15,rx:0,ry:0,stroke:null,strokeWidth:0}),
+      _t('Open for Projects  ✦  Open for Projects  ✦  Open for Projects  ✦  Open',-96,524,1380,22,{fill:'#0B1E15',fontWeight:'bold',charSpacing:18,angle:-15}),
+      _r(-140,684,1440,90,'#00E8A2',{angle:-15,rx:0,ry:0,stroke:null,strokeWidth:0}),
+      _t('YourAgency  ✦  Design & Product Agency  ✦  YourAgency  ✦  Design & Products',-96,706,1380,22,{fill:'#0B1E15',fontWeight:'bold',charSpacing:18,angle:-15}),
+      _t('⬡',510,112,62,56,{fill:'#FFFFFF',textAlign:'center',fontWeight:'bold'}),
+      _t('We Design\nWe Build\nWe Scale',60,810,880,112,{fill:'#FFFFFF',fontFamily:'Arial Black',fontWeight:'bold',lineHeight:1.0,charSpacing:-15}),
+      _t('youragency.com',60,1278,300,22,{fill:'rgba(255,255,255,0.42)'}),
+      _t('→',978,1270,62,38,{fill:'#00E8A2',fontWeight:'bold',textAlign:'center'}),
+    ]};
+
+    const ten = [
+      {id:'tpl-finance-hero-v3',         name:'Finance — Dark Hero',            desc:'Dark forest green with white content card, photo area placeholder, gold badge, and CTA button.', data:_w(t01)},
+      {id:'tpl-finance-freedom-v3',      name:'Finance — Financial Freedom',    desc:'Light cream background with dark green diagonal sweep, bold headline, and content panel.', data:_w(t02)},
+      {id:'tpl-finance-smart-v3',        name:'Finance — Smart Money Bold',     desc:'Dark green with large mixed-colour bold headline, accent side bar, and body quote box.', data:_w(t03)},
+      {id:'tpl-finance-question-v3',     name:'Finance — Business Question',    desc:'Light cream background with floating white card, bold question headline, and icon badge.', data:_w(t04)},
+      {id:'tpl-finance-cta-v3',          name:'Finance — Formalize CTA',        desc:'Dark green with bold white headline, yellow arrow badge, CTA button, and brand footer.', data:_w(t05)},
+      {id:'tpl-creator-inner-card-v3',   name:'Creator — Dark Inner Card',      desc:'Very dark green with inner bordered card panel, accent-colour headline word, slide indicators.', data:_w(t06)},
+      {id:'tpl-stats-big-number-v3',     name:'Stats — Big Number Showcase',    desc:'Dark background with large %70 stat, three metric chips, and supporting body text.', data:_w(t07)},
+      {id:'tpl-comparison-split-v3',     name:'Comparison — VS Split',          desc:'1080×1080 black + neon green diagonal split. SEO vs PPC comparison with bullet lists.', data:_w(t08,1080)},
+      {id:'tpl-feature-checklist-v3',    name:'Features — Dark Checklist',      desc:'Dark green with bold headline, three rounded feature rows with green check circles.', data:_w(t09)},
+      {id:'tpl-agency-tape-v3',          name:'Agency — Diagonal Tape',         desc:'Dark green with three diagonal mint tape banners, bold 3-line headline, footer URL.', data:_w(t10)},
+    ];
+    for(const tmpl of ten){
+      await pool.query(
+        `INSERT INTO card_templates(id,name,description,design_data,is_published,created_at,updated_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT(id) DO UPDATE SET design_data=EXCLUDED.design_data,name=EXCLUDED.name,updated_at=EXCLUDED.updated_at`,
+        [tmpl.id,tmpl.name,tmpl.desc,JSON.stringify(tmpl.data),true,now,now]
+      );
+    }
+    console.log('10 editable card templates upserted.');
+  } catch(e){ console.warn('10 templates seed skipped:',e); }
+  // ── end 10 Editable Card Templates ─────────────────────────────────────────
+
   // ─── Mailing Module (additive only) ────────────────────────────────────────
 
   await pool.query(`
