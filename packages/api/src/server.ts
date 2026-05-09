@@ -1321,6 +1321,156 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   }
   // ── end Solo Leveling seed ─────────────────────────────────────────────────
 
+  // ── Verdant Dark Studio card templates (Card 03 + Card 04) ────────────────
+  try {
+    const VBG = '#0E1F2A';
+    const VACC = '#6DFF5B';
+    const VINK = '#FFFFFF';
+    const VMUT = '#8FA5B0';
+
+    const mkRings = (cx: number, cy: number) =>
+      [200, 350, 500, 650].map((r, i) => ({
+        type: 'circle', radius: r, left: cx - r, top: cy - r,
+        fill: '', stroke: `rgba(255,255,255,${(0.12 - i * 0.02).toFixed(2)})`,
+        strokeWidth: 1.5, selectable: false, evented: false,
+        originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0,
+        opacity: 1, shadow: null, visible: true, strokeDashArray: null,
+        strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter',
+        strokeUniform: false, strokeMiterLimit: 4, flipX: false, flipY: false,
+        skewX: 0, skewY: 0, rx: 0, ry: 0,
+      }));
+
+    const mkStamp = (cx: number, cy: number, label: string) => [
+      { type: 'circle', radius: 58, left: cx - 58, top: cy - 58, fill: '', stroke: VACC, strokeWidth: 2, strokeDashArray: [6, 4], selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4, flipX: false, flipY: false, skewX: 0, skewY: 0, rx: 0, ry: 0 },
+      { type: 'circle', radius: 45, left: cx - 45, top: cy - 45, fill: VACC, stroke: VBG, strokeWidth: 6, strokeDashArray: null, selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4, flipX: false, flipY: false, skewX: 0, skewY: 0, rx: 0, ry: 0 },
+      { type: 'textbox', text: '✦', left: cx - 20, top: cy - 18, width: 40, fontSize: 28, fontFamily: 'Arial', fontWeight: 'bold', fill: VBG, textAlign: 'center', selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, underline: false, overline: false, linethrough: false, charSpacing: 0, lineHeight: 1.16, splitByGrapheme: false, styles: {}, strokeWidth: 0, stroke: null, backgroundColor: '', textBackgroundColor: '' },
+      { type: 'textbox', text: label, left: cx - 55, top: cy + 52, width: 110, fontSize: 10, fontFamily: 'Arial', fontWeight: 'normal', fill: VMUT, textAlign: 'center', selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, underline: false, overline: false, linethrough: false, charSpacing: 100, lineHeight: 1.16, splitByGrapheme: false, styles: {}, strokeWidth: 0, stroke: null, backgroundColor: '', textBackgroundColor: '' },
+    ];
+
+    const mkRect = (left: number, top: number, width: number, height: number, fill: string, extra: Record<string, unknown> = {}) => ({
+      type: 'rect', left, top, width, height, fill,
+      stroke: null, strokeWidth: 0, strokeDashArray: null, strokeLineCap: 'butt',
+      strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+      selectable: false, evented: false, originX: 'left', originY: 'top',
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true,
+      flipX: false, flipY: false, skewX: 0, skewY: 0, rx: 0, ry: 0, ...extra,
+    });
+
+    const mkText = (text: string, left: number, top: number, width: number, fontSize: number, extra: Record<string, unknown> = {}) => ({
+      type: 'textbox', text, left, top, width, fontSize,
+      fontFamily: 'Arial', fontWeight: 'normal', fill: VINK, textAlign: 'left',
+      selectable: false, evented: false, originX: 'left', originY: 'top',
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true,
+      underline: false, overline: false, linethrough: false,
+      charSpacing: 0, lineHeight: 1.16, splitByGrapheme: false, styles: {},
+      strokeWidth: 0, stroke: null, backgroundColor: '', textBackgroundColor: '', ...extra,
+    });
+
+    // ── Card 03 — Agency Hero ──────────────────────────────────────────────────
+    const card03Fabric = {
+      version: '5.3.0',
+      background: VBG,
+      objects: [
+        mkRect(0, 0, 1080, 1350, VBG),
+        ...mkRings(1080, 0),
+        ...mkRings(0, 1350),
+        // S-curve swoosh
+        { type: 'path', path: [['M', 0, 680], ['C', 270, 560, 810, 800, 1080, 680]], left: 0, top: 560, fill: '', stroke: 'rgba(109,255,91,0.25)', strokeWidth: 2.5, strokeDashArray: null, strokeLineCap: 'round', strokeDashOffset: 0, strokeLineJoin: 'round', strokeUniform: false, strokeMiterLimit: 4, selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, flipX: false, flipY: false, skewX: 0, skewY: 0 },
+        // Nav logo
+        mkText('✦ VERDANT', 60, 60, 200, 20, { fontWeight: 'bold', charSpacing: 200 }),
+        // Nav links
+        mkText('Work    About    Services    Contact', 520, 64, 500, 15, { fill: VMUT, textAlign: 'right' }),
+        // Eyebrow
+        mkText('CREATIVE AGENCY', 60, 360, 400, 13, { fill: VACC, fontWeight: 'bold', charSpacing: 260 }),
+        // Accent bar
+        mkRect(60, 388, 60, 3, VACC),
+        // Headline (lines 0 & 2 in accent)
+        mkText('Custom\nDesigns,\nJust for You!', 60, 420, 700, 108, {
+          fontFamily: 'Arial Black', fontWeight: 'bold', charSpacing: -20, lineHeight: 1.0,
+          styles: {
+            '0': { '0': { fill: VACC }, '1': { fill: VACC }, '2': { fill: VACC }, '3': { fill: VACC }, '4': { fill: VACC }, '5': { fill: VACC } },
+            '2': { '0': { fill: VACC }, '1': { fill: VACC }, '2': { fill: VACC }, '3': { fill: VACC }, '4': { fill: VACC }, '5': { fill: VACC }, '6': { fill: VACC }, '7': { fill: VACC }, '8': { fill: VACC }, '9': { fill: VACC }, '10': { fill: VACC }, '11': { fill: VACC }, '12': { fill: VACC } },
+          },
+        }),
+        // Body text
+        mkText('We craft purposeful identities, digital experiences,\nand brand strategies that move people.', 60, 850, 680, 24, { fill: VMUT, lineHeight: 1.5 }),
+        // CTA button
+        mkRect(60, 948, 380, 64, VACC, { rx: 8, ry: 8 }),
+        mkText('— Connect With Us Today', 60, 964, 380, 20, { fill: VBG, fontWeight: 'bold', textAlign: 'center' }),
+        // Stamp badge mid-right
+        ...mkStamp(900, 810, 'VERDANT STUDIO'),
+        // Footer divider + text
+        mkRect(60, 1290, 960, 1, 'rgba(255,255,255,0.15)'),
+        mkText('verdant.studio  ·  @verdantagency  ·  2026', 60, 1305, 960, 13, { fill: VMUT, textAlign: 'center', charSpacing: 80 }),
+      ],
+    };
+
+    // ── Card 04 — Carousel Cover ───────────────────────────────────────────────
+    const card04Fabric = {
+      version: '5.3.0',
+      background: VBG,
+      objects: [
+        mkRect(0, 0, 1080, 1350, VBG),
+        ...mkRings(1080, 0),
+        ...mkRings(0, 1350),
+        // Loop swoosh (bottom half, behind content)
+        { type: 'path', path: [['M', 80, 1000], ['C', 300, 900, 700, 1150, 950, 950], ['C', 1100, 830, 1050, 1100, 900, 1200]], left: 0, top: 830, fill: '', stroke: 'rgba(109,255,91,0.20)', strokeWidth: 2, strokeDashArray: null, strokeLineCap: 'round', strokeDashOffset: 0, strokeLineJoin: 'round', strokeUniform: false, strokeMiterLimit: 4, selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, flipX: false, flipY: false, skewX: 0, skewY: 0 },
+        // Nav logo
+        mkText('✦ VERDANT', 60, 60, 200, 20, { fontWeight: 'bold', charSpacing: 200 }),
+        // Nav links ("Discover" chars 11–18 in accent)
+        mkText('Process    Discover    Results    Contact', 440, 64, 580, 15, {
+          fill: VMUT, textAlign: 'right',
+          styles: { '0': { '11': { fill: VACC }, '12': { fill: VACC }, '13': { fill: VACC }, '14': { fill: VACC }, '15': { fill: VACC }, '16': { fill: VACC }, '17': { fill: VACC }, '18': { fill: VACC } } },
+        }),
+        // Eyebrow
+        mkText('BRAND CASE STUDY', 60, 320, 500, 13, { fill: VACC, fontWeight: 'bold', charSpacing: 260 }),
+        // Accent bar
+        mkRect(60, 346, 60, 3, VACC),
+        // "Before" outline accent box (behind headline line 0)
+        { type: 'rect', left: 58, top: 378, width: 330, height: 108, fill: '', stroke: VACC, strokeWidth: 2, strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4, selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, flipX: false, flipY: false, skewX: 0, skewY: 0, rx: 4, ry: 4 },
+        // Headline ("After" chars 0–4 on line 1 in accent)
+        mkText('Before and\nAfter Brand\nTransformation', 60, 380, 800, 100, {
+          fontFamily: 'Arial Black', fontWeight: 'bold', charSpacing: -20, lineHeight: 1.0,
+          styles: {
+            '1': { '0': { fill: VACC }, '1': { fill: VACC }, '2': { fill: VACC }, '3': { fill: VACC }, '4': { fill: VACC } },
+          },
+        }),
+        // Body text
+        mkText('See how we transformed a struggling brand\ninto a market leader in 90 days.', 60, 780, 680, 24, { fill: VMUT, lineHeight: 1.5 }),
+        // Swipe pill
+        { type: 'rect', left: 60, top: 870, width: 160, height: 46, fill: 'rgba(109,255,91,0.12)', stroke: VACC, strokeWidth: 1.5, strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4, selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, flipX: false, flipY: false, skewX: 0, skewY: 0, rx: 23, ry: 23 },
+        mkText('Swipe →', 60, 882, 160, 17, { fill: VACC, fontWeight: 'bold', textAlign: 'center' }),
+        // Stamp badge lower-right
+        ...mkStamp(920, 1080, 'CASE STUDY'),
+        // Corner caption
+        mkText('Brand Lessons\nfor StartUp Owners', 60, 1180, 340, 20, { fontWeight: 'bold', lineHeight: 1.3 }),
+        // Footer divider + text
+        mkRect(60, 1290, 960, 1, 'rgba(255,255,255,0.15)'),
+        mkText('verdant.studio  ·  @verdantagency  ·  2026', 60, 1305, 960, 13, { fill: VMUT, textAlign: 'center', charSpacing: 80 }),
+      ],
+    };
+
+    const c03data = { fabricVersion: true as const, canvasWidth: 1080, canvasHeight: 1350, fabricJson: card03Fabric };
+    const c04data = { fabricVersion: true as const, canvasWidth: 1080, canvasHeight: 1350, fabricJson: card04Fabric };
+
+    await pool.query(
+      `INSERT INTO card_templates (id, name, description, design_data, is_published, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (id) DO UPDATE SET design_data=EXCLUDED.design_data, name=EXCLUDED.name, updated_at=EXCLUDED.updated_at`,
+      ['verdant03-dark-studio-agency-hero-2026', 'Verdant Dark Studio — Agency Hero', 'Dark teal + neon green agency card. Concentric rings, mixed-colour headline, S-curve swoosh, stamp badge, CTA. Fully editable.', JSON.stringify(c03data), true, now, now]
+    );
+    await pool.query(
+      `INSERT INTO card_templates (id, name, description, design_data, is_published, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (id) DO UPDATE SET design_data=EXCLUDED.design_data, name=EXCLUDED.name, updated_at=EXCLUDED.updated_at`,
+      ['verdant04-dark-studio-carousel-cover-2026', 'Verdant Dark Studio — Carousel Cover', 'Before-and-after brand transformation carousel cover. Swipe pill, loop swoosh, stamp badge, accent outline box on "Before". Fully editable.', JSON.stringify(c04data), true, now, now]
+    );
+    console.log('Verdant Dark Studio card templates upserted.');
+  } catch (e) {
+    console.warn('Verdant Dark Studio template seed skipped:', e);
+  }
+  // ── end Verdant Dark Studio seed ────────────────────────────────────────────
+
   // ─── Mailing Module (additive only) ────────────────────────────────────────
 
   await pool.query(`
