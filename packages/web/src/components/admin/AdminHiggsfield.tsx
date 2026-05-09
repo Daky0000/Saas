@@ -47,8 +47,9 @@ type ConnectionStatus = {
 export default function AdminHiggsfield() {
   const [tab, setTab] = useState<'image' | 'video' | 'history'>('image');
 
-  // API key state
-  const [apiKey, setApiKey] = useState('');
+  // API credentials state
+  const [apiId, setApiId] = useState('');
+  const [apiSecret, setApiSecret] = useState('');
   const [baseUrl, setBaseUrl] = useState('https://api.higgsfield.ai');
   const [showBaseUrl, setShowBaseUrl] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
@@ -86,9 +87,10 @@ export default function AdminHiggsfield() {
         headers: authHeader(),
       });
       if (r.ok) {
-        const data = await r.json() as { config?: { config?: { apiKey?: string; baseUrl?: string } } };
+        const data = await r.json() as { config?: { config?: { apiId?: string; apiSecret?: string; baseUrl?: string } } };
         const cfg = data.config?.config;
-        if (cfg?.apiKey) setApiKey(cfg.apiKey);
+        if (cfg?.apiId) setApiId(cfg.apiId);
+        if (cfg?.apiSecret) setApiSecret(cfg.apiSecret);
         if (cfg?.baseUrl) setBaseUrl(cfg.baseUrl);
       }
     } catch { /* ignore */ }
@@ -110,14 +112,14 @@ export default function AdminHiggsfield() {
   };
 
   const saveApiKey = async () => {
-    if (!apiKey.trim()) return;
+    if (!apiId.trim() || !apiSecret.trim()) return;
     setSavingKey(true);
     setSaveError(null);
     try {
       const r = await fetch(`${API_BASE_URL}/api/admin/platform-configs/higgsfield`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ config: { apiKey: apiKey.trim(), baseUrl: baseUrl.trim() }, enabled: true }),
+        body: JSON.stringify({ config: { apiId: apiId.trim(), apiSecret: apiSecret.trim(), baseUrl: baseUrl.trim() }, enabled: true }),
       });
       const data = await r.json().catch(() => ({})) as { error?: string };
       if (!r.ok) {
@@ -250,33 +252,50 @@ export default function AdminHiggsfield() {
           )}
         </div>
 
-        <div className="mt-4 flex gap-2">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxx"
-            className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
-          />
-          <button
-            type="button"
-            onClick={() => void saveApiKey()}
-            disabled={savingKey || !apiKey.trim()}
-            className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-              saveSuccess ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-40'
-            }`}
-          >
-            {saveSuccess ? <Check size={14} /> : savingKey ? '…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void checkStatus()}
-            disabled={checkingStatus}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <RefreshCw size={13} className={checkingStatus ? 'animate-spin' : ''} />
-            Test
-          </button>
+        <div className="mt-4 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">API ID</label>
+              <input
+                type="text"
+                value={apiId}
+                onChange={(e) => setApiId(e.target.value)}
+                placeholder="your-api-id"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Secret</label>
+              <input
+                type="password"
+                value={apiSecret}
+                onChange={(e) => setApiSecret(e.target.value)}
+                placeholder="your-api-secret"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void saveApiKey()}
+              disabled={savingKey || !apiId.trim() || !apiSecret.trim()}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+                saveSuccess ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-40'
+              }`}
+            >
+              {saveSuccess ? <Check size={14} /> : savingKey ? '…' : 'Save Credentials'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void checkStatus()}
+              disabled={checkingStatus}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <RefreshCw size={13} className={checkingStatus ? 'animate-spin' : ''} />
+              Test
+            </button>
+          </div>
         </div>
 
         {/* Advanced: custom base URL */}
@@ -309,8 +328,8 @@ export default function AdminHiggsfield() {
           <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{saveError}</p>
         )}
         <p className="mt-2 text-[11px] text-slate-400">
-          Get your API key at{' '}
-          <span className="font-semibold text-slate-600">higgsfield.ai → Profile → Settings → API</span>
+          Get your credentials at{' '}
+          <span className="font-semibold text-slate-600">cloud.higgsfield.ai/api-keys</span>
         </p>
       </div>
 

@@ -23209,10 +23209,15 @@ async function getHiggsfieldConfig(): Promise<{ apiKey: string; baseUrl: string 
       `SELECT config FROM platform_configs WHERE platform = 'higgsfield' AND enabled = true LIMIT 1`
     );
     const cfg = r.rows[0]?.config;
-    if (!cfg?.apiKey) return null;
+    // Support both legacy single apiKey and new apiId + apiSecret format
+    let apiKey = cfg?.apiKey ?? '';
+    if (!apiKey && cfg?.apiId && cfg?.apiSecret) {
+      apiKey = `${cfg.apiId}:${cfg.apiSecret}`;
+    }
+    if (!apiKey) return null;
     return {
-      apiKey: cfg.apiKey,
-      baseUrl: (cfg.baseUrl || 'https://api.higgsfield.ai').replace(/\/$/, ''),
+      apiKey,
+      baseUrl: (cfg?.baseUrl || 'https://api.higgsfield.ai').replace(/\/$/, ''),
     };
   } catch { return null; }
 }
