@@ -364,7 +364,7 @@ export default function AdminHiggsfield() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Model ID</label>
+                <label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Model</label>
                 <a
                   href="https://docs.higgsfield.ai/docs"
                   target="_blank"
@@ -374,20 +374,13 @@ export default function AdminHiggsfield() {
                   <ExternalLink size={11} /> Higgsfield docs →
                 </a>
               </div>
-              <datalist id="img-model-list">
-                {IMAGE_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}
-              </datalist>
-              <input
-                type="text"
-                list="img-model-list"
+              <select
                 value={imgModel}
                 onChange={(e) => setImgModel(e.target.value)}
-                placeholder="higgsfield-ai/soul/standard"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
-              />
-              <p className="mt-1 text-[11px] text-slate-400">
-                Known IDs: <span className="font-mono">higgsfield-ai/soul/standard</span>, <span className="font-mono">reve/text-to-image</span>
-              </p>
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              >
+                {IMAGE_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
             </div>
 
             <div>
@@ -453,8 +446,16 @@ export default function AdminHiggsfield() {
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <p className="mb-3 text-sm font-bold text-slate-900">Result</p>
               {imgResult.error ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {imgResult.error}
+                <div className="space-y-2">
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {imgResult.error}
+                  </div>
+                  {imgResult.error.toLowerCase().includes('credit') && (
+                    <p className="text-[11px] text-slate-500">
+                      Higgsfield separates <strong>dashboard credits</strong> (web UI) from <strong>API credits</strong> (programmatic access). Check your API plan at{' '}
+                      <span className="font-semibold">cloud.higgsfield.ai</span> — you may need to purchase API credits separately.
+                    </p>
+                  )}
                 </div>
               ) : imgResult.url ? (
                 <div className="space-y-3">
@@ -487,20 +488,15 @@ export default function AdminHiggsfield() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
             <div>
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Model ID
-                <span className="ml-1 normal-case font-normal text-slate-400">— from cloud.higgsfield.ai</span>
+                Model
               </label>
-              <datalist id="vid-model-list">
-                {VIDEO_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}
-              </datalist>
-              <input
-                type="text"
-                list="vid-model-list"
+              <select
                 value={vidModel}
                 onChange={(e) => setVidModel(e.target.value)}
-                placeholder="higgsfield-ai/kling/standard"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
-              />
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              >
+                {VIDEO_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
             </div>
 
             <div>
@@ -578,8 +574,16 @@ export default function AdminHiggsfield() {
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <p className="mb-3 text-sm font-bold text-slate-900">Result</p>
               {vidResult.error ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {vidResult.error}
+                <div className="space-y-2">
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {vidResult.error}
+                  </div>
+                  {vidResult.error.toLowerCase().includes('credit') && (
+                    <p className="text-[11px] text-slate-500">
+                      Higgsfield separates <strong>dashboard credits</strong> (web UI) from <strong>API credits</strong> (programmatic access). Check your API plan at{' '}
+                      <span className="font-semibold">cloud.higgsfield.ai</span> — you may need to purchase API credits separately.
+                    </p>
+                  )}
                 </div>
               ) : vidResult.url ? (
                 <div className="space-y-3">
