@@ -1323,6 +1323,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   // ── Verdant Dark Studio card templates (Card 03 + Card 04) ────────────────
   try {
+    const now = new Date().toISOString();
     const VBG = '#0E1F2A';
     const VACC = '#6DFF5B';
     const VINK = '#FFFFFF';
@@ -1473,6 +1474,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   // ── Social Media Templates (5 editable templates) ─────────────────────────
   try {
+    const now = new Date().toISOString();
     const R = (left: number, top: number, w: number, h: number, fill: string, ex: Record<string, unknown> = {}) => ({
       type: 'rect', left, top, width: w, height: h, fill,
       stroke: null, strokeWidth: 1, strokeDashArray: null, strokeLineCap: 'butt',
@@ -1692,6 +1694,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   // ── 10 Editable Card Templates ─────────────────────────────────────────────
   try {
+    const now = new Date().toISOString();
     const _r = (l:number,t:number,w:number,h:number,fill:string,ex:Record<string,unknown>={})=>({type:'rect',left:l,top:t,width:w,height:h,fill,stroke:null,strokeWidth:1,strokeDashArray:null,strokeLineCap:'butt',strokeDashOffset:0,strokeLineJoin:'miter',strokeUniform:false,strokeMiterLimit:4,selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,flipX:false,flipY:false,skewX:0,skewY:0,rx:0,ry:0,...ex});
     const _t = (text:string,l:number,t:number,w:number,sz:number,ex:Record<string,unknown>={})=>({type:'textbox',text,left:l,top:t,width:w,fontSize:sz,fontFamily:'Arial',fontWeight:'normal',fill:'#FFFFFF',textAlign:'left',selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,underline:false,overline:false,linethrough:false,charSpacing:0,lineHeight:1.2,splitByGrapheme:false,styles:{},strokeWidth:0,stroke:null,backgroundColor:'',textBackgroundColor:'',...ex});
     const _c = (cx:number,cy:number,r:number,ex:Record<string,unknown>={})=>({type:'circle',radius:r,left:cx-r,top:cy-r,fill:'#FFFFFF',stroke:null,strokeWidth:1,strokeDashArray:null,strokeLineCap:'butt',strokeDashOffset:0,strokeLineJoin:'miter',strokeUniform:false,strokeMiterLimit:4,selectable:false,evented:false,originX:'left',originY:'top',scaleX:1,scaleY:1,angle:0,opacity:1,shadow:null,visible:true,flipX:false,flipY:false,skewX:0,skewY:0,...ex});
