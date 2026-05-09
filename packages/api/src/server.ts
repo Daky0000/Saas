@@ -1904,6 +1904,96 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   } catch(e){ console.warn('10 templates seed skipped:',e); }
   // ── end 10 Editable Card Templates ─────────────────────────────────────────
 
+  // ── UpDraft Agency Tape poster template ────────────────────────────────────
+  try {
+    const now = new Date().toISOString();
+    const UPDRAFT_ID = 'updraft-agency-tape-poster-2026';
+    const imageUrl = 'https://d8j0ntlcm91z4.cloudfront.net/user_3DSPVF70hppaORlPqQfWVzMK0VX/hf_20260509_203119_2849b11d-891a-4b0e-9837-cb67927f4904.png';
+    const fabricJson = {
+      version: '5.3.0',
+      background: '#07120E',
+      width: 1080,
+      height: 1350,
+      objects: [
+        // Full-bleed background image
+        {
+          type: 'image', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 0, top: 0,
+          width: 928, height: 1152,
+          scaleX: 1080 / 928, scaleY: 1350 / 1152,
+          angle: 0, flipX: false, flipY: false, opacity: 1,
+          fill: 'rgb(0,0,0)', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          cropX: 0, cropY: 0,
+          src: imageUrl,
+          crossOrigin: 'anonymous', filters: [],
+        },
+        // Editable headline overlay (users can change the three lines)
+        {
+          type: 'textbox', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 64, top: 490, width: 900,
+          text: 'We Design\nWe Build\nWe Scale',
+          fontSize: 120, fontFamily: 'Inter', fontWeight: '800', fontStyle: 'normal',
+          fill: '#DFFFEC', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          angle: 0, flipX: false, flipY: false, opacity: 0,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          textAlign: 'left', lineHeight: 0.96, charSpacing: -20,
+          styles: [], direction: 'ltr', pathStartOffset: 0,
+          pathSide: 'left', pathAlign: 'baseline',
+          overline: false, underline: false, linethrough: false,
+          textBackgroundColor: '', splitByGrapheme: false,
+        },
+        // Brand name (editable)
+        {
+          type: 'textbox', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 64, top: 1290, width: 600,
+          text: 'updraft.agency',
+          fontSize: 28, fontFamily: 'Inter', fontWeight: '500', fontStyle: 'normal',
+          fill: '#DFFFEC', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          angle: 0, flipX: false, flipY: false, opacity: 0,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          textAlign: 'left', lineHeight: 1.2, charSpacing: 0,
+          styles: [], direction: 'ltr', pathStartOffset: 0,
+          pathSide: 'left', pathAlign: 'baseline',
+          overline: false, underline: false, linethrough: false,
+          textBackgroundColor: '', splitByGrapheme: false,
+        },
+      ],
+    };
+    const designData = { fabricVersion: true as const, canvasWidth: 1080, canvasHeight: 1350, fabricJson };
+    await pool.query(
+      `INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO UPDATE SET design_data=EXCLUDED.design_data, cover_image_url=EXCLUDED.cover_image_url, updated_at=EXCLUDED.updated_at`,
+      [
+        UPDRAFT_ID,
+        'UpDraft — Agency Tape Poster',
+        'Brutalist vinyl-tape agency poster (1080×1350). Deep green palette with neon #2BE38B tape bands, bold headline, and editorial layout. Open in canvas to customise headline and brand name.',
+        JSON.stringify(designData),
+        imageUrl,
+        true,
+        now, now,
+      ]
+    );
+    console.log('UpDraft Agency Tape template upserted.');
+  } catch (e) { console.warn('UpDraft template seed skipped:', e); }
+  // ── end UpDraft Agency Tape seed ────────────────────────────────────────────
+
   // ─── Mailing Module (additive only) ────────────────────────────────────────
 
   await pool.query(`

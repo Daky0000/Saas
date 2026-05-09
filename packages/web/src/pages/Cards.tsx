@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Sparkles, Wand2,
   CheckCircle2, Loader2, RefreshCw, ChevronRight, Download, Edit3,
-  AlertCircle, Layers, Pencil, Trash2, Clock, Image,
+  AlertCircle, Layers, Pencil, Trash2, Clock, Image, LayoutTemplate,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
 import CardBuilderModal from '../components/cards/builder/CardBuilderModal';
@@ -562,9 +562,57 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   );
 }
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface CardTemplate {
+  id: string;
+  name: string;
+  description: string;
+  designData: object;
+  coverImageUrl: string | null;
+  isPublished: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Template card ─────────────────────────────────────────────────────────────
+
+function TemplateThumb({ tpl, onUse }: { tpl: CardTemplate; onUse: () => void }) {
+  return (
+    <div
+      onClick={onUse}
+      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 aspect-[4/5] shadow-sm hover:shadow-xl transition-all duration-200"
+    >
+      {tpl.coverImageUrl ? (
+        <img
+          src={tpl.coverImageUrl}
+          alt={tpl.name}
+          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center">
+          <LayoutTemplate size={36} className="text-white/20" />
+        </div>
+      )}
+
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+
+      <div className="absolute inset-x-0 bottom-0 p-4 translate-y-2 group-hover:translate-y-0 transition-transform">
+        <p className="text-sm font-bold text-white leading-snug truncate">{tpl.name}</p>
+        <p className="text-[11px] text-white/60 mt-0.5 line-clamp-2 leading-snug">{tpl.description}</p>
+        <div className="mt-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1.5 rounded-full bg-[#5b6cf9] px-3 py-1 text-[11px] font-bold text-white">
+            <Plus size={11} /> Use Template
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── My Designs card ───────────────────────────────────────────────────────────
 
-type MainTab = 'studio' | 'designs';
+type MainTab = 'studio' | 'designs' | 'templates';
 
 function DesignThumb({ design, onOpen, onDelete }: { design: UserDesign; onOpen: () => void; onDelete: () => void }) {
   const [deleting, setDeleting] = useState(false);
@@ -642,6 +690,9 @@ const Cards = () => {
   const [editingDesign, setEditingDesign] = useState<UserDesign | null>(null);
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
+  const [templates, setTemplates]   = useState<CardTemplate[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templateCanvas, setTemplateCanvas] = useState<{ fabricJson: Record<string, unknown>; canvasWidth?: number; canvasHeight?: number } | null>(null);
 
   const fetchDesigns = async () => {
     setLoadingDesigns(true);
@@ -652,19 +703,32 @@ const Cards = () => {
     finally { setLoadingDesigns(false); }
   };
 
-  useEffect(() => { fetchDesigns(); }, []);
+  const fetchTemplates = async () => {
+    setLoadingTemplates(true);
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/card-templates/published`, {
+        headers: { Authorization: `Bearer ${tok()}` },
+      });
+      const d = await r.json();
+      if (d.success) setTemplates(d.templates ?? []);
+    } catch { /* ignore */ }
+    finally { setLoadingTemplates(false); }
+  };
 
-  const openNewDesign = () => { setEditingDesign(null); setBuilderOpen(true); };
-  const openDesign    = (d: UserDesign) => { setEditingDesign(d); setBuilderOpen(true); };
+  useEffect(() => { fetchDesigns(); fetchTemplates(); }, []);
 
-  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); fetchDesigns(); };
+  const openNewDesign = () => { setTemplateCanvas(null); setEditingDesign(null); setBuilderOpen(true); };
+  const openDesign    = (d: UserDesign) => { setTemplateCanvas(null); setEditingDesign(d); setBuilderOpen(true); };
+  const openTemplate  = (tpl: CardTemplate) => { setEditingDesign(null); setTemplateCanvas(tpl.designData as { fabricJson: Record<string, unknown>; canvasWidth?: number; canvasHeight?: number }); setBuilderOpen(true); };
+
+  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); setTemplateCanvas(null); fetchDesigns(); };
   const handleDesignSaved  = (_saved: UserDesign) => { fetchDesigns(); };
 
   if (builderOpen) {
     return (
       <CardBuilderModal
         existingDesign={editingDesign}
-        initialCanvasData={null}
+        initialCanvasData={templateCanvas}
         initialDesignName={undefined}
         onClose={handleBuilderClose}
         onSaved={handleDesignSaved}
@@ -686,8 +750,9 @@ const Cards = () => {
       {/* Tab bar */}
       <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit">
         {([
-          { id: 'studio'  as const, label: 'AI Studio',  icon: <Sparkles size={14} /> },
-          { id: 'designs' as const, label: 'My Designs', icon: <Image    size={14} /> },
+          { id: 'studio'    as const, label: 'AI Studio',  icon: <Sparkles       size={14} /> },
+          { id: 'templates' as const, label: 'Templates',  icon: <LayoutTemplate size={14} /> },
+          { id: 'designs'   as const, label: 'My Designs', icon: <Image          size={14} /> },
         ]).map((t) => (
           <button
             key={t.id}
@@ -707,6 +772,28 @@ const Cards = () => {
       {/* Tab content */}
       {tab === 'studio' ? (
         <AIStudio onDesignSaved={handleDesignSaved} />
+      ) : tab === 'templates' ? (
+        <div>
+          {loadingTemplates ? (
+            <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
+              <Loader2 size={16} className="animate-spin" /> Loading templates…
+            </div>
+          ) : templates.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center py-16 gap-3">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                <LayoutTemplate size={24} className="text-slate-400" />
+              </div>
+              <p className="font-bold text-slate-700">No templates yet</p>
+              <p className="text-sm text-slate-400">Admin-published templates will appear here.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {templates.map((tpl) => (
+                <TemplateThumb key={tpl.id} tpl={tpl} onUse={() => openTemplate(tpl)} />
+              ))}
+            </div>
+          )}
+        </div>
       ) : (
         <div>
           {loadingDesigns ? (
