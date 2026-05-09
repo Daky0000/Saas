@@ -577,6 +577,8 @@ function App() {
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [pendingTour, setPendingTour] = useState(false);
 
   const goTasks = useCallback((filter = 'all') => {
     setCurrentTaskFilter(filter);
@@ -872,9 +874,7 @@ function App() {
     goTasks,
   };
 
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const guide = PAGE_GUIDES[currentPage];
-  const [pendingTour, setPendingTour] = useState(false);
 
   return (
     <WorkspaceProvider>
