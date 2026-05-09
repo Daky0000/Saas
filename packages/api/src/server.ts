@@ -1936,6 +1936,52 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   // ── End Agent System ──────────────────────────────────────────────────────────
 
+  // ── Agent Workflow & Tools ────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_tools (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      key         TEXT NOT NULL UNIQUE,
+      name        TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      type        TEXT NOT NULL DEFAULT 'builtin',
+      config      JSONB NOT NULL DEFAULT '{}',
+      enabled     BOOLEAN NOT NULL DEFAULT true,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_workflows (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_key   TEXT NOT NULL UNIQUE,
+      steps       JSONB NOT NULL DEFAULT '[]',
+      is_active   BOOLEAN NOT NULL DEFAULT true,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    INSERT INTO agent_tools (key, name, description, type, config) VALUES
+    ('meigen_search',   'MeiGen AI Search',   'Search MeiGen AI for design templates and extract generation prompts', 'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
+    ('pinterest_search','Pinterest Search',    'Search Pinterest for visual design inspiration by keyword',           'api',     '{"endpoint":"pinterest"}'),
+    ('claude_synthesize','Claude Synthesize',  'Use Claude AI to craft a tailored prompt from designs and brand memory','builtin','{"model":"claude-haiku-4-5-20251001"}'),
+    ('generate_image',  'Generate Image',      'Generate an image using the model specified in the prompt or fallback','builtin', '{"fallback_model":"flux-1.1-pro"}'),
+    ('save_design',     'Save to Designs',     'Save the generated image to the user designs collection',            'builtin', '{}')
+    ON CONFLICT (key) DO NOTHING;
+  `).catch(() => undefined);
+  {
+    const _novaSteps = [
+      { id: 'step_search',  name: 'Search Designs',       tool: 'meigen_search',    description: 'Find matching design templates on MeiGen AI', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
+      { id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize', description: 'Extract visual elements and generation prompts from found designs', prompt_template: 'From these design concepts, extract 3–5 key visual styles with their image generation prompts and recommended AI model.\n\nDesigns: {step_search.result}', params: {} },
+      { id: 'step_tailor',  name: 'Tailor to Brand',       tool: 'claude_synthesize', description: 'Combine design inspiration with user brand memory to produce a final prompt', prompt_template: 'Create a single optimized image generation prompt by blending these design concepts with the user brand:\n- Niche: {brand.niche}\n- Tone: {brand.tone}\n- Audience: {brand.audience}\n\nDesign concepts: {step_extract.result}\n\nReturn ONLY valid JSON (no markdown): { "prompt": "...", "model": "flux-1.1-pro", "style_notes": "..." }', params: {} },
+      { id: 'step_generate',name: 'Generate Image',        tool: 'generate_image',    description: 'Generate the final branded image', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
+      { id: 'step_save',    name: 'Save Design',           tool: 'save_design',       description: 'Save the generated image to user designs', prompt_template: '', params: {} },
+    ];
+    await pool.query(
+      `INSERT INTO agent_workflows (agent_key, steps) VALUES ('nova', $1) ON CONFLICT (agent_key) DO NOTHING`,
+      [JSON.stringify(_novaSteps)]
+    ).catch(() => undefined);
+  }
+  // ── End Agent Workflow & Tools ────────────────────────────────────────────────
+
   // ── End User Memory ───────────────────────────────────────────────────────────
 
   // ─── Workspace & Organizations ────────────────────────────────────────────────
@@ -24456,6 +24502,339 @@ async function runDueDateAlerts() {
     logger.error({ err }, 'due_date_alert_error');
   }
 }
+
+// ─── Nova Design Agent Routes ─────────────────────────────────────────────────
+
+// GET /api/admin/agent-tools — list all available tools
+app.get('/api/admin/agent-tools', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  try {
+    const { rows } = await dbQuery(`SELECT * FROM agent_tools ORDER BY type, name`);
+    return res.json({ success: true, tools: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/admin/agent-workflows/:key — get workflow for agent
+app.get('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  try {
+    const { rows } = await dbQuery(`SELECT * FROM agent_workflows WHERE agent_key = $1`, [req.params.key]);
+    return res.json({ success: true, workflow: rows[0] ?? null });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/admin/agent-workflows/:key — save workflow
+app.put('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  const { steps, is_active = true } = req.body as { steps: any[]; is_active?: boolean };
+  if (!Array.isArray(steps)) return res.status(400).json({ success: false, error: 'steps must be an array' });
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO agent_workflows (agent_key, steps, is_active, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (agent_key) DO UPDATE SET steps = $2, is_active = $3, updated_at = NOW()
+       RETURNING *`,
+      [req.params.key, JSON.stringify(steps), is_active]
+    );
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── Nova workflow helpers ─────────────────────────────────────────────────────
+
+function _addPlaceholders(prompt: string): string {
+  if (prompt.includes('[') && prompt.includes(']')) return prompt;
+  return `[YOUR BUSINESS NAME] ${prompt
+    .replace(/\b(professional|modern|minimalist|elegant|bold)\b/gi, '[STYLE]')
+    .trim()}`.trim() || `[STYLE] design for [YOUR BUSINESS] targeting [YOUR AUDIENCE]`;
+}
+
+function _extractJsonFromText(text: string): Record<string, any> | null {
+  try {
+    const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const candidate = codeBlock ? codeBlock[1] : text;
+    const jsonMatch = candidate.match(/\{[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  } catch { /* ignore */ }
+  return null;
+}
+
+// POST /api/nova/design — SSE stream executing Nova design workflow
+app.post('/api/nova/design', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { description = '', auto = true } = req.body as { description?: string; auto?: boolean };
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  try {
+    // 1. Load user brand memory
+    const { rows: memRows } = await dbQuery(
+      `SELECT category, title, content FROM user_memories
+       WHERE user_id = $1 AND category IN ('brand','visual','content','audience','business')
+       ORDER BY category, sort_order LIMIT 30`,
+      [auth.userId]
+    );
+    const hasBrandMemory = memRows.length > 0;
+    const brandCtx: Record<string, string[]> = {};
+    for (const r of memRows as any[]) {
+      if (!brandCtx[r.category]) brandCtx[r.category] = [];
+      brandCtx[r.category].push(`${r.title}: ${r.content}`);
+    }
+    const brandSummary = Object.entries(brandCtx)
+      .map(([cat, items]) => `${cat.toUpperCase()}:\n${items.join('\n')}`)
+      .join('\n\n');
+
+    const brandNiche  = brandCtx.business?.[0] ?? brandCtx.brand?.[0] ?? 'general business';
+    const brandTone   = brandCtx.brand?.[1]   ?? brandCtx.content?.[0] ?? 'professional';
+    const brandAudience = brandCtx.audience?.[0] ?? 'general audience';
+
+    // 2. Load Nova workflow
+    const { rows: wfRows } = await dbQuery(
+      `SELECT steps FROM agent_workflows WHERE agent_key = 'nova' AND is_active = true LIMIT 1`
+    );
+    const steps: any[] = wfRows[0]?.steps ?? [];
+    if (steps.length === 0) {
+      send({ type: 'error', message: 'Nova workflow not configured. Set up the workflow in Admin → Agents.' });
+      send({ type: 'done' });
+      return res.end();
+    }
+
+    // 3. AI config
+    const aiCfg = await getAIConfig();
+    const apiKey = resolveActiveKey(aiCfg);
+    if (!apiKey) {
+      send({ type: 'error', message: 'AI not configured — add an API key in Admin → AI Assistant.' });
+      send({ type: 'done' });
+      return res.end();
+    }
+    const anthropic = new Anthropic({ apiKey });
+
+    const stepResults: Record<string, any> = {};
+
+    // 4. Execute workflow steps
+    for (const step of steps) {
+      send({ type: 'step_start', step_id: step.id, name: step.name, tool: step.tool });
+
+      try {
+        // ── meigen_search ────────────────────────────────────────────────────
+        if (step.tool === 'meigen_search') {
+          const searchRes = await anthropic.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1500,
+            messages: [{
+              role: 'user',
+              content: `You are a design research AI. Generate 4 realistic design concepts as if retrieved from a design AI library.
+
+Request: "${description || 'professional brand design'}"
+Brand niche: ${brandNiche}
+
+Return ONLY valid JSON array (no markdown, no text outside the array):
+[
+  {
+    "title": "short descriptive name",
+    "style": "visual style description",
+    "colors": "main colors used",
+    "prompt": "detailed image generation prompt that would create this design",
+    "model": "one of: flux-1.1-pro | soul-2 | nano-banana-pro | seedream-3",
+    "thumbnail_description": "brief visual description for display"
+  }
+]`,
+            }],
+          });
+
+          let designs: any[] = [];
+          const rawContent = searchRes.content[0].type === 'text' ? searchRes.content[0].text : '';
+          try {
+            const arrMatch = rawContent.match(/\[[\s\S]*\]/);
+            if (arrMatch) designs = JSON.parse(arrMatch[0]);
+          } catch { designs = []; }
+
+          stepResults[step.id] = { designs };
+          send({ type: 'step_done', step_id: step.id });
+          send({ type: 'inspirations', designs });
+
+        // ── claude_synthesize ─────────────────────────────────────────────────
+        } else if (step.tool === 'claude_synthesize') {
+          let prompt = step.prompt_template
+            .replace('{input}', description || 'professional brand design')
+            .replace('{brand.niche}', brandNiche)
+            .replace('{brand.tone}', brandTone)
+            .replace('{brand.audience}', brandAudience)
+            .replace('{step_search.result}', JSON.stringify(stepResults['step_search']?.designs ?? []))
+            .replace('{step_extract.result}', stepResults['step_extract']?.result ?? '');
+
+          if (brandSummary) prompt += `\n\nUSER BRAND MEMORY:\n${brandSummary}`;
+
+          const synthRes = await anthropic.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1200,
+            messages: [{ role: 'user', content: prompt }],
+          });
+
+          const result = synthRes.content[0].type === 'text' ? synthRes.content[0].text : '';
+          stepResults[step.id] = { result };
+          send({ type: 'step_done', step_id: step.id });
+
+        // ── generate_image ───────────────────────────────────────────────────
+        } else if (step.tool === 'generate_image') {
+          // Parse tailored prompt + model from step_tailor
+          let finalPrompt = description || 'professional brand design';
+          let finalModel = 'flux-1.1-pro';
+          const tailorResult = stepResults['step_tailor']?.result ?? '';
+          const parsed = _extractJsonFromText(tailorResult);
+          if (parsed?.prompt) { finalPrompt = parsed.prompt; finalModel = parsed.model ?? finalModel; }
+          else if (tailorResult) { finalPrompt = tailorResult.slice(0, 900); }
+
+          // If no memory and not auto-mode, pause for user prompt review
+          if (!hasBrandMemory && !auto) {
+            send({ type: 'prompt_ready', prompt: _addPlaceholders(finalPrompt), model: finalModel, has_memory: false, needs_input: true });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          send({ type: 'prompt_ready', prompt: finalPrompt, model: finalModel, has_memory: hasBrandMemory, needs_input: false });
+
+          const cfg = await getHiggsfieldConfig();
+          if (!cfg) {
+            send({ type: 'error', message: 'Image generation not configured — set up Higgsfield in Admin.' });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          send({ type: 'step_progress', step_id: step.id, message: `Generating with ${finalModel}…` });
+
+          const genId = randomUUID();
+          await dbQuery(
+            `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
+             VALUES ($1, 'image', $2, $3, $4, 'pending')`,
+            [genId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow', user_id: auth.userId })]
+          ).catch(() => undefined);
+
+          const imgResp = await axios.post(
+            `${cfg.baseUrl}/v1/generate/image`,
+            { prompt: finalPrompt, model: finalModel },
+            { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 90000 }
+          );
+
+          if (imgResp.status >= 400) {
+            const errMsg = imgResp.data?.error ?? imgResp.data?.message ?? `API error ${imgResp.status}`;
+            await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+            send({ type: 'error', message: errMsg });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          const imageUrl = imgResp.data?.url ?? imgResp.data?.image_url ?? imgResp.data?.output?.[0] ?? null;
+          await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
+
+          stepResults[step.id] = { url: imageUrl, gen_id: genId, model: finalModel, prompt: finalPrompt };
+          send({ type: 'step_done', step_id: step.id });
+          send({ type: 'image_ready', url: imageUrl, model: finalModel, prompt: finalPrompt });
+
+        // ── save_design ──────────────────────────────────────────────────────
+        } else if (step.tool === 'save_design') {
+          const genStep = stepResults['step_generate'];
+          if (genStep?.url) {
+            const dId = randomUUID();
+            const dName = `AI Design — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+            await dbQuery(
+              `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at)
+               VALUES ($1, $2, $3, 1080, 1080, $4, $5, NOW())`,
+              [dId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl: genStep.url, prompt: genStep.prompt, model: genStep.model }), genStep.url]
+            ).catch(() => undefined);
+            stepResults[step.id] = { design_id: dId, name: dName };
+            send({ type: 'step_done', step_id: step.id });
+            send({ type: 'saved', design_id: dId, name: dName });
+          } else {
+            send({ type: 'step_done', step_id: step.id });
+          }
+        } else {
+          send({ type: 'step_done', step_id: step.id });
+        }
+      } catch (stepErr: any) {
+        send({ type: 'step_done', step_id: step.id, error: stepErr.message });
+      }
+    }
+
+    send({ type: 'done' });
+    return res.end();
+  } catch (err: any) {
+    send({ type: 'error', message: err?.message ?? 'Workflow failed' });
+    send({ type: 'done' });
+    return res.end();
+  }
+});
+
+// POST /api/nova/generate-image — generate image from an edited prompt (manual mode)
+app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { prompt = '', model = 'flux-1.1-pro', save = true } = req.body as { prompt?: string; model?: string; save?: boolean };
+  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.status(400).json({ error: 'Image generation not configured — set up Higgsfield in Admin.' });
+
+  const genId = randomUUID();
+  await dbQuery(
+    `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
+     VALUES ($1, 'image', $2, $3, $4, 'pending')`,
+    [genId, model, prompt.trim(), JSON.stringify({ source: 'nova_manual', user_id: auth.userId })]
+  ).catch(() => undefined);
+
+  try {
+    const resp = await axios.post(
+      `${cfg.baseUrl}/v1/generate/image`,
+      { prompt: prompt.trim(), model },
+      { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 90000 }
+    );
+
+    if (resp.status >= 400) {
+      const errMsg = resp.data?.error ?? resp.data?.message ?? `API error ${resp.status}`;
+      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(400).json({ error: errMsg });
+    }
+
+    const imageUrl = resp.data?.url ?? resp.data?.image_url ?? resp.data?.output?.[0] ?? null;
+    await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
+
+    let designId: string | null = null;
+    if (save && imageUrl) {
+      designId = randomUUID();
+      const dName = `AI Design — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+      await dbQuery(
+        `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at)
+         VALUES ($1, $2, $3, 1080, 1080, $4, $5, NOW())`,
+        [designId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, prompt: prompt.trim(), model }), imageUrl]
+      ).catch(() => undefined);
+    }
+
+    return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId });
+  } catch (e: any) {
+    await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ── End Nova Design Agent Routes ───────────────────────────────────────────────
 
 // Start server
 if (config.nodeEnv !== 'test') {
