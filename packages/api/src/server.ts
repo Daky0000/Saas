@@ -1994,6 +1994,116 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   } catch (e) { console.warn('UpDraft template seed skipped:', e); }
   // ── end UpDraft Agency Tape seed ────────────────────────────────────────────
 
+  // ── arcgraphix Before/After carousel cover template ───────────────────────
+  try {
+    const now = new Date().toISOString();
+    const ARCGRAPHIX_ID = 'arcgraphix-before-after-carousel-2026';
+    const imageUrl = 'https://d8j0ntlcm91z4.cloudfront.net/user_3DSPVF70hppaORlPqQfWVzMK0VX/hf_20260509_203530_37c2b6b3-c838-4a5f-b57e-b0bd335ad9c7.png';
+    const fabricJson = {
+      version: '5.3.0',
+      background: '#0B1B2A',
+      width: 1080,
+      height: 1350,
+      objects: [
+        // Full-bleed background image
+        {
+          type: 'image', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 0, top: 0,
+          width: 928, height: 1152,
+          scaleX: 1080 / 928, scaleY: 1350 / 1152,
+          angle: 0, flipX: false, flipY: false, opacity: 1,
+          fill: 'rgb(0,0,0)', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          cropX: 0, cropY: 0,
+          src: imageUrl,
+          crossOrigin: 'anonymous', filters: [],
+        },
+        // Editable headline
+        {
+          type: 'textbox', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 64, top: 340, width: 950,
+          text: 'Before and\nAfter Brand\nTransformation',
+          fontSize: 110, fontFamily: 'Inter', fontWeight: '800', fontStyle: 'normal',
+          fill: '#ffffff', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          angle: 0, flipX: false, flipY: false, opacity: 0,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          textAlign: 'left', lineHeight: 1.0, charSpacing: -30,
+          styles: [], direction: 'ltr', pathStartOffset: 0,
+          pathSide: 'left', pathAlign: 'baseline',
+          overline: false, underline: false, linethrough: false,
+          textBackgroundColor: '', splitByGrapheme: false,
+        },
+        // Editable body copy
+        {
+          type: 'textbox', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 64, top: 910, width: 780,
+          text: 'This is how I helped Venyls Feast transform their look from confusing & outdated to clean, professional, and consistent.',
+          fontSize: 26, fontFamily: 'Inter', fontWeight: '400', fontStyle: 'normal',
+          fill: '#B7C2CD', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          angle: 0, flipX: false, flipY: false, opacity: 0,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          textAlign: 'left', lineHeight: 1.45, charSpacing: 0,
+          styles: [], direction: 'ltr', pathStartOffset: 0,
+          pathSide: 'left', pathAlign: 'baseline',
+          overline: false, underline: false, linethrough: false,
+          textBackgroundColor: '', splitByGrapheme: false,
+        },
+        // Handle / footer
+        {
+          type: 'textbox', version: '5.3.0',
+          originX: 'left', originY: 'top',
+          left: 64, top: 1290, width: 400,
+          text: '@arcgraphix',
+          fontSize: 24, fontFamily: 'Inter', fontWeight: '500', fontStyle: 'normal',
+          fill: '#B7C2CD', stroke: null, strokeWidth: 0,
+          strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0,
+          strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+          angle: 0, flipX: false, flipY: false, opacity: 0,
+          shadow: null, visible: true, backgroundColor: '',
+          fillRule: 'nonzero', paintFirst: 'fill',
+          globalCompositeOperation: 'source-over', skewX: 0, skewY: 0,
+          textAlign: 'left', lineHeight: 1.2, charSpacing: 0,
+          styles: [], direction: 'ltr', pathStartOffset: 0,
+          pathSide: 'left', pathAlign: 'baseline',
+          overline: false, underline: false, linethrough: false,
+          textBackgroundColor: '', splitByGrapheme: false,
+        },
+      ],
+    };
+    const designData = { fabricVersion: true as const, canvasWidth: 1080, canvasHeight: 1350, fabricJson };
+    await pool.query(
+      `INSERT INTO card_templates (id, name, description, design_data, cover_image_url, is_published, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO UPDATE SET design_data=EXCLUDED.design_data, cover_image_url=EXCLUDED.cover_image_url, updated_at=EXCLUDED.updated_at`,
+      [
+        ARCGRAPHIX_ID,
+        'arcgraphix — Before/After Carousel Cover',
+        'Editorial dark-portfolio Instagram carousel cover (1080×1350). Deep navy #0B1B2A, neon-green #22E06B accent, concentric arc background. Framed headline, stamp badge, decorative squiggle. Open in canvas to customise headline and body copy.',
+        JSON.stringify(designData),
+        imageUrl,
+        true,
+        now, now,
+      ]
+    );
+    console.log('arcgraphix Before/After template upserted.');
+  } catch (e) { console.warn('arcgraphix template seed skipped:', e); }
+  // ── end arcgraphix seed ─────────────────────────────────────────────────────
+
   // ─── Mailing Module (additive only) ────────────────────────────────────────
 
   await pool.query(`
