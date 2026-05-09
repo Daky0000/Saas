@@ -214,6 +214,7 @@ function AgentModal({
   const [loadingWf, setLoadingWf] = useState(false);
   const [savingWf, setSavingWf] = useState(false);
   const [savedWf, setSavedWf] = useState(false);
+  const [resettingWf, setResettingWf] = useState(false);
   const [wfError, setWfError] = useState<string | null>(null);
 
   // Load workflow on mount
@@ -271,6 +272,25 @@ function AgentModal({
       setWfError(e.message);
     } finally {
       setSavingWf(false);
+    }
+  };
+
+  const resetWorkflow = async () => {
+    if (!confirm('Reset workflow to defaults? This will overwrite your current steps.')) return;
+    setResettingWf(true);
+    setWfError(null);
+    try {
+      const res = await fetch(`${BASE()}/api/admin/agent-workflows/${template.agent_key}/reset`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok()}` },
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error ?? 'Reset failed');
+      setSteps(d.workflow.steps ?? []);
+    } catch (e: any) {
+      setWfError(e.message);
+    } finally {
+      setResettingWf(false);
     }
   };
 
@@ -456,7 +476,15 @@ function AgentModal({
                     <Plus size={14} /> Add Step
                   </button>
 
-                  <div className="flex justify-end pt-1">
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      disabled={resettingWf}
+                      onClick={resetWorkflow}
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:bg-slate-50 transition disabled:opacity-50"
+                    >
+                      {resettingWf ? <><RefreshCw size={12} className="animate-spin" /> Resetting…</> : <><RefreshCw size={12} /> Reset to Defaults</>}
+                    </button>
                     <button
                       type="button"
                       disabled={savingWf}

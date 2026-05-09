@@ -24726,21 +24726,48 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
             [genId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow', user_id: auth.userId })]
           ).catch(() => undefined);
 
-          const imgResp = await axios.post(
-            `${cfg.baseUrl}/v1/generate/image`,
-            { prompt: finalPrompt, model: finalModel },
-            { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 90000 }
-          );
+          // Try Higgsfield via MCP protocol first, then fall back to REST API
+          let imageUrl: string | null = null;
+          let genError: string | null = null;
 
-          if (imgResp.status >= 400) {
-            const errMsg = imgResp.data?.error ?? imgResp.data?.message ?? `API error ${imgResp.status}`;
-            await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
-            send({ type: 'error', message: errMsg });
+          try {
+            const mcpResp = await axios.post(
+              'https://mcp.higgsfield.ai/mcp',
+              { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_image', arguments: { prompt: finalPrompt, model: finalModel } } },
+              { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, validateStatus: () => true, timeout: 90000 }
+            );
+            if (mcpResp.status < 400 && mcpResp.data?.result) {
+              const mcpContent = mcpResp.data.result?.content;
+              if (Array.isArray(mcpContent)) {
+                const imgItem = mcpContent.find((c: any) => c.type === 'image' || c.type === 'resource');
+                imageUrl = imgItem?.url ?? imgItem?.resource?.uri ?? mcpResp.data.result?.url ?? null;
+              } else {
+                imageUrl = mcpResp.data.result?.url ?? mcpResp.data.result?.image_url ?? null;
+              }
+            }
+          } catch { /* MCP call failed, fall through to REST */ }
+
+          // Fall back to REST API if MCP didn't return an image
+          if (!imageUrl) {
+            const imgResp = await axios.post(
+              `${cfg.baseUrl}/v1/generate/image`,
+              { prompt: finalPrompt, model: finalModel },
+              { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 90000 }
+            );
+            if (imgResp.status >= 400) {
+              genError = imgResp.data?.error ?? imgResp.data?.message ?? `API error ${imgResp.status}`;
+            } else {
+              imageUrl = imgResp.data?.url ?? imgResp.data?.image_url ?? imgResp.data?.output?.[0] ?? null;
+            }
+          }
+
+          if (genError) {
+            await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [genError, genId]).catch(() => undefined);
+            send({ type: 'error', message: genError });
             send({ type: 'done' });
             return res.end();
           }
 
-          const imageUrl = imgResp.data?.url ?? imgResp.data?.image_url ?? imgResp.data?.output?.[0] ?? null;
           await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
 
           stepResults[step.id] = { url: imageUrl, gen_id: genId, model: finalModel, prompt: finalPrompt };
@@ -24831,6 +24858,143 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   } catch (e: any) {
     await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
     return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/nova/suggestions — generate design suggestions from user brand memory
+app.post('/api/nova/suggestions', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  try {
+    const { rows: memRows } = await dbQuery(
+      `SELECT category, title, content FROM user_memories
+       WHERE user_id = $1 AND category IN ('brand','visual','content','audience','business')
+       ORDER BY category, sort_order LIMIT 30`,
+      [auth.userId]
+    );
+
+    // Generic suggestions for users with no memory
+    if (memRows.length === 0) {
+      return res.json({
+        success: true,
+        has_memory: false,
+        suggestions: [
+          { id: 'g1', title: 'Brand Identity Post',     description: 'Showcase your brand story and values',        hint: 'modern brand identity social media post, clean professional design' },
+          { id: 'g2', title: 'Product Showcase',        description: 'Highlight your key product or service',       hint: 'product showcase image, studio lighting, premium quality' },
+          { id: 'g3', title: 'Promotional Banner',      description: 'Eye-catching offer or announcement',          hint: 'promotional banner with bold typography and vibrant colors' },
+          { id: 'g4', title: 'Quote / Inspiration Post', description: 'Motivational content for your audience',     hint: 'elegant quote post with minimal design and beautiful typography' },
+        ],
+      });
+    }
+
+    // Build brand context for Claude
+    const brandCtx: Record<string, string[]> = {};
+    for (const r of memRows as any[]) {
+      if (!brandCtx[r.category]) brandCtx[r.category] = [];
+      brandCtx[r.category].push(`${r.title}: ${r.content}`);
+    }
+    const brandSummary = Object.entries(brandCtx).map(([cat, items]) => `${cat.toUpperCase()}:\n${items.join('\n')}`).join('\n\n');
+
+    const aiCfg = await getAIConfig();
+    const apiKey = resolveActiveKey(aiCfg);
+    if (!apiKey) {
+      return res.json({ success: true, has_memory: true, suggestions: [] });
+    }
+
+    const anthropic = new Anthropic({ apiKey });
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: `Based on this brand's memory profile, generate 4 personalized design suggestions for social media / marketing content.
+
+BRAND MEMORY:
+${brandSummary}
+
+Return ONLY a valid JSON array (no markdown):
+[
+  {
+    "id": "s1",
+    "title": "Short catchy title (3-5 words)",
+    "description": "One sentence describing what this design achieves for the brand",
+    "hint": "A specific image generation prompt tailored to this brand's style, colors, and niche (used as the pre-filled description)"
+  }
+]
+
+Make each suggestion specific to this brand — reference their niche, audience, and visual style. Vary the formats: social post, banner, story, etc.`,
+      }],
+    });
+
+    let suggestions: any[] = [];
+    const raw = msg.content[0].type === 'text' ? msg.content[0].text : '';
+    try {
+      const arrMatch = raw.match(/\[[\s\S]*\]/);
+      if (arrMatch) suggestions = JSON.parse(arrMatch[0]);
+    } catch { suggestions = []; }
+
+    return res.json({ success: true, has_memory: true, suggestions });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/admin/agent-workflows/:key/reset — reset workflow to built-in defaults
+app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+
+  const DEFAULTS: Record<string, any[]> = {
+    nova: [
+      {
+        id: 'step_search', name: 'Search Designs', tool: 'meigen_search',
+        description: 'Search MeiGen AI for design templates matching the user\'s request',
+        prompt_template: 'Search for high-quality designs matching: {input}\nBrand niche: {brand.niche}\nReturn diverse style options including modern, minimal, bold, and elegant variations.',
+        params: { top_n: 5 },
+      },
+      {
+        id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize',
+        description: 'Extract the visual style, colors, and generation prompts from found designs',
+        prompt_template: 'Analyze these design concepts and extract:\n1. Key visual elements and composition\n2. Color palette and typography style\n3. The exact image generation prompt for each design\n4. Recommended AI model (flux-1.1-pro / soul-2 / seedream-3)\n\nDesigns: {step_search.result}\n\nBe specific about what makes each design effective.',
+        params: {},
+      },
+      {
+        id: 'step_tailor', name: 'Tailor to Brand', tool: 'claude_synthesize',
+        description: 'Merge design inspiration with the user\'s brand memory to create a tailored prompt',
+        prompt_template: 'Create one optimized image generation prompt by combining the best design elements with this brand\'s identity:\n\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nTarget audience: {brand.audience}\n\nDesign concepts extracted: {step_extract.result}\n\nRequirements:\n- Reflect the brand\'s unique personality\n- Be specific about colors, composition, and mood\n- Keep it under 200 words\n\nReturn ONLY valid JSON (no markdown fences):\n{ "prompt": "...", "model": "flux-1.1-pro", "style_notes": "brief note on design choices" }',
+        params: {},
+      },
+      {
+        id: 'step_generate', name: 'Generate Image', tool: 'generate_image',
+        description: 'Generate the final brand-tailored image using the crafted prompt',
+        prompt_template: '{step_tailor.prompt}',
+        params: { auto_if_memory: true },
+      },
+      {
+        id: 'step_save', name: 'Save Design', tool: 'save_design',
+        description: 'Save the generated image to the user\'s design collection',
+        prompt_template: '',
+        params: {},
+      },
+    ],
+  };
+
+  const defaults = DEFAULTS[req.params.key];
+  if (!defaults) return res.status(404).json({ success: false, error: 'No defaults for this agent' });
+
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO agent_workflows (agent_key, steps, is_active, updated_at)
+       VALUES ($1, $2, true, NOW())
+       ON CONFLICT (agent_key) DO UPDATE SET steps = $2, is_active = true, updated_at = NOW()
+       RETURNING *`,
+      [req.params.key, JSON.stringify(defaults)]
+    );
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
   }
 });
 

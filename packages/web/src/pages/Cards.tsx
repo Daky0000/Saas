@@ -182,6 +182,8 @@ const DEFAULT_STEPS: UIStep[] = [
   { id: 'step_save',    name: 'Save Design',            status: 'pending' },
 ];
 
+type Suggestion = { id: string; title: string; description: string; hint: string };
+
 function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void }) {
   const [phase, setPhase]             = useState<StudioPhase>('idle');
   const [description, setDescription] = useState('');
@@ -195,6 +197,29 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   const [errorMsg, setErrorMsg]       = useState<string | null>(null);
   const [generating, setGenerating]   = useState(false);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
+
+  // Suggestions
+  const [suggestions, setSuggestions]         = useState<Suggestion[]>([]);
+  const [loadingSuggestions, setLoadingSugg]  = useState(false);
+  const [suggHasMemory, setSuggHasMemory]     = useState(false);
+
+  useEffect(() => {
+    setLoadingSugg(true);
+    fetch(`${getApiBaseUrl()}/api/nova/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      body: JSON.stringify({}),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          setSuggestions(d.suggestions ?? []);
+          setSuggHasMemory(!!d.has_memory);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingSugg(false));
+  }, []);
 
   const resetState = () => {
     setPhase('idle');
@@ -385,6 +410,56 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
             </p>
           </div>
         </div>
+
+        {/* Suggestions */}
+        {(loadingSuggestions || suggestions.length > 0) && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 md:p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm font-bold text-slate-900">
+                  {suggHasMemory ? 'Suggested for your brand' : 'Try one of these'}
+                </p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {suggHasMemory ? 'Based on your saved brand memory' : 'Add brand memory for personalised suggestions'}
+                </p>
+              </div>
+              {!suggHasMemory && (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-600">
+                  No memory saved
+                </span>
+              )}
+            </div>
+
+            {loadingSuggestions ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[1,2,3,4].map((n) => (
+                  <div key={n} className="rounded-xl border border-slate-100 p-3 space-y-2">
+                    <div className="h-3 w-3/4 animate-pulse rounded bg-slate-100" />
+                    <div className="h-2.5 w-full animate-pulse rounded bg-slate-100" />
+                    <div className="h-2.5 w-2/3 animate-pulse rounded bg-slate-100" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {suggestions.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setDescription(s.hint)}
+                    className="group text-left rounded-xl border border-slate-200 bg-slate-50 hover:border-[#5b6cf9] hover:bg-indigo-50 p-3 transition"
+                  >
+                    <p className="text-xs font-bold text-slate-800 group-hover:text-[#5b6cf9] mb-1">{s.title}</p>
+                    <p className="text-[11px] text-slate-500 leading-snug line-clamp-2">{s.description}</p>
+                    <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-[#5b6cf9] opacity-0 group-hover:opacity-100 transition">
+                      <Plus size={10} /> Use this
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* How it works */}
         <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
