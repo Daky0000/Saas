@@ -3,9 +3,9 @@ import {
   Check,
   ChevronDown,
   Download,
+  ExternalLink,
   Film,
   Image,
-  List,
   RefreshCw,
   Trash2,
   Wand2,
@@ -84,10 +84,6 @@ export default function AdminHiggsfield() {
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Models state
-  const [models, setModels] = useState<string[] | null>(null);
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [modelsError, setModelsError] = useState<string | null>(null);
 
   const tok = () => localStorage.getItem('auth_token') ?? '';
   const authHeader = () => ({ Authorization: `Bearer ${tok()}` });
@@ -203,29 +199,6 @@ export default function AdminHiggsfield() {
       setVidResult({ url: null, error: e instanceof Error ? e.message : 'Request failed' });
     } finally {
       setGeneratingVid(false);
-    }
-  };
-
-  const loadModels = async () => {
-    setLoadingModels(true);
-    setModelsError(null);
-    try {
-      const r = await fetch(`${API_BASE_URL}/api/admin/higgsfield/models`, { headers: authHeader() });
-      const data = await r.json() as { success?: boolean; models?: any; error?: string };
-      if (!r.ok) { setModelsError(data.error ?? `Error ${r.status}`); return; }
-      // models could be array of strings, array of objects, or object with keys
-      const raw = data.models;
-      let list: string[] = [];
-      if (Array.isArray(raw)) {
-        list = raw.map((m: any) => (typeof m === 'string' ? m : m.id ?? m.model_id ?? JSON.stringify(m)));
-      } else if (raw && typeof raw === 'object') {
-        list = Object.keys(raw);
-      }
-      setModels(list);
-    } catch (e) {
-      setModelsError(e instanceof Error ? e.message : 'Failed to load models');
-    } finally {
-      setLoadingModels(false);
     }
   };
 
@@ -395,23 +368,18 @@ export default function AdminHiggsfield() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Model ID
-                  <span className="ml-1 normal-case font-normal text-slate-400">— exact ID from your Higgsfield account</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => { setModels(null); setModelsError(null); void loadModels(); }}
-                  disabled={loadingModels}
+                <label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Model ID</label>
+                <a
+                  href="https://platform.higgsfield.ai"
+                  target="_blank"
+                  rel="noreferrer"
                   className="flex items-center gap-1 text-[11px] text-violet-600 hover:text-violet-800 font-semibold"
                 >
-                  <List size={11} />
-                  {loadingModels ? 'Loading…' : 'Browse available models'}
-                </button>
+                  <ExternalLink size={11} /> Find model IDs →
+                </a>
               </div>
               <datalist id="img-model-list">
                 {IMAGE_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}
-                {models?.map((m) => <option key={m} value={m} />)}
               </datalist>
               <input
                 type="text"
@@ -421,27 +389,9 @@ export default function AdminHiggsfield() {
                 placeholder="higgsfield-ai/soul/standard"
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
               />
-              {modelsError && (
-                <p className="mt-1 text-[11px] text-red-500">{modelsError}</p>
-              )}
-              {models && models.length > 0 && (
-                <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2 space-y-1">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1 mb-1">Your available models — click to select</p>
-                  {models.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => { setImgModel(m); setModels(null); }}
-                      className="block w-full text-left rounded-lg px-2 py-1.5 font-mono text-xs text-slate-700 hover:bg-violet-50 hover:text-violet-700 transition"
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {models && models.length === 0 && (
-                <p className="mt-1 text-[11px] text-slate-400">No models returned — check your credentials or Higgsfield plan.</p>
-              )}
+              <p className="mt-1 text-[11px] text-slate-400">
+                Format: <span className="font-mono">higgsfield-ai/&#123;model&#125;/&#123;variant&#125;</span> — find exact IDs in your Higgsfield dashboard
+              </p>
             </div>
 
             <div>

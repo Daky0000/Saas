@@ -23283,26 +23283,6 @@ app.get('/api/admin/higgsfield/status', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/higgsfield/models — list available models
-app.get('/api/admin/higgsfield/models', async (req: Request, res: Response) => {
-  const admin = await requireAdmin(req, res);
-  if (!admin) return;
-  const cfg = await getHiggsfieldConfig();
-  if (!cfg) return res.status(400).json({ error: 'Credentials not configured' });
-  try {
-    const resp = await axios.get(`${cfg.baseUrl}/models`, {
-      headers: higgsfieldHeaders(cfg),
-      validateStatus: () => true,
-      timeout: 10000,
-    });
-    if (resp.status >= 400) {
-      return res.status(resp.status).json({ error: higgsfieldErrMsg(resp.data, resp.status) });
-    }
-    return res.json({ success: true, models: resp.data });
-  } catch (e: any) {
-    return res.status(500).json({ error: e?.message });
-  }
-});
 
 // POST /api/admin/higgsfield/generate/image — generate an image
 app.post('/api/admin/higgsfield/generate/image', async (req: Request, res: Response) => {
