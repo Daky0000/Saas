@@ -3558,6 +3558,32 @@ app.put('/api/auth/profile', validateBody(authProfileSchema), async (req: Reques
   }
 });
 
+app.post('/api/auth/change-password', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { currentPassword, newPassword } = req.body as Record<string, string>;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ success: false, error: 'currentPassword and newPassword are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
+  }
+  try {
+    const { rows } = await dbQuery<{ password_hash: string }>(
+      'SELECT password_hash FROM users WHERE id = $1', [auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found' });
+    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!valid) return res.status(400).json({ success: false, error: 'Current password is incorrect' });
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await dbQuery('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, auth.userId]);
+    return res.json({ success: true });
+  } catch (e) {
+    logger.error({ e }, 'change_password_failed');
+    return res.status(500).json({ success: false, error: 'Failed to change password' });
+  }
+});
+
 app.get('/api/users', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);

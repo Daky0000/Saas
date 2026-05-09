@@ -52,6 +52,7 @@ import Memory from './pages/Memory';
 import Notifications from './pages/Notifications';
 import TasksPage from './components/tasks/TasksPage';
 import ProjectSettings from './pages/ProjectSettings';
+import SettingsPage from './pages/Settings';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
@@ -83,7 +84,8 @@ type PageType =
   | 'billing'
   | 'pricing'
   | 'tasks'
-  | 'project-settings';
+  | 'project-settings'
+  | 'settings';
 
 type AuthMeResponse = {
   success: boolean;
@@ -117,6 +119,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   billing: '/billing',
   tasks: '/tasks',
   'project-settings': '/project/settings',
+  settings: '/settings',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -508,7 +511,7 @@ function AppSidebar({
 
       {/* ── Settings ── */}
       <div className="border-t border-gray-100">
-        <button type="button" onClick={() => go('profile')} className={cls(currentPage === 'profile')}>
+        <button type="button" onClick={() => go('settings')} className={cls(currentPage === 'settings')}>
           <Settings size={15} className="shrink-0" />
           <span className="flex-1 text-left">Settings</span>
           {profileNeedsAttention && <AlertCircle size={12} className="text-red-500 shrink-0" />}
@@ -539,7 +542,7 @@ function AppSidebar({
             <button type="button" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <User size={14} className="shrink-0 text-gray-400" /> Profile
             </button>
-            <button type="button" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            <button type="button" onClick={() => { go('settings'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <Settings size={14} className="shrink-0 text-gray-400" /> Settings
             </button>
             <div className="mx-3 my-1 h-px bg-gray-100" />
@@ -860,6 +863,7 @@ function App() {
       case 'notifications': return <Notifications />;
       case 'tasks': return <TasksPage initialFilter={currentTaskFilter} />;
       case 'project-settings': return <ProjectSettings />;
+      case 'settings': return <SettingsPage currentUser={authUser} onUserUpdated={handleUserUpdated} onNavigateToBilling={() => navigateToPage('billing')} />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };
