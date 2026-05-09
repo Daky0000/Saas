@@ -23294,7 +23294,7 @@ app.post('/api/admin/higgsfield/generate/image', async (req: Request, res: Respo
 
   const {
     prompt = '',
-    model = 'higgsfield-ai/soul/standard',
+    model = 'higgsfield-ai/soul/standard', // confirmed ID from Higgsfield docs
     aspect_ratio = '1:1',
     resolution = '720p',
   } = req.body as Record<string, any>;
@@ -23356,7 +23356,7 @@ app.post('/api/admin/higgsfield/generate/video', async (req: Request, res: Respo
 
   const {
     prompt = '',
-    model = 'higgsfield-ai/kling/standard',
+    model = 'higgsfield-ai/dop/standard',
     image_url,
     aspect_ratio = '16:9',
     resolution = '720p',
@@ -24694,7 +24694,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
     "style": "visual style description",
     "colors": "main colors used",
     "prompt": "detailed image generation prompt that would create this design",
-    "model": "one of: flux-1.1-pro | soul-2 | nano-banana-pro | seedream-3",
+    "model": "one of: higgsfield-ai/soul/standard | reve/text-to-image",
     "thumbnail_description": "brief visual description for display"
   }
 ]`,
@@ -24738,7 +24738,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
         } else if (step.tool === 'generate_image') {
           // Parse tailored prompt + model from step_tailor
           let finalPrompt = description || 'professional brand design';
-          let finalModel = 'flux-1.1-pro';
+          let finalModel = 'higgsfield-ai/soul/standard';
           const tailorResult = stepResults['step_tailor']?.result ?? '';
           const parsed = _extractJsonFromText(tailorResult);
           if (parsed?.prompt) { finalPrompt = parsed.prompt; finalModel = parsed.model ?? finalModel; }
@@ -24851,7 +24851,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   if (!auth) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-  const { prompt = '', model = 'flux-1.1-pro', save = true } = req.body as { prompt?: string; model?: string; save?: boolean };
+  const { prompt = '', model = 'higgsfield-ai/soul/standard', save = true } = req.body as { prompt?: string; model?: string; save?: boolean };
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
   const cfg = await getHiggsfieldConfig();
@@ -25001,13 +25001,13 @@ app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Resp
       {
         id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize',
         description: 'Extract the visual style, colors, and generation prompts from found designs',
-        prompt_template: 'Analyze these design concepts and extract:\n1. Key visual elements and composition\n2. Color palette and typography style\n3. The exact image generation prompt for each design\n4. Recommended AI model (flux-1.1-pro / soul-2 / seedream-3)\n\nDesigns: {step_search.result}\n\nBe specific about what makes each design effective.',
+        prompt_template: 'Analyze these design concepts and extract:\n1. Key visual elements and composition\n2. Color palette and typography style\n3. The exact image generation prompt for each design\n4. Recommended AI model (higgsfield-ai/soul/standard or reve/text-to-image)\n\nDesigns: {step_search.result}\n\nBe specific about what makes each design effective.',
         params: {},
       },
       {
         id: 'step_tailor', name: 'Tailor to Brand', tool: 'claude_synthesize',
         description: 'Merge design inspiration with the user\'s brand memory to create a tailored prompt',
-        prompt_template: 'Create one optimized image generation prompt by combining the best design elements with this brand\'s identity:\n\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nTarget audience: {brand.audience}\n\nDesign concepts extracted: {step_extract.result}\n\nRequirements:\n- Reflect the brand\'s unique personality\n- Be specific about colors, composition, and mood\n- Keep it under 200 words\n\nReturn ONLY valid JSON (no markdown fences):\n{ "prompt": "...", "model": "flux-1.1-pro", "style_notes": "brief note on design choices" }',
+        prompt_template: 'Create one optimized image generation prompt by combining the best design elements with this brand\'s identity:\n\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nTarget audience: {brand.audience}\n\nDesign concepts extracted: {step_extract.result}\n\nRequirements:\n- Reflect the brand\'s unique personality\n- Be specific about colors, composition, and mood\n- Keep it under 200 words\n\nReturn ONLY valid JSON (no markdown fences):\n{ "prompt": "...", "model": "higgsfield-ai/soul/standard", "style_notes": "brief note on design choices" }',
         params: {},
       },
       {

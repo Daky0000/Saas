@@ -12,20 +12,16 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
-// Model IDs use format: higgsfield-ai/{name}/{variant}
-// Find your exact model IDs at cloud.higgsfield.ai
 const IMAGE_MODEL_SUGGESTIONS = [
   'higgsfield-ai/soul/standard',
-  'higgsfield-ai/soul/2',
-  'higgsfield-ai/flux/pro',
-  'higgsfield-ai/seedream/standard',
-  'higgsfield-ai/nano-banana/pro',
+  'reve/text-to-image',
 ];
 
 const VIDEO_MODEL_SUGGESTIONS = [
-  'higgsfield-ai/kling/standard',
-  'higgsfield-ai/seedance/standard',
-  'higgsfield-ai/veo/standard',
+  'higgsfield-ai/dop/standard',
+  'higgsfield-ai/dop/preview',
+  'bytedance/seedance/v1/pro/image-to-video',
+  'kling-video/v2.1/pro/image-to-video',
 ];
 
 const ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'];
@@ -65,7 +61,7 @@ export default function AdminHiggsfield() {
 
   // Image generation state
   const [imgPrompt, setImgPrompt] = useState('');
-  const [imgModel, setImgModel] = useState('higgsfield-ai/soul/standard');
+  const [imgModel, setImgModel] = useState('higgsfield-ai/soul/standard'); // confirmed model ID from docs
   const [imgAspect, setImgAspect] = useState('1:1');
   const [imgResolution, setImgResolution] = useState('720p');
   const [generatingImg, setGeneratingImg] = useState(false);
@@ -73,7 +69,7 @@ export default function AdminHiggsfield() {
 
   // Video generation state
   const [vidPrompt, setVidPrompt] = useState('');
-  const [vidModel, setVidModel] = useState('higgsfield-ai/kling/standard');
+  const [vidModel, setVidModel] = useState('higgsfield-ai/dop/standard');
   const [vidAspect, setVidAspect] = useState('16:9');
   const [vidResolution, setVidResolution] = useState('720p');
   const [vidImageUrl, setVidImageUrl] = useState('');
@@ -370,12 +366,12 @@ export default function AdminHiggsfield() {
               <div className="mb-1.5 flex items-center justify-between">
                 <label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Model ID</label>
                 <a
-                  href="https://platform.higgsfield.ai"
+                  href="https://docs.higgsfield.ai/docs"
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-1 text-[11px] text-violet-600 hover:text-violet-800 font-semibold"
                 >
-                  <ExternalLink size={11} /> Find model IDs →
+                  <ExternalLink size={11} /> Higgsfield docs →
                 </a>
               </div>
               <datalist id="img-model-list">
@@ -390,7 +386,7 @@ export default function AdminHiggsfield() {
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
               />
               <p className="mt-1 text-[11px] text-slate-400">
-                Format: <span className="font-mono">higgsfield-ai/&#123;model&#125;/&#123;variant&#125;</span> — find exact IDs in your Higgsfield dashboard
+                Known IDs: <span className="font-mono">higgsfield-ai/soul/standard</span>, <span className="font-mono">reve/text-to-image</span>
               </p>
             </div>
 
