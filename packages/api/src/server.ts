@@ -1471,6 +1471,225 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   }
   // ── end Verdant Dark Studio seed ────────────────────────────────────────────
 
+  // ── Social Media Templates (5 editable templates) ─────────────────────────
+  try {
+    const R = (left: number, top: number, w: number, h: number, fill: string, ex: Record<string, unknown> = {}) => ({
+      type: 'rect', left, top, width: w, height: h, fill,
+      stroke: null, strokeWidth: 1, strokeDashArray: null, strokeLineCap: 'butt',
+      strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4,
+      selectable: false, evented: false, originX: 'left', originY: 'top',
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true,
+      flipX: false, flipY: false, skewX: 0, skewY: 0, rx: 0, ry: 0, ...ex,
+    });
+    const T = (text: string, left: number, top: number, w: number, size: number, ex: Record<string, unknown> = {}) => ({
+      type: 'textbox', text, left, top, width: w, fontSize: size,
+      fontFamily: 'Arial', fontWeight: 'normal', fill: '#FFFFFF', textAlign: 'left',
+      selectable: false, evented: false, originX: 'left', originY: 'top',
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true,
+      underline: false, overline: false, linethrough: false,
+      charSpacing: 0, lineHeight: 1.2, splitByGrapheme: false, styles: {},
+      strokeWidth: 0, stroke: null, backgroundColor: '', textBackgroundColor: '', ...ex,
+    });
+    const C = (cx: number, cy: number, radius: number, ex: Record<string, unknown> = {}) => ({
+      type: 'circle', radius, left: cx - radius, top: cy - radius,
+      fill: '#3AE53A', stroke: null, strokeWidth: 1, strokeDashArray: null,
+      strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter',
+      strokeUniform: false, strokeMiterLimit: 4,
+      selectable: false, evented: false, originX: 'left', originY: 'top',
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true,
+      flipX: false, flipY: false, skewX: 0, skewY: 0, ...ex,
+    });
+    const PT = (path: unknown[][], stroke: string, sw: number, ex: Record<string, unknown> = {}) => ({
+      type: 'path', path, fill: '', stroke, strokeWidth: sw, strokeDashArray: null,
+      strokeLineCap: 'round', strokeDashOffset: 0, strokeLineJoin: 'round',
+      strokeUniform: false, strokeMiterLimit: 4, left: 0, top: 0,
+      selectable: false, evented: false, originX: 'left', originY: 'top',
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true,
+      flipX: false, flipY: false, skewX: 0, skewY: 0, ...ex,
+    });
+    const wrapFab = (json: unknown, h = 1350) => ({ fabricVersion: true as const, canvasWidth: 1080, canvasHeight: h, fabricJson: json });
+
+    // ── 1. Finance Hero (Avante Capital style) ────────────────────────────────
+    const finance_hero = {
+      version: '5.3.0', background: '#0D4A2C',
+      objects: [
+        R(0, 0, 1080, 1350, '#0D4A2C'),
+        // Photo placeholder right
+        R(540, 130, 500, 620, '#0A3D22', { rx: 20, ry: 20 }),
+        T('PHOTO\nAREA', 668, 390, 260, 18, { fill: '#1A6B3C', textAlign: 'center', charSpacing: 200, fontWeight: 'bold', lineHeight: 1.6 }),
+        // Top header
+        T('@avantecapital', 60, 52, 300, 16, { fill: 'rgba(255,255,255,0.45)', charSpacing: 50 }),
+        T('consultoria financeira', 680, 52, 340, 16, { fill: 'rgba(255,255,255,0.45)', textAlign: 'right', charSpacing: 30 }),
+        // White content card
+        R(40, 650, 760, 620, '#FFFFFF', { rx: 24, ry: 24, stroke: null, strokeWidth: 0 }),
+        // Headline inside card
+        T('Seu futuro\nfinanceiro\nmais perto!', 80, 690, 620, 56, { fill: '#0D2E1A', fontFamily: 'Arial Black', fontWeight: 'bold', lineHeight: 1.05, charSpacing: -10 }),
+        // Body
+        T('Com planejamento e estratégia, você conquista estabilidade e realiza seus sonhos.', 80, 900, 620, 22, { fill: '#4A6B55', lineHeight: 1.55 }),
+        // Gold check badge
+        C(754, 860, 50, { fill: '#F5C518', stroke: '#FFFFFF', strokeWidth: 4, strokeDashArray: null }),
+        T('✓', 730, 840, 48, 34, { fill: '#0D4A2C', fontWeight: 'bold', textAlign: 'center' }),
+        // CTA button
+        R(80, 1000, 268, 58, '#0D4A2C', { rx: 29, ry: 29, stroke: null, strokeWidth: 0 }),
+        T('Saiba mais →', 80, 1017, 268, 18, { fill: '#FFFFFF', fontWeight: 'bold', textAlign: 'center' }),
+        // Brand logo bottom
+        T('▶  avante capital', 80, 1272, 340, 22, { fill: '#FFFFFF', fontWeight: 'bold' }),
+        T('@avantecapital', 80, 1302, 340, 14, { fill: 'rgba(255,255,255,0.4)' }),
+      ],
+    };
+
+    // ── 2. Creator Dark (Slyso style) ────────────────────────────────────────
+    const creator_dark = {
+      version: '5.3.0', background: '#0B1F18',
+      objects: [
+        R(0, 0, 1080, 1350, '#0B1F18'),
+        // Subtle dot grid
+        ...Array.from({ length: 16 }, (_, i) => C(100 + (i % 4) * 260, 100 + Math.floor(i / 4) * 320, 3, { fill: 'rgba(58,229,58,0.12)', stroke: null })),
+        // Inner bordered card
+        R(65, 145, 950, 1060, '#0F2A20', { rx: 28, ry: 28, stroke: 'rgba(255,255,255,0.18)', strokeWidth: 2, strokeDashArray: null }),
+        // Logo circle + symbol
+        C(138, 234, 30, { fill: '#3AE53A', stroke: null }),
+        T('✦', 120, 217, 36, 21, { fill: '#0B1F18', fontWeight: 'bold', textAlign: 'center' }),
+        T('Slyso', 182, 218, 200, 22, { fill: '#FFFFFF', fontWeight: 'bold' }),
+        T('• • •', 870, 220, 110, 20, { fill: 'rgba(255,255,255,0.4)', textAlign: 'right', charSpacing: 80 }),
+        T('terilapfinance.com', 740, 254, 280, 14, { fill: 'rgba(255,255,255,0.3)', textAlign: 'right' }),
+        // Headline with "Creators," in accent on line 1
+        T('Empowering\nCreators,\nMaximizing\nEarnings.', 110, 348, 800, 88, {
+          fill: '#FFFFFF', fontFamily: 'Arial Black', fontWeight: 'bold', lineHeight: 1.05, charSpacing: -15,
+          styles: { '1': { '0': { fill: '#3AE53A' }, '1': { fill: '#3AE53A' }, '2': { fill: '#3AE53A' }, '3': { fill: '#3AE53A' }, '4': { fill: '#3AE53A' }, '5': { fill: '#3AE53A' }, '6': { fill: '#3AE53A' }, '7': { fill: '#3AE53A' } } },
+        }),
+        // Body paragraph
+        T('Provides a streamlined ecosystem where creators can manage brand partnerships, exclusive memberships, merchandise sales, and content licensing all in one place.', 110, 820, 800, 22, { fill: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }),
+        // Slide indicators
+        R(110, 1140, 145, 4, '#FFFFFF', { rx: 2, ry: 2, stroke: null, strokeWidth: 0 }),
+        R(265, 1142, 52, 2, 'rgba(255,255,255,0.25)', { rx: 1, ry: 1, stroke: null, strokeWidth: 0 }),
+        R(327, 1142, 52, 2, 'rgba(255,255,255,0.25)', { rx: 1, ry: 1, stroke: null, strokeWidth: 0 }),
+        R(825, 1140, 64, 4, 'rgba(255,255,255,0.25)', { rx: 2, ry: 2, stroke: null, strokeWidth: 0 }),
+        R(899, 1140, 22, 4, 'rgba(255,255,255,0.25)', { rx: 2, ry: 2, stroke: null, strokeWidth: 0 }),
+        R(931, 1140, 22, 4, 'rgba(255,255,255,0.25)', { rx: 2, ry: 2, stroke: null, strokeWidth: 0 }),
+      ],
+    };
+
+    // ── 3. VS Comparison (Wishtree style, 1080×1080) ─────────────────────────
+    const vs_comparison = {
+      version: '5.3.0', background: '#39FF14',
+      objects: [
+        R(0, 0, 1080, 1080, '#39FF14'),
+        // Black left trapezoid
+        { type: 'path', path: [['M', 0, 0], ['L', 560, 0], ['L', 460, 1080], ['L', 0, 1080], ['Z']], fill: '#111111', stroke: null, strokeWidth: 0, strokeDashArray: null, strokeLineCap: 'butt', strokeDashOffset: 0, strokeLineJoin: 'miter', strokeUniform: false, strokeMiterLimit: 4, selectable: false, evented: false, originX: 'left', originY: 'top', scaleX: 1, scaleY: 1, angle: 0, opacity: 1, shadow: null, visible: true, flipX: false, flipY: false, skewX: 0, skewY: 0, left: 0, top: 0 },
+        // Logo top-left
+        T('W  wishtree', 40, 38, 280, 28, { fill: '#39FF14', fontWeight: 'bold' }),
+        // URL top-right
+        T('www.wishtreeinfosolution.com', 570, 40, 470, 18, { fill: '#111111', textAlign: 'right' }),
+        // "SEO" tag (pill, rotated, neon green)
+        R(490, 95, 110, 200, '#39FF14', { rx: 55, ry: 55, stroke: '#111111', strokeWidth: 3, strokeDashArray: null, angle: 0 }),
+        T('SEO', 500, 148, 90, 30, { fill: '#111111', fontWeight: 'bold', textAlign: 'center' }),
+        // "PPC" tag
+        R(490, 735, 110, 200, '#111111', { rx: 55, ry: 55, stroke: '#39FF14', strokeWidth: 2, strokeDashArray: null, angle: 0 }),
+        T('PPC', 500, 788, 90, 30, { fill: '#39FF14', fontWeight: 'bold', textAlign: 'center' }),
+        // VS divider line
+        R(534, 285, 2, 430, 'rgba(255,255,255,0.25)', { stroke: null, strokeWidth: 0 }),
+        // VS text
+        T('VS', 492, 458, 100, 38, { fill: '#FFFFFF', fontWeight: 'bold', textAlign: 'center' }),
+        // Left SEO bullets
+        T('• Organic Positions\n• Traffic Over Time\n• Long-Term Results\n• Ongoing Process\n• Improves Visibility\n• Free / Lower Cost', 36, 248, 430, 24, { fill: '#FFFFFF', lineHeight: 1.88 }),
+        // Right PPC bullets
+        T('• Paid Positions\n• Immediate Traffic\n• Immediate Results\n• One-Time Setup\n• Improves Sales\n• Only Paid', 580, 248, 460, 24, { fill: '#111111', lineHeight: 1.88 }),
+        // Bottom left contact
+        T('✉ info@wishtreeweb.com\n☎ +971 58 681 6054', 36, 940, 400, 18, { fill: 'rgba(255,255,255,0.55)', lineHeight: 1.7 }),
+        // Bottom right social
+        T('Follow us on #wishtree_dubai', 610, 982, 430, 17, { fill: '#111111', textAlign: 'right' }),
+      ],
+    };
+
+    // ── 4. Feature Cards Dark (Service Points style) ──────────────────────────
+    const feature_cards = {
+      version: '5.3.0', background: '#0A1F18',
+      objects: [
+        R(0, 0, 1080, 1350, '#0A1F18'),
+        // Soft arc background decoration
+        PT([['M', -80, 820], ['C', 200, 620, 840, 1060, 1200, 740]], 'rgba(58,229,58,0.07)', 70, { strokeLineCap: 'round', strokeLineJoin: 'round' }),
+        // Logo top-left
+        C(76, 76, 26, { fill: '#3AE53A', stroke: null }),
+        T('✦', 59, 59, 34, 20, { fill: '#0A1F18', fontWeight: 'bold', textAlign: 'center' }),
+        T('ServicePoints', 116, 58, 280, 22, { fill: '#FFFFFF', fontWeight: 'bold' }),
+        T('30 September 2024', 750, 60, 290, 17, { fill: 'rgba(255,255,255,0.35)', textAlign: 'right' }),
+        // Headline
+        T('What did we\nimplement?', 60, 190, 760, 92, { fill: '#FFFFFF', fontFamily: 'Arial Black', fontWeight: 'bold', lineHeight: 1.05, charSpacing: -15 }),
+        // Card 1
+        R(60, 500, 960, 162, 'rgba(58,229,58,0.07)', { rx: 20, ry: 20, stroke: 'rgba(58,229,58,0.18)', strokeWidth: 1, strokeDashArray: null }),
+        C(120, 581, 28, { fill: '#3AE53A', stroke: null }),
+        T('✓', 101, 562, 38, 24, { fill: '#0A1F18', fontWeight: 'bold', textAlign: 'center' }),
+        T('Improve delivery time', 168, 544, 700, 26, { fill: '#FFFFFF', fontWeight: 'bold' }),
+        T('We changed to another supplier for your underperforming product', 168, 576, 800, 21, { fill: 'rgba(255,255,255,0.45)', lineHeight: 1.4 }),
+        // Card 2
+        R(60, 682, 960, 162, 'rgba(58,229,58,0.07)', { rx: 20, ry: 20, stroke: 'rgba(58,229,58,0.18)', strokeWidth: 1, strokeDashArray: null }),
+        C(120, 763, 28, { fill: '#3AE53A', stroke: null }),
+        T('✓', 101, 744, 38, 24, { fill: '#0A1F18', fontWeight: 'bold', textAlign: 'center' }),
+        T('Improve processing time', 168, 726, 700, 26, { fill: '#FFFFFF', fontWeight: 'bold' }),
+        T('We changed to another supplier for your underperforming product', 168, 758, 800, 21, { fill: 'rgba(255,255,255,0.45)', lineHeight: 1.4 }),
+        // Card 3
+        R(60, 864, 960, 162, 'rgba(58,229,58,0.07)', { rx: 20, ry: 20, stroke: 'rgba(58,229,58,0.18)', strokeWidth: 1, strokeDashArray: null }),
+        C(120, 945, 28, { fill: '#3AE53A', stroke: null }),
+        T('✓', 101, 926, 38, 24, { fill: '#0A1F18', fontWeight: 'bold', textAlign: 'center' }),
+        T('Improve price', 168, 908, 700, 26, { fill: '#FFFFFF', fontWeight: 'bold' }),
+        T('We changed to another supplier for your underperforming product', 168, 940, 800, 21, { fill: 'rgba(255,255,255,0.45)', lineHeight: 1.4 }),
+        // Mockup placeholder card (right decoration)
+        R(680, 220, 360, 480, 'rgba(58,229,58,0.04)', { rx: 18, ry: 18, stroke: 'rgba(58,229,58,0.10)', strokeWidth: 1, strokeDashArray: null }),
+        T('Report\nMockup', 760, 410, 200, 22, { fill: 'rgba(58,229,58,0.18)', textAlign: 'center', fontWeight: 'bold', lineHeight: 1.5 }),
+        // Arrow circle button bottom-right
+        C(990, 1285, 46, { fill: '', stroke: 'rgba(255,255,255,0.28)', strokeWidth: 2, strokeDashArray: null }),
+        T('→', 968, 1265, 44, 30, { fill: '#FFFFFF', textAlign: 'center' }),
+      ],
+    };
+
+    // ── 5. Agency Diagonal Tape (UpDraft style) ────────────────────────────────
+    const agency_tape = {
+      version: '5.3.0', background: '#0B1E15',
+      objects: [
+        R(0, 0, 1080, 1350, '#0B1E15'),
+        // Tape 1
+        R(-140, 318, 1440, 88, '#00E8A2', { angle: -15, rx: 0, ry: 0, stroke: null, strokeWidth: 0 }),
+        T('UpDraft  ✦  Design & Product Agency  ✦  UpDraft  ✦  Design & Product Agency  ✦', -100, 342, 1380, 22, { fill: '#0B1E15', fontWeight: 'bold', charSpacing: 20, angle: -15 }),
+        // Tape 2
+        R(-140, 498, 1440, 88, '#00E8A2', { angle: -15, rx: 0, ry: 0, stroke: null, strokeWidth: 0 }),
+        T('Open for Projects  ✦  Open for Projects  ✦  Open for Projects  ✦  Open for Projects  ✦', -100, 521, 1380, 22, { fill: '#0B1E15', fontWeight: 'bold', charSpacing: 20, angle: -15 }),
+        // Tape 3
+        R(-140, 678, 1440, 88, '#00E8A2', { angle: -15, rx: 0, ry: 0, stroke: null, strokeWidth: 0 }),
+        T('UpDraft  ✦  Design & Product Agency  ✦  UpDraft  ✦  Design & Product Agency  ✦', -100, 701, 1380, 22, { fill: '#0B1E15', fontWeight: 'bold', charSpacing: 20, angle: -15 }),
+        // Shield icon top-center
+        T('⬡', 510, 108, 60, 54, { fill: '#FFFFFF', textAlign: 'center', fontWeight: 'bold' }),
+        // Headline below tapes
+        T('We Design\nWe Build\nWe Scale', 60, 810, 860, 112, { fill: '#FFFFFF', fontFamily: 'Arial Black', fontWeight: 'bold', lineHeight: 1.0, charSpacing: -15 }),
+        // URL bottom-left
+        T('updraft.agency', 60, 1276, 300, 22, { fill: 'rgba(255,255,255,0.45)' }),
+        // Arrow bottom-right
+        T('→', 978, 1268, 62, 38, { fill: '#00E8A2', fontWeight: 'bold', textAlign: 'center' }),
+      ],
+    };
+
+    const socialTemplates = [
+      { id: 'social-finance-hero-2026',      name: 'Finance — Green Hero',         desc: 'Dark forest green finance post. White content card, photo placeholder, gold check badge, CTA button. Fully editable.', data: wrapFab(finance_hero) },
+      { id: 'social-creator-dark-2026',      name: 'Creator — Dark Card',          desc: 'Very dark green creator brand card with inner bordered panel. Mixed-colour headline, body text, slide indicators. Fully editable.', data: wrapFab(creator_dark) },
+      { id: 'social-vs-comparison-2026',     name: 'Comparison — VS Split',        desc: '1080×1080 black + neon green diagonal split. Comparison-style with bullet lists and category label pills. Fully editable.', data: wrapFab(vs_comparison, 1080) },
+      { id: 'social-feature-cards-2026',     name: 'Features — Dark Checklist',    desc: 'Dark green feature showcase. Bold headline, 3 rounded feature cards with green check circles, arrow button. Fully editable.', data: wrapFab(feature_cards) },
+      { id: 'social-agency-tape-2026',       name: 'Agency — Diagonal Tape',       desc: 'Dark forest green agency poster. Three diagonal mint-green tape banners, bold 3-line headline, footer URL. Fully editable.', data: wrapFab(agency_tape) },
+    ];
+
+    for (const tmpl of socialTemplates) {
+      await pool.query(
+        `INSERT INTO card_templates (id, name, description, design_data, is_published, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (id) DO UPDATE SET design_data=EXCLUDED.design_data, name=EXCLUDED.name, updated_at=EXCLUDED.updated_at`,
+        [tmpl.id, tmpl.name, tmpl.desc, JSON.stringify(tmpl.data), true, now, now]
+      );
+    }
+    console.log('Social media card templates upserted (5 templates).');
+  } catch (e) {
+    console.warn('Social media template seed skipped:', e);
+  }
+  // ── end Social Media Templates seed ────────────────────────────────────────
+
   // ─── Mailing Module (additive only) ────────────────────────────────────────
 
   await pool.query(`

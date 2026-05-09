@@ -49,40 +49,58 @@ function DesignThumb({
   };
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
-      <div className="relative aspect-square overflow-hidden bg-zinc-100 cursor-pointer" onClick={onOpen}>
+    <div className="group relative overflow-hidden rounded-2xl bg-slate-900 shadow-sm transition duration-300 hover:shadow-xl hover:shadow-black/20 cursor-pointer" onClick={onOpen}>
+      <div className="relative aspect-square overflow-hidden">
         {design.thumbnail_url ? (
-          <img src={design.thumbnail_url} alt={design.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
+          <img src={design.thumbnail_url} alt={design.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <span className="text-sm text-zinc-400">No preview</span>
+          <div className="flex h-full items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900">
+            <span className="text-sm text-white/25">No preview</span>
           </div>
         )}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-          <div className="rounded-xl bg-white/90 px-4 py-2 text-sm font-semibold text-zinc-900 shadow">
-            {ai ? 'View Image' : 'Open in Builder'}
+        {/* Bottom gradient overlay */}
+        <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none" />
+        {/* Info inside card */}
+        <div className="absolute bottom-0 inset-x-0 p-3 pointer-events-none">
+          <div className="flex items-end justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-bold text-white leading-tight">{design.name}</p>
+              <p className="flex items-center gap-1 text-[10px] text-white/45 mt-0.5">
+                <Clock size={8} /> {formatDate(design.updated_at)}
+              </p>
+            </div>
+            <div className="pointer-events-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onOpen(); }}
+                className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/20 backdrop-blur-sm text-white hover:bg-white/35 transition"
+                title={ai ? 'View' : 'Edit'}
+              >
+                {ai ? <ExternalLink size={11} /> : <Pencil size={11} />}
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-500/60 backdrop-blur-sm text-white hover:bg-red-500/80 transition disabled:opacity-40"
+                title="Delete"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
           </div>
         </div>
+        {/* AI badge */}
         {ai && (
-          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-[#5b6cf9]/90 px-2 py-0.5 text-[10px] font-bold text-white">
+          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-[#5b6cf9]/90 backdrop-blur-sm px-2 py-0.5 text-[10px] font-bold text-white">
             <Sparkles size={8} /> AI
           </div>
         )}
-      </div>
-      <div className="flex items-center justify-between p-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">{design.name}</p>
-          <p className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
-            <Clock size={10} /> {formatDate(design.updated_at)}
-          </p>
-        </div>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button type="button" onClick={onOpen} className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 hover:bg-zinc-50 transition" title={ai ? 'View' : 'Edit'}>
-            {ai ? <ExternalLink size={12} /> : <Pencil size={13} />}
-          </button>
-          <button type="button" onClick={handleDelete} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-lg border border-red-200 text-red-400 hover:bg-red-50 transition disabled:opacity-50" title="Delete">
-            <Trash2 size={13} />
-          </button>
+        {/* Hover CTA */}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 group-hover:bg-black/10 group-hover:opacity-100 transition-all duration-200 pointer-events-none">
+          <span className="rounded-full bg-white/90 backdrop-blur-sm px-4 py-1.5 text-[12px] font-bold text-slate-900 shadow-lg translate-y-1.5 group-hover:translate-y-0 transition-transform duration-200">
+            {ai ? 'View Image' : 'Open in Builder'}
+          </span>
         </div>
       </div>
     </div>
@@ -905,13 +923,7 @@ const Cards = () => {
           {isLoadingTemplates ? (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {[1, 2, 3, 4].map((n) => (
-                <div key={n}>
-                  <div className="aspect-square animate-pulse rounded-2xl bg-slate-100" />
-                  <div className="mt-2.5 space-y-1.5 px-0.5">
-                    <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
-                    <div className="h-3 w-1/2 animate-pulse rounded bg-slate-100" />
-                  </div>
-                </div>
+                <div key={n} className="aspect-[4/5] animate-pulse rounded-2xl bg-slate-100" />
               ))}
             </div>
           ) : publishedTemplates.length === 0 ? (
@@ -926,31 +938,51 @@ const Cards = () => {
                 const dd = template.designData as unknown as Record<string, unknown>;
                 const isEditable = isFabricDesign(template.designData) || Array.isArray(dd?.elements);
                 return (
-                <button key={template.id} type="button" onClick={() => handleSelectPublishedTemplate(template)} className="group text-left focus:outline-none" disabled={!isEditable}>
-                  <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-100 shadow-sm transition duration-300 group-hover:shadow-lg">
-                    {template.coverImageUrl ? (
-                      <img src={template.coverImageUrl} alt={template.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-slate-400"><span className="text-sm">No preview</span></div>
-                    )}
-                    {/* Not Editable badge */}
-                    {!isEditable && (
-                      <div className="absolute right-2 top-2 flex items-center gap-1 rounded-lg bg-black/70 px-2 py-1 backdrop-blur-sm">
-                        <Lock size={9} className="text-white/80 shrink-0" />
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-white/90">Not Editable</span>
+                  <button
+                    key={template.id}
+                    type="button"
+                    onClick={() => handleSelectPublishedTemplate(template)}
+                    className="group focus:outline-none"
+                    disabled={!isEditable}
+                  >
+                    <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-slate-900 shadow-sm transition duration-300 group-hover:shadow-xl group-hover:shadow-black/25">
+                      {template.coverImageUrl ? (
+                        <img
+                          src={template.coverImageUrl}
+                          alt={template.name}
+                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                        />
+                      ) : (
+                        <div className="h-full w-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-end p-4">
+                          <p className="text-white/10 font-black text-3xl leading-none line-clamp-3 text-left">{template.name}</p>
+                        </div>
+                      )}
+                      {/* Bottom gradient */}
+                      <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none" />
+                      {/* Category chip */}
+                      <div className="absolute top-2.5 left-2.5">
+                        <span className="rounded-full bg-black/40 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white/80">Social</span>
                       </div>
-                    )}
-                    {isEditable && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-200 group-hover:bg-black/40 group-hover:opacity-100">
-                        <span className="rounded-full bg-white px-5 py-2 text-sm font-bold text-slate-900 shadow-md">Use Template</span>
+                      {/* Template info */}
+                      <div className="absolute bottom-0 inset-x-0 p-3.5 text-left pointer-events-none">
+                        <p className="text-[12px] font-bold text-white leading-snug line-clamp-2">{template.name}</p>
+                        {!isEditable && (
+                          <div className="mt-1 flex items-center gap-1">
+                            <Lock size={9} className="text-white/45 shrink-0" />
+                            <span className="text-[9px] text-white/45 font-semibold">View only</span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <div className="mt-2.5 px-0.5">
-                    <p className="truncate text-sm font-semibold text-slate-900">{template.name}</p>
-                    {template.description && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{template.description}</p>}
-                  </div>
-                </button>
+                      {/* Hover CTA */}
+                      {isEditable && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-200 group-hover:bg-black/15 group-hover:opacity-100 pointer-events-none">
+                          <span className="rounded-full bg-white px-5 py-2 text-[13px] font-bold text-slate-900 shadow-lg translate-y-1.5 group-hover:translate-y-0 transition-transform duration-200">
+                            Use Template
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </button>
                 );
               })}
             </div>
