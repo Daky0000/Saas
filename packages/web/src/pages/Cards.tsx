@@ -674,20 +674,13 @@ const Cards = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
+      <header>
         <div className="max-w-2xl">
           <h1 className="text-4xl font-black text-slate-900">My Studio</h1>
           <p className="mt-2 text-base text-slate-600">
             Generate AI-powered designs tailored to your brand, or build from scratch.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openNewDesign}
-          className="flex shrink-0 items-center gap-2 rounded-2xl bg-[#5b6cf9] px-5 py-3 text-sm font-bold text-white shadow-md shadow-indigo-100 transition hover:bg-indigo-600 active:scale-[0.98]"
-        >
-          <Plus size={16} /> Blank Canvas
-        </button>
       </header>
 
       {/* Tab bar */}
