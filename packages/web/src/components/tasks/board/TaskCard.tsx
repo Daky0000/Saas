@@ -26,7 +26,13 @@ export default function TaskCard({ task, isAdmin, onClick }: Props) {
   return (
     <div
       onClick={onClick}
-      className={`group rounded-xl border border-gray-200 bg-white p-3 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all ${isAdmin ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+      className={`group rounded-xl border p-3 shadow-sm transition-all ${
+        isAdmin ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+      } ${
+        isOverdue
+          ? 'border-red-100 bg-slate-50 opacity-50 grayscale hover:opacity-75 hover:grayscale-0'
+          : 'border-gray-200 bg-white hover:shadow-md hover:border-indigo-200'
+      }`}
     >
       {/* Labels */}
       {labels.length > 0 && (
@@ -45,7 +51,7 @@ export default function TaskCard({ task, isAdmin, onClick }: Props) {
       {/* Title + priority dot */}
       <div className="flex items-start gap-2 mb-2">
         <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: PRIORITY_COLORS[task.priority] }} title={PRIORITY_LABELS[task.priority]} />
-        <p className="text-[13px] font-semibold text-gray-900 leading-snug line-clamp-2">{task.title}</p>
+        <p className={`text-[13px] font-semibold leading-snug line-clamp-2 ${isOverdue ? 'text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
       </div>
 
       {/* Action progress */}
