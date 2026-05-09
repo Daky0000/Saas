@@ -23222,6 +23222,15 @@ function higgsfieldHeaders(cfg: HiggsfieldCfg): Record<string, string> {
   return { Authorization: `Key ${cfg.apiId}:${cfg.apiSecret}`, 'Content-Type': 'application/json' };
 }
 
+function higgsfieldErrMsg(data: any, status: number): string {
+  if (!data) return `Higgsfield API error ${status}`;
+  if (typeof data === 'string') return data;
+  // Try common error fields, then dump the full body so the user can see what HF returned
+  const msg = data.error ?? data.message ?? data.detail ?? data.details ?? null;
+  if (msg) return `${msg} (HTTP ${status})`;
+  return `HTTP ${status}: ${JSON.stringify(data).slice(0, 300)}`;
+}
+
 // Poll /requests/{id}/status until completed/failed, returns image URL
 async function pollHiggsfieldRequest(
   cfg: HiggsfieldCfg,
@@ -23266,11 +23275,32 @@ app.get('/api/admin/higgsfield/status', async (req: Request, res: Response) => {
       timeout: 8000,
     });
     if (resp.status === 401 || resp.status === 403) {
-      return res.json({ connected: false, error: 'Invalid API credentials' });
+      return res.json({ connected: false, error: `Invalid API credentials (${resp.status})` });
     }
     return res.json({ connected: true });
   } catch (e: any) {
     return res.json({ connected: false, error: e?.message || 'Connection failed' });
+  }
+});
+
+// GET /api/admin/higgsfield/models — list available models
+app.get('/api/admin/higgsfield/models', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.status(400).json({ error: 'Credentials not configured' });
+  try {
+    const resp = await axios.get(`${cfg.baseUrl}/models`, {
+      headers: higgsfieldHeaders(cfg),
+      validateStatus: () => true,
+      timeout: 10000,
+    });
+    if (resp.status >= 400) {
+      return res.status(resp.status).json({ error: higgsfieldErrMsg(resp.data, resp.status) });
+    }
+    return res.json({ success: true, models: resp.data });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message });
   }
 });
 
@@ -23307,7 +23337,7 @@ app.post('/api/admin/higgsfield/generate/image', async (req: Request, res: Respo
     );
 
     if (submitResp.status >= 400) {
-      const errMsg = submitResp.data?.error || submitResp.data?.message || `API error ${submitResp.status}`;
+      const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
       await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
@@ -23372,7 +23402,7 @@ app.post('/api/admin/higgsfield/generate/video', async (req: Request, res: Respo
     );
 
     if (submitResp.status >= 400) {
-      const errMsg = submitResp.data?.error || submitResp.data?.message || `API error ${submitResp.status}`;
+      const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
       await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
@@ -24770,7 +24800,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
             );
 
             if (submitResp.status >= 400) {
-              const errMsg = submitResp.data?.error ?? submitResp.data?.message ?? `API error ${submitResp.status}`;
+              const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
               await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
               send({ type: 'error', message: errMsg });
               send({ type: 'done' });
@@ -24863,7 +24893,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
     );
 
     if (submitResp.status >= 400) {
-      const errMsg = submitResp.data?.error ?? submitResp.data?.message ?? `API error ${submitResp.status}`;
+      const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
       await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
