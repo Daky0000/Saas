@@ -23203,49 +23203,72 @@ app.get('/api/admin/apify/runs', async (req: Request, res: Response) => {
 
 // ─── Higgsfield Admin Routes ───────────────────────────────────────────────────
 
-async function getHiggsfieldConfig(): Promise<{ apiKey: string; baseUrl: string } | null> {
+type HiggsfieldCfg = { apiId: string; apiSecret: string; baseUrl: string };
+
+async function getHiggsfieldConfig(): Promise<HiggsfieldCfg | null> {
   try {
     const r = await dbQuery<{ config: Record<string, string> }>(
       `SELECT config FROM platform_configs WHERE platform = 'higgsfield' AND enabled = true LIMIT 1`
     );
     const cfg = r.rows[0]?.config;
-    // Support both legacy single apiKey and new apiId + apiSecret format
-    let apiKey = cfg?.apiKey ?? '';
-    if (!apiKey && cfg?.apiId && cfg?.apiSecret) {
-      apiKey = `${cfg.apiId}:${cfg.apiSecret}`;
-    }
-    if (!apiKey) return null;
-    return {
-      apiKey,
-      baseUrl: (cfg?.baseUrl || 'https://api.higgsfield.ai').replace(/\/$/, ''),
-    };
+    const apiId = cfg?.apiId ?? '';
+    const apiSecret = cfg?.apiSecret ?? '';
+    if (!apiId || !apiSecret) return null;
+    return { apiId, apiSecret, baseUrl: 'https://platform.higgsfield.ai' };
   } catch { return null; }
 }
 
-// GET /api/admin/higgsfield/status — verify API key works
+function higgsfieldHeaders(cfg: HiggsfieldCfg): Record<string, string> {
+  return { Authorization: `Key ${cfg.apiId}:${cfg.apiSecret}`, 'Content-Type': 'application/json' };
+}
+
+// Poll /requests/{id}/status until completed/failed, returns image URL
+async function pollHiggsfieldRequest(
+  cfg: HiggsfieldCfg,
+  requestId: string,
+  maxWaitMs = 120000,
+  onProgress?: (status: string) => void
+): Promise<string> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000));
+    const resp = await axios.get(
+      `${cfg.baseUrl}/requests/${requestId}/status`,
+      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 12000 }
+    );
+    const d = resp.data ?? {};
+    const st: string = d.status ?? '';
+    onProgress?.(st);
+    if (st === 'completed') {
+      const url: string | null =
+        d.images?.[0]?.url ?? d.images?.[0] ?? d.video?.url ?? null;
+      if (!url) throw new Error('Generation completed but no media URL returned');
+      return url;
+    }
+    if (st === 'failed' || st === 'nsfw') {
+      throw new Error(`Generation ${st}${d.error ? ': ' + d.error : ''}`);
+    }
+  }
+  throw new Error('Generation timed out');
+}
+
+// GET /api/admin/higgsfield/status — verify credentials work
 app.get('/api/admin/higgsfield/status', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const cfg = await getHiggsfieldConfig();
   if (!cfg) return res.json({ connected: false });
   try {
-    const resp = await axios.get(`${cfg.baseUrl}/v1/user/me`, {
-      headers: { Authorization: `Bearer ${cfg.apiKey}` },
+    // Probe a non-existent request — 404 means auth is valid, 401/403 means bad credentials
+    const resp = await axios.get(`${cfg.baseUrl}/requests/connection-probe/status`, {
+      headers: higgsfieldHeaders(cfg),
       validateStatus: () => true,
       timeout: 8000,
     });
-    if (resp.status === 200) {
-      const d = resp.data ?? {};
-      return res.json({
-        connected: true,
-        username: d.username || d.email || d.name || '',
-        credits: d.credits ?? d.credit_balance ?? null,
-      });
-    }
     if (resp.status === 401 || resp.status === 403) {
-      return res.json({ connected: false, error: 'Invalid API key' });
+      return res.json({ connected: false, error: 'Invalid API credentials' });
     }
-    return res.json({ connected: false, error: `API returned ${resp.status}` });
+    return res.json({ connected: true });
   } catch (e: any) {
     return res.json({ connected: false, error: e?.message || 'Connection failed' });
   }
@@ -23257,17 +23280,13 @@ app.post('/api/admin/higgsfield/generate/image', async (req: Request, res: Respo
   if (!admin) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
   const cfg = await getHiggsfieldConfig();
-  if (!cfg) return res.status(400).json({ error: 'Higgsfield API key not configured' });
+  if (!cfg) return res.status(400).json({ error: 'Higgsfield credentials not configured' });
 
   const {
     prompt = '',
-    model = 'soul-2',
-    negative_prompt = '',
+    model = 'higgsfield-ai/soul/standard',
     aspect_ratio = '1:1',
-    width,
-    height,
-    steps,
-    guidance_scale,
+    resolution = '720p',
   } = req.body as Record<string, any>;
 
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
@@ -23276,37 +23295,40 @@ app.post('/api/admin/higgsfield/generate/image', async (req: Request, res: Respo
   await dbQuery(
     `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
      VALUES ($1, 'image', $2, $3, $4, 'pending')`,
-    [genId, model, prompt.trim(), JSON.stringify({ negative_prompt, aspect_ratio, width, height, steps, guidance_scale })]
+    [genId, model, prompt.trim(), JSON.stringify({ aspect_ratio, resolution })]
   ).catch(() => undefined);
 
   try {
-    const payload: Record<string, any> = { prompt: prompt.trim(), model };
-    if (negative_prompt) payload.negative_prompt = negative_prompt;
-    if (aspect_ratio) payload.aspect_ratio = aspect_ratio;
-    if (width) payload.width = width;
-    if (height) payload.height = height;
-    if (steps) payload.steps = steps;
-    if (guidance_scale) payload.guidance_scale = guidance_scale;
+    // Submit to platform.higgsfield.ai/{model_id}
+    const submitResp = await axios.post(
+      `${cfg.baseUrl}/${model}`,
+      { prompt: prompt.trim(), aspect_ratio, resolution },
+      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
+    );
 
-    const resp = await axios.post(`${cfg.baseUrl}/v1/generate/image`, payload, {
-      headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
-      validateStatus: () => true,
-      timeout: 60000,
-    });
-
-    if (resp.status >= 400) {
-      const errMsg = resp.data?.error || resp.data?.message || `API error ${resp.status}`;
+    if (submitResp.status >= 400) {
+      const errMsg = submitResp.data?.error || submitResp.data?.message || `API error ${submitResp.status}`;
       await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
 
-    const resultUrl = resp.data?.url || resp.data?.image_url || resp.data?.output?.[0] || null;
+    const requestId: string = submitResp.data?.request_id;
+    if (!requestId) {
+      const errMsg = 'No request_id returned from Higgsfield';
+      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(500).json({ error: errMsg });
+    }
+
+    await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+
+    // Poll until complete
+    const resultUrl = await pollHiggsfieldRequest(cfg, requestId);
     await dbQuery(
       `UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`,
       [resultUrl, genId]
     ).catch(() => undefined);
 
-    return res.json({ success: true, id: genId, url: resultUrl, raw: resp.data });
+    return res.json({ success: true, id: genId, url: resultUrl });
   } catch (e: any) {
     const errMsg = e?.message || 'Generation failed';
     await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
@@ -23320,14 +23342,14 @@ app.post('/api/admin/higgsfield/generate/video', async (req: Request, res: Respo
   if (!admin) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
   const cfg = await getHiggsfieldConfig();
-  if (!cfg) return res.status(400).json({ error: 'Higgsfield API key not configured' });
+  if (!cfg) return res.status(400).json({ error: 'Higgsfield credentials not configured' });
 
   const {
     prompt = '',
-    model = 'kling-3',
+    model = 'higgsfield-ai/kling/standard',
     image_url,
-    duration,
     aspect_ratio = '16:9',
+    resolution = '720p',
   } = req.body as Record<string, any>;
 
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
@@ -23336,36 +23358,42 @@ app.post('/api/admin/higgsfield/generate/video', async (req: Request, res: Respo
   await dbQuery(
     `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
      VALUES ($1, 'video', $2, $3, $4, 'pending')`,
-    [genId, model, prompt.trim(), JSON.stringify({ image_url, duration, aspect_ratio })]
+    [genId, model, prompt.trim(), JSON.stringify({ image_url, aspect_ratio, resolution })]
   ).catch(() => undefined);
 
   try {
-    const payload: Record<string, any> = { prompt: prompt.trim(), model };
+    const payload: Record<string, any> = { prompt: prompt.trim(), aspect_ratio, resolution };
     if (image_url) payload.image_url = image_url;
-    if (duration) payload.duration = duration;
-    if (aspect_ratio) payload.aspect_ratio = aspect_ratio;
 
-    const resp = await axios.post(`${cfg.baseUrl}/v1/generate/video`, payload, {
-      headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
-      validateStatus: () => true,
-      timeout: 120000,
-    });
+    const submitResp = await axios.post(
+      `${cfg.baseUrl}/${model}`,
+      payload,
+      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
+    );
 
-    if (resp.status >= 400) {
-      const errMsg = resp.data?.error || resp.data?.message || `API error ${resp.status}`;
+    if (submitResp.status >= 400) {
+      const errMsg = submitResp.data?.error || submitResp.data?.message || `API error ${submitResp.status}`;
       await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
 
-    const resultUrl = resp.data?.url || resp.data?.video_url || resp.data?.output?.[0] || null;
-    const status = resultUrl ? 'completed' : 'processing';
-    const jobId = resp.data?.id || resp.data?.job_id || null;
+    const requestId: string = submitResp.data?.request_id;
+    if (!requestId) {
+      const errMsg = 'No request_id returned from Higgsfield';
+      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(500).json({ error: errMsg });
+    }
+
+    await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+
+    // Poll for video completion (videos can take longer — 3 min timeout)
+    const resultUrl = await pollHiggsfieldRequest(cfg, requestId, 180000);
     await dbQuery(
-      `UPDATE higgsfield_generations SET status=$1, result_url=$2 WHERE id=$3`,
-      [status, resultUrl ?? jobId, genId]
+      `UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`,
+      [resultUrl, genId]
     ).catch(() => undefined);
 
-    return res.json({ success: true, id: genId, url: resultUrl, job_id: jobId, status, raw: resp.data });
+    return res.json({ success: true, id: genId, url: resultUrl, request_id: requestId });
   } catch (e: any) {
     const errMsg = e?.message || 'Generation failed';
     await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
@@ -24722,7 +24750,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
             return res.end();
           }
 
-          send({ type: 'step_progress', step_id: step.id, message: `Generating with ${finalModel}…` });
+          send({ type: 'step_progress', step_id: step.id, message: `Submitting to Higgsfield…` });
 
           const genId = randomUUID();
           await dbQuery(
@@ -24731,44 +24759,38 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
             [genId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow', user_id: auth.userId })]
           ).catch(() => undefined);
 
-          // Try Higgsfield via MCP protocol first, then fall back to REST API
           let imageUrl: string | null = null;
-          let genError: string | null = null;
 
           try {
-            const mcpResp = await axios.post(
-              'https://mcp.higgsfield.ai/mcp',
-              { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_image', arguments: { prompt: finalPrompt, model: finalModel } } },
-              { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, validateStatus: () => true, timeout: 90000 }
+            // Submit generation request to platform.higgsfield.ai/{model_id}
+            const submitResp = await axios.post(
+              `${cfg.baseUrl}/${finalModel}`,
+              { prompt: finalPrompt, aspect_ratio: '1:1', resolution: '720p' },
+              { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
             );
-            if (mcpResp.status < 400 && mcpResp.data?.result) {
-              const mcpContent = mcpResp.data.result?.content;
-              if (Array.isArray(mcpContent)) {
-                const imgItem = mcpContent.find((c: any) => c.type === 'image' || c.type === 'resource');
-                imageUrl = imgItem?.url ?? imgItem?.resource?.uri ?? mcpResp.data.result?.url ?? null;
-              } else {
-                imageUrl = mcpResp.data.result?.url ?? mcpResp.data.result?.image_url ?? null;
-              }
-            }
-          } catch { /* MCP call failed, fall through to REST */ }
 
-          // Fall back to REST API if MCP didn't return an image
-          if (!imageUrl) {
-            const imgResp = await axios.post(
-              `${cfg.baseUrl}/v1/generate/image`,
-              { prompt: finalPrompt, model: finalModel },
-              { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 90000 }
-            );
-            if (imgResp.status >= 400) {
-              genError = imgResp.data?.error ?? imgResp.data?.message ?? `API error ${imgResp.status}`;
-            } else {
-              imageUrl = imgResp.data?.url ?? imgResp.data?.image_url ?? imgResp.data?.output?.[0] ?? null;
+            if (submitResp.status >= 400) {
+              const errMsg = submitResp.data?.error ?? submitResp.data?.message ?? `API error ${submitResp.status}`;
+              await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+              send({ type: 'error', message: errMsg });
+              send({ type: 'done' });
+              return res.end();
             }
-          }
 
-          if (genError) {
-            await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [genError, genId]).catch(() => undefined);
-            send({ type: 'error', message: genError });
+            const requestId: string = submitResp.data?.request_id;
+            if (!requestId) throw new Error('No request_id returned from Higgsfield');
+
+            await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+
+            // Poll with SSE progress updates
+            imageUrl = await pollHiggsfieldRequest(cfg, requestId, 120000, (status) => {
+              send({ type: 'step_progress', step_id: step.id, message: `Generation ${status}…` });
+            });
+
+          } catch (e: any) {
+            const errMsg = e?.message ?? 'Generation failed';
+            await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+            send({ type: 'error', message: errMsg });
             send({ type: 'done' });
             return res.end();
           }
@@ -24833,19 +24855,26 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   ).catch(() => undefined);
 
   try {
-    const resp = await axios.post(
-      `${cfg.baseUrl}/v1/generate/image`,
-      { prompt: prompt.trim(), model },
-      { headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 90000 }
+    // Submit generation request
+    const submitResp = await axios.post(
+      `${cfg.baseUrl}/${model}`,
+      { prompt: prompt.trim(), aspect_ratio: '1:1', resolution: '720p' },
+      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
     );
 
-    if (resp.status >= 400) {
-      const errMsg = resp.data?.error ?? resp.data?.message ?? `API error ${resp.status}`;
+    if (submitResp.status >= 400) {
+      const errMsg = submitResp.data?.error ?? submitResp.data?.message ?? `API error ${submitResp.status}`;
       await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
 
-    const imageUrl = resp.data?.url ?? resp.data?.image_url ?? resp.data?.output?.[0] ?? null;
+    const requestId: string = submitResp.data?.request_id;
+    if (!requestId) throw new Error('No request_id returned from Higgsfield');
+
+    await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+
+    // Poll until done
+    const imageUrl = await pollHiggsfieldRequest(cfg, requestId, 120000);
     await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
 
     let designId: string | null = null;

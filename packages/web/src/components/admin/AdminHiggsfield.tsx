@@ -11,20 +11,24 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
-const IMAGE_MODELS = [
-  { id: 'soul-2', label: 'Soul 2.0 (Fashion / Portraits)' },
-  { id: 'nano-banana-pro', label: 'Nano Banana Pro (4K)' },
-  { id: 'flux-1.1-pro', label: 'Flux 1.1 Pro' },
-  { id: 'seedream-3', label: 'Seedream 3' },
+// Model IDs use format: higgsfield-ai/{name}/{variant}
+// Find your exact model IDs at cloud.higgsfield.ai
+const IMAGE_MODEL_SUGGESTIONS = [
+  'higgsfield-ai/soul/standard',
+  'higgsfield-ai/soul/2',
+  'higgsfield-ai/flux/pro',
+  'higgsfield-ai/seedream/standard',
+  'higgsfield-ai/nano-banana/pro',
 ];
 
-const VIDEO_MODELS = [
-  { id: 'kling-3', label: 'Kling 3.0 (15s, character consistency)' },
-  { id: 'seedance-2', label: 'Seedance 2.0 (Most advanced)' },
-  { id: 'veo-3', label: 'Veo 3' },
+const VIDEO_MODEL_SUGGESTIONS = [
+  'higgsfield-ai/kling/standard',
+  'higgsfield-ai/seedance/standard',
+  'higgsfield-ai/veo/standard',
 ];
 
 const ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'];
+const RESOLUTIONS = ['480p', '720p', '1080p'];
 
 type Generation = {
   id: string;
@@ -60,19 +64,20 @@ export default function AdminHiggsfield() {
 
   // Image generation state
   const [imgPrompt, setImgPrompt] = useState('');
-  const [imgModel, setImgModel] = useState('soul-2');
-  const [imgNegPrompt, setImgNegPrompt] = useState('');
+  const [imgModel, setImgModel] = useState('higgsfield-ai/soul/standard');
   const [imgAspect, setImgAspect] = useState('1:1');
+  const [imgResolution, setImgResolution] = useState('720p');
   const [generatingImg, setGeneratingImg] = useState(false);
   const [imgResult, setImgResult] = useState<{ url: string | null; error: string | null } | null>(null);
 
   // Video generation state
   const [vidPrompt, setVidPrompt] = useState('');
-  const [vidModel, setVidModel] = useState('kling-3');
+  const [vidModel, setVidModel] = useState('higgsfield-ai/kling/standard');
   const [vidAspect, setVidAspect] = useState('16:9');
+  const [vidResolution, setVidResolution] = useState('720p');
   const [vidImageUrl, setVidImageUrl] = useState('');
   const [generatingVid, setGeneratingVid] = useState(false);
-  const [vidResult, setVidResult] = useState<{ url: string | null; job_id: string | null; error: string | null } | null>(null);
+  const [vidResult, setVidResult] = useState<{ url: string | null; error: string | null } | null>(null);
 
   // History state
   const [generations, setGenerations] = useState<Generation[]>([]);
@@ -147,8 +152,8 @@ export default function AdminHiggsfield() {
         body: JSON.stringify({
           prompt: imgPrompt,
           model: imgModel,
-          negative_prompt: imgNegPrompt || undefined,
           aspect_ratio: imgAspect,
+          resolution: imgResolution,
         }),
       });
       const data = await r.json() as { url?: string | null; error?: string };
@@ -177,18 +182,19 @@ export default function AdminHiggsfield() {
           prompt: vidPrompt,
           model: vidModel,
           aspect_ratio: vidAspect,
+          resolution: vidResolution,
           image_url: vidImageUrl || undefined,
         }),
       });
-      const data = await r.json() as { url?: string | null; job_id?: string | null; status?: string; error?: string };
+      const data = await r.json() as { url?: string | null; error?: string };
       if (!r.ok) {
-        setVidResult({ url: null, job_id: null, error: data.error ?? `Error ${r.status}` });
+        setVidResult({ url: null, error: data.error ?? `Error ${r.status}` });
       } else {
-        setVidResult({ url: data.url ?? null, job_id: data.job_id ?? null, error: null });
+        setVidResult({ url: data.url ?? null, error: null });
         void loadHistory();
       }
     } catch (e) {
-      setVidResult({ url: null, job_id: null, error: e instanceof Error ? e.message : 'Request failed' });
+      setVidResult({ url: null, error: e instanceof Error ? e.message : 'Request failed' });
     } finally {
       setGeneratingVid(false);
     }
@@ -360,17 +366,20 @@ export default function AdminHiggsfield() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
             <div>
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Model
+                Model ID
+                <span className="ml-1 normal-case font-normal text-slate-400">— from cloud.higgsfield.ai</span>
               </label>
-              <select
+              <datalist id="img-model-list">
+                {IMAGE_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}
+              </datalist>
+              <input
+                type="text"
+                list="img-model-list"
                 value={imgModel}
                 onChange={(e) => setImgModel(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
-              >
-                {IMAGE_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </select>
+                placeholder="higgsfield-ai/soul/standard"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
             </div>
 
             <div>
@@ -403,15 +412,17 @@ export default function AdminHiggsfield() {
               </div>
               <div>
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Negative Prompt
+                  Resolution
                 </label>
-                <input
-                  type="text"
-                  value={imgNegPrompt}
-                  onChange={(e) => setImgNegPrompt(e.target.value)}
-                  placeholder="blurry, low quality…"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
-                />
+                <select
+                  value={imgResolution}
+                  onChange={(e) => setImgResolution(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                >
+                  {RESOLUTIONS.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -468,17 +479,20 @@ export default function AdminHiggsfield() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
             <div>
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Model
+                Model ID
+                <span className="ml-1 normal-case font-normal text-slate-400">— from cloud.higgsfield.ai</span>
               </label>
-              <select
+              <datalist id="vid-model-list">
+                {VIDEO_MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}
+              </datalist>
+              <input
+                type="text"
+                list="vid-model-list"
                 value={vidModel}
                 onChange={(e) => setVidModel(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
-              >
-                {VIDEO_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </select>
+                placeholder="higgsfield-ai/kling/standard"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
             </div>
 
             <div>
@@ -511,16 +525,30 @@ export default function AdminHiggsfield() {
               </div>
               <div>
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Image URL (optional)
+                  Resolution
                 </label>
-                <input
-                  type="text"
-                  value={vidImageUrl}
-                  onChange={(e) => setVidImageUrl(e.target.value)}
-                  placeholder="https://… (image-to-video)"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
-                />
+                <select
+                  value={vidResolution}
+                  onChange={(e) => setVidResolution(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                >
+                  {RESOLUTIONS.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
               </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Image URL (optional — for image-to-video)
+              </label>
+              <input
+                type="text"
+                value={vidImageUrl}
+                onChange={(e) => setVidImageUrl(e.target.value)}
+                placeholder="https://…"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
             </div>
 
             <button
@@ -547,11 +575,7 @@ export default function AdminHiggsfield() {
                 </div>
               ) : vidResult.url ? (
                 <div className="space-y-3">
-                  <video
-                    src={vidResult.url}
-                    controls
-                    className="w-full rounded-xl"
-                  />
+                  <video src={vidResult.url} controls className="w-full rounded-xl" />
                   <a
                     href={vidResult.url}
                     download
@@ -562,11 +586,7 @@ export default function AdminHiggsfield() {
                     <Download size={14} /> Download
                   </a>
                 </div>
-              ) : (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  Video generation is processing.{vidResult.job_id ? ` Job ID: ${vidResult.job_id}` : ''} Check History in a few minutes.
-                </div>
-              )}
+              ) : null}
             </div>
           )}
         </div>
