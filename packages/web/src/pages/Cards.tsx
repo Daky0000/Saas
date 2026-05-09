@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Plus, Sparkles, Wand2,
   CheckCircle2, Loader2, RefreshCw, ChevronRight, Download, Edit3,
-  AlertCircle, Layers,
+  AlertCircle, Layers, Pencil, Trash2, Clock, Image,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
 import CardBuilderModal from '../components/cards/builder/CardBuilderModal';
@@ -562,17 +562,104 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   );
 }
 
+// ── My Designs card ───────────────────────────────────────────────────────────
+
+type MainTab = 'studio' | 'designs';
+
+function DesignThumb({ design, onOpen, onDelete }: { design: UserDesign; onOpen: () => void; onDelete: () => void }) {
+  const [deleting, setDeleting] = useState(false);
+
+  const formatDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${design.name}"?`)) return;
+    setDeleting(true);
+    try {
+      await designService.delete(design.id);
+      onDelete();
+    } catch {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={onOpen}
+      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 aspect-[4/5] shadow-sm hover:shadow-xl transition-all duration-200"
+    >
+      {design.thumbnail_url ? (
+        <img
+          src={design.thumbnail_url}
+          alt={design.name}
+          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center">
+          <Image size={36} className="text-white/30" />
+        </div>
+      )}
+
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+
+      <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white transition"
+          title="Edit"
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-red-500 shadow hover:bg-white transition"
+          title="Delete"
+        >
+          {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={13} />}
+        </button>
+      </div>
+
+      <div className="absolute bottom-0 inset-x-0 p-4">
+        <p className="text-sm font-bold text-white leading-snug truncate">{design.name}</p>
+        <div className="flex items-center gap-1 mt-1">
+          <Clock size={10} className="text-white/50" />
+          <span className="text-[10px] text-white/50">{formatDate(design.updated_at)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const Cards = () => {
+  const [tab, setTab]               = useState<MainTab>('studio');
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editingDesign, setEditingDesign] = useState<UserDesign | null>(null);
+  const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
+  const [loadingDesigns, setLoadingDesigns] = useState(false);
+
+  const fetchDesigns = async () => {
+    setLoadingDesigns(true);
+    try {
+      const list = await designService.list();
+      setMyDesigns(list);
+    } catch { /* ignore */ }
+    finally { setLoadingDesigns(false); }
+  };
+
+  useEffect(() => { fetchDesigns(); }, []);
+
   const openNewDesign = () => { setEditingDesign(null); setBuilderOpen(true); };
+  const openDesign    = (d: UserDesign) => { setEditingDesign(d); setBuilderOpen(true); };
 
-  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); };
-  const handleDesignSaved = (_saved: UserDesign) => { /* designs tracked inside AIStudio */ };
+  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); fetchDesigns(); };
+  const handleDesignSaved  = (_saved: UserDesign) => { fetchDesigns(); };
 
-  // ── Builder full-screen ───────────────────────────────────────────────────
   if (builderOpen) {
     return (
       <CardBuilderModal
@@ -589,7 +676,7 @@ const Cards = () => {
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div className="max-w-2xl">
-          <h1 className="text-4xl font-black text-slate-900">AI Studio</h1>
+          <h1 className="text-4xl font-black text-slate-900">My Studio</h1>
           <p className="mt-2 text-base text-slate-600">
             Generate AI-powered designs tailored to your brand, or build from scratch.
           </p>
@@ -603,7 +690,76 @@ const Cards = () => {
         </button>
       </header>
 
-      <AIStudio onDesignSaved={handleDesignSaved} />
+      {/* Tab bar */}
+      <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit">
+        {([
+          { id: 'studio'  as const, label: 'AI Studio',  icon: <Sparkles size={14} /> },
+          { id: 'designs' as const, label: 'My Designs', icon: <Image    size={14} /> },
+        ]).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+              tab === t.id
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {tab === 'studio' ? (
+        <AIStudio onDesignSaved={handleDesignSaved} />
+      ) : (
+        <div>
+          {loadingDesigns ? (
+            <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
+              <Loader2 size={16} className="animate-spin" /> Loading your designs…
+            </div>
+          ) : myDesigns.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center py-16 gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                <Image size={24} className="text-slate-400" />
+              </div>
+              <div className="text-center">
+                <p className="font-bold text-slate-700">No designs yet</p>
+                <p className="text-sm text-slate-400 mt-1">Generate an AI design or start with a blank canvas.</p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setTab('studio')}
+                  className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-bold text-white hover:bg-indigo-600 transition"
+                >
+                  <Sparkles size={14} /> AI Studio
+                </button>
+                <button
+                  type="button"
+                  onClick={openNewDesign}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  <Plus size={14} /> Blank Canvas
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {myDesigns.map((d) => (
+                <DesignThumb
+                  key={d.id}
+                  design={d}
+                  onOpen={() => openDesign(d)}
+                  onDelete={() => setMyDesigns((prev) => prev.filter((x) => x.id !== d.id))}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
