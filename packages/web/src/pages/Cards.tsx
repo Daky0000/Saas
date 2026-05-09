@@ -1,148 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Plus, Pencil, Trash2, Clock, Sparkles, Wand2, Image, LayoutTemplate,
+  Plus, Sparkles, Wand2,
   CheckCircle2, Loader2, RefreshCw, ChevronRight, Download, Edit3,
-  AlertCircle, ExternalLink, Layers, Lock,
+  AlertCircle, Layers,
 } from 'lucide-react';
-import AdvancedTemplateCard from '../components/AdvancedTemplateCard';
-import { cloneCardTemplate } from '../data/cardTemplates';
-import { CardTemplate, AdminCardTemplate, isFabricDesign, FabricDesignData } from '../types/cardTemplate';
-import { cardTemplateService } from '../services/cardTemplateService';
-import { designService, UserDesign } from '../services/designService';
+import { UserDesign, designService } from '../services/designService';
 import CardBuilderModal from '../components/cards/builder/CardBuilderModal';
 import { getApiBaseUrl } from '../utils/apiBase';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function tok() { return localStorage.getItem('auth_token') ?? ''; }
-
-function formatDate(iso: string) {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch { return iso; }
-}
-
-function isAiImage(design: UserDesign): boolean {
-  return (design.canvas_data as any)?.type === 'ai_image';
-}
-
-// ── Design card thumbnail ─────────────────────────────────────────────────────
-
-function DesignThumb({
-  design,
-  onOpen,
-  onDelete,
-}: {
-  design: UserDesign;
-  onOpen: () => void;
-  onDelete: () => void;
-}) {
-  const [deleting, setDeleting] = useState(false);
-  const ai = isAiImage(design);
-
-  const handleDelete = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(`Delete "${design.name}"? This cannot be undone.`)) return;
-    setDeleting(true);
-    try { await designService.delete(design.id); onDelete(); }
-    catch { setDeleting(false); }
-  };
-
-  return (
-    <div className="group relative overflow-hidden rounded-2xl bg-slate-900 shadow-sm transition duration-300 hover:shadow-xl hover:shadow-black/20 cursor-pointer" onClick={onOpen}>
-      <div className="relative aspect-square overflow-hidden">
-        {design.thumbnail_url ? (
-          <img src={design.thumbnail_url} alt={design.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-        ) : (
-          <div className="flex h-full items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900">
-            <span className="text-sm text-white/25">No preview</span>
-          </div>
-        )}
-        {/* Bottom gradient overlay */}
-        <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none" />
-        {/* Info inside card */}
-        <div className="absolute bottom-0 inset-x-0 p-3 pointer-events-none">
-          <div className="flex items-end justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate text-[12px] font-bold text-white leading-tight">{design.name}</p>
-              <p className="flex items-center gap-1 text-[10px] text-white/45 mt-0.5">
-                <Clock size={8} /> {formatDate(design.updated_at)}
-              </p>
-            </div>
-            <div className="pointer-events-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onOpen(); }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/20 backdrop-blur-sm text-white hover:bg-white/35 transition"
-                title={ai ? 'View' : 'Edit'}
-              >
-                {ai ? <ExternalLink size={11} /> : <Pencil size={11} />}
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={deleting}
-                className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-500/60 backdrop-blur-sm text-white hover:bg-red-500/80 transition disabled:opacity-40"
-                title="Delete"
-              >
-                <Trash2 size={11} />
-              </button>
-            </div>
-          </div>
-        </div>
-        {/* AI badge */}
-        {ai && (
-          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-[#5b6cf9]/90 backdrop-blur-sm px-2 py-0.5 text-[10px] font-bold text-white">
-            <Sparkles size={8} /> AI
-          </div>
-        )}
-        {/* Hover CTA */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 group-hover:bg-black/10 group-hover:opacity-100 transition-all duration-200 pointer-events-none">
-          <span className="rounded-full bg-white/90 backdrop-blur-sm px-4 py-1.5 text-[12px] font-bold text-slate-900 shadow-lg translate-y-1.5 group-hover:translate-y-0 transition-transform duration-200">
-            {ai ? 'View Image' : 'Open in Builder'}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── AI Image Preview modal ────────────────────────────────────────────────────
-
-function AiImagePreview({ design, onClose, onOpenCanvas }: { design: UserDesign; onClose: () => void; onOpenCanvas: () => void }) {
-  const data = design.canvas_data as any;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="relative max-w-2xl w-full rounded-2xl bg-white shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
-          <p className="font-bold text-slate-900 text-sm">{design.name}</p>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700">✕</button>
-        </div>
-        {design.thumbnail_url && (
-          <img src={design.thumbnail_url} alt={design.name} className="w-full object-contain max-h-[60vh]" />
-        )}
-        {data?.prompt && (
-          <div className="px-5 py-3 bg-slate-50 border-t border-slate-100">
-            <p className="text-[11px] font-semibold text-slate-500 mb-1">Prompt used</p>
-            <p className="text-xs text-slate-600 line-clamp-3">{data.prompt}</p>
-          </div>
-        )}
-        <div className="flex gap-2 px-5 py-3 border-t border-slate-100">
-          {design.thumbnail_url && (
-            <a href={design.thumbnail_url} download target="_blank" rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
-              <Download size={12} /> Download
-            </a>
-          )}
-          <button type="button" onClick={onOpenCanvas}
-            className="flex items-center gap-1.5 rounded-xl bg-[#5b6cf9] px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-600 transition">
-            <Edit3 size={12} /> Open in Canvas
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Inspiration card ──────────────────────────────────────────────────────────
 
@@ -696,128 +564,32 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-type MainTab = 'studio' | 'designs' | 'templates';
-
 const Cards = () => {
-  const [tab, setTab] = useState<MainTab>('studio');
-
-  const [selectedTemplate, setSelectedTemplate] = useState<CardTemplate | null>(null);
-  const [publishedTemplates, setPublishedTemplates] = useState<AdminCardTemplate[]>([]);
-  const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
-
-  const [myDesigns, setMyDesigns] = useState<UserDesign[]>([]);
-  const [isLoadingDesigns, setIsLoadingDesigns] = useState(true);
-
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editingDesign, setEditingDesign] = useState<UserDesign | null>(null);
-  const [templateInitData, setTemplateInitData] = useState<{ fabricData: FabricDesignData; name: string } | null>(null);
-
-  const [previewDesign, setPreviewDesign] = useState<UserDesign | null>(null);
-
-  useEffect(() => {
-    cardTemplateService.getPublishedTemplates()
-      .then((t) => setPublishedTemplates(t))
-      .catch(() => setPublishedTemplates([]))
-      .finally(() => setIsLoadingTemplates(false));
-  }, []);
-
-  const fetchDesigns = () => {
-    setIsLoadingDesigns(true);
-    designService.list()
-      .then((d) => setMyDesigns(d))
-      .catch(() => setMyDesigns([]))
-      .finally(() => setIsLoadingDesigns(false));
-  };
-
-  useEffect(() => { fetchDesigns(); }, []);
-
-  const openDesign = (design: UserDesign) => {
-    if (isAiImage(design)) {
-      setPreviewDesign(design);
-    } else {
-      setEditingDesign(design);
-      setBuilderOpen(true);
-    }
-  };
-
   const openNewDesign = () => { setEditingDesign(null); setBuilderOpen(true); };
 
-  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); setTemplateInitData(null); };
-
-  const handleDesignSaved = (saved: UserDesign) => {
-    setMyDesigns((prev) => {
-      const idx = prev.findIndex((d) => d.id === saved.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = saved; return next; }
-      return [saved, ...prev];
-    });
-  };
-
-  const handleDeleteDesign = (id: string) => setMyDesigns((prev) => prev.filter((d) => d.id !== id));
-
-  const handleSelectPublishedTemplate = (template: AdminCardTemplate) => {
-    if (isFabricDesign(template.designData)) {
-      setTemplateInitData({ fabricData: template.designData, name: template.name });
-      setEditingDesign(null);
-      setBuilderOpen(true);
-    } else {
-      const dd = template.designData as unknown as Record<string, unknown>;
-      // Only open old editor when it's a proper CardTemplate (has elements array)
-      if (Array.isArray(dd?.elements)) {
-        setSelectedTemplate(cloneCardTemplate(template.designData as CardTemplate));
-      }
-      // Otherwise (AI image / raw JSON with no canvas data) — nothing to open
-    }
-  };
+  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); };
+  const handleDesignSaved = (_saved: UserDesign) => { /* designs tracked inside AIStudio */ };
 
   // ── Builder full-screen ───────────────────────────────────────────────────
   if (builderOpen) {
     return (
       <CardBuilderModal
         existingDesign={editingDesign}
-        initialCanvasData={templateInitData
-          ? { fabricJson: templateInitData.fabricData.fabricJson, canvasWidth: templateInitData.fabricData.canvasWidth, canvasHeight: templateInitData.fabricData.canvasHeight }
-          : null}
-        initialDesignName={templateInitData?.name}
+        initialCanvasData={null}
+        initialDesignName={undefined}
         onClose={handleBuilderClose}
         onSaved={handleDesignSaved}
       />
     );
   }
 
-  if (selectedTemplate) {
-    return (
-      <div className="space-y-6">
-        <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Template Editor</p>
-              <h2 className="mt-1 text-2xl font-black text-slate-900">{selectedTemplate.name}</h2>
-            </div>
-            <button type="button" onClick={() => setSelectedTemplate(null)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
-              Back to Cards
-            </button>
-          </div>
-          <div className="mt-6">
-            <AdvancedTemplateCard template={selectedTemplate} onTemplateChange={(t) => setSelectedTemplate(t)} />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Tab navigation ────────────────────────────────────────────────────────
-  const TABS: { key: MainTab; label: string; icon: React.ReactNode }[] = [
-    { key: 'studio',    label: 'AI Studio',    icon: <Sparkles size={14} /> },
-    { key: 'designs',   label: 'My Designs',   icon: <Image size={14} /> },
-    { key: 'templates', label: 'Templates',    icon: <LayoutTemplate size={14} /> },
-  ];
-
   return (
     <div className="space-y-6">
-      {/* Header */}
       <header className="flex items-start justify-between gap-4">
         <div className="max-w-2xl">
-          <h1 className="text-4xl font-black text-slate-900">Design Studio</h1>
+          <h1 className="text-4xl font-black text-slate-900">AI Studio</h1>
           <p className="mt-2 text-base text-slate-600">
             Generate AI-powered designs tailored to your brand, or build from scratch.
           </p>
@@ -827,177 +599,11 @@ const Cards = () => {
           onClick={openNewDesign}
           className="flex shrink-0 items-center gap-2 rounded-2xl bg-[#5b6cf9] px-5 py-3 text-sm font-bold text-white shadow-md shadow-indigo-100 transition hover:bg-indigo-600 active:scale-[0.98]"
         >
-          <Plus size={16} /> New Canvas
+          <Plus size={16} /> Blank Canvas
         </button>
       </header>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 rounded-2xl border border-slate-200 bg-white p-1 w-fit">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-              tab === t.key
-                ? 'bg-[#5b6cf9] text-white shadow-sm'
-                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-            }`}
-          >
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
-      {tab === 'studio' && (
-        <AIStudio onDesignSaved={(d) => { handleDesignSaved(d); }} />
-      )}
-
-      {tab === 'designs' && (
-        <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8">
-          <div className="mb-5 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">My Designs</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Your saved canvas and AI-generated designs</p>
-            </div>
-            {myDesigns.length > 0 && (
-              <button type="button" onClick={openNewDesign} className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
-                <Plus size={13} /> New Canvas
-              </button>
-            )}
-          </div>
-
-          {isLoadingDesigns ? (
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3].map((n) => (
-                <div key={n} className="overflow-hidden rounded-2xl border border-slate-200">
-                  <div className="aspect-square animate-pulse bg-slate-100" />
-                  <div className="space-y-2 p-3">
-                    <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
-                    <div className="h-3 w-1/2 animate-pulse rounded bg-slate-100" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : myDesigns.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-[#5b6cf9]">
-                <Sparkles size={26} />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-slate-700">No designs yet</p>
-                <p className="text-xs text-slate-400 mt-1">Use AI Studio to generate your first design, or create a canvas from scratch.</p>
-              </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setTab('studio')} className="rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-bold text-white hover:bg-indigo-600 transition">
-                  Open AI Studio
-                </button>
-                <button type="button" onClick={openNewDesign} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
-                  Blank Canvas
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {myDesigns.map((design) => (
-                <DesignThumb
-                  key={design.id}
-                  design={design}
-                  onOpen={() => openDesign(design)}
-                  onDelete={() => handleDeleteDesign(design.id)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === 'templates' && (
-        <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8">
-          <div className="mb-5">
-            <h2 className="text-lg font-bold text-slate-900">Featured Templates</h2>
-            <p className="mt-0.5 text-sm text-slate-500">Curated templates ready to customize in the canvas editor</p>
-          </div>
-
-          {isLoadingTemplates ? (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {[1, 2, 3, 4].map((n) => (
-                <div key={n} className="aspect-[4/5] animate-pulse rounded-2xl bg-slate-100" />
-              ))}
-            </div>
-          ) : publishedTemplates.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
-              <LayoutTemplate size={28} className="text-slate-300" />
-              <p className="text-sm font-bold text-slate-500">No templates published yet</p>
-              <p className="text-xs text-slate-400">Admin can publish templates from Admin → Cards.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {publishedTemplates.map((template) => {
-                const dd = template.designData as unknown as Record<string, unknown>;
-                const isEditable = isFabricDesign(template.designData) || Array.isArray(dd?.elements);
-                return (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => handleSelectPublishedTemplate(template)}
-                    className="group focus:outline-none"
-                    disabled={!isEditable}
-                  >
-                    <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-slate-900 shadow-sm transition duration-300 group-hover:shadow-xl group-hover:shadow-black/25">
-                      {template.coverImageUrl ? (
-                        <img
-                          src={template.coverImageUrl}
-                          alt={template.name}
-                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                        />
-                      ) : (
-                        <div className="h-full w-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-end p-4">
-                          <p className="text-white/10 font-black text-3xl leading-none line-clamp-3 text-left">{template.name}</p>
-                        </div>
-                      )}
-                      {/* Bottom gradient */}
-                      <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none" />
-                      {/* Category chip */}
-                      <div className="absolute top-2.5 left-2.5">
-                        <span className="rounded-full bg-black/40 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white/80">Social</span>
-                      </div>
-                      {/* Template info */}
-                      <div className="absolute bottom-0 inset-x-0 p-3.5 text-left pointer-events-none">
-                        <p className="text-[12px] font-bold text-white leading-snug line-clamp-2">{template.name}</p>
-                        {!isEditable && (
-                          <div className="mt-1 flex items-center gap-1">
-                            <Lock size={9} className="text-white/45 shrink-0" />
-                            <span className="text-[9px] text-white/45 font-semibold">View only</span>
-                          </div>
-                        )}
-                      </div>
-                      {/* Hover CTA */}
-                      {isEditable && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-200 group-hover:bg-black/15 group-hover:opacity-100 pointer-events-none">
-                          <span className="rounded-full bg-white px-5 py-2 text-[13px] font-bold text-slate-900 shadow-lg translate-y-1.5 group-hover:translate-y-0 transition-transform duration-200">
-                            Use Template
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* AI image preview modal */}
-      {previewDesign && (
-        <AiImagePreview
-          design={previewDesign}
-          onClose={() => setPreviewDesign(null)}
-          onOpenCanvas={() => { setPreviewDesign(null); openNewDesign(); }}
-        />
-      )}
+      <AIStudio onDesignSaved={handleDesignSaved} />
     </div>
   );
 };

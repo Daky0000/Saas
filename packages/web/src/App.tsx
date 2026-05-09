@@ -343,7 +343,7 @@ function AppSidebar({
             {([
               { id: 'post-automation' as PageType, label: 'Automation' },
               { id: 'media' as PageType, label: 'Media' },
-              { id: 'cards' as PageType, label: 'Cards' },
+              { id: 'cards' as PageType, label: 'AI Studio' },
             ] as { id: PageType; label: string }[]).map((c) => (
               <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                 {c.label}
