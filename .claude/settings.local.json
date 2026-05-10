@@ -65,7 +65,9 @@
       "PowerShell(Get-ChildItem -Path \"d:\\\\Saas\\\\src\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName | Format-Table -AutoSize -Wrap)",
       "WebFetch(domain:reactjs.org)",
       "WebFetch(domain:legacy.reactjs.org)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
     ]
   }
 }
