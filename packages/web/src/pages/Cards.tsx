@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Plus, Sparkles, Wand2,
   CheckCircle2, Loader2, RefreshCw, ChevronRight, Download, Edit3,
   AlertCircle, Layers, Pencil, Trash2, Clock, Image, LayoutTemplate,
+  Heart, Eye, Copy, Play, X, Video,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
 import CardBuilderModal from '../components/cards/builder/CardBuilderModal';
@@ -11,6 +12,30 @@ import { getApiBaseUrl } from '../utils/apiBase';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function tok() { return localStorage.getItem('auth_token') ?? ''; }
+
+// ── Credit badge ──────────────────────────────────────────────────────────────
+
+function CreditBadge() {
+  const [credits, setCredits] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/credits/balance`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setCredits(d.credits); })
+      .catch(() => {});
+  }, []);
+
+  if (credits === null) return null;
+
+  return (
+    <div className="flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-[#5b6cf9]">
+      <span className="text-sm">✦</span>
+      <span>{credits} credits</span>
+    </div>
+  );
+}
 
 // ── Inspiration card ──────────────────────────────────────────────────────────
 
@@ -55,6 +80,29 @@ function StepIndicator({ steps }: { steps: { id: string; name: string; status: '
   );
 }
 
+// ── Model definitions ─────────────────────────────────────────────────────────
+
+type GenMode = 'image' | 'video';
+
+interface AIModel {
+  id: string;
+  label: string;
+  desc: string;
+  creditCost: number;
+  badge?: string;
+}
+
+const IMAGE_MODELS: AIModel[] = [
+  { id: 'nano_banana_2',     label: 'Nano Banana 2',    desc: 'Fast & affordable',    creditCost: 3 },
+  { id: 'flux-1.1-pro',     label: 'Flux 1.1 Pro',     desc: 'High quality',         creditCost: 5, badge: 'Popular' },
+  { id: 'nano_banana_pro',  label: 'Nano Banana Pro',  desc: "Google's flagship",    creditCost: 8 },
+];
+
+const VIDEO_MODELS: AIModel[] = [
+  { id: 'seedance-1-lite',   label: 'Seedance Lite',   desc: 'Fast motion video',   creditCost: 20 },
+  { id: 'higgsfield-video',  label: 'Higgsfield Pro',  desc: 'Cinematic quality',   creditCost: 35 },
+];
+
 // ── AI Studio tab ─────────────────────────────────────────────────────────────
 
 type UIStep = { id: string; name: string; status: 'pending' | 'running' | 'done' | 'error' };
@@ -84,10 +132,20 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   const [generating, setGenerating]   = useState(false);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
 
+  // GenMode & model picker
+  const [genMode, setGenMode]         = useState<GenMode>('image');
+  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(IMAGE_MODELS[1]);
+  const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS[0]);
+  const [videoPrompt, setVideoPrompt] = useState('');
+  const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [videoUrl, setVideoUrl]       = useState<string | null>(null);
+
   // Suggestions
   const [suggestions, setSuggestions]         = useState<Suggestion[]>([]);
   const [loadingSuggestions, setLoadingSugg]  = useState(false);
   const [suggHasMemory, setSuggHasMemory]     = useState(false);
+
+  const currentModel = genMode === 'image' ? selectedImageModel : selectedVideoModel;
 
   useEffect(() => {
     setLoadingSugg(true);
@@ -115,6 +173,7 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
     setImageUrl(null);
     setSavedDesignId(null);
     setErrorMsg(null);
+    setVideoUrl(null);
   };
 
   const updateStep = (id: string, status: UIStep['status']) => {
@@ -205,7 +264,6 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
         }
       }
 
-      // Final phase if we never hit 'done' event explicitly
       setPhase((prev) => prev === 'running' || prev === 'generating' ? 'done' : prev);
 
     } catch (err: any) {
@@ -239,6 +297,27 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
     }
   };
 
+  const generateVideo = async () => {
+    if (!videoPrompt.trim()) return;
+    setGeneratingVideo(true);
+    setVideoUrl(null);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/nova/generate-video`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ prompt: videoPrompt.trim(), model: selectedVideoModel.id }),
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error ?? 'Video generation failed');
+      setVideoUrl(d.url ?? null);
+    } catch (err: any) {
+      setErrorMsg(err.message ?? 'Video generation failed');
+    } finally {
+      setGeneratingVideo(false);
+    }
+  };
+
   const handleSaveAndRefresh = async () => {
     if (!savedDesignId) return;
     try {
@@ -252,53 +331,130 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   if (phase === 'idle') {
     return (
       <div className="space-y-6">
+        {/* GenMode + Model picker card */}
         <div className="rounded-2xl border border-slate-200 bg-white p-6 md:p-8">
           <div className="flex items-center gap-3 mb-5">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#5b6cf9]/10">
               <Wand2 size={20} className="text-[#5b6cf9]" />
             </div>
-            <div>
+            <div className="flex-1">
               <h2 className="text-lg font-black text-slate-900">AI Design Studio</h2>
-              <p className="text-sm text-slate-500">Describe what you want — Nova researches, styles it to your brand, and generates the image.</p>
+              <p className="text-sm text-slate-500">Describe what you want — Nova researches, styles it to your brand, and generates the output.</p>
             </div>
           </div>
 
-          <div className="space-y-3">
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) generate(true); }}
-              rows={3}
-              placeholder="e.g. a modern business card, a minimalist Instagram post, a bold promotional banner…"
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
-            />
-            <div className="flex gap-3">
+          {/* GenMode toggle */}
+          <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
+            {([{ id: 'image' as GenMode, label: 'Image', icon: <Image size={13} /> }, { id: 'video' as GenMode, label: 'Video', icon: <Video size={13} /> }]).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setGenMode(m.id)}
+                className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${
+                  genMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {m.icon} {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Model picker */}
+          <div className="mb-5">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
+            <div className="flex flex-wrap gap-2">
+              {(genMode === 'image' ? IMAGE_MODELS : VIDEO_MODELS).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => genMode === 'image' ? setSelectedImageModel(m) : setSelectedVideoModel(m)}
+                  className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
+                    currentModel.id === m.id
+                      ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  {m.badge && (
+                    <span className="absolute -top-2 -right-2 rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white">{m.badge}</span>
+                  )}
+                  <span className="text-xs font-bold">{m.label}</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
+                  <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Video mode form */}
+          {genMode === 'video' ? (
+            <div className="space-y-3">
+              <textarea
+                value={videoPrompt}
+                onChange={(e) => setVideoPrompt(e.target.value)}
+                rows={3}
+                placeholder="Describe your video… e.g. a slow-motion ocean wave at sunset with cinematic lighting"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+              />
               <button
                 type="button"
-                disabled={!description.trim()}
-                onClick={() => generate(true)}
+                disabled={!videoPrompt.trim() || generatingVideo}
+                onClick={generateVideo}
                 className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]"
               >
-                <Sparkles size={15} /> Generate from My Brand
+                {generatingVideo ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Play size={14} /> Generate Video ✦{selectedVideoModel.creditCost}</>}
               </button>
-              <button
-                type="button"
-                disabled={!description.trim()}
-                onClick={() => generate(false)}
-                className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
-              >
-                <Edit3 size={14} /> Review Prompt First
-              </button>
+              {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+              {videoUrl && (
+                <div className="rounded-2xl overflow-hidden border border-slate-200">
+                  <video src={videoUrl} controls className="w-full" />
+                  <div className="p-3 flex gap-2">
+                    <a href={videoUrl} download target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+                      <Download size={12} /> Download
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
-            <p className="text-xs text-slate-400">
-              "Generate from My Brand" uses your saved brand memory to auto-fill everything.
-              "Review Prompt First" lets you edit before generating.
-            </p>
-          </div>
+          ) : (
+            /* Image mode form */
+            <div className="space-y-3">
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) generate(true); }}
+                rows={3}
+                placeholder="e.g. a modern business card, a minimalist Instagram post, a bold promotional banner…"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+              />
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={!description.trim()}
+                  onClick={() => generate(true)}
+                  className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]"
+                >
+                  <Sparkles size={15} /> Generate ✦{selectedImageModel.creditCost}
+                </button>
+                <button
+                  type="button"
+                  disabled={!description.trim()}
+                  onClick={() => generate(false)}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                >
+                  <Edit3 size={14} /> Review Prompt First
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">
+                "Generate" uses your saved brand memory to auto-fill everything.
+                "Review Prompt First" lets you edit before generating.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Suggestions */}
-        {(loadingSuggestions || suggestions.length > 0) && (
+        {genMode === 'image' && (loadingSuggestions || suggestions.length > 0) && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 md:p-6">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -356,7 +512,7 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
               { icon: '✦', label: 'Extract prompts', desc: 'Pulls the generation prompts used' },
               { icon: '◉', label: 'Brand-tailor', desc: 'Adapts to your colors, tone & niche' },
               { icon: '🎨', label: 'Generate image', desc: 'Creates your unique design' },
-              { icon: '💾', label: 'Save to designs', desc: 'Auto-saved to My Designs' },
+              { icon: '💾', label: 'Save to history', desc: 'Auto-saved to History' },
             ].map((item, i) => (
               <div key={i} className="flex flex-col items-center text-center gap-1">
                 <span className="text-xl">{item.icon}</span>
@@ -513,7 +669,7 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
                   onClick={handleSaveAndRefresh}
                   className="flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-600 transition"
                 >
-                  <CheckCircle2 size={13} /> Saved to My Designs
+                  <CheckCircle2 size={13} /> Saved to History
                 </button>
               )}
               {imageUrl && (
@@ -573,36 +729,188 @@ interface CardTemplate {
   isPublished: boolean;
   createdAt: string;
   updatedAt: string;
+  view_count?: number;
+  like_count?: number;
 }
 
-// ── Template card ─────────────────────────────────────────────────────────────
+// ── Preview modal ─────────────────────────────────────────────────────────────
 
-function TemplateThumb({ tpl, onUse }: { tpl: CardTemplate; onUse: () => void }) {
+function PreviewModal({
+  tpl,
+  onClose,
+  onUse,
+}: {
+  tpl: CardTemplate;
+  onClose: () => void;
+  onUse: () => void;
+}) {
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(tpl.like_count ?? 0);
+  const [viewCount, setViewCount] = useState(tpl.view_count ?? 0);
+
+  // Track view on mount
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/card-templates/${tpl.id}/view`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setViewCount(d.view_count ?? viewCount); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tpl.id]);
+
+  // Close on ESC
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const toggleLike = () => {
+    fetch(`${getApiBaseUrl()}/api/card-templates/${tpl.id}/like`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          setLiked(d.liked);
+          setLikeCount(d.like_count);
+        }
+      })
+      .catch(() => {});
+    setLiked((p) => !p);
+    setLikeCount((p) => liked ? p - 1 : p + 1);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
+      <div
+        className="relative bg-white rounded-3xl overflow-hidden shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col md:flex-row"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Close button */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white hover:bg-black/40 transition"
+        >
+          <X size={16} />
+        </button>
+
+        {/* Left: image */}
+        <div className="md:w-1/2 bg-slate-900 flex items-center justify-center min-h-[260px]">
+          {tpl.coverImageUrl ? (
+            <img src={tpl.coverImageUrl} alt={tpl.name} className="w-full h-full object-contain max-h-[70vh]" />
+          ) : (
+            <div className="flex flex-col items-center gap-3 text-white/30 p-8">
+              <LayoutTemplate size={48} />
+              <p className="text-sm">No preview</p>
+            </div>
+          )}
+        </div>
+
+        {/* Right: details */}
+        <div className="md:w-1/2 p-6 md:p-8 flex flex-col gap-4 overflow-y-auto">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900">{tpl.name}</h2>
+            {tpl.description && (
+              <p className="mt-2 text-sm text-slate-500 leading-relaxed">{tpl.description}</p>
+            )}
+          </div>
+
+          {/* Stats */}
+          <div className="flex items-center gap-4 text-sm text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <Eye size={14} /> {viewCount.toLocaleString()} views
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Heart size={14} className={liked ? 'fill-red-500 text-red-500' : ''} />
+              {likeCount.toLocaleString()} likes
+            </span>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-3 mt-auto">
+            <button
+              type="button"
+              onClick={toggleLike}
+              className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
+                liked
+                  ? 'border-red-300 bg-red-50 text-red-500 hover:bg-red-100'
+                  : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Heart size={15} className={liked ? 'fill-red-500 text-red-500' : ''} />
+              {liked ? 'Liked' : 'Like'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { onUse(); onClose(); }}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 transition"
+            >
+              <Plus size={14} /> Use Template
+            </button>
+          </div>
+
+          {tpl.coverImageUrl && (
+            <a
+              href={tpl.coverImageUrl}
+              download
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 transition"
+            >
+              <Download size={12} /> Download preview image
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Discover card (masonry) ───────────────────────────────────────────────────
+
+function DiscoverCard({ tpl, onClick }: { tpl: CardTemplate; onClick: () => void }) {
   return (
     <div
-      onClick={onUse}
-      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 aspect-[4/5] shadow-sm hover:shadow-xl transition-all duration-200"
+      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 shadow-sm hover:shadow-xl transition-all duration-200"
+      onClick={onClick}
     >
       {tpl.coverImageUrl ? (
         <img
           src={tpl.coverImageUrl}
           alt={tpl.name}
-          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          className="w-full h-auto block transition-transform duration-300 group-hover:scale-105"
         />
       ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center">
+        <div className="aspect-[4/5] flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900">
           <LayoutTemplate size={36} className="text-white/20" />
         </div>
       )}
 
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+      {/* Hover overlay */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
 
-      <div className="absolute inset-x-0 bottom-0 p-4 translate-y-2 group-hover:translate-y-0 transition-transform">
+      <div className="absolute inset-x-0 bottom-0 p-3 translate-y-4 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-200">
         <p className="text-sm font-bold text-white leading-snug truncate">{tpl.name}</p>
-        <p className="text-[11px] text-white/60 mt-0.5 line-clamp-2 leading-snug">{tpl.description}</p>
-        <div className="mt-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="flex items-center gap-1.5 rounded-full bg-[#5b6cf9] px-3 py-1 text-[11px] font-bold text-white">
-            <Plus size={11} /> Use Template
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center gap-3 text-[11px] text-white/70">
+            {(tpl.like_count ?? 0) > 0 && (
+              <span className="flex items-center gap-1">
+                <Heart size={10} /> {tpl.like_count}
+              </span>
+            )}
+            {(tpl.view_count ?? 0) > 0 && (
+              <span className="flex items-center gap-1">
+                <Eye size={10} /> {tpl.view_count}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-[#5b6cf9] px-2.5 py-1 text-[10px] font-bold text-white">
+            <Plus size={9} /> Use Idea
           </div>
         </div>
       </div>
@@ -610,12 +918,21 @@ function TemplateThumb({ tpl, onUse }: { tpl: CardTemplate; onUse: () => void })
   );
 }
 
-// ── My Designs card ───────────────────────────────────────────────────────────
+// ── History card (masonry) ────────────────────────────────────────────────────
 
-type MainTab = 'studio' | 'designs' | 'templates';
+type MainTab = 'studio' | 'discover' | 'history';
 
-function DesignThumb({ design, onOpen, onDelete }: { design: UserDesign; onOpen: () => void; onDelete: () => void }) {
+function HistoryCard({ design, onOpen, onDelete }: { design: UserDesign; onOpen: () => void; onDelete: () => void }) {
   const [deleting, setDeleting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const isAiImage = !!(design as any).canvas_data && (() => {
+    try {
+      const d = typeof (design as any).canvas_data === 'string'
+        ? JSON.parse((design as any).canvas_data)
+        : (design as any).canvas_data;
+      return d?.type === 'ai_image' || d?.type === 'ai_video';
+    } catch { return false; }
+  })();
 
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -632,34 +949,75 @@ function DesignThumb({ design, onOpen, onDelete }: { design: UserDesign; onOpen:
     }
   };
 
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (design.thumbnail_url) {
+      navigator.clipboard.writeText(design.thumbnail_url).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {});
+    }
+  };
+
   return (
     <div
-      onClick={onOpen}
-      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 aspect-[4/5] shadow-sm hover:shadow-xl transition-all duration-200"
+      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 shadow-sm hover:shadow-xl transition-all duration-200"
+      onClick={isAiImage ? undefined : onOpen}
     >
       {design.thumbnail_url ? (
         <img
           src={design.thumbnail_url}
           alt={design.name}
-          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          className="w-full h-auto block transition-transform duration-300 group-hover:scale-105"
         />
       ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center">
+        <div className="aspect-[4/5] bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center">
           <Image size={36} className="text-white/30" />
         </div>
       )}
 
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+      {/* Hover overlay */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
 
+      {/* Top action buttons */}
       <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onOpen(); }}
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white transition"
-          title="Edit"
-        >
-          <Pencil size={13} />
-        </button>
+        {/* Copy URL */}
+        {design.thumbnail_url && (
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white transition"
+            title={copied ? 'Copied!' : 'Copy URL'}
+          >
+            {copied ? <CheckCircle2 size={12} className="text-emerald-500" /> : <Copy size={12} />}
+          </button>
+        )}
+        {/* Download */}
+        {design.thumbnail_url && (
+          <a
+            href={design.thumbnail_url}
+            download
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white transition"
+            title="Download"
+          >
+            <Download size={12} />
+          </a>
+        )}
+        {/* Edit (only for canvas designs) */}
+        {!isAiImage && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpen(); }}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white transition"
+            title="Edit"
+          >
+            <Pencil size={13} />
+          </button>
+        )}
+        {/* Delete */}
         <button
           type="button"
           onClick={handleDelete}
@@ -671,7 +1029,8 @@ function DesignThumb({ design, onOpen, onDelete }: { design: UserDesign; onOpen:
         </button>
       </div>
 
-      <div className="absolute bottom-0 inset-x-0 p-4">
+      {/* Bottom info */}
+      <div className="absolute bottom-0 inset-x-0 p-3 translate-y-2 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-200">
         <p className="text-sm font-bold text-white leading-snug truncate">{design.name}</p>
         <div className="flex items-center gap-1 mt-1">
           <Clock size={10} className="text-white/50" />
@@ -693,17 +1052,18 @@ const Cards = () => {
   const [templates, setTemplates]   = useState<CardTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [templateCanvas, setTemplateCanvas] = useState<{ fabricJson: Record<string, unknown>; canvasWidth?: number; canvasHeight?: number } | null>(null);
+  const [previewTpl, setPreviewTpl] = useState<CardTemplate | null>(null);
 
-  const fetchDesigns = async () => {
+  const fetchDesigns = useCallback(async () => {
     setLoadingDesigns(true);
     try {
       const list = await designService.list();
       setMyDesigns(list);
     } catch { /* ignore */ }
     finally { setLoadingDesigns(false); }
-  };
+  }, []);
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = useCallback(async () => {
     setLoadingTemplates(true);
     try {
       const r = await fetch(`${getApiBaseUrl()}/api/card-templates/published`, {
@@ -713,9 +1073,9 @@ const Cards = () => {
       if (d.success) setTemplates(d.templates ?? []);
     } catch { /* ignore */ }
     finally { setLoadingTemplates(false); }
-  };
+  }, []);
 
-  useEffect(() => { fetchDesigns(); fetchTemplates(); }, []);
+  useEffect(() => { fetchDesigns(); fetchTemplates(); }, [fetchDesigns, fetchTemplates]);
 
   const openNewDesign = () => { setTemplateCanvas(null); setEditingDesign(null); setBuilderOpen(true); };
   const openDesign    = (d: UserDesign) => { setTemplateCanvas(null); setEditingDesign(d); setBuilderOpen(true); };
@@ -739,20 +1099,23 @@ const Cards = () => {
   return (
     <div className="space-y-6">
       <header>
-        <div className="max-w-2xl">
-          <h1 className="text-4xl font-black text-slate-900">My Studio</h1>
-          <p className="mt-2 text-base text-slate-600">
-            Generate AI-powered designs tailored to your brand, or build from scratch.
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <h1 className="text-4xl font-black text-slate-900">My Studio</h1>
+            <p className="mt-2 text-base text-slate-600">
+              Generate AI-powered designs tailored to your brand, or build from scratch.
+            </p>
+          </div>
+          <CreditBadge />
         </div>
       </header>
 
       {/* Tab bar */}
       <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit">
         {([
-          { id: 'studio'    as const, label: 'AI Studio',  icon: <Sparkles       size={14} /> },
-          { id: 'templates' as const, label: 'Templates',  icon: <LayoutTemplate size={14} /> },
-          { id: 'designs'   as const, label: 'My Designs', icon: <Image          size={14} /> },
+          { id: 'studio'   as const, label: 'AI Studio', icon: <Sparkles      size={14} /> },
+          { id: 'discover' as const, label: 'Discover',  icon: <LayoutTemplate size={14} /> },
+          { id: 'history'  as const, label: 'History',   icon: <Image          size={14} /> },
         ]).map((t) => (
           <button
             key={t.id}
@@ -772,7 +1135,7 @@ const Cards = () => {
       {/* Tab content */}
       {tab === 'studio' ? (
         <AIStudio onDesignSaved={handleDesignSaved} />
-      ) : tab === 'templates' ? (
+      ) : tab === 'discover' ? (
         <div>
           {loadingTemplates ? (
             <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
@@ -787,9 +1150,11 @@ const Cards = () => {
               <p className="text-sm text-slate-400">Admin-published templates will appear here.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-4">
               {templates.map((tpl) => (
-                <TemplateThumb key={tpl.id} tpl={tpl} onUse={() => openTemplate(tpl)} />
+                <div key={tpl.id} className="break-inside-avoid mb-4">
+                  <DiscoverCard tpl={tpl} onClick={() => setPreviewTpl(tpl)} />
+                </div>
               ))}
             </div>
           )}
@@ -827,18 +1192,28 @@ const Cards = () => {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-4">
               {myDesigns.map((d) => (
-                <DesignThumb
-                  key={d.id}
-                  design={d}
-                  onOpen={() => openDesign(d)}
-                  onDelete={() => setMyDesigns((prev) => prev.filter((x) => x.id !== d.id))}
-                />
+                <div key={d.id} className="break-inside-avoid mb-4">
+                  <HistoryCard
+                    design={d}
+                    onOpen={() => openDesign(d)}
+                    onDelete={() => setMyDesigns((prev) => prev.filter((x) => x.id !== d.id))}
+                  />
+                </div>
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* Preview modal */}
+      {previewTpl && (
+        <PreviewModal
+          tpl={previewTpl}
+          onClose={() => setPreviewTpl(null)}
+          onUse={() => openTemplate(previewTpl)}
+        />
       )}
     </div>
   );

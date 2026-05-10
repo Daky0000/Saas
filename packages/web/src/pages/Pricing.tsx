@@ -232,6 +232,23 @@ const Pricing = () => {
                   )}
                 </button>
 
+                {/* Credits badge */}
+                {(() => {
+                  const creditFeature = plan.features.find((f) => f.toLowerCase().includes('ai image/video credits'));
+                  if (!creditFeature) return null;
+                  const match = creditFeature.match(/^(\d+)\s/);
+                  const creditCount = match ? match[1] : null;
+                  if (!creditCount) return null;
+                  return (
+                    <div className={`mt-5 flex items-center gap-2 rounded-xl px-3 py-2 ${isFeatured ? 'bg-white/10' : 'bg-indigo-50 border border-indigo-100'}`}>
+                      <span className={`text-base ${isFeatured ? 'text-white' : 'text-[#5b6cf9]'}`}>✦</span>
+                      <span className={`text-sm font-bold ${isFeatured ? 'text-white' : 'text-[#5b6cf9]'}`}>
+                        {Number(creditCount).toLocaleString()} credits/month
+                      </span>
+                    </div>
+                  );
+                })()}
+
                 {/* Features */}
                 <ul className="mt-7 space-y-3">
                   {plan.features.map((feature) => (

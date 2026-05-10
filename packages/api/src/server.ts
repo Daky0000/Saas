@@ -2694,6 +2694,36 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`CREATE INDEX IF NOT EXISTS billing_events_user_idx ON billing_events (user_id);`).catch(() => undefined);
   // ── End Billing Tables ────────────────────────────────────────────────────────
 
+  // ── Credits System ────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_credits (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      credits INTEGER NOT NULL DEFAULT 0,
+      reset_date TIMESTAMPTZ NOT NULL DEFAULT (date_trunc('month', NOW()) + INTERVAL '1 month'),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS design_likes (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      design_id TEXT NOT NULL,
+      design_type TEXT NOT NULL DEFAULT 'user',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (user_id, design_id)
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS view_count INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS like_count INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS credits_per_month INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
+
+  // Update existing plans with credits_per_month if not already set
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 50   WHERE name LIKE '%Starter%' AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 500  WHERE name LIKE '%Growth%'  AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 2000 WHERE name LIKE '%Scale%'   AND credits_per_month = 0;`).catch(() => undefined);
+  // ── End Credits System ────────────────────────────────────────────────────────
+
   // ── User Memory ───────────────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_memories (
@@ -3879,6 +3909,7 @@ async function ensureSeedPricingPlans() {
         'Up to 3 connected integrations',
         'Basic analytics overview',
         '1 team member',
+        '50 AI image/video credits per month',
       ],
       yearlyFeatures: [
         'Everything in Starter monthly',
@@ -3887,6 +3918,7 @@ async function ensureSeedPricingPlans() {
         '3 connected integrations',
         'Basic analytics overview',
         '1 team member',
+        '50 AI image/video credits per month',
       ],
     },
     {
@@ -3902,6 +3934,7 @@ async function ensureSeedPricingPlans() {
         'Up to 10 connected integrations',
         'Full analytics dashboard and insights',
         'Up to 5 team members',
+        '500 AI image/video credits per month',
       ],
       yearlyFeatures: [
         'Everything in Growth monthly',
@@ -3910,6 +3943,7 @@ async function ensureSeedPricingPlans() {
         '10 connected integrations',
         'Advanced editor and analytics access',
         'Up to 5 team members',
+        '500 AI image/video credits per month',
       ],
     },
     {
@@ -3924,6 +3958,7 @@ async function ensureSeedPricingPlans() {
         'Unlimited integrations',
         'Advanced analytics and export workflows',
         'Up to 15 team members',
+        '2000 AI image/video credits per month',
       ],
       yearlyFeatures: [
         'Everything in Scale monthly',
@@ -3932,6 +3967,7 @@ async function ensureSeedPricingPlans() {
         'Unlimited integrations',
         'Advanced analytics and exports',
         'Up to 15 team members',
+        '2000 AI image/video credits per month',
       ],
     },
   ];
@@ -25794,6 +25830,25 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   const { prompt = '', model = 'higgsfield-ai/soul/standard', save = true } = req.body as { prompt?: string; model?: string; save?: boolean };
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
+  // Credit cost by model
+  const imageCreditCosts: Record<string, number> = {
+    'nano_banana_2': 3,
+    'flux-1.1-pro': 5,
+    'nano_banana_pro': 8,
+  };
+  const creditCost = imageCreditCosts[model] ?? 5;
+
+  // Check and deduct credits
+  const { rows: creditRows } = await dbQuery(
+    `SELECT credits FROM user_credits WHERE user_id = $1`,
+    [auth.userId]
+  ).catch(() => ({ rows: [] as any[] }));
+
+  const currentCredits = creditRows[0]?.credits ?? 50; // default 50 for new users
+  if (creditRows.length > 0 && currentCredits < creditCost) {
+    return res.status(402).json({ error: 'Insufficient credits' });
+  }
+
   const cfg = await getHiggsfieldConfig();
   if (!cfg) return res.status(400).json({ error: 'Image generation not configured — set up Higgsfield in Admin.' });
 
@@ -25837,6 +25892,14 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
         [designId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, prompt: prompt.trim(), model }), imageUrl]
       ).catch(() => undefined);
     }
+
+    // Deduct credits after successful generation
+    await dbQuery(
+      `INSERT INTO user_credits (user_id, credits, updated_at)
+       VALUES ($1, GREATEST(0, 50 - $2), NOW())
+       ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
+      [auth.userId, creditCost]
+    ).catch(() => undefined);
 
     return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId });
   } catch (e: any) {
@@ -25983,6 +26046,297 @@ app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Resp
 });
 
 // ── End Nova Design Agent Routes ───────────────────────────────────────────────
+
+// ── Credits System Routes ─────────────────────────────────────────────────────
+
+// GET /api/credits/balance — get current user credit balance
+app.get('/api/credits/balance', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  try {
+    const { rows } = await dbQuery(
+      `SELECT credits, reset_date FROM user_credits WHERE user_id = $1`,
+      [auth.userId]
+    );
+
+    if (rows.length === 0) {
+      // Auto-create with 50 free credits for new users
+      await dbQuery(
+        `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
+         VALUES ($1, 50, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
+         ON CONFLICT (user_id) DO NOTHING`,
+        [auth.userId]
+      ).catch(() => undefined);
+      return res.json({ success: true, credits: 50, reset_date: null });
+    }
+
+    return res.json({ success: true, credits: rows[0].credits, reset_date: rows[0].reset_date });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/credits/use — deduct credits from current user
+app.post('/api/credits/use', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { amount = 1 } = req.body as { amount?: number };
+
+  try {
+    const { rows } = await dbQuery(
+      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW()
+       WHERE user_id = $2 RETURNING credits`,
+      [amount, auth.userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Credit account not found' });
+    }
+
+    return res.json({ success: true, credits: rows[0].credits });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/credits/admin/grant — admin: grant credits to a user
+app.post('/api/credits/admin/grant', async (req: Request, res: Response) => {
+  const auth = requireAdmin(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { user_id, amount } = req.body as { user_id?: string; amount?: number };
+  if (!user_id || !amount || amount <= 0) {
+    return res.status(400).json({ error: 'user_id and positive amount are required' });
+  }
+
+  try {
+    await dbQuery(
+      `INSERT INTO user_credits (user_id, credits, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $2, updated_at = NOW()`,
+      [user_id, amount]
+    );
+
+    const { rows } = await dbQuery(
+      `SELECT credits FROM user_credits WHERE user_id = $1`,
+      [user_id]
+    );
+
+    return res.json({ success: true, credits: rows[0]?.credits ?? amount });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/card-templates/:id/view — increment view count
+app.post('/api/card-templates/:id/view', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { id } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      `UPDATE card_templates SET view_count = view_count + 1 WHERE id = $1 RETURNING view_count`,
+      [id]
+    );
+
+    if (rows.length === 0) return res.status(404).json({ error: 'Template not found' });
+    return res.json({ success: true, view_count: rows[0].view_count });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/card-templates/:id/like — toggle like for current user
+app.post('/api/card-templates/:id/like', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { id } = req.params;
+  try {
+    // Check if already liked
+    const { rows: existing } = await dbQuery(
+      `SELECT 1 FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = 'template'`,
+      [auth.userId, id]
+    );
+
+    let liked: boolean;
+    if (existing.length > 0) {
+      // Unlike
+      await dbQuery(
+        `DELETE FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = 'template'`,
+        [auth.userId, id]
+      );
+      await dbQuery(
+        `UPDATE card_templates SET like_count = GREATEST(0, like_count - 1) WHERE id = $1`,
+        [id]
+      );
+      liked = false;
+    } else {
+      // Like
+      await dbQuery(
+        `INSERT INTO design_likes (user_id, design_id, design_type) VALUES ($1, $2, 'template') ON CONFLICT DO NOTHING`,
+        [auth.userId, id]
+      );
+      await dbQuery(
+        `UPDATE card_templates SET like_count = like_count + 1 WHERE id = $1`,
+        [id]
+      );
+      liked = true;
+    }
+
+    const { rows } = await dbQuery(
+      `SELECT like_count FROM card_templates WHERE id = $1`,
+      [id]
+    );
+
+    return res.json({ success: true, liked, like_count: rows[0]?.like_count ?? 0 });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/user-designs/:id/like — toggle like for user's own design
+app.post('/api/user-designs/:id/like', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { id } = req.params;
+  try {
+    const { rows: existing } = await dbQuery(
+      `SELECT 1 FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = 'user'`,
+      [auth.userId, id]
+    );
+
+    let liked: boolean;
+    if (existing.length > 0) {
+      await dbQuery(
+        `DELETE FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = 'user'`,
+        [auth.userId, id]
+      );
+      liked = false;
+    } else {
+      await dbQuery(
+        `INSERT INTO design_likes (user_id, design_id, design_type) VALUES ($1, $2, 'user') ON CONFLICT DO NOTHING`,
+        [auth.userId, id]
+      );
+      liked = true;
+    }
+
+    return res.json({ success: true, liked });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/user-designs/:id/liked — check if current user has liked a design
+app.get('/api/user-designs/:id/liked', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { id } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT 1 FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = 'user'`,
+      [auth.userId, id]
+    );
+    return res.json({ liked: rows.length > 0 });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/nova/generate-video — generate video via Higgsfield
+app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { prompt = '', model = 'seedance-1-lite' } = req.body as { prompt?: string; model?: string };
+  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  // Credit cost by model
+  const creditCosts: Record<string, number> = {
+    'seedance-1-lite': 20,
+    'higgsfield-video': 35,
+  };
+  const creditCost = creditCosts[model] ?? 20;
+
+  // Check user credits
+  const { rows: creditRows } = await dbQuery(
+    `SELECT credits FROM user_credits WHERE user_id = $1`,
+    [auth.userId]
+  ).catch(() => ({ rows: [] as any[] }));
+
+  const currentCredits = creditRows[0]?.credits ?? 0;
+  if (currentCredits < creditCost) {
+    return res.status(402).json({ error: 'Insufficient credits' });
+  }
+
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.status(400).json({ error: 'Video generation not configured — set up Higgsfield in Admin.' });
+
+  const genId = randomUUID();
+  await dbQuery(
+    `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
+     VALUES ($1, 'video', $2, $3, $4, 'pending')`,
+    [genId, model, prompt.trim(), JSON.stringify({ source: 'nova_video', user_id: auth.userId })]
+  ).catch(() => undefined);
+
+  try {
+    // Map model id to Higgsfield endpoint path
+    const modelPath = model === 'higgsfield-video' ? 'higgsfield-ai/film/standard' : model;
+
+    const submitResp = await axios.post(
+      `${cfg.baseUrl}/${modelPath}`,
+      { prompt: prompt.trim(), aspect_ratio: '9:16', duration: 5 },
+      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
+    );
+
+    if (submitResp.status >= 400) {
+      const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
+      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(400).json({ error: errMsg });
+    }
+
+    const requestId: string = submitResp.data?.request_id;
+    if (!requestId) throw new Error('No request_id returned from Higgsfield');
+
+    await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+
+    const videoUrl = await pollHiggsfieldRequest(cfg, requestId, 180000);
+    await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [videoUrl, genId]).catch(() => undefined);
+
+    // Deduct credits
+    await dbQuery(
+      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
+      [creditCost, auth.userId]
+    ).catch(() => undefined);
+
+    // Save to user_designs
+    const designId = randomUUID();
+    const dName = `AI Video — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    await dbQuery(
+      `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at)
+       VALUES ($1, $2, $3, 1080, 1920, $4, $5, NOW())`,
+      [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl, prompt: prompt.trim(), model }), videoUrl]
+    ).catch(() => undefined);
+
+    return res.json({ success: true, url: videoUrl, design_id: designId, gen_id: genId });
+  } catch (e: any) {
+    await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ── End Credits System Routes ─────────────────────────────────────────────────
 
 // Start server
 if (config.nodeEnv !== 'test') {
