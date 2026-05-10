@@ -805,6 +805,38 @@ async function ensureDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS media_image_links_user_source_idx ON media_image_links (user_id, source_table, source_id, source_field)`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS media_image_links_media_idx ON media_image_links (media_image_id)`).catch(() => undefined);
 
+  // ── Credits & Likes (additive migrations) ────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_credits (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      credits INTEGER NOT NULL DEFAULT 0,
+      reset_date TIMESTAMPTZ NOT NULL DEFAULT (date_trunc('month', NOW()) + INTERVAL '1 month'),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS design_likes (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      design_id TEXT NOT NULL,
+      design_type TEXT NOT NULL DEFAULT 'user',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (user_id, design_id)
+    )
+  `).catch(() => undefined);
+
+  await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS view_count INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
+  await pool.query(`ALTER TABLE card_templates ADD COLUMN IF NOT EXISTS like_count INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
+  await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS credits_per_month INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
+  await pool.query(`ALTER TABLE user_designs ADD COLUMN IF NOT EXISTS like_count INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
+  await pool.query(`ALTER TABLE user_designs ADD COLUMN IF NOT EXISTS media_type TEXT NOT NULL DEFAULT 'image'`).catch(() => undefined);
+
+  // Update existing pricing plans with credit allocations (idempotent — only sets if 0)
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 200  WHERE name ILIKE '%starter%' AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 1000 WHERE name ILIKE '%growth%'  AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 5000 WHERE name ILIKE '%scale%'   AND credits_per_month = 0`).catch(() => undefined);
+  // ── end Credits & Likes ───────────────────────────────────────────────────────
+
   // Seed integrations registry (best-effort; idempotent)
   await pool.query(
     `INSERT INTO integrations (provider, name, slug, type, enabled)
@@ -3903,22 +3935,22 @@ async function ensureSeedPricingPlans() {
       monthlyPrice: 19,
       yearlyPrice: 190,
       monthlyFeatures: [
+        '200 AI image/video credits per month',
         'Up to 60 social posts per month',
         'Access to the social card template editor',
         'JPG export for final cards',
         'Up to 3 connected integrations',
         'Basic analytics overview',
         '1 team member',
-        '50 AI image/video credits per month',
       ],
       yearlyFeatures: [
         'Everything in Starter monthly',
         'Save about 2 months each year',
+        '200 AI image/video credits per month',
         '60 social posts per month',
         '3 connected integrations',
         'Basic analytics overview',
         '1 team member',
-        '50 AI image/video credits per month',
       ],
     },
     {
@@ -3928,22 +3960,22 @@ async function ensureSeedPricingPlans() {
       yearlyPrice: 490,
       featured: true,
       monthlyFeatures: [
+        '1000 AI image/video credits per month',
         'Up to 250 social posts per month',
         'Unlimited card edits and exports',
         'Advanced template customization',
         'Up to 10 connected integrations',
         'Full analytics dashboard and insights',
         'Up to 5 team members',
-        '500 AI image/video credits per month',
       ],
       yearlyFeatures: [
         'Everything in Growth monthly',
+        '1000 AI image/video credits per month',
         'Save about 2 months each year',
         '250 social posts per month',
         '10 connected integrations',
         'Advanced editor and analytics access',
         'Up to 5 team members',
-        '500 AI image/video credits per month',
       ],
     },
     {
@@ -3952,22 +3984,22 @@ async function ensureSeedPricingPlans() {
       monthlyPrice: 99,
       yearlyPrice: 990,
       monthlyFeatures: [
+        '5000 AI image/video credits per month',
         'Unlimited social posts',
         'Unlimited card templates and exports',
         'Priority access to new editor features',
         'Unlimited integrations',
         'Advanced analytics and export workflows',
         'Up to 15 team members',
-        '2000 AI image/video credits per month',
       ],
       yearlyFeatures: [
         'Everything in Scale monthly',
+        '5000 AI image/video credits per month',
         'Save about 2 months each year',
         'Unlimited posts and exports',
         'Unlimited integrations',
         'Advanced analytics and exports',
         'Up to 15 team members',
-        '2000 AI image/video credits per month',
       ],
     },
   ];
@@ -7742,14 +7774,14 @@ app.get('/api/card-templates/published', async (req: Request, res: Response) => 
       templates = Array.from(inMemoryCardTemplatesById.values()).filter((t) => t.is_published);
     } else {
       const result = await dbQuery<DbCardTemplate>(
-        'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at FROM card_templates WHERE is_published = true ORDER BY created_at DESC'
+        'SELECT id, name, description, design_data, cover_image_url, is_published, created_at, updated_at, COALESCE(view_count,0) as view_count, COALESCE(like_count,0) as like_count FROM card_templates WHERE is_published = true ORDER BY created_at DESC'
       );
       templates = result.rows;
     }
 
     return res.json({
       success: true,
-      templates: templates.map((t) => ({
+      templates: templates.map((t: any) => ({
         id: t.id,
         name: t.name,
         description: t.description || '',
@@ -7758,6 +7790,8 @@ app.get('/api/card-templates/published', async (req: Request, res: Response) => 
         isPublished: t.is_published,
         createdAt: t.created_at,
         updatedAt: t.updated_at,
+        viewCount: t.view_count ?? 0,
+        likeCount: t.like_count ?? 0,
       })),
     });
   } catch (error) {
@@ -8041,6 +8075,168 @@ app.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Delete card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete card template' });
+  }
+});
+
+// ─── Credits Routes ───────────────────────────────────────────────────────────
+
+// GET /api/credits/balance
+app.get('/api/credits/balance', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, credits: 50, reset_date: null });
+  try {
+    const { rows } = await pool!.query<{ credits: number; reset_date: string }>(
+      'SELECT credits, reset_date FROM user_credits WHERE user_id = $1',
+      [auth.userId]
+    );
+    if (rows.length === 0) {
+      // First time — grant 50 free credits
+      await pool!.query(
+        `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
+         VALUES ($1, 50, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
+         ON CONFLICT (user_id) DO NOTHING`,
+        [auth.userId]
+      );
+      return res.json({ success: true, credits: 50, reset_date: null });
+    }
+    return res.json({ success: true, credits: rows[0].credits, reset_date: rows[0].reset_date });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/credits/use  { amount }
+app.post('/api/credits/use', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, credits: 50 });
+  const { amount = 5 } = req.body as { amount?: number };
+  try {
+    const { rows } = await pool!.query<{ credits: number }>(
+      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW()
+       WHERE user_id = $2 RETURNING credits`,
+      [amount, auth.userId]
+    );
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'No credit account found' });
+    return res.json({ success: true, credits: rows[0].credits });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/credits/admin/grant  { user_id, amount }
+app.post('/api/credits/admin/grant', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true });
+  const { user_id, amount } = req.body as { user_id: string; amount: number };
+  if (!user_id || !amount) return res.status(400).json({ success: false, error: 'user_id and amount required' });
+  try {
+    await pool!.query(
+      `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
+       VALUES ($1, $2, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
+       ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $2, updated_at = NOW()`,
+      [user_id, amount]
+    );
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/card-templates/:id/view
+app.post('/api/card-templates/:id/view', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, view_count: 0 });
+  const { id } = req.params;
+  try {
+    const { rows } = await pool!.query<{ view_count: number }>(
+      `UPDATE card_templates SET view_count = view_count + 1 WHERE id = $1 RETURNING view_count`,
+      [id]
+    );
+    return res.json({ success: true, view_count: rows[0]?.view_count ?? 0 });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/card-templates/:id/like
+app.post('/api/card-templates/:id/like', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, liked: true, like_count: 0 });
+  const { id } = req.params;
+  try {
+    const existing = await pool!.query(
+      'SELECT 1 FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = $3',
+      [auth.userId, id, 'template']
+    );
+    let liked: boolean;
+    if (existing.rows.length > 0) {
+      await pool!.query('DELETE FROM design_likes WHERE user_id = $1 AND design_id = $2', [auth.userId, id]);
+      await pool!.query(`UPDATE card_templates SET like_count = GREATEST(0, like_count - 1) WHERE id = $1`, [id]);
+      liked = false;
+    } else {
+      await pool!.query(
+        'INSERT INTO design_likes (user_id, design_id, design_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [auth.userId, id, 'template']
+      );
+      await pool!.query(`UPDATE card_templates SET like_count = like_count + 1 WHERE id = $1`, [id]);
+      liked = true;
+    }
+    const { rows } = await pool!.query<{ like_count: number }>('SELECT like_count FROM card_templates WHERE id = $1', [id]);
+    return res.json({ success: true, liked, like_count: rows[0]?.like_count ?? 0 });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/user-designs/:id/like
+app.post('/api/user-designs/:id/like', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, liked: true, like_count: 0 });
+  const { id } = req.params;
+  try {
+    const existing = await pool!.query(
+      'SELECT 1 FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = $3',
+      [auth.userId, id, 'user']
+    );
+    let liked: boolean;
+    if (existing.rows.length > 0) {
+      await pool!.query('DELETE FROM design_likes WHERE user_id = $1 AND design_id = $2', [auth.userId, id]);
+      await pool!.query(`UPDATE user_designs SET like_count = GREATEST(0, like_count - 1) WHERE id = $1`, [id]);
+      liked = false;
+    } else {
+      await pool!.query(
+        'INSERT INTO design_likes (user_id, design_id, design_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [auth.userId, id, 'user']
+      );
+      await pool!.query(`UPDATE user_designs SET like_count = like_count + 1 WHERE id = $1`, [id]);
+      liked = true;
+    }
+    const { rows } = await pool!.query<{ like_count: number }>('SELECT like_count FROM user_designs WHERE id = $1', [id]);
+    return res.json({ success: true, liked, like_count: rows[0]?.like_count ?? 0 });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/user-designs/likes — get liked design IDs for current user
+app.get('/api/user-designs/likes', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.json({ success: true, liked_ids: [] });
+  try {
+    const { rows } = await pool!.query<{ design_id: string }>(
+      `SELECT design_id FROM design_likes WHERE user_id = $1 AND design_type = 'user'`,
+      [auth.userId]
+    );
+    return res.json({ success: true, liked_ids: rows.map((r) => r.design_id) });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -25818,6 +26014,73 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
     send({ type: 'error', message: err?.message ?? 'Workflow failed' });
     send({ type: 'done' });
     return res.end();
+  }
+});
+
+// POST /api/nova/generate-video — generate video from prompt
+app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { prompt = '', model = 'seedance-1-lite' } = req.body as { prompt?: string; model?: string };
+  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  const creditCost = model === 'higgsfield-video' ? 35 : 20;
+
+  // Check + deduct credits
+  const credRow = await pool!.query<{ credits: number }>(
+    'SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]
+  ).catch(() => ({ rows: [] as { credits: number }[] }));
+  const currentCredits = credRow.rows[0]?.credits ?? 0;
+  if (currentCredits < creditCost) {
+    return res.status(402).json({ error: 'Insufficient credits', credits: currentCredits, required: creditCost });
+  }
+
+  const cfg = await getHiggsfieldConfig();
+  if (!cfg) return res.status(400).json({ error: 'Video generation not configured.' });
+
+  try {
+    // Deduct credits
+    await pool!.query(
+      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
+      [creditCost, auth.userId]
+    ).catch(() => undefined);
+
+    // Call Higgsfield video API — seedance-1-lite or similar
+    const videoModel = model === 'higgsfield-video' ? 'higgsfield-ai/video/standard' : 'bytedance/seedance-1-lite';
+    const submitResp = await axios.post(
+      `${cfg.baseUrl}/${videoModel}`,
+      { prompt: prompt.trim(), aspect_ratio: '9:16', duration: 5 },
+      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
+    );
+
+    if (submitResp.status >= 400) {
+      // Refund credits on failure
+      await pool!.query(
+        `UPDATE user_credits SET credits = credits + $1, updated_at = NOW() WHERE user_id = $2`,
+        [creditCost, auth.userId]
+      ).catch(() => undefined);
+      return res.status(400).json({ error: higgsfieldErrMsg(submitResp.data, submitResp.status) });
+    }
+
+    const requestId: string = submitResp.data?.request_id;
+    if (!requestId) throw new Error('No request_id from Higgsfield');
+
+    const videoUrl = await pollHiggsfieldRequest(cfg, requestId, 300000);
+
+    // Save to user_designs
+    const designId = randomUUID();
+    const dName = `AI Video — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    await pool!.query(
+      `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, media_type, updated_at)
+       VALUES ($1, $2, $3, 1080, 1920, $4, $5, 'video', NOW())`,
+      [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl, prompt: prompt.trim(), model }), videoUrl]
+    ).catch(() => undefined);
+
+    return res.json({ success: true, url: videoUrl, design_id: designId });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
   }
 });
 
