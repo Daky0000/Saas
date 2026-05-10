@@ -8,165 +8,11 @@ import PublicFooter from '../components/landing/PublicFooter';
 
 gsap.registerPlugin(ScrollTrigger);
 
-// ── CSS ───────────────────────────────────────────────────────────────────────
-
-const CSS = `
-.pp{--a:#5b6cf9;--as:rgba(91,108,249,.08);--ag:rgba(91,108,249,.22);--ink:#0a0a0b;--ink2:#374151;--ink3:#6b7280;--ink4:#9ca3af;--b:#e5e7eb;--bg2:#f9fafb;
-  font-family:'Inter',system-ui,-apple-system,sans-serif;background:#fff;color:var(--ink);overflow-x:hidden}
-.pp-w{max-width:1160px;margin:0 auto;padding:0 32px}
-@media(max-width:640px){.pp-w{padding:0 20px}}
-.pp-sec{padding:96px 0}
-@media(max-width:768px){.pp-sec{padding:60px 0}}
-
-/* Hero */
-.pp-hero{padding:140px 0 80px;text-align:center;position:relative;overflow:hidden}
-.pp-hero-g{position:absolute;top:-60px;left:50%;transform:translateX(-50%);width:800px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(91,108,249,.1) 0%,transparent 65%);pointer-events:none}
-.pp-hero-dots{position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(circle,#c7d0fe 1px,transparent 1px);background-size:28px 28px;opacity:.22;mask-image:radial-gradient(ellipse 80% 70% at 50% 30%,black 30%,transparent 100%)}
-.pp-badge{display:inline-flex;align-items:center;gap:8px;border:1px solid #c7d0fe;background:#eef0fe;border-radius:999px;padding:6px 16px 6px 12px;font-size:12.5px;font-weight:600;color:var(--a);margin-bottom:28px}
-.pp-dot{width:6px;height:6px;border-radius:50%;background:var(--a)}
-.pp-h1{font-size:clamp(40px,5vw,72px);font-weight:900;line-height:1.02;letter-spacing:-.045em;color:var(--ink);margin:0 0 22px}
-.pp-accent{background:linear-gradient(135deg,#5b6cf9 0%,#818cf8 50%,#a78bfa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.pp-sub{font-size:17px;color:var(--ink3);line-height:1.7;max-width:500px;margin:0 auto 40px}
-@media(max-width:640px){.pp-sub{font-size:15px}}
-
-/* Toggle */
-.pp-toggle{display:inline-flex;background:var(--bg2);border:1px solid var(--b);border-radius:14px;padding:5px}
-.pp-tog-btn{display:flex;align-items:center;gap:7px;padding:9px 22px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .2s;background:transparent;color:var(--ink3)}
-.pp-tog-btn.active{background:#fff;color:var(--ink);box-shadow:0 1px 6px rgba(0,0,0,.08);border:1px solid var(--b)}
-.pp-save-pill{display:inline-block;background:#dcfce7;color:#16a34a;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:999px}
-
-/* Plans grid */
-.pp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:56px}
-@media(max-width:900px){.pp-grid{grid-template-columns:1fr;max-width:440px;margin-left:auto;margin-right:auto}}
-
-/* Plan card */
-.pp-card{border:1.5px solid var(--b);border-radius:22px;padding:30px;background:#fff;display:flex;flex-direction:column;transition:border-color .2s,box-shadow .2s,transform .2s;position:relative;will-change:transform}
-.pp-card:hover{border-color:#c7d0fe;box-shadow:0 12px 40px rgba(91,108,249,.1);transform:translateY(-3px)}
-.pp-card.pp-feat{border-color:var(--a);background:var(--ink)}
-.pp-card.pp-feat:hover{border-color:#818cf8;box-shadow:0 12px 40px rgba(91,108,249,.25);transform:translateY(-4px)}
-.pp-pop-tag{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;padding:4px 14px;border-radius:999px;white-space:nowrap}
-.pp-feat .pp-pop-tag{background:var(--a)}
-.pp-plan-name{font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--ink);margin-bottom:5px}
-.pp-feat .pp-plan-name{color:#fff}
-.pp-plan-desc{font-size:13.5px;color:var(--ink3);line-height:1.6;margin-bottom:18px}
-.pp-feat .pp-plan-desc{color:rgba(255,255,255,.45)}
-.pp-credits{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--a);background:var(--as);border:1px solid rgba(91,108,249,.18);border-radius:8px;padding:5px 11px;margin-bottom:18px}
-.pp-feat .pp-credits{background:rgba(91,108,249,.2);border-color:rgba(91,108,249,.3);color:#818cf8}
-.pp-price{font-size:clamp(40px,4.5vw,52px);font-weight:900;letter-spacing:-.04em;color:var(--ink);line-height:1}
-.pp-feat .pp-price{color:#fff}
-.pp-period{font-size:14px;color:var(--ink4);margin-left:3px}
-.pp-feat .pp-period{color:rgba(255,255,255,.4)}
-.pp-orig{font-size:13px;color:var(--ink4);text-decoration:line-through;margin-bottom:2px}
-.pp-feat .pp-orig{color:rgba(255,255,255,.3)}
-.pp-save-note{font-size:12px;color:#16a34a;font-weight:600;margin-top:4px}
-.pp-divider{height:1px;background:var(--b);margin:18px 0}
-.pp-feat .pp-divider{background:rgba(255,255,255,.1)}
-.pp-feats{list-style:none;padding:0;margin:0 0 24px;display:flex;flex-direction:column;gap:10px;flex:1}
-.pp-feat-li{display:flex;align-items:flex-start;gap:9px;font-size:13.5px;color:var(--ink2);line-height:1.55}
-.pp-feat .pp-feat-li{color:rgba(255,255,255,.7)}
-.pp-chk{width:18px;height:18px;border-radius:5px;background:var(--as);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
-.pp-feat .pp-chk{background:rgba(91,108,249,.25)}
-.pp-card-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;font-size:14px;font-weight:700;padding:13px;border-radius:12px;border:none;cursor:pointer;transition:all .2s}
-.pp-card:not(.pp-feat) .pp-card-btn{background:var(--ink);color:#fff}
-.pp-card:not(.pp-feat) .pp-card-btn:hover{background:#1f2937;transform:translateY(-1px)}
-.pp-feat .pp-card-btn{background:#fff;color:var(--a)}
-.pp-feat .pp-card-btn:hover{background:#f0f1ff;transform:translateY(-1px)}
-.pp-card-note{font-size:11.5px;color:var(--ink4);text-align:center;margin-top:10px}
-.pp-feat .pp-card-note{color:rgba(255,255,255,.3)}
-
-/* Credits explainer */
-.pp-credits-sec{background:var(--bg2);border-radius:28px;padding:56px;position:relative;overflow:hidden}
-@media(max-width:640px){.pp-credits-sec{padding:36px 22px}}
-.pp-credits-g{position:absolute;top:-80px;right:-80px;width:360px;height:360px;border-radius:50%;background:radial-gradient(circle,rgba(91,108,249,.1) 0%,transparent 65%);pointer-events:none}
-.pp-credits-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center}
-@media(max-width:900px){.pp-credits-grid{grid-template-columns:1fr;gap:36px}}
-.pp-ey{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--a);margin-bottom:14px}
-.pp-ey-dot{width:5px;height:5px;border-radius:50%;background:var(--a)}
-.pp-h2{font-size:clamp(26px,3.2vw,44px);font-weight:900;letter-spacing:-.04em;line-height:1.08;color:var(--ink);margin:0 0 16px}
-.pp-h2-sub{font-size:16px;line-height:1.7;color:var(--ink3)}
-.pp-credit-list{display:flex;flex-direction:column;gap:14px;margin-top:28px}
-.pp-credit-item{display:flex;align-items:center;gap:14px;padding:14px 16px;background:#fff;border:1px solid var(--b);border-radius:14px}
-.pp-credit-ico{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
-.pp-credit-cost{font-size:22px;font-weight:900;letter-spacing:-.03em;color:var(--a);min-width:52px;text-align:right}
-.pp-credit-label{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:2px}
-.pp-credit-hint{font-size:12px;color:var(--ink4)}
-
-/* Credit meter visual */
-.pp-meter{background:#fff;border:1px solid var(--b);border-radius:20px;padding:24px}
-.pp-meter-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}
-.pp-meter-plan{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink4)}
-.pp-meter-val{font-size:32px;font-weight:900;letter-spacing:-.04em;color:var(--ink)}
-.pp-meter-sub{font-size:12px;color:var(--ink4);margin-top:2px}
-.pp-meter-bars{display:flex;flex-direction:column;gap:10px}
-.pp-meter-bar-row{display:flex;flex-direction:column;gap:4px}
-.pp-meter-bar-label{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3)}
-.pp-meter-track{height:8px;background:#f3f4f6;border-radius:999px;overflow:hidden}
-.pp-meter-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--a),#818cf8)}
-.pp-meter-fill.green{background:linear-gradient(90deg,#10b981,#34d399)}
-.pp-meter-fill.amber{background:linear-gradient(90deg,#f59e0b,#fcd34d)}
-.pp-meter-refill{display:flex;align-items:center;gap:6px;margin-top:16px;font-size:12px;color:var(--ink3);padding:10px;background:var(--as);border-radius:10px}
-
-/* Comparison table */
-.pp-tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-.pp-tbl{width:100%;border-collapse:collapse;min-width:640px}
-.pp-tbl thead tr{border-bottom:2px solid var(--b)}
-.pp-tbl th{padding:16px 20px;font-size:13px;font-weight:700;color:var(--ink3);text-align:left}
-.pp-tbl th:not(:first-child){text-align:center}
-.pp-tbl th.pp-tbl-hi{color:var(--a);background:var(--as);border-radius:0}
-.pp-tbl td{padding:14px 20px;font-size:14px;color:var(--ink2);border-bottom:1px solid #f3f4f6}
-.pp-tbl td:not(:first-child){text-align:center}
-.pp-tbl-section td{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ink4);padding-top:24px;padding-bottom:8px;border-bottom:none}
-.pp-tbl tr:last-child td{border-bottom:none}
-.pp-tbl-hi td{background:rgba(91,108,249,.03)}
-.pp-y{color:var(--a)}
-.pp-n{color:#d1d5db}
-
-/* FAQ */
-.pp-faq-item{border-bottom:1px solid var(--b)}
-.pp-faq-q{display:flex;width:100%;align-items:center;justify-content:space-between;gap:16px;padding:22px 0;cursor:pointer;background:transparent;border:none;text-align:left}
-.pp-faq-qt{font-size:16px;font-weight:700;color:var(--ink);line-height:1.4}
-.pp-faq-ico{width:28px;height:28px;border-radius:8px;background:var(--bg2);border:1px solid var(--b);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .2s,transform .2s;font-size:16px;color:var(--ink3);font-weight:300}
-.pp-faq-item.open .pp-faq-ico{background:var(--as);border-color:#c7d0fe;color:var(--a);transform:rotate(45deg)}
-.pp-faq-ans{font-size:15px;color:var(--ink3);line-height:1.75;max-height:0;overflow:hidden;transition:max-height .35s ease,opacity .3s;opacity:0}
-.pp-faq-item.open .pp-faq-ans{max-height:300px;opacity:1;padding-bottom:22px}
-
-/* CTA bottom */
-.pp-cta{background:var(--ink);border-radius:28px;padding:72px 56px;text-align:center;position:relative;overflow:hidden}
-@media(max-width:640px){.pp-cta{padding:48px 24px;border-radius:20px}}
-.pp-cta-g1{position:absolute;top:-80px;right:-60px;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(91,108,249,.25) 0%,transparent 65%);pointer-events:none}
-.pp-cta-g2{position:absolute;bottom:-80px;left:-60px;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(91,108,249,.15) 0%,transparent 65%);pointer-events:none}
-.pp-cta-h{font-size:clamp(32px,4vw,56px);font-weight:900;letter-spacing:-.04em;color:#fff;line-height:1.06;margin:0 0 16px}
-.pp-cta-sub{font-size:16px;color:rgba(255,255,255,.45);margin:0 auto 36px;max-width:440px;line-height:1.65}
-.pp-cta-trust{display:flex;align-items:center;justify-content:center;gap:24px;margin-top:20px;flex-wrap:wrap}
-.pp-cta-t{font-size:12.5px;color:rgba(255,255,255,.3)}
-.pp-cta-t::before{content:'✓  ';color:rgba(91,108,249,.6)}
-.pp-btn-p{display:inline-flex;align-items:center;gap:8px;background:var(--a);color:#fff;font-size:15px;font-weight:700;padding:14px 26px;border-radius:12px;border:none;cursor:pointer;transition:all .2s;box-shadow:0 4px 18px rgba(91,108,249,.35)}
-.pp-btn-p:hover{background:#4f5de6;transform:translateY(-2px);box-shadow:0 8px 28px rgba(91,108,249,.45)}
-.pp-btn-g{display:inline-flex;align-items:center;gap:8px;background:transparent;color:rgba(255,255,255,.6);font-size:15px;font-weight:600;padding:14px 22px;border-radius:12px;border:1.5px solid rgba(255,255,255,.15);cursor:pointer;transition:all .2s}
-.pp-btn-g:hover{border-color:rgba(255,255,255,.3);color:#fff}
-.pp-cta-btns{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
-
-/* Proof bar */
-.pp-proof{display:flex;align-items:center;justify-content:center;gap:32px;padding:32px 0;flex-wrap:wrap;border-top:1px solid var(--b);border-bottom:1px solid var(--b);margin:64px 0}
-.pp-proof-item{display:flex;flex-direction:column;align-items:center;gap:4px}
-.pp-proof-v{font-size:26px;font-weight:900;letter-spacing:-.04em;color:var(--ink)}
-.pp-proof-l{font-size:12px;color:var(--ink4);font-weight:500}
-@media(max-width:480px){.pp-proof{gap:20px}}
-
-@keyframes pp-pulse{0%,100%{opacity:1}50%{opacity:.3}}
-@keyframes pp-bar{from{width:0}to{width:var(--tw)}}
-.pp-anim-bar{animation:pp-bar 1s ease .3s both}
-`;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Types & helpers ───────────────────────────────────────────────────────────
 
 type BillingCycle = 'monthly' | 'yearly';
 
-function fmt(price: number) {
-  return price === 0 ? 'Free' : `$${Math.round(price)}`;
-}
-
-function Chk({ dark = false }) {
+function Chk({ dark = false }: { dark?: boolean }) {
   const c = dark ? '#818cf8' : '#5b6cf9';
   return (
     <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
@@ -187,53 +33,31 @@ function Arr() {
 
 const FALLBACK: PricingPlan[] = [
   {
-    id: 'starter',
-    name: 'Starter',
+    id: 'starter', name: 'Starter',
     description: 'For creators and solo brands finding their content rhythm.',
-    price: 0,
-    billingPeriod: 'monthly',
+    price: 0, billingPeriod: 'monthly',
     features: ['200 AI credits/month', '3 social accounts', 'AI text generation', 'Content calendar', 'Basic analytics', 'Card templates'],
-    isActive: true,
-    discountPercentage: 0,
-    isOnSale: false,
-    createdAt: '',
-    updatedAt: '',
+    isActive: true, discountPercentage: 0, isOnSale: false, createdAt: '', updatedAt: '',
   },
   {
-    id: 'growth',
-    name: 'Growth',
+    id: 'growth', name: 'Growth',
     description: 'For professionals and teams that publish across every channel.',
-    price: 29,
-    billingPeriod: 'monthly',
+    price: 29, billingPeriod: 'monthly',
     features: ['2,000 AI credits/month', '10 social accounts', 'AI image generation', 'Custom brand voice', 'Advanced analytics', 'Priority support', 'Team workspace (3 seats)'],
-    isActive: true,
-    discountPercentage: 0,
-    isOnSale: false,
-    createdAt: '',
-    updatedAt: '',
+    isActive: true, discountPercentage: 0, isOnSale: false, createdAt: '', updatedAt: '',
   },
   {
-    id: 'scale',
-    name: 'Scale',
+    id: 'scale', name: 'Scale',
     description: 'For agencies and brands managing multiple clients at full velocity.',
-    price: 79,
-    billingPeriod: 'monthly',
+    price: 79, billingPeriod: 'monthly',
     features: ['Unlimited AI credits', 'Unlimited accounts', 'AI video generation', 'White-label exports', 'Client workspaces', 'API access', 'Dedicated support', 'Custom integrations'],
-    isActive: true,
-    discountPercentage: 0,
-    isOnSale: false,
-    createdAt: '',
-    updatedAt: '',
+    isActive: true, discountPercentage: 0, isOnSale: false, createdAt: '', updatedAt: '',
   },
 ];
 
 const PLAN_CREDITS: Record<string, string> = {
-  starter: '200 credits / mo',
-  growth: '2,000 credits / mo',
-  scale: 'Unlimited credits',
-  free: '200 credits / mo',
-  pro: '2,000 credits / mo',
-  business: 'Unlimited credits',
+  starter: '200 credits / mo', growth: '2,000 credits / mo', scale: 'Unlimited credits',
+  free: '200 credits / mo', pro: '2,000 credits / mo', business: 'Unlimited credits',
 };
 
 function getCredits(plan: PricingPlan) {
@@ -249,6 +73,46 @@ function isFeatured(plan: PricingPlan) {
   return n.includes('growth') || n.includes('pro') || n.includes('business');
 }
 
+function fmt(price: number) {
+  return price === 0 ? 'Free' : `$${Math.round(price)}`;
+}
+
+// ── Animations ────────────────────────────────────────────────────────────────
+
+function useAnimations() {
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.utils.toArray<HTMLElement>('[data-pp="fade"]').forEach((el) => {
+        gsap.fromTo(el, { y: 36, opacity: 0 }, {
+          y: 0, opacity: 1, duration: 0.8, ease: 'power3.out',
+          scrollTrigger: { trigger: el, start: 'top 88%', once: true },
+        });
+      });
+      gsap.utils.toArray<HTMLElement>('[data-pp="stagger"]').forEach((el) => {
+        gsap.fromTo(Array.from(el.children), { y: 28, opacity: 0 }, {
+          y: 0, opacity: 1, duration: 0.7, ease: 'power3.out', stagger: 0.12,
+          scrollTrigger: { trigger: el, start: 'top 86%', once: true },
+        });
+      });
+    });
+    return () => { ctx.revert(); ScrollTrigger.getAll().forEach((t) => t.kill()); };
+  }, []);
+}
+
+function useHeroAnim(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!ref.current) return;
+    const ctx = gsap.context(() => {
+      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+      tl.fromTo('.pp-hero-badge', { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5 }, 0.15)
+        .fromTo('.pp-hero-h1', { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 0.3)
+        .fromTo('.pp-hero-sub', { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6 }, 0.48)
+        .fromTo('.pp-hero-toggle', { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5 }, 0.62);
+    }, ref.current);
+    return () => ctx.revert();
+  }, [ref]);
+}
+
 // ── Plan card ─────────────────────────────────────────────────────────────────
 
 function PlanCard({ plan, cycle, onCta }: { plan: PricingPlan; cycle: BillingCycle; onCta: () => void }) {
@@ -257,54 +121,104 @@ function PlanCard({ plan, cycle, onCta }: { plan: PricingPlan; cycle: BillingCyc
   const pct = plan.discountPercentage ?? 0;
   const yearlyMult = cycle === 'yearly' && !isFree ? 0.8 : 1;
   const finalPrice = pct > 0 ? plan.price * (1 - pct / 100) : plan.price * yearlyMult;
-  const origPrice = plan.price;
   const showOrig = (pct > 0 || (cycle === 'yearly' && !isFree));
 
   return (
-    <div className={`pp-card${featured ? ' pp-feat' : ''}`}>
-      {featured && <div className="pp-pop-tag">Most popular</div>}
+    <div
+      className={`relative flex flex-col rounded-[22px] p-7 transition-all ${
+        featured
+          ? 'border border-[#5b6cf9] bg-[#0a0a0b] hover:-translate-y-1'
+          : 'border border-gray-100 bg-white hover:border-[#c7d0fe] hover:shadow-[0_12px_40px_rgba(91,108,249,.1)] hover:-translate-y-0.5'
+      }`}
+    >
+      {featured && (
+        <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#5b6cf9] text-white text-[10.5px] font-extrabold uppercase tracking-widest px-3.5 py-1 rounded-full whitespace-nowrap">
+          Most popular
+        </div>
+      )}
       {plan.isOnSale && !featured && (
-        <div className="pp-pop-tag" style={{ background: '#f59e0b' }}>On Sale</div>
+        <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-amber-400 text-white text-[10.5px] font-extrabold uppercase tracking-widest px-3.5 py-1 rounded-full">
+          On Sale
+        </div>
       )}
 
-      <div className="pp-plan-name">{plan.name}</div>
-      <div className="pp-plan-desc">{plan.description}</div>
+      <div className="text-[19px] font-extrabold tracking-tight mb-1" style={{ color: featured ? '#fff' : '#0a0a0b' }}>
+        {plan.name}
+      </div>
+      <div className="text-[13.5px] leading-relaxed mb-4" style={{ color: featured ? 'rgba(255,255,255,.45)' : '#6b7280' }}>
+        {plan.description}
+      </div>
 
-      <div className="pp-credits">
-        <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke={featured ? '#818cf8' : '#5b6cf9'} strokeWidth="1.5" /><path d="M7 4v3l2 2" stroke={featured ? '#818cf8' : '#5b6cf9'} strokeWidth="1.5" strokeLinecap="round" /></svg>
+      <div
+        className="inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border mb-4"
+        style={{
+          color: featured ? '#818cf8' : '#5b6cf9',
+          background: featured ? 'rgba(91,108,249,.2)' : 'rgba(91,108,249,.08)',
+          borderColor: featured ? 'rgba(91,108,249,.3)' : 'rgba(91,108,249,.18)',
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="6" stroke={featured ? '#818cf8' : '#5b6cf9'} strokeWidth="1.5" />
+          <path d="M7 4v3l2 2" stroke={featured ? '#818cf8' : '#5b6cf9'} strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
         {getCredits(plan)}
       </div>
 
-      <div>
+      <div className="mb-4">
         {showOrig && (
-          <div className="pp-orig">{fmt(origPrice)}<span style={{ fontSize: 12 }}>/{cycle === 'monthly' ? 'mo' : 'yr'}</span></div>
+          <div className="text-[13px] line-through mb-0.5" style={{ color: featured ? 'rgba(255,255,255,.3)' : '#9ca3af' }}>
+            {fmt(plan.price)}<span className="text-[12px]">/{cycle === 'monthly' ? 'mo' : 'yr'}</span>
+          </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3 }}>
-          <span className="pp-price">{isFree ? 'Free' : `$${Math.round(finalPrice)}`}</span>
-          {!isFree && <span className="pp-period">/{cycle === 'monthly' ? 'mo' : 'yr'}</span>}
+        <div className="flex items-end gap-1">
+          <span
+            className="font-black tracking-tight leading-none"
+            style={{ fontSize: 'clamp(40px, 4.5vw, 52px)', letterSpacing: '-0.04em', color: featured ? '#fff' : '#0a0a0b' }}
+          >
+            {isFree ? 'Free' : `$${Math.round(finalPrice)}`}
+          </span>
+          {!isFree && (
+            <span className="text-[14px] ml-0.5 pb-1" style={{ color: featured ? 'rgba(255,255,255,.4)' : '#9ca3af' }}>
+              /{cycle === 'monthly' ? 'mo' : 'yr'}
+            </span>
+          )}
         </div>
         {cycle === 'yearly' && !isFree && pct === 0 && (
-          <div className="pp-save-note">Save ~20% vs monthly</div>
+          <div className="text-[12px] text-emerald-600 font-semibold mt-1">Save ~20% vs monthly</div>
         )}
-        {pct > 0 && <div className="pp-save-note">Save {Math.round(pct)}%</div>}
+        {pct > 0 && <div className="text-[12px] text-emerald-600 font-semibold mt-1">Save {Math.round(pct)}%</div>}
       </div>
 
-      <div className="pp-divider" />
+      <div className="h-px mb-4" style={{ background: featured ? 'rgba(255,255,255,.1)' : '#e5e7eb' }} />
 
-      <ul className="pp-feats">
+      <ul className="list-none p-0 mb-6 flex flex-col gap-2.5 flex-1">
         {plan.features.map((f, i) => (
-          <li key={i} className="pp-feat-li">
-            <div className="pp-chk"><Chk dark={featured} /></div>
+          <li key={i} className="flex items-start gap-2 text-[13.5px] leading-snug" style={{ color: featured ? 'rgba(255,255,255,.7)' : '#374151' }}>
+            <div
+              className="w-[18px] h-[18px] rounded-md flex items-center justify-center flex-shrink-0 mt-px"
+              style={{ background: featured ? 'rgba(91,108,249,.25)' : 'rgba(91,108,249,.08)' }}
+            >
+              <Chk dark={featured} />
+            </div>
             {f}
           </li>
         ))}
       </ul>
 
-      <button type="button" className="pp-card-btn" onClick={onCta}>
-        {isFree ? 'Get started free' : 'Start 7-day trial'}
-        <Arr />
+      <button
+        type="button"
+        className="w-full flex items-center justify-center gap-1.5 text-[14px] font-bold py-3.5 rounded-xl border-none cursor-pointer transition-all hover:-translate-y-px"
+        style={{
+          background: featured ? '#fff' : '#0a0a0b',
+          color: featured ? '#5b6cf9' : '#fff',
+        }}
+        onClick={onCta}
+      >
+        {isFree ? 'Get started free' : 'Start 7-day trial'} <Arr />
       </button>
-      <div className="pp-card-note">{isFree ? 'No credit card required' : 'Cancel anytime'}</div>
+      <div className="text-[11.5px] text-center mt-2.5" style={{ color: featured ? 'rgba(255,255,255,.3)' : '#9ca3af' }}>
+        {isFree ? 'No credit card required' : 'Cancel anytime'}
+      </div>
     </div>
   );
 }
@@ -313,38 +227,43 @@ function PlanCard({ plan, cycle, onCta }: { plan: PricingPlan; cycle: BillingCyc
 
 function CreditMeter() {
   return (
-    <div className="pp-meter">
-      <div className="pp-meter-top">
+    <div className="bg-white border border-gray-100 rounded-2xl p-6">
+      <div className="flex justify-between items-start mb-5">
         <div>
-          <div className="pp-meter-plan">Growth Plan</div>
-          <div className="pp-meter-val">2,000</div>
-          <div className="pp-meter-sub">credits remaining this month</div>
+          <div className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1">Growth Plan</div>
+          <div className="text-3xl font-black tracking-tight text-[#0a0a0b]">2,000</div>
+          <div className="text-[12px] text-gray-400 mt-0.5">credits remaining this month</div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 11, color: '#9ca3af' }}>Renews in</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: '#0a0a0b' }}>18 days</div>
+        <div className="text-right">
+          <div className="text-[11px] text-gray-400">Renews in</div>
+          <div className="text-[16px] font-extrabold text-[#0a0a0b]">18 days</div>
         </div>
       </div>
-      <div className="pp-meter-bars">
+      <div className="flex flex-col gap-2.5">
         {[
-          { label: 'AI Text generation', used: 420, total: 2000, pct: 21, cls: '' },
-          { label: 'AI Image generation', used: 180, total: 2000, pct: 9, cls: 'green' },
-          { label: 'Video generation', used: 60, total: 2000, pct: 3, cls: 'amber' },
+          { label: 'AI Text generation', used: 420, total: 2000, pct: 21, color: 'linear-gradient(90deg,#5b6cf9,#818cf8)' },
+          { label: 'AI Image generation', used: 180, total: 2000, pct: 9, color: 'linear-gradient(90deg,#10b981,#34d399)' },
+          { label: 'Video generation', used: 60, total: 2000, pct: 3, color: 'linear-gradient(90deg,#f59e0b,#fcd34d)' },
         ].map((b) => (
-          <div key={b.label} className="pp-meter-bar-row">
-            <div className="pp-meter-bar-label">
+          <div key={b.label}>
+            <div className="flex justify-between text-[11px] text-gray-500 mb-1">
               <span>{b.label}</span>
               <span>{b.used} used</span>
             </div>
-            <div className="pp-meter-track">
-              <div className={`pp-meter-fill${b.cls ? ' ' + b.cls : ''}`} style={{ width: `${b.pct}%` }} />
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full dw-progress"
+                style={{ width: `${b.pct}%`, background: b.color }}
+              />
             </div>
           </div>
         ))}
       </div>
-      <div className="pp-meter-refill">
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.93 2.93l1.42 1.42M9.65 9.65l1.42 1.42M2.93 11.07l1.42-1.42M9.65 4.35l1.42-1.42" stroke="#5b6cf9" strokeWidth="1.5" strokeLinecap="round" /></svg>
-        <span>Credits auto-refill on June 1 · <strong style={{ color: '#0a0a0b' }}>+2,000 AI credits</strong></span>
+      <div className="flex items-center gap-1.5 mt-4 text-[12px] text-gray-500 px-2.5 py-2.5 bg-[rgba(91,108,249,.08)] rounded-xl">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+          <path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.93 2.93l1.42 1.42M9.65 9.65l1.42 1.42M2.93 11.07l1.42-1.42M9.65 4.35l1.42-1.42" stroke="#5b6cf9" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+        <span>Credits auto-refill on June 1 · <strong className="text-[#0a0a0b]">+2,000 AI credits</strong></span>
       </div>
     </div>
   );
@@ -380,39 +299,41 @@ const TABLE_ROWS = [
 
 function CompareTable({ onCta }: { onCta: () => void }) {
   return (
-    <div className="pp-tbl-wrap">
-      <table className="pp-tbl">
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse" style={{ minWidth: 640 }}>
         <thead>
-          <tr>
-            <th style={{ width: '40%' }}>Features</th>
-            <th>Starter</th>
-            <th className="pp-tbl-hi">Growth</th>
-            <th>Scale</th>
+          <tr className="border-b-2 border-gray-100">
+            <th className="p-4 text-[13px] font-bold text-gray-500 text-left" style={{ width: '40%' }}>Features</th>
+            <th className="p-4 text-[13px] font-bold text-gray-500 text-center">Starter</th>
+            <th className="p-4 text-[13px] font-bold text-[#5b6cf9] text-center bg-[rgba(91,108,249,.04)]">Growth</th>
+            <th className="p-4 text-[13px] font-bold text-gray-500 text-center">Scale</th>
           </tr>
         </thead>
         <tbody>
           {TABLE_ROWS.map((row, i) =>
             'section' in row ? (
-              <tr key={i} className="pp-tbl-section">
-                <td colSpan={4}>{row.section}</td>
+              <tr key={i}>
+                <td colSpan={4} className="px-4 pt-6 pb-2 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+                  {row.section}
+                </td>
               </tr>
             ) : (
-              <tr key={i} className={row.vals?.[1] !== '—' && !row.vals?.[1]?.includes('Basic') ? 'pp-tbl-hi' : ''}>
-                <td>{row.label}</td>
+              <tr key={i} className="border-b border-gray-50 last:border-b-0">
+                <td className="px-4 py-3.5 text-[14px] text-gray-700">{row.label}</td>
                 {row.vals?.map((v, j) => (
-                  <td key={j}>
+                  <td key={j} className={`px-4 py-3.5 text-center ${j === 1 ? 'bg-[rgba(91,108,249,.03)]' : ''}`}>
                     {v === '✓' ? (
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="pp-y" style={{ margin: '0 auto', display: 'block' }}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ margin: '0 auto', display: 'block' }}>
                         <circle cx="8" cy="8" r="7" fill="rgba(91,108,249,.1)" />
                         <path d="M5 8L7 10.5L11 5.5" stroke="#5b6cf9" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     ) : v === '—' ? (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="pp-n" style={{ margin: '0 auto', display: 'block' }}>
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ margin: '0 auto', display: 'block' }}>
                         <circle cx="7" cy="7" r="6" fill="#f3f4f6" />
                         <path d="M4.5 7h5" stroke="#d1d5db" strokeWidth="1.5" strokeLinecap="round" />
                       </svg>
                     ) : (
-                      <span style={{ fontSize: 13 }}>{v}</span>
+                      <span className="text-[13px] text-gray-600">{v}</span>
                     )}
                   </td>
                 ))}
@@ -422,16 +343,12 @@ function CompareTable({ onCta }: { onCta: () => void }) {
           <tr>
             <td />
             {['Starter', 'Growth', 'Scale'].map((n, j) => (
-              <td key={j} style={{ paddingTop: 20 }}>
+              <td key={j} className="px-4 pt-5">
                 <button
                   type="button"
                   onClick={onCta}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    background: j === 1 ? '#5b6cf9' : '#0a0a0b', color: '#fff',
-                    fontSize: 13, fontWeight: 700, padding: '10px 14px', borderRadius: 10, border: 'none',
-                    cursor: 'pointer', transition: 'opacity .2s',
-                  }}
+                  className="w-full flex items-center justify-center gap-1.5 text-[13px] font-bold py-2.5 px-3.5 rounded-xl border-none cursor-pointer transition-opacity hover:opacity-90"
+                  style={{ background: j === 1 ? '#5b6cf9' : '#0a0a0b', color: '#fff' }}
                 >
                   {n === 'Starter' ? 'Get started free' : `Try ${n}`}
                 </button>
@@ -458,52 +375,31 @@ const FAQS = [
 function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`pp-faq-item${open ? ' open' : ''}`}>
-      <button type="button" className="pp-faq-q" onClick={() => setOpen((p) => !p)}>
-        <span className="pp-faq-qt">{q}</span>
-        <span className="pp-faq-ico">+</span>
+    <div className="border-b border-gray-100">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-4 py-5 cursor-pointer bg-transparent border-none text-left"
+        onClick={() => setOpen((p) => !p)}
+      >
+        <span className="text-[16px] font-bold text-[#0a0a0b] leading-snug">{q}</span>
+        <span
+          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[16px] font-light transition-all"
+          style={{
+            background: open ? 'rgba(91,108,249,.08)' : '#f9fafb',
+            border: open ? '1px solid #c7d0fe' : '1px solid #e5e7eb',
+            color: open ? '#5b6cf9' : '#6b7280',
+            transform: open ? 'rotate(45deg)' : 'none',
+          }}
+        >+</span>
       </button>
-      <div className="pp-faq-ans">{a}</div>
+      <div
+        className="overflow-hidden transition-all duration-300"
+        style={{ maxHeight: open ? 300 : 0, opacity: open ? 1 : 0, paddingBottom: open ? 22 : 0 }}
+      >
+        <p className="text-[15px] text-gray-500 leading-[1.75] m-0">{a}</p>
+      </div>
     </div>
   );
-}
-
-// ── Scroll animations ─────────────────────────────────────────────────────────
-
-function useAnimations() {
-  useEffect(() => {
-    const ctx = gsap.context(() => {
-      gsap.utils.toArray<HTMLElement>('[data-pp="fade"]').forEach((el) => {
-        gsap.fromTo(el, { y: 36, opacity: 0 }, {
-          y: 0, opacity: 1, duration: 0.8, ease: 'power3.out',
-          scrollTrigger: { trigger: el, start: 'top 88%', once: true },
-        });
-      });
-      gsap.utils.toArray<HTMLElement>('[data-pp="stagger"]').forEach((el) => {
-        gsap.fromTo(Array.from(el.children), { y: 28, opacity: 0 }, {
-          y: 0, opacity: 1, duration: 0.7, ease: 'power3.out', stagger: 0.12,
-          scrollTrigger: { trigger: el, start: 'top 86%', once: true },
-        });
-      });
-    });
-    return () => { ctx.revert(); ScrollTrigger.getAll().forEach((t) => t.kill()); };
-  }, []);
-}
-
-// ── Hero entrance ─────────────────────────────────────────────────────────────
-
-function useHeroAnim(ref: RefObject<HTMLElement | null>) {
-  useEffect(() => {
-    if (!ref.current) return;
-    const ctx = gsap.context(() => {
-      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
-      tl.fromTo('.pp-badge', { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5 }, 0.15)
-        .fromTo('.pp-h1', { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 0.3)
-        .fromTo('.pp-sub', { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6 }, 0.48)
-        .fromTo('.pp-toggle', { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5 }, 0.62);
-    }, ref.current);
-    return () => ctx.revert();
-  }, [ref]);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -515,14 +411,6 @@ export default function PublicPricing({ onLoginClick }: Props) {
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const heroRef = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.id = 'pp-css';
-    style.textContent = CSS;
-    document.head.appendChild(style);
-    return () => { document.getElementById('pp-css')?.remove(); };
-  }, []);
 
   useEffect(() => {
     pricingService
@@ -539,98 +427,158 @@ export default function PublicPricing({ onLoginClick }: Props) {
   useAnimations();
 
   return (
-    <div className="pp">
+    <div className="bg-white text-[#0a0a0b] overflow-x-hidden font-sans">
       <PublicNav onLoginClick={onLoginClick} activePath="/pricing" />
 
-      {/* ── Hero ────────────────────────────────────────────────────── */}
-      <section className="pp-hero" ref={heroRef}>
-        <div className="pp-hero-g" />
-        <div className="pp-hero-dots" />
-        <div className="pp-w" style={{ position: 'relative' }}>
-          <div className="pp-badge">
-            <span className="pp-dot" />
+      {/* ── Hero ─────────────────────────────────────────────────────── */}
+      <section
+        className="relative overflow-hidden text-center pt-36 pb-20"
+        ref={heroRef}
+      >
+        {/* Glow */}
+        <div
+          className="absolute pointer-events-none rounded-full"
+          style={{
+            top: -60, left: '50%', transform: 'translateX(-50%)',
+            width: 800, height: 400,
+            background: 'radial-gradient(circle, rgba(91,108,249,.1) 0%, transparent 65%)',
+          }}
+        />
+        {/* Dots */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[.22]"
+          style={{
+            backgroundImage: 'radial-gradient(#c7d0fe 1px, transparent 1px)',
+            backgroundSize: '28px 28px',
+            maskImage: 'radial-gradient(ellipse 80% 70% at 50% 30%, black 30%, transparent 100%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 80% 70% at 50% 30%, black 30%, transparent 100%)',
+          }}
+        />
+
+        <div className="max-w-[1160px] mx-auto px-6 relative">
+          <div className="pp-hero-badge inline-flex items-center gap-2 border border-[#c7d0fe] bg-[#eef0fe] rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-[#5b6cf9] mb-7">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#5b6cf9]" />
             Simple, transparent pricing
           </div>
-          <h1 className="pp-h1">
+
+          <h1
+            className="pp-hero-h1 font-black tracking-tight text-[#0a0a0b] mb-6"
+            style={{ fontSize: 'clamp(40px, 5vw, 72px)', letterSpacing: '-0.045em', lineHeight: 1.02 }}
+          >
             Pricing that grows<br />
-            <span className="pp-accent">with your brand.</span>
+            <span className="bg-gradient-to-r from-[#5b6cf9] to-violet-500 bg-clip-text text-transparent">
+              with your brand.
+            </span>
           </h1>
-          <p className="pp-sub">
+
+          <p className="pp-hero-sub text-[17px] text-gray-500 leading-[1.7] max-w-[500px] mx-auto mb-10">
             Start free with 200 AI credits. Upgrade when you need more power. No hidden fees, ever.
           </p>
 
-          {/* Billing toggle */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-            <div className="pp-toggle">
+          {/* Toggle */}
+          <div className="pp-hero-toggle flex flex-col items-center gap-2.5">
+            <div className="inline-flex bg-gray-50 border border-gray-100 rounded-xl p-1">
               {(['monthly', 'yearly'] as BillingCycle[]).map((c) => (
-                <button key={c} type="button" className={`pp-tog-btn${cycle === c ? ' active' : ''}`} onClick={() => setCycle(c)}>
+                <button
+                  key={c}
+                  type="button"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-[14px] font-semibold cursor-pointer border-none transition-all"
+                  style={{
+                    background: cycle === c ? '#fff' : 'transparent',
+                    color: cycle === c ? '#0a0a0b' : '#6b7280',
+                    boxShadow: cycle === c ? '0 1px 6px rgba(0,0,0,.08)' : 'none',
+                  }}
+                  onClick={() => setCycle(c)}
+                >
                   {c === 'monthly' ? 'Monthly' : 'Yearly'}
-                  {c === 'yearly' && <span className="pp-save-pill">−20%</span>}
+                  {c === 'yearly' && (
+                    <span className="bg-emerald-100 text-emerald-700 text-[10px] font-extrabold uppercase tracking-wide px-2 py-0.5 rounded-full">−20%</span>
+                  )}
                 </button>
               ))}
             </div>
-            <p style={{ fontSize: 12, color: '#9ca3af' }}>
+            <p className="text-[12px] text-gray-400">
               {cycle === 'yearly' ? '✓ Annual billing — saving ~20% per year' : 'Switch to annual and save ~20%'}
             </p>
           </div>
         </div>
       </section>
 
-      {/* ── Plans ───────────────────────────────────────────────────── */}
-      <div className="pp-w">
+      {/* ── Plans ──────────────────────────────────────────────────────── */}
+      <div className="max-w-[1160px] mx-auto px-6">
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '80px 0', color: '#9ca3af', fontSize: 14 }}>Loading plans…</div>
+          <div className="text-center py-20 text-gray-400 text-[14px]">Loading plans…</div>
         ) : (
-          <div className="pp-grid" data-pp="stagger">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-14" data-pp="stagger">
             {plans.map((p) => (
               <PlanCard key={p.id} plan={p} cycle={cycle} onCta={onLoginClick} />
             ))}
           </div>
         )}
-        <p style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', marginTop: 20 }}>
+        <p className="text-center text-[12px] text-gray-400 mt-5">
           Prices in USD. Billed securely via Stripe. Taxes may apply.
         </p>
       </div>
 
-      {/* ── Social proof bar ─────────────────────────────────────────── */}
-      <div className="pp-w">
-        <div className="pp-proof" data-pp="stagger">
+      {/* ── Social proof ────────────────────────────────────────────────── */}
+      <div className="max-w-[1160px] mx-auto px-6">
+        <div
+          className="flex items-center justify-center gap-8 py-8 flex-wrap border-t border-b border-gray-100 my-16"
+          data-pp="stagger"
+        >
           {[
             { v: '12,000+', l: 'Brands & creators' },
             { v: '4.8 / 5', l: 'Average rating' },
             { v: '$0', l: 'Setup cost' },
             { v: '24/7', l: 'Support' },
           ].map((s) => (
-            <div key={s.l} className="pp-proof-item">
-              <div className="pp-proof-v">{s.v}</div>
-              <div className="pp-proof-l">{s.l}</div>
+            <div key={s.l} className="flex flex-col items-center gap-1">
+              <div className="text-[26px] font-black tracking-tight text-[#0a0a0b]">{s.v}</div>
+              <div className="text-[12px] text-gray-400 font-medium">{s.l}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* ── Credits explainer ────────────────────────────────────────── */}
-      <div className="pp-w pp-sec">
-        <div className="pp-credits-sec" data-pp="fade">
-          <div className="pp-credits-g" />
-          <div className="pp-credits-grid">
+      {/* ── Credits explainer ─────────────────────────────────────────────── */}
+      <div className="max-w-[1160px] mx-auto px-6 py-24">
+        <div
+          className="relative overflow-hidden rounded-[28px] p-14"
+          style={{ background: '#f9fafb' }}
+          data-pp="fade"
+        >
+          {/* Glow */}
+          <div
+            className="absolute pointer-events-none rounded-full"
+            style={{ top: -80, right: -80, width: 360, height: 360, background: 'radial-gradient(circle, rgba(91,108,249,.1) 0%, transparent 65%)' }}
+          />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-14 items-center relative">
             <div>
-              <div className="pp-ey"><span className="pp-ey-dot" />Credit system</div>
-              <h2 className="pp-h2">One credit. Endless possibilities.</h2>
-              <p className="pp-h2-sub">Credits are spent when you use AI features. Every plan comes with a monthly credit allowance that auto-refills on your billing date.</p>
-              <div className="pp-credit-list">
+              <div className="inline-flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-widest text-[#5b6cf9] mb-3.5">
+                <span className="w-1 h-1 rounded-full bg-[#5b6cf9]" />Credit system
+              </div>
+              <h2
+                className="font-black tracking-tight text-[#0a0a0b] mb-4"
+                style={{ fontSize: 'clamp(26px, 3.2vw, 44px)', letterSpacing: '-0.04em', lineHeight: 1.08 }}
+              >
+                One credit. Endless possibilities.
+              </h2>
+              <p className="text-[16px] leading-[1.7] text-gray-500 mb-7">
+                Credits are spent when you use AI features. Every plan comes with a monthly credit allowance that auto-refills on your billing date.
+              </p>
+              <div className="flex flex-col gap-3.5">
                 {[
-                  { ico: '✍️', bg: '#eef0fe', label: 'AI text post', hint: 'LinkedIn, Twitter, Instagram caption…', cost: '1 credit' },
-                  { ico: '🖼️', bg: '#fdf4ff', label: 'AI image generation', hint: 'Custom graphics, banners, thumbnails…', cost: '5 credits' },
-                  { ico: '🎬', bg: '#fff7ed', label: 'AI short video', hint: 'Reels, TikTok, YouTube Shorts clips…', cost: '20 credits' },
+                  { ico: '✍️', bg: '#eef0fe', label: 'AI text post', hint: 'LinkedIn, Twitter, Instagram caption…', cost: '1 cr' },
+                  { ico: '🖼️', bg: '#fdf4ff', label: 'AI image generation', hint: 'Custom graphics, banners, thumbnails…', cost: '5 cr' },
+                  { ico: '🎬', bg: '#fff7ed', label: 'AI short video', hint: 'Reels, TikTok, YouTube Shorts clips…', cost: '20 cr' },
                 ].map((c) => (
-                  <div key={c.label} className="pp-credit-item">
-                    <div className="pp-credit-ico" style={{ background: c.bg }}>{c.ico}</div>
-                    <div style={{ flex: 1 }}>
-                      <div className="pp-credit-label">{c.label}</div>
-                      <div className="pp-credit-hint">{c.hint}</div>
+                  <div key={c.label} className="flex items-center gap-3.5 px-4 py-3.5 bg-white border border-gray-100 rounded-2xl">
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center text-[17px] flex-shrink-0" style={{ background: c.bg }}>{c.ico}</div>
+                    <div className="flex-1">
+                      <div className="text-[13px] font-semibold text-[#0a0a0b] mb-0.5">{c.label}</div>
+                      <div className="text-[12px] text-gray-400">{c.hint}</div>
                     </div>
-                    <div className="pp-credit-cost">{c.cost}</div>
+                    <div className="text-[22px] font-black tracking-tight text-[#5b6cf9] min-w-[52px] text-right">{c.cost}</div>
                   </div>
                 ))}
               </div>
@@ -640,53 +588,85 @@ export default function PublicPricing({ onLoginClick }: Props) {
         </div>
       </div>
 
-      {/* ── Compare table ────────────────────────────────────────────── */}
-      <div className="pp-w pp-sec" style={{ paddingTop: 0 }}>
-        <div style={{ textAlign: 'center', marginBottom: 48 }} data-pp="fade">
-          <div className="pp-ey" style={{ justifyContent: 'center' }}><span className="pp-ey-dot" />Full comparison</div>
-          <h2 className="pp-h2" style={{ textAlign: 'center' }}>Everything in one table.</h2>
-          <p className="pp-h2-sub" style={{ textAlign: 'center', margin: '0 auto' }}>Not sure which plan fits? Here's every feature side by side.</p>
+      {/* ── Compare table ─────────────────────────────────────────────────── */}
+      <div className="max-w-[1160px] mx-auto px-6 pb-24">
+        <div className="text-center mb-12" data-pp="fade">
+          <div className="inline-flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-widest text-[#5b6cf9] mb-3 justify-center">
+            <span className="w-1 h-1 rounded-full bg-[#5b6cf9]" />Full comparison
+          </div>
+          <h2
+            className="font-black tracking-tight text-[#0a0a0b] mb-3 text-center"
+            style={{ fontSize: 'clamp(26px, 3.2vw, 44px)', letterSpacing: '-0.04em', lineHeight: 1.08 }}
+          >
+            Everything in one table.
+          </h2>
+          <p className="text-[16px] leading-[1.7] text-gray-500 text-center max-w-[480px] mx-auto">
+            Not sure which plan fits? Here's every feature side by side.
+          </p>
         </div>
         <div data-pp="fade">
           <CompareTable onCta={onLoginClick} />
         </div>
       </div>
 
-      {/* ── FAQ ──────────────────────────────────────────────────────── */}
-      <div className="pp-w pp-sec" style={{ paddingTop: 0, maxWidth: 760, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 48 }} data-pp="fade">
-          <div className="pp-ey" style={{ justifyContent: 'center' }}><span className="pp-ey-dot" />FAQ</div>
-          <h2 className="pp-h2" style={{ textAlign: 'center' }}>Questions? Answered.</h2>
+      {/* ── FAQ ───────────────────────────────────────────────────────────── */}
+      <div className="max-w-[760px] mx-auto px-6 pb-24">
+        <div className="text-center mb-12" data-pp="fade">
+          <div className="inline-flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-widest text-[#5b6cf9] mb-3 justify-center">
+            <span className="w-1 h-1 rounded-full bg-[#5b6cf9]" />FAQ
+          </div>
+          <h2
+            className="font-black tracking-tight text-[#0a0a0b] text-center"
+            style={{ fontSize: 'clamp(26px, 3.2vw, 44px)', letterSpacing: '-0.04em', lineHeight: 1.08 }}
+          >
+            Questions? Answered.
+          </h2>
         </div>
         <div data-pp="stagger">
           {FAQS.map((f, i) => <FaqItem key={i} q={f.q} a={f.a} />)}
         </div>
       </div>
 
-      {/* ── CTA ──────────────────────────────────────────────────────── */}
-      <div className="pp-w" style={{ paddingBottom: 80 }}>
-        <div className="pp-cta" data-pp="fade">
-          <div className="pp-cta-g1" />
-          <div className="pp-cta-g2" />
-          <div style={{ position: 'relative' }}>
-            <h2 className="pp-cta-h">
-              Start building your<br />
-              audience today.
+      {/* ── CTA ───────────────────────────────────────────────────────────── */}
+      <div className="max-w-[1160px] mx-auto px-6 pb-20">
+        <div
+          className="relative overflow-hidden bg-[#0a0a0b] rounded-[28px] py-[72px] px-14 text-center"
+          data-pp="fade"
+        >
+          {/* Orbs */}
+          <div className="absolute pointer-events-none rounded-full" style={{ top: -80, right: -60, width: 400, height: 400, background: 'radial-gradient(circle, rgba(91,108,249,.25) 0%, transparent 65%)' }} />
+          <div className="absolute pointer-events-none rounded-full" style={{ bottom: -80, left: -60, width: 300, height: 300, background: 'radial-gradient(circle, rgba(91,108,249,.15) 0%, transparent 65%)' }} />
+          <div className="relative">
+            <h2
+              className="font-black tracking-tight text-white mb-4"
+              style={{ fontSize: 'clamp(32px, 4vw, 56px)', letterSpacing: '-0.04em', lineHeight: 1.06 }}
+            >
+              Start building your<br />audience today.
             </h2>
-            <p className="pp-cta-sub">
+            <p className="text-[16px] text-white/45 max-w-[440px] mx-auto mb-9 leading-[1.65]">
               Free plan available. No credit card required. Upgrade when you're ready to scale.
             </p>
-            <div className="pp-cta-btns">
-              <button type="button" className="pp-btn-p" onClick={onLoginClick}>
+            <div className="flex items-center justify-center gap-3 flex-wrap mb-5">
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 bg-[#5b6cf9] text-white text-[15px] font-bold px-6 py-3.5 rounded-xl border-none cursor-pointer transition-all hover:-translate-y-0.5 hover:bg-[#4f5de6]"
+                style={{ boxShadow: '0 4px 18px rgba(91,108,249,.35)' }}
+                onClick={onLoginClick}
+              >
                 Get started free <Arr />
               </button>
-              <button type="button" className="pp-btn-g" onClick={onLoginClick}>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 bg-transparent text-white/60 text-[15px] font-semibold px-5 py-3.5 rounded-xl cursor-pointer transition-all hover:border-white/30 hover:text-white"
+                style={{ border: '1.5px solid rgba(255,255,255,.15)' }}
+                onClick={onLoginClick}
+              >
                 Talk to sales
               </button>
             </div>
-            <div className="pp-cta-trust">
+            <div className="flex items-center justify-center gap-6 flex-wrap">
               {['Free plan forever', '7-day trial on paid plans', 'Cancel anytime'].map((t) => (
-                <span key={t} className="pp-cta-t">{t}</span>
+                <span key={t} className="text-[12.5px] text-white/30 before:content-['✓__'] before:text-[rgba(91,108,249,.6)]">{t}</span>
               ))}
             </div>
           </div>

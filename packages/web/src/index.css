@@ -46,3 +46,22 @@
     @apply w-12 h-12 rounded-lg flex items-center justify-center font-semibold;
   }
 }
+
+/* ── Landing page animations (compiled at build, not injected at runtime) ── */
+@keyframes dw-float  { 0%,100% { transform:translateY(0) }  50% { transform:translateY(-10px) } }
+@keyframes dw-glow   { 0%,100% { opacity:.4 }              50% { opacity:.85 } }
+@keyframes dw-marquee{ from { transform:translateX(0) }    to   { transform:translateX(-50%) } }
+@keyframes dw-pulse  { 0%,100% { opacity:1 }               50% { opacity:.25 } }
+@keyframes dw-bar    { from { transform:scaleY(0.05); opacity:0 } to { transform:scaleY(1); opacity:1 } }
+@keyframes dw-prog   { from { width:0 } }
+@keyframes fadeInUp  { from { opacity:0; transform:translateY(28px) } to { opacity:1; transform:translateY(0) } }
+
+.dw-float   { animation: dw-float   7s  ease-in-out infinite; will-change: transform }
+.dw-float-2 { animation: dw-float   9s  ease-in-out infinite 2.5s; will-change: transform }
+.dw-float-3 { animation: dw-float   8s  ease-in-out infinite 4s;   will-change: transform }
+.dw-glow    { animation: dw-glow    5s  ease-in-out infinite }
+.dw-glow-2  { animation: dw-glow    7s  ease-in-out infinite 2s }
+.dw-marquee { animation: dw-marquee 28s linear      infinite }
+.dw-dot-pulse { animation: dw-pulse 1.6s ease-in-out infinite }
+.dw-bar     { animation: dw-bar     .8s ease-out    backwards; transform-origin: bottom }
+.dw-progress{ animation: dw-prog    1.2s ease-out   .3s both }
