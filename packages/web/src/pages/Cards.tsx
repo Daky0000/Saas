@@ -1,12 +1,38 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Plus, Sparkles, Wand2,
   CheckCircle2, Loader2, RefreshCw, ChevronRight, ChevronDown, Download, Edit3,
   AlertCircle, Layers, Trash2, Clock, Image, LayoutTemplate,
-  Heart, Eye, Copy, Play, X, Video, Maximize2, Undo2, Redo2,
+  Heart, Eye, Copy, Play, X, Video, Maximize2,
+  RotateCcw, Lock, Share2, Languages,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
 import { getApiBaseUrl } from '../utils/apiBase';
+
+// ── Discover types & constants ────────────────────────────────────────────────
+
+type ModelFilter = 'all' | 'nanobanana' | 'seedance' | 'gptimage' | 'midjourney';
+type SortMode    = 'featured' | 'newest' | 'popular';
+type UseMode     = 'prompt' | 'ref';
+
+const MODEL_TABS: { id: ModelFilter; label: string; badge?: string }[] = [
+  { id: 'all',        label: 'All' },
+  { id: 'nanobanana', label: 'Nanobanana' },
+  { id: 'seedance',   label: 'Seedance 2.0', badge: 'NEW' },
+  { id: 'gptimage',   label: 'GPT Image' },
+  { id: 'midjourney', label: 'Midjourney' },
+];
+
+const ASPECT_RATIOS = ['1:1', '3:4', '4:5', '2:3', '9:16', '4:3', '5:4', '3:2', '16:9', '21:9', '9:21'] as const;
+
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(diff / 3_600_000);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -732,138 +758,149 @@ interface CardTemplate {
   like_count?: number;
 }
 
-// ── Preview modal ─────────────────────────────────────────────────────────────
+// ── Image preview modal ───────────────────────────────────────────────────────
 
-function PreviewModal({
+function ImagePreviewModal({
   tpl,
   onClose,
-  onUse,
+  onUseAsPrompt,
+  onUseAsRef,
 }: {
   tpl: CardTemplate;
   onClose: () => void;
-  onUse: () => void;
+  onUseAsPrompt: () => void;
+  onUseAsRef: () => void;
 }) {
-  const [liked, setLiked] = useState(false);
+  const [liked, setLiked]       = useState(false);
   const [likeCount, setLikeCount] = useState(tpl.like_count ?? 0);
   const [viewCount, setViewCount] = useState(tpl.view_count ?? 0);
+  const [copied, setCopied]     = useState(false);
 
-  // Track view on mount
   useEffect(() => {
     fetch(`${getApiBaseUrl()}/api/card-templates/${tpl.id}/view`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${tok()}` },
-    })
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setViewCount(d.view_count ?? viewCount); })
-      .catch(() => {});
+      method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
+    }).then(r => r.json()).then(d => { if (d.success) setViewCount(d.view_count ?? viewCount); }).catch(() => {});
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tpl.id]);
 
-  // Close on ESC
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
-
   const toggleLike = () => {
     fetch(`${getApiBaseUrl()}/api/card-templates/${tpl.id}/like`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${tok()}` },
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.success) {
-          setLiked(d.liked);
-          setLikeCount(d.like_count);
-        }
-      })
-      .catch(() => {});
-    setLiked((p) => !p);
-    setLikeCount((p) => liked ? p - 1 : p + 1);
+      method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
+    }).then(r => r.json()).then(d => {
+      if (d.success) { setLiked(d.liked); setLikeCount(d.like_count); }
+    }).catch(() => {});
+    setLiked(p => !p);
+    setLikeCount(p => liked ? p - 1 : p + 1);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
-      <div
-        className="relative bg-white rounded-3xl overflow-hidden shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col md:flex-row"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Close button */}
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white hover:bg-black/40 transition"
-        >
-          <X size={16} />
-        </button>
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(tpl.description || '').then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
 
-        {/* Left: image */}
-        <div className="md:w-1/2 bg-slate-900 flex items-center justify-center min-h-[260px]">
-          {tpl.coverImageUrl ? (
-            <img src={tpl.coverImageUrl} alt={tpl.name} className="w-full h-full object-contain max-h-[70vh]" />
-          ) : (
-            <div className="flex flex-col items-center gap-3 text-white/30 p-8">
-              <LayoutTemplate size={48} />
-              <p className="text-sm">No preview</p>
-            </div>
-          )}
+  const avatarColor = `hsl(${tpl.name.charCodeAt(0) * 37 % 360}, 55%, 45%)`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex bg-black/85 backdrop-blur-xl" onClick={onClose}>
+
+      {/* Top-right controls (over the image area) */}
+      <div className="absolute top-4 z-20 flex items-center gap-2" style={{ right: 'calc(288px + 16px)' }}>
+        <button type="button"
+          className="flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-semibold text-white transition">
+          <Download size={12} /> Save
+        </button>
+        {tpl.coverImageUrl && (
+          <a href={tpl.coverImageUrl} download target="_blank" rel="noreferrer"
+            onClick={e => e.stopPropagation()}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white transition">
+            <Download size={13} />
+          </a>
+        )}
+        <span className="flex items-center rounded-lg bg-white/10 px-2 py-1 text-[11px] text-white/60">esc</span>
+        <button type="button" onClick={onClose}
+          className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white transition">
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Left: image */}
+      <div className="flex-1 flex items-center justify-center p-8 md:p-16" onClick={e => e.stopPropagation()}>
+        {tpl.coverImageUrl ? (
+          <img src={tpl.coverImageUrl} alt={tpl.name}
+            className="max-h-[85vh] max-w-full object-contain rounded-2xl shadow-2xl" />
+        ) : (
+          <div className="w-64 aspect-[3/4] rounded-2xl bg-slate-800 flex items-center justify-center text-white/20">
+            <LayoutTemplate size={48} />
+          </div>
+        )}
+      </div>
+
+      {/* Right: info panel */}
+      <div className="w-72 bg-white flex flex-col shrink-0 overflow-hidden" onClick={e => e.stopPropagation()}>
+
+        {/* Creator header */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white text-sm font-bold"
+            style={{ background: avatarColor }}>
+            {tpl.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-slate-900 truncate">{tpl.name}</p>
+            <p className="text-[11px] text-slate-400 truncate">@{tpl.name.toLowerCase().replace(/\s+/g, '')}</p>
+          </div>
+          <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+            GPT Image
+          </span>
         </div>
 
-        {/* Right: details */}
-        <div className="md:w-1/2 p-6 md:p-8 flex flex-col gap-4 overflow-y-auto">
-          <div>
-            <h2 className="text-2xl font-black text-slate-900">{tpl.name}</h2>
-            {tpl.description && (
-              <p className="mt-2 text-sm text-slate-500 leading-relaxed">{tpl.description}</p>
-            )}
-          </div>
+        {/* Stats */}
+        <div className="flex items-center gap-4 px-4 py-2.5 border-b border-slate-100 text-xs text-slate-500">
+          <button type="button" onClick={toggleLike}
+            className={`flex items-center gap-1 transition ${liked ? 'text-red-500' : 'hover:text-red-400'}`}>
+            <Heart size={12} className={liked ? 'fill-red-500' : ''} />
+            {likeCount.toLocaleString()}
+          </button>
+          <span className="flex items-center gap-1"><Eye size={12} /> {viewCount.toLocaleString()}</span>
+          <span className="ml-auto text-[10px] text-slate-400">{timeAgo(tpl.createdAt)}</span>
+        </div>
 
-          {/* Stats */}
-          <div className="flex items-center gap-4 text-sm text-slate-500">
-            <span className="flex items-center gap-1.5">
-              <Eye size={14} /> {viewCount.toLocaleString()} views
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Heart size={14} className={liked ? 'fill-red-500 text-red-500' : ''} />
-              {likeCount.toLocaleString()} likes
-            </span>
-          </div>
+        {/* Scrollable prompt */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 text-[12px] text-slate-700 leading-relaxed">
+          {tpl.description
+            ? tpl.description
+            : <span className="text-slate-400 italic">No prompt available.</span>
+          }
+        </div>
 
-          {/* Actions */}
-          <div className="flex flex-wrap gap-3 mt-auto">
-            <button
-              type="button"
-              onClick={toggleLike}
-              className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
-                liked
-                  ? 'border-red-300 bg-red-50 text-red-500 hover:bg-red-100'
-                  : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              <Heart size={15} className={liked ? 'fill-red-500 text-red-500' : ''} />
-              {liked ? 'Liked' : 'Like'}
-            </button>
-            <button
-              type="button"
-              onClick={() => { onUse(); onClose(); }}
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 transition"
-            >
-              <Plus size={14} /> Use Template
-            </button>
-          </div>
+        {/* Translate + Copy */}
+        <div className="flex items-center gap-1 px-3 py-2 border-t border-slate-100">
+          <button type="button"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:bg-slate-50 transition">
+            <Languages size={11} /> Translate
+          </button>
+          <button type="button" onClick={copyPrompt}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:bg-slate-50 transition">
+            {copied ? <CheckCircle2 size={11} className="text-emerald-500" /> : <Copy size={11} />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
 
-          {tpl.coverImageUrl && (
-            <a
-              href={tpl.coverImageUrl}
-              download
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 transition"
-            >
-              <Download size={12} /> Download preview image
-            </a>
-          )}
+        {/* Action buttons */}
+        <div className="flex gap-2 px-4 py-3 border-t border-slate-100">
+          <button type="button"
+            onClick={() => { onUseAsPrompt(); onClose(); }}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
+            <RotateCcw size={11} /> Use as Prompt
+          </button>
+          <button type="button"
+            onClick={() => { onUseAsRef(); onClose(); }}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
+            Use as Ref
+          </button>
         </div>
       </div>
     </div>
@@ -872,17 +909,27 @@ function PreviewModal({
 
 // ── Discover card (masonry) ───────────────────────────────────────────────────
 
-function DiscoverCard({ tpl, onClick }: { tpl: CardTemplate; onClick: () => void }) {
+function DiscoverCard({
+  tpl,
+  onPreview,
+  onUseIdea,
+}: {
+  tpl: CardTemplate;
+  onPreview: () => void;
+  onUseIdea: (e: React.MouseEvent) => void;
+}) {
+  const avatarColor = `hsl(${tpl.name.charCodeAt(0) * 37 % 360}, 55%, 45%)`;
+
   return (
     <div
-      className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 shadow-sm hover:shadow-xl transition-all duration-200"
-      onClick={onClick}
+      className="group relative cursor-pointer overflow-hidden rounded-xl bg-slate-900"
+      onClick={onPreview}
     >
       {tpl.coverImageUrl ? (
         <img
           src={tpl.coverImageUrl}
           alt={tpl.name}
-          className="w-full h-auto block transition-transform duration-300 group-hover:scale-105"
+          className="w-full h-auto block transition-transform duration-300 group-hover:scale-[1.02]"
         />
       ) : (
         <div className="aspect-[4/5] flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900">
@@ -890,26 +937,42 @@ function DiscoverCard({ tpl, onClick }: { tpl: CardTemplate; onClick: () => void
         </div>
       )}
 
-      {/* Hover overlay */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-
-      <div className="absolute inset-x-0 bottom-0 p-3 translate-y-4 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-200">
-        <p className="text-sm font-bold text-white leading-snug truncate">{tpl.name}</p>
-        <div className="flex items-center justify-between mt-2">
-          <div className="flex items-center gap-3 text-[11px] text-white/70">
-            {(tpl.like_count ?? 0) > 0 && (
-              <span className="flex items-center gap-1">
-                <Heart size={10} /> {tpl.like_count}
-              </span>
-            )}
-            {(tpl.view_count ?? 0) > 0 && (
-              <span className="flex items-center gap-1">
-                <Eye size={10} /> {tpl.view_count}
-              </span>
-            )}
+      {/* Bottom info — slides up on hover */}
+      <div className="absolute inset-x-0 bottom-0 translate-y-full group-hover:translate-y-0 transition-transform duration-200 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-10 pb-3 px-3">
+        {/* Creator row */}
+        <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white text-[10px] font-bold"
+            style={{ background: avatarColor }}>
+            {tpl.name.charAt(0).toUpperCase()}
           </div>
-          <div className="flex items-center gap-1 rounded-full bg-[#5b6cf9] px-2.5 py-1 text-[10px] font-bold text-white">
-            <Plus size={9} /> Use Idea
+          <div className="min-w-0">
+            <p className="text-white text-[11px] font-bold leading-none truncate">{tpl.name}</p>
+            <p className="text-white/60 text-[10px] mt-0.5 truncate">@{tpl.name.toLowerCase().replace(/\s+/g, '')}</p>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="flex items-center gap-3 text-white/60 text-[10px] mb-2.5">
+          <span className="flex items-center gap-0.5"><Heart size={9} /> {(tpl.like_count ?? 0).toLocaleString()}</span>
+          <span className="flex items-center gap-0.5"><Eye size={9} /> {(tpl.view_count ?? 0).toLocaleString()}</span>
+          <span>{timeAgo(tpl.createdAt)}</span>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-between">
+          <button type="button" onClick={onUseIdea}
+            className="flex items-center gap-1.5 rounded-full bg-white/90 hover:bg-white px-3 py-1.5 text-[11px] font-bold text-slate-900 transition">
+            <RotateCcw size={10} /> Use Idea
+          </button>
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={e => e.stopPropagation()}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition">
+              <Layers size={12} />
+            </button>
+            <button type="button" onClick={e => e.stopPropagation()}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition">
+              <Share2 size={12} />
+            </button>
           </div>
         </div>
       </div>
@@ -1020,7 +1083,7 @@ function HistoryCard({ design, onDelete }: { design: UserDesign; onDelete: () =>
   );
 }
 
-// ── Template Generator Modal ──────────────────────────────────────────────────
+// ── Generate panel (inline right sidebar) ────────────────────────────────────
 
 const QUALITY_MODEL_MAP = {
   standard: { model: 'flux-1.1-pro',   credits: 5  },
@@ -1028,348 +1091,263 @@ const QUALITY_MODEL_MAP = {
   high:     { model: 'nano_banana_pro', credits: 12 },
 } as const;
 
-function TemplateGeneratorModal({
+function GeneratePanel({
   tpl,
+  useMode,
   onClose,
   onGenerated,
 }: {
   tpl: CardTemplate;
+  useMode: UseMode;
   onClose: () => void;
   onGenerated?: () => void;
 }) {
   const imgToPromptRef = useRef<HTMLInputElement>(null);
   const refUploadRef   = useRef<HTMLInputElement>(null);
 
-  const [prompt, setPrompt]         = useState(tpl.description || '');
-  const [imgPreview, setImgPreview] = useState<string | null>(tpl.coverImageUrl);
-  const [quality, setQuality]       = useState<'standard' | 'medium' | 'high'>('standard');
-  const [generating, setGenerating] = useState(false);
-  const [resultUrl, setResultUrl]   = useState<string | null>(null);
-  const [errorMsg, setErrorMsg]     = useState<string | null>(null);
-
-  const promptRef = useRef(prompt);
-  promptRef.current = prompt;
-  const qualityRef = useRef(quality);
-  qualityRef.current = quality;
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onClose(); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') doGenerate();
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [prompt, setPrompt]           = useState(tpl.description || '');
+  const [imgToPrompt, setImgToPrompt] = useState<string | null>(useMode === 'prompt' ? tpl.coverImageUrl : null);
+  const [refImage, setRefImage]       = useState<string | null>(useMode === 'ref'    ? tpl.coverImageUrl : null);
+  const [quality, setQuality]         = useState<'standard' | 'medium' | 'high'>('standard');
+  const [aspectRatio, setAspectRatio] = useState('auto');
+  const [resolution, setResolution]   = useState<'1k' | '2k' | '4k'>('2k');
+  const [batchCount]                  = useState(1);
+  const [aspectOpen, setAspectOpen]   = useState(false);
+  const [resOpen, setResOpen]         = useState(false);
+  const [generating, setGenerating]   = useState(false);
+  const [resultUrls, setResultUrls]   = useState<string[]>([]);
+  const [errorMsg, setErrorMsg]       = useState<string | null>(null);
 
   const handleImgToPromptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setImgPreview(reader.result as string);
-    reader.readAsDataURL(file);
+    const file = e.target.files?.[0]; if (!file) return;
+    const r = new FileReader(); r.onload = () => setImgToPrompt(r.result as string); r.readAsDataURL(file);
+  };
+  const handleRefUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const r = new FileReader(); r.onload = () => setRefImage(r.result as string); r.readAsDataURL(file);
   };
 
   const doGenerate = async () => {
-    const p = promptRef.current;
-    const q = qualityRef.current;
-    if (!p.trim() || generating) return;
-    setGenerating(true);
-    setErrorMsg(null);
-    setResultUrl(null);
+    if (!prompt.trim() || generating) return;
+    setGenerating(true); setErrorMsg(null); setResultUrls([]);
     try {
-      const { model } = QUALITY_MODEL_MAP[q];
+      const { model } = QUALITY_MODEL_MAP[quality];
       const res = await fetch(`${getApiBaseUrl()}/api/nova/generate-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
-        body: JSON.stringify({ prompt: p.trim(), model, save: true }),
+        body: JSON.stringify({ prompt: prompt.trim(), model, save: true }),
       });
       const d = await res.json();
       if (!d.success) throw new Error(d.error ?? 'Generation failed');
-      setResultUrl(d.url ?? null);
+      if (d.url) setResultUrls([d.url]);
       onGenerated?.();
     } catch (err: any) {
       setErrorMsg(err.message ?? 'Generation failed');
-    } finally {
-      setGenerating(false);
-    }
+    } finally { setGenerating(false); }
   };
 
   const { credits } = QUALITY_MODEL_MAP[quality];
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: '#ebebeb', fontFamily: 'Inter, sans-serif' }}>
-
-      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 bg-white border-b border-slate-200 px-4 h-12 shrink-0">
-        <button type="button" onClick={onClose}
-          className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100 transition text-slate-500">
-          <X size={16} />
-        </button>
-        <span className="text-sm font-semibold text-slate-800 truncate max-w-[180px]">{tpl.name}</span>
-        <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 font-medium">
-          Instagram Square <span className="text-slate-400 ml-1">1080×1080</span>
-          <ChevronDown size={11} className="ml-1 text-slate-400" />
-        </div>
-        <div className="flex items-center gap-0.5 ml-1">
-          <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100 transition text-slate-400">
-            <Undo2 size={14} />
+    <div className="flex flex-col h-full bg-white border-l border-slate-200 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
+        <span className="text-sm font-bold text-slate-800">Generate</span>
+        <div className="flex items-center gap-1">
+          <button type="button" className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 transition">
+            <Maximize2 size={13} />
           </button>
-          <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100 transition text-slate-400">
-            <Redo2 size={14} />
+          <button type="button" onClick={onClose} className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 transition">
+            <X size={13} />
           </button>
         </div>
-        <div className="flex-1" />
-        {resultUrl && (
-          <a href={resultUrl} download target="_blank" rel="noreferrer"
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
-            <Download size={12} /> PNG
-          </a>
-        )}
-        <button type="button"
-          className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition">
-          Save
-        </button>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* ── Left: Layers ────────────────────────────────────────────────── */}
-        <div className="w-44 bg-white border-r border-slate-200 flex flex-col shrink-0">
-          <div className="px-4 py-2.5 border-b border-slate-100">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Layers</span>
+      <div className="flex-1 overflow-y-auto">
+        {/* Image to Prompt */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition"
+          onClick={() => imgToPromptRef.current?.click()}>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+            <Image size={14} />
           </div>
-          {tpl.coverImageUrl ? (
-            <div className="p-2">
-              <div className="flex items-center gap-2 rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-2">
-                <Image size={11} className="text-slate-400 shrink-0" />
-                <span className="truncate text-[11px] font-medium text-slate-600">Cover Image</span>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center flex-1 gap-2 text-slate-300 p-4 text-center">
-              <Layers size={22} />
-              <p className="text-[10px]">No layers yet</p>
-              <p className="text-[10px] leading-tight">Add elements using the toolbar below</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-slate-700">Image to Prompt</p>
+            <p className="text-[10px] text-slate-400">Upload image to generate a prompt</p>
+          </div>
+          {imgToPrompt && (
+            <div className="relative">
+              <img src={imgToPrompt} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover border border-slate-200" />
+              <button type="button" onClick={e => { e.stopPropagation(); setImgToPrompt(null); }}
+                className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 text-white text-[8px]">✕</button>
             </div>
           )}
         </div>
+        <input ref={imgToPromptRef} type="file" accept="image/*" className="hidden" onChange={handleImgToPromptUpload} />
 
-        {/* ── Center: Artboard ────────────────────────────────────────────── */}
-        <div className="flex-1 relative flex flex-col items-center justify-center overflow-auto"
-          style={{ backgroundImage: 'radial-gradient(circle, #c8c8c8 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
-          <p className="absolute top-4 text-[11px] text-slate-400 pointer-events-none select-none">
-            {tpl.name} — 1080×1080.
-          </p>
+        {/* Drop or upload reference */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition"
+          onClick={() => refUploadRef.current?.click()}>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+            <Image size={14} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-slate-500">Drop or upload reference</p>
+            <p className="text-[10px] text-slate-400">optional</p>
+          </div>
+          {refImage ? (
+            <div className="relative">
+              <img src={refImage} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover border border-slate-200" />
+              <button type="button" onClick={e => { e.stopPropagation(); setRefImage(null); }}
+                className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 text-white text-[8px]">✕</button>
+            </div>
+          ) : (
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400">
+              <Plus size={12} />
+            </div>
+          )}
+        </div>
+        <input ref={refUploadRef} type="file" accept="image/*" className="hidden" onChange={handleRefUpload} />
 
-          {/* Artboard */}
-          <div className="relative bg-white shadow-xl" style={{ width: 440, height: 440 }}>
-            {resultUrl ? (
-              <img src={resultUrl} alt="Generated" className="w-full h-full object-cover" />
-            ) : tpl.coverImageUrl ? (
-              <img src={tpl.coverImageUrl} alt={tpl.name} className="w-full h-full object-contain" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-slate-200">
-                <LayoutTemplate size={56} />
-              </div>
-            )}
-            {generating && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 size={28} className="animate-spin text-[#5b6cf9]" />
-                  <p className="text-xs font-bold text-slate-700">Generating…</p>
-                </div>
+        {/* Prompt */}
+        <div className="px-4 pt-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-bold text-slate-700">Prompt</span>
+            <button type="button" className="text-slate-400 hover:text-slate-600 transition">
+              <Languages size={11} />
+            </button>
+          </div>
+          <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={8}
+            placeholder="Describe what you want to generate…"
+            className="w-full resize-none border-0 bg-transparent text-[11px] text-slate-800 placeholder-slate-300 outline-none leading-relaxed" />
+        </div>
+
+        {/* Enhance row */}
+        <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100">
+          <button type="button" className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition">
+            <Sparkles size={9} /> Enhance
+          </button>
+          <span className="text-[10px] text-slate-400 font-mono">⌘+↵</span>
+        </div>
+
+        {/* Controls row: batch / lock / aspect / resolution */}
+        <div className="flex items-center gap-2 px-4 py-2.5 border-t border-slate-100">
+          <button type="button" className="text-slate-400 hover:text-slate-700 text-xs font-bold px-0.5">−</button>
+          <span className="text-[11px] font-semibold text-slate-600">{batchCount}/4</span>
+          <div className="relative group/lock">
+            <button type="button" className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 transition">
+              <Lock size={11} />
+            </button>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/lock:block whitespace-nowrap rounded-lg bg-slate-800 px-2 py-1 text-[10px] text-white shadow-lg z-50 pointer-events-none">
+              Upgrade to unlock batch generation
+            </div>
+          </div>
+
+          {/* Aspect ratio */}
+          <div className="relative">
+            <button type="button" onClick={() => { setAspectOpen(o => !o); setResOpen(false); }}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600 hover:border-slate-300 transition">
+              <Maximize2 size={9} /> {aspectRatio === 'auto' ? 'Auto' : aspectRatio}
+            </button>
+            {aspectOpen && (
+              <div className="absolute top-full left-0 mt-1 z-50 w-24 rounded-xl border border-slate-200 bg-white shadow-xl overflow-auto max-h-64">
+                {['auto', ...ASPECT_RATIOS].map(r => (
+                  <button key={r} type="button" onClick={() => { setAspectRatio(r); setAspectOpen(false); }}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left hover:bg-slate-50 transition ${aspectRatio === r ? 'font-bold text-slate-900' : 'text-slate-600'}`}>
+                    {r === 'auto' ? 'Auto' : r}
+                  </button>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Floating toolbar */}
-          <div className="absolute bottom-12 flex items-center gap-0.5 rounded-2xl bg-white border border-slate-200 shadow-lg px-2.5 py-1.5">
-            {[
-              { label: '↖', title: 'Select' },
-              { label: 'T', title: 'Text', bold: true },
-              { icon: <Image size={14} />, title: 'Image' },
-              { icon: <div className="w-3 h-3 rounded-sm border-2 border-current" />, title: 'Shape' },
-            ].map((t, i) => (
-              <button key={i} type="button" title={t.title}
-                className={`flex h-8 w-8 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 transition text-sm ${(t as any).bold ? 'font-bold' : ''}`}>
-                {(t as any).icon ?? t.label}
+          {/* Resolution */}
+          <div className="relative">
+            <button type="button" onClick={() => { setResOpen(o => !o); setAspectOpen(false); }}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600 hover:border-slate-300 transition">
+              ↔ {resolution.toUpperCase()}
+            </button>
+            {resOpen && (
+              <div className="absolute top-full left-0 mt-1 z-50 w-52 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+                {[
+                  { key: '1k', label: '1K', desc: 'Recommended For Most Use Cases', locked: false },
+                  { key: '2k', label: '2K', desc: 'Higher Detail, Balanced',         locked: false },
+                  { key: '4k', label: '4K', desc: 'Upgrade to unlock 4K resolution', locked: true  },
+                ].map(r => (
+                  <button key={r.key} type="button" disabled={r.locked}
+                    onClick={() => { if (!r.locked) { setResolution(r.key as any); setResOpen(false); } }}
+                    className={`w-full flex flex-col text-left px-3 py-2.5 hover:bg-slate-50 transition disabled:cursor-not-allowed ${resolution === r.key ? 'bg-slate-50' : ''}`}>
+                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800">
+                      {r.label} {r.locked && <Lock size={9} className="text-slate-400" />}
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">{r.desc}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Quality */}
+        <div className="px-4 py-3 border-t border-slate-100">
+          <p className="text-[10px] text-slate-400 mb-2">Select quality</p>
+          <div className="flex gap-1.5">
+            {(['standard', 'medium', 'high'] as const).map(q => (
+              <button key={q} type="button" onClick={() => setQuality(q)}
+                className={`flex-1 rounded-full border py-1 text-[10px] font-semibold capitalize transition ${
+                  quality === q ? 'border-slate-800 bg-slate-900 text-white' : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                }`}>
+                {q.charAt(0).toUpperCase() + q.slice(1)}
               </button>
             ))}
           </div>
         </div>
 
-        {/* ── Right: Properties + Generate ────────────────────────────────── */}
-        <div className="w-72 bg-white border-l border-slate-200 flex flex-col shrink-0 overflow-y-auto">
-          <div className="px-4 py-2.5 border-b border-slate-100">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Properties</span>
+        {/* Model info */}
+        <div className="px-4 py-3 border-t border-slate-100 space-y-2">
+          <button type="button" className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition">
+            <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[8px]">?</span>
+            FAQ · Model features &amp; pricing ↗
+          </button>
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300 transition">
+            <Sparkles size={12} className="text-slate-500 shrink-0" />
+            <span className="flex-1 text-[11px] font-semibold text-slate-700">
+              {QUALITY_MODEL_MAP[quality].model === 'flux-1.1-pro' ? 'Flux 1.1 Pro' : 'Nano Banana Pro'}
+            </span>
+            <ChevronDown size={12} className="text-slate-400 shrink-0" />
           </div>
+        </div>
 
-          {/* Artboard background (decorative) */}
-          <div className="px-4 py-3 border-b border-slate-100">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Artboard Background</p>
-            <div className="flex gap-1 mb-3">
-              {['Solid', 'Gradient', 'Image'].map((t) => (
-                <button key={t} type="button"
-                  className={`flex-1 rounded-lg border py-1 text-[10px] font-semibold transition ${
-                    t === 'Solid'
-                      ? 'border-slate-300 bg-white text-slate-700 shadow-sm'
-                      : 'border-transparent text-slate-400 hover:text-slate-600'
-                  }`}>
-                  {t}
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] text-slate-400 mb-1.5">Background Color</p>
-            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300 transition">
-              <div className="h-4 w-4 rounded-sm border border-slate-200 bg-white" />
-              <span className="text-[11px] text-slate-500">Pick color</span>
-            </div>
-          </div>
+        {errorMsg && (
+          <div className="mx-4 mb-3 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-600">{errorMsg}</div>
+        )}
 
-          {/* Generate module */}
-          <div className="px-4 py-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-slate-800">Generate</span>
-              <button type="button" className="text-slate-400 hover:text-slate-600 transition">
-                <Maximize2 size={13} />
-              </button>
-            </div>
-
-            {/* Image to Prompt */}
-            <div
-              className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer hover:border-slate-300 transition"
-              onClick={() => imgToPromptRef.current?.click()}
-            >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
-                <Image size={14} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-semibold text-slate-700">Image to Prompt</p>
-                <p className="text-[10px] text-slate-400 truncate">Upload image to generate a prompt</p>
-              </div>
-              {imgPreview && (
-                <img src={imgPreview} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover border border-slate-200" />
-              )}
-            </div>
-            <input ref={imgToPromptRef} type="file" accept="image/*" className="hidden" onChange={handleImgToPromptUpload} />
-
-            {/* Drop or upload reference */}
-            <div
-              className="flex items-center gap-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer hover:border-slate-300 transition"
-              onClick={() => refUploadRef.current?.click()}
-            >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
-                <Image size={14} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-semibold text-slate-500">Drop or upload reference</p>
-                <p className="text-[10px] text-slate-400">optional</p>
-              </div>
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400">
-                <Plus size={12} />
-              </div>
-            </div>
-            <input ref={refUploadRef} type="file" accept="image/*" className="hidden" />
-
-            {/* Prompt */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[11px] font-bold text-slate-600">Prompt</span>
-                <button type="button" className="text-[10px] text-slate-400 hover:text-slate-600 transition font-medium">Aₐ</button>
-              </div>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={7}
-                placeholder="Describe what you want to generate…"
-                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9]/20 transition leading-relaxed"
-              />
-              <div className="flex items-center justify-between mt-1.5">
-                <button type="button" className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition">
-                  <Sparkles size={9} /> Enhance
-                </button>
-                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-medium">
-                  <span>- 1/4</span>
-                  <span className="flex items-center gap-0.5"><Maximize2 size={8} /> Auto</span>
-                  <span>2K</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Select quality */}
-            <div>
-              <p className="text-[10px] text-slate-400 mb-1.5">Select quality</p>
-              <div className="flex gap-1.5">
-                {(['standard', 'medium', 'high'] as const).map((q) => (
-                  <button key={q} type="button" onClick={() => setQuality(q)}
-                    className={`flex-1 rounded-full border py-1 text-[10px] font-semibold capitalize transition ${
-                      quality === q
-                        ? 'border-slate-800 bg-slate-900 text-white'
-                        : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
-                    }`}>
-                    {q.charAt(0).toUpperCase() + q.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Model info */}
-            <div className="space-y-2 pt-1">
-              <button type="button" className="text-[10px] text-slate-400 hover:text-slate-600 transition flex items-center gap-1">
-                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[8px]">?</span>
-                FAQ · Model features &amp; pricing ↗
-              </button>
-              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300 transition">
-                <Sparkles size={12} className="text-slate-500 shrink-0" />
-                <span className="flex-1 text-[11px] font-semibold text-slate-700">
-                  {QUALITY_MODEL_MAP[quality].model === 'flux-1.1-pro' ? 'Flux 1.1 Pro' : 'Nano Banana Pro'}
-                </span>
-                <ChevronDown size={12} className="text-slate-400 shrink-0" />
-              </div>
-            </div>
-
-            {errorMsg && (
-              <p className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-600">{errorMsg}</p>
-            )}
-
-            {resultUrl && !generating && (
-              <div className="space-y-2">
-                <div className="rounded-xl overflow-hidden border border-slate-200">
-                  <img src={resultUrl} alt="Generated" className="w-full" />
-                </div>
-                <div className="flex gap-1.5">
-                  <a href={resultUrl} download target="_blank" rel="noreferrer"
-                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition">
+        {resultUrls.length > 0 && (
+          <div className="px-4 pb-3 space-y-2">
+            {resultUrls.map((url, i) => (
+              <div key={i} className="rounded-xl overflow-hidden border border-slate-200">
+                <img src={url} alt="Generated" className="w-full" />
+                <div className="p-2 flex gap-1.5">
+                  <a href={url} download target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition">
                     <Download size={10} /> Download
                   </a>
-                  <button type="button" onClick={() => { setResultUrl(null); setErrorMsg(null); }}
-                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition">
+                  <button type="button" onClick={() => setResultUrls([])}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition">
                     <RefreshCw size={10} /> New
                   </button>
                 </div>
               </div>
-            )}
+            ))}
           </div>
-
-          {/* Generate button pinned to bottom */}
-          <div className="flex-1" />
-          <div className="p-4 border-t border-slate-100 bg-white sticky bottom-0">
-            <button type="button" disabled={!prompt.trim() || generating} onClick={doGenerate}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition active:scale-[0.98]">
-              {generating
-                ? <><Loader2 size={14} className="animate-spin" /> Generating…</>
-                : <><Sparkles size={14} /> Generate ✦{credits}</>
-              }
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* ── Bottom shortcuts bar ─────────────────────────────────────────────── */}
-      <div className="bg-white border-t border-slate-100 h-7 flex items-center gap-6 px-4 text-[10px] text-slate-400 shrink-0 select-none">
-        <span><span className="font-semibold text-slate-500">Esc</span> Close</span>
-        <span><span className="font-semibold text-slate-500">Ctrl+Enter</span> Generate</span>
+      {/* Generate button */}
+      <div className="px-4 py-3 border-t border-slate-100 shrink-0">
+        <button type="button" disabled={!prompt.trim() || generating} onClick={doGenerate}
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition active:scale-[0.98]">
+          {generating ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Sparkles size={14} /> Generate ✦{credits}</>}
+        </button>
       </div>
     </div>
   );
@@ -1379,7 +1357,10 @@ function TemplateGeneratorModal({
 
 const Cards = () => {
   const [tab, setTab]               = useState<MainTab>('studio');
-  const [generatorTpl, setGeneratorTpl] = useState<CardTemplate | null>(null);
+  const [modelFilter, setModelFilter] = useState<ModelFilter>('all');
+  const [sortBy, setSortBy]         = useState<SortMode>('featured');
+  const [generateTpl, setGenerateTpl] = useState<CardTemplate | null>(null);
+  const [generateMode, setGenerateMode] = useState<UseMode>('prompt');
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [templates, setTemplates]   = useState<CardTemplate[]>([]);
@@ -1411,15 +1392,21 @@ const Cards = () => {
 
   const handleDesignSaved = (_saved?: UserDesign) => { fetchDesigns(); };
 
-  if (generatorTpl) {
-    return (
-      <TemplateGeneratorModal
-        tpl={generatorTpl}
-        onClose={() => { setGeneratorTpl(null); fetchDesigns(); }}
-        onGenerated={fetchDesigns}
-      />
-    );
-  }
+  const filteredTemplates = useMemo(() => {
+    let list = [...templates];
+    if (modelFilter !== 'all') {
+      const labelMap: Record<ModelFilter, string> = {
+        all: '', nanobanana: 'nanobanana', seedance: 'seedance', gptimage: 'gpt', midjourney: 'midjourney',
+      };
+      const key = labelMap[modelFilter];
+      list = list.filter((t) =>
+        (t.name + ' ' + (t.description ?? '')).toLowerCase().includes(key)
+      );
+    }
+    if (sortBy === 'newest') list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    else if (sortBy === 'popular') list.sort((a, b) => ((b.view_count ?? 0) + (b.like_count ?? 0)) - ((a.view_count ?? 0) + (a.like_count ?? 0)));
+    return list;
+  }, [templates, modelFilter, sortBy]);
 
   return (
     <div className="space-y-6">
@@ -1461,28 +1448,93 @@ const Cards = () => {
       {tab === 'studio' ? (
         <AIStudio onDesignSaved={handleDesignSaved} />
       ) : tab === 'discover' ? (
-        <div>
-          {loadingTemplates ? (
-            <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
-              <Loader2 size={16} className="animate-spin" /> Loading templates…
-            </div>
-          ) : templates.length === 0 ? (
-            <div className="rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center py-16 gap-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
-                <LayoutTemplate size={24} className="text-slate-400" />
-              </div>
-              <p className="font-bold text-slate-700">No templates yet</p>
-              <p className="text-sm text-slate-400">Admin-published templates will appear here.</p>
-            </div>
-          ) : (
-            <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-4">
-              {templates.map((tpl) => (
-                <div key={tpl.id} className="break-inside-avoid mb-4">
-                  <DiscoverCard tpl={tpl} onClick={() => setPreviewTpl(tpl)} />
-                </div>
+        <div className="space-y-4">
+          {/* Model filter tabs */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {MODEL_TABS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setModelFilter(m.id)}
+                className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                  modelFilter === m.id
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {m.label}
+                {m.badge && (
+                  <span className="rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none">
+                    {m.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+            <div className="ml-auto flex items-center gap-1">
+              {(['featured', 'newest', 'popular'] as SortMode[]).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSortBy(s)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition ${
+                    sortBy === s
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {s}
+                </button>
               ))}
             </div>
-          )}
+          </div>
+
+          {/* Gallery + inline generate panel */}
+          <div className="flex gap-4 items-start">
+            {/* Masonry gallery */}
+            <div className="flex-1 min-w-0">
+              {loadingTemplates ? (
+                <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
+                  <Loader2 size={16} className="animate-spin" /> Loading templates…
+                </div>
+              ) : filteredTemplates.length === 0 ? (
+                <div className="rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center py-16 gap-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                    <LayoutTemplate size={24} className="text-slate-400" />
+                  </div>
+                  <p className="font-bold text-slate-700">No templates yet</p>
+                  <p className="text-sm text-slate-400">Admin-published templates will appear here.</p>
+                </div>
+              ) : (
+                <div className={`gap-4 ${generateTpl ? 'columns-2 sm:columns-2 lg:columns-3' : 'columns-2 sm:columns-3 lg:columns-4 xl:columns-5'}`}>
+                  {filteredTemplates.map((tpl) => (
+                    <div key={tpl.id} className="break-inside-avoid mb-4">
+                      <DiscoverCard
+                        tpl={tpl}
+                        onPreview={() => setPreviewTpl(tpl)}
+                        onUseIdea={(e) => {
+                          e.stopPropagation();
+                          setGenerateTpl(tpl);
+                          setGenerateMode('prompt');
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Inline generate panel */}
+            {generateTpl && (
+              <div className="w-80 shrink-0 sticky top-4">
+                <GeneratePanel
+                  tpl={generateTpl}
+                  useMode={generateMode}
+                  onClose={() => setGenerateTpl(null)}
+                  onGenerated={() => { fetchDesigns(); }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div>
@@ -1526,10 +1578,21 @@ const Cards = () => {
 
       {/* Preview modal */}
       {previewTpl && (
-        <PreviewModal
+        <ImagePreviewModal
           tpl={previewTpl}
           onClose={() => setPreviewTpl(null)}
-          onUse={() => { setGeneratorTpl(previewTpl); setPreviewTpl(null); }}
+          onUseAsPrompt={() => {
+            setGenerateTpl(previewTpl);
+            setGenerateMode('prompt');
+            setPreviewTpl(null);
+            setTab('discover');
+          }}
+          onUseAsRef={() => {
+            setGenerateTpl(previewTpl);
+            setGenerateMode('ref');
+            setPreviewTpl(null);
+            setTab('discover');
+          }}
         />
       )}
     </div>
