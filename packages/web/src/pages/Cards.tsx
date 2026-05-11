@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Plus, Sparkles, Wand2,
-  CheckCircle2, Loader2, RefreshCw, ChevronRight, Download, Edit3,
-  AlertCircle, Layers, Pencil, Trash2, Clock, Image, LayoutTemplate,
-  Heart, Eye, Copy, Play, X, Video,
+  CheckCircle2, Loader2, RefreshCw, ChevronRight, ChevronDown, Download, Edit3,
+  AlertCircle, Layers, Trash2, Clock, Image, LayoutTemplate,
+  Heart, Eye, Copy, Play, X, Video, Maximize2, Undo2, Redo2,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
-import CardBuilderModal from '../components/cards/builder/CardBuilderModal';
 import { getApiBaseUrl } from '../utils/apiBase';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -922,18 +921,9 @@ function DiscoverCard({ tpl, onClick }: { tpl: CardTemplate; onClick: () => void
 
 type MainTab = 'studio' | 'discover' | 'history';
 
-function HistoryCard({ design, onOpen, onDelete }: { design: UserDesign; onOpen: () => void; onDelete: () => void }) {
+function HistoryCard({ design, onDelete }: { design: UserDesign; onDelete: () => void }) {
   const [deleting, setDeleting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const isAiImage = !!(design as any).canvas_data && (() => {
-    try {
-      const d = typeof (design as any).canvas_data === 'string'
-        ? JSON.parse((design as any).canvas_data)
-        : (design as any).canvas_data;
-      return d?.type === 'ai_image' || d?.type === 'ai_video';
-    } catch { return false; }
-  })();
-
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -962,7 +952,7 @@ function HistoryCard({ design, onOpen, onDelete }: { design: UserDesign; onOpen:
   return (
     <div
       className="group relative cursor-pointer overflow-hidden rounded-2xl bg-slate-900 shadow-sm hover:shadow-xl transition-all duration-200"
-      onClick={isAiImage ? undefined : onOpen}
+
     >
       {design.thumbnail_url ? (
         <img
@@ -1006,17 +996,6 @@ function HistoryCard({ design, onOpen, onDelete }: { design: UserDesign; onOpen:
             <Download size={12} />
           </a>
         )}
-        {/* Edit (only for canvas designs) */}
-        {!isAiImage && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpen(); }}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white transition"
-            title="Edit"
-          >
-            <Pencil size={13} />
-          </button>
-        )}
         {/* Delete */}
         <button
           type="button"
@@ -1041,17 +1020,370 @@ function HistoryCard({ design, onOpen, onDelete }: { design: UserDesign; onOpen:
   );
 }
 
+// ── Template Generator Modal ──────────────────────────────────────────────────
+
+const QUALITY_MODEL_MAP = {
+  standard: { model: 'flux-1.1-pro',   credits: 5  },
+  medium:   { model: 'nano_banana_pro', credits: 8  },
+  high:     { model: 'nano_banana_pro', credits: 12 },
+} as const;
+
+function TemplateGeneratorModal({
+  tpl,
+  onClose,
+  onGenerated,
+}: {
+  tpl: CardTemplate;
+  onClose: () => void;
+  onGenerated?: () => void;
+}) {
+  const imgToPromptRef = useRef<HTMLInputElement>(null);
+  const refUploadRef   = useRef<HTMLInputElement>(null);
+
+  const [prompt, setPrompt]         = useState(tpl.description || '');
+  const [imgPreview, setImgPreview] = useState<string | null>(tpl.coverImageUrl);
+  const [quality, setQuality]       = useState<'standard' | 'medium' | 'high'>('standard');
+  const [generating, setGenerating] = useState(false);
+  const [resultUrl, setResultUrl]   = useState<string | null>(null);
+  const [errorMsg, setErrorMsg]     = useState<string | null>(null);
+
+  const promptRef = useRef(prompt);
+  promptRef.current = prompt;
+  const qualityRef = useRef(quality);
+  qualityRef.current = quality;
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') doGenerate();
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleImgToPromptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setImgPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const doGenerate = async () => {
+    const p = promptRef.current;
+    const q = qualityRef.current;
+    if (!p.trim() || generating) return;
+    setGenerating(true);
+    setErrorMsg(null);
+    setResultUrl(null);
+    try {
+      const { model } = QUALITY_MODEL_MAP[q];
+      const res = await fetch(`${getApiBaseUrl()}/api/nova/generate-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ prompt: p.trim(), model, save: true }),
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error ?? 'Generation failed');
+      setResultUrl(d.url ?? null);
+      onGenerated?.();
+    } catch (err: any) {
+      setErrorMsg(err.message ?? 'Generation failed');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const { credits } = QUALITY_MODEL_MAP[quality];
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: '#ebebeb', fontFamily: 'Inter, sans-serif' }}>
+
+      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 bg-white border-b border-slate-200 px-4 h-12 shrink-0">
+        <button type="button" onClick={onClose}
+          className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100 transition text-slate-500">
+          <X size={16} />
+        </button>
+        <span className="text-sm font-semibold text-slate-800 truncate max-w-[180px]">{tpl.name}</span>
+        <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 font-medium">
+          Instagram Square <span className="text-slate-400 ml-1">1080×1080</span>
+          <ChevronDown size={11} className="ml-1 text-slate-400" />
+        </div>
+        <div className="flex items-center gap-0.5 ml-1">
+          <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100 transition text-slate-400">
+            <Undo2 size={14} />
+          </button>
+          <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100 transition text-slate-400">
+            <Redo2 size={14} />
+          </button>
+        </div>
+        <div className="flex-1" />
+        {resultUrl && (
+          <a href={resultUrl} download target="_blank" rel="noreferrer"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+            <Download size={12} /> PNG
+          </a>
+        )}
+        <button type="button"
+          className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition">
+          Save
+        </button>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* ── Left: Layers ────────────────────────────────────────────────── */}
+        <div className="w-44 bg-white border-r border-slate-200 flex flex-col shrink-0">
+          <div className="px-4 py-2.5 border-b border-slate-100">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Layers</span>
+          </div>
+          {tpl.coverImageUrl ? (
+            <div className="p-2">
+              <div className="flex items-center gap-2 rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-2">
+                <Image size={11} className="text-slate-400 shrink-0" />
+                <span className="truncate text-[11px] font-medium text-slate-600">Cover Image</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center flex-1 gap-2 text-slate-300 p-4 text-center">
+              <Layers size={22} />
+              <p className="text-[10px]">No layers yet</p>
+              <p className="text-[10px] leading-tight">Add elements using the toolbar below</p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Center: Artboard ────────────────────────────────────────────── */}
+        <div className="flex-1 relative flex flex-col items-center justify-center overflow-auto"
+          style={{ backgroundImage: 'radial-gradient(circle, #c8c8c8 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
+          <p className="absolute top-4 text-[11px] text-slate-400 pointer-events-none select-none">
+            {tpl.name} — 1080×1080.
+          </p>
+
+          {/* Artboard */}
+          <div className="relative bg-white shadow-xl" style={{ width: 440, height: 440 }}>
+            {resultUrl ? (
+              <img src={resultUrl} alt="Generated" className="w-full h-full object-cover" />
+            ) : tpl.coverImageUrl ? (
+              <img src={tpl.coverImageUrl} alt={tpl.name} className="w-full h-full object-contain" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-200">
+                <LayoutTemplate size={56} />
+              </div>
+            )}
+            {generating && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 size={28} className="animate-spin text-[#5b6cf9]" />
+                  <p className="text-xs font-bold text-slate-700">Generating…</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Floating toolbar */}
+          <div className="absolute bottom-12 flex items-center gap-0.5 rounded-2xl bg-white border border-slate-200 shadow-lg px-2.5 py-1.5">
+            {[
+              { label: '↖', title: 'Select' },
+              { label: 'T', title: 'Text', bold: true },
+              { icon: <Image size={14} />, title: 'Image' },
+              { icon: <div className="w-3 h-3 rounded-sm border-2 border-current" />, title: 'Shape' },
+            ].map((t, i) => (
+              <button key={i} type="button" title={t.title}
+                className={`flex h-8 w-8 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 transition text-sm ${(t as any).bold ? 'font-bold' : ''}`}>
+                {(t as any).icon ?? t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Right: Properties + Generate ────────────────────────────────── */}
+        <div className="w-72 bg-white border-l border-slate-200 flex flex-col shrink-0 overflow-y-auto">
+          <div className="px-4 py-2.5 border-b border-slate-100">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Properties</span>
+          </div>
+
+          {/* Artboard background (decorative) */}
+          <div className="px-4 py-3 border-b border-slate-100">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Artboard Background</p>
+            <div className="flex gap-1 mb-3">
+              {['Solid', 'Gradient', 'Image'].map((t) => (
+                <button key={t} type="button"
+                  className={`flex-1 rounded-lg border py-1 text-[10px] font-semibold transition ${
+                    t === 'Solid'
+                      ? 'border-slate-300 bg-white text-slate-700 shadow-sm'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400 mb-1.5">Background Color</p>
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300 transition">
+              <div className="h-4 w-4 rounded-sm border border-slate-200 bg-white" />
+              <span className="text-[11px] text-slate-500">Pick color</span>
+            </div>
+          </div>
+
+          {/* Generate module */}
+          <div className="px-4 py-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-slate-800">Generate</span>
+              <button type="button" className="text-slate-400 hover:text-slate-600 transition">
+                <Maximize2 size={13} />
+              </button>
+            </div>
+
+            {/* Image to Prompt */}
+            <div
+              className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer hover:border-slate-300 transition"
+              onClick={() => imgToPromptRef.current?.click()}
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
+                <Image size={14} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold text-slate-700">Image to Prompt</p>
+                <p className="text-[10px] text-slate-400 truncate">Upload image to generate a prompt</p>
+              </div>
+              {imgPreview && (
+                <img src={imgPreview} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover border border-slate-200" />
+              )}
+            </div>
+            <input ref={imgToPromptRef} type="file" accept="image/*" className="hidden" onChange={handleImgToPromptUpload} />
+
+            {/* Drop or upload reference */}
+            <div
+              className="flex items-center gap-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer hover:border-slate-300 transition"
+              onClick={() => refUploadRef.current?.click()}
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                <Image size={14} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold text-slate-500">Drop or upload reference</p>
+                <p className="text-[10px] text-slate-400">optional</p>
+              </div>
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400">
+                <Plus size={12} />
+              </div>
+            </div>
+            <input ref={refUploadRef} type="file" accept="image/*" className="hidden" />
+
+            {/* Prompt */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-bold text-slate-600">Prompt</span>
+                <button type="button" className="text-[10px] text-slate-400 hover:text-slate-600 transition font-medium">Aₐ</button>
+              </div>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={7}
+                placeholder="Describe what you want to generate…"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9]/20 transition leading-relaxed"
+              />
+              <div className="flex items-center justify-between mt-1.5">
+                <button type="button" className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition">
+                  <Sparkles size={9} /> Enhance
+                </button>
+                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-medium">
+                  <span>- 1/4</span>
+                  <span className="flex items-center gap-0.5"><Maximize2 size={8} /> Auto</span>
+                  <span>2K</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Select quality */}
+            <div>
+              <p className="text-[10px] text-slate-400 mb-1.5">Select quality</p>
+              <div className="flex gap-1.5">
+                {(['standard', 'medium', 'high'] as const).map((q) => (
+                  <button key={q} type="button" onClick={() => setQuality(q)}
+                    className={`flex-1 rounded-full border py-1 text-[10px] font-semibold capitalize transition ${
+                      quality === q
+                        ? 'border-slate-800 bg-slate-900 text-white'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                    }`}>
+                    {q.charAt(0).toUpperCase() + q.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Model info */}
+            <div className="space-y-2 pt-1">
+              <button type="button" className="text-[10px] text-slate-400 hover:text-slate-600 transition flex items-center gap-1">
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[8px]">?</span>
+                FAQ · Model features &amp; pricing ↗
+              </button>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300 transition">
+                <Sparkles size={12} className="text-slate-500 shrink-0" />
+                <span className="flex-1 text-[11px] font-semibold text-slate-700">
+                  {QUALITY_MODEL_MAP[quality].model === 'flux-1.1-pro' ? 'Flux 1.1 Pro' : 'Nano Banana Pro'}
+                </span>
+                <ChevronDown size={12} className="text-slate-400 shrink-0" />
+              </div>
+            </div>
+
+            {errorMsg && (
+              <p className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-600">{errorMsg}</p>
+            )}
+
+            {resultUrl && !generating && (
+              <div className="space-y-2">
+                <div className="rounded-xl overflow-hidden border border-slate-200">
+                  <img src={resultUrl} alt="Generated" className="w-full" />
+                </div>
+                <div className="flex gap-1.5">
+                  <a href={resultUrl} download target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition">
+                    <Download size={10} /> Download
+                  </a>
+                  <button type="button" onClick={() => { setResultUrl(null); setErrorMsg(null); }}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition">
+                    <RefreshCw size={10} /> New
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Generate button pinned to bottom */}
+          <div className="flex-1" />
+          <div className="p-4 border-t border-slate-100 bg-white sticky bottom-0">
+            <button type="button" disabled={!prompt.trim() || generating} onClick={doGenerate}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition active:scale-[0.98]">
+              {generating
+                ? <><Loader2 size={14} className="animate-spin" /> Generating…</>
+                : <><Sparkles size={14} /> Generate ✦{credits}</>
+              }
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Bottom shortcuts bar ─────────────────────────────────────────────── */}
+      <div className="bg-white border-t border-slate-100 h-7 flex items-center gap-6 px-4 text-[10px] text-slate-400 shrink-0 select-none">
+        <span><span className="font-semibold text-slate-500">Esc</span> Close</span>
+        <span><span className="font-semibold text-slate-500">Ctrl+Enter</span> Generate</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const Cards = () => {
   const [tab, setTab]               = useState<MainTab>('studio');
-  const [builderOpen, setBuilderOpen] = useState(false);
-  const [editingDesign, setEditingDesign] = useState<UserDesign | null>(null);
+  const [generatorTpl, setGeneratorTpl] = useState<CardTemplate | null>(null);
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [templates, setTemplates]   = useState<CardTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [templateCanvas, setTemplateCanvas] = useState<{ fabricJson: Record<string, unknown>; canvasWidth?: number; canvasHeight?: number } | null>(null);
   const [previewTpl, setPreviewTpl] = useState<CardTemplate | null>(null);
 
   const fetchDesigns = useCallback(async () => {
@@ -1077,21 +1409,14 @@ const Cards = () => {
 
   useEffect(() => { fetchDesigns(); fetchTemplates(); }, [fetchDesigns, fetchTemplates]);
 
-  const openNewDesign = () => { setTemplateCanvas(null); setEditingDesign(null); setBuilderOpen(true); };
-  const openDesign    = (d: UserDesign) => { setTemplateCanvas(null); setEditingDesign(d); setBuilderOpen(true); };
-  const openTemplate  = (tpl: CardTemplate) => { setEditingDesign(null); setTemplateCanvas(tpl.designData as { fabricJson: Record<string, unknown>; canvasWidth?: number; canvasHeight?: number }); setBuilderOpen(true); };
+  const handleDesignSaved = (_saved?: UserDesign) => { fetchDesigns(); };
 
-  const handleBuilderClose = () => { setBuilderOpen(false); setEditingDesign(null); setTemplateCanvas(null); fetchDesigns(); };
-  const handleDesignSaved  = (_saved: UserDesign) => { fetchDesigns(); };
-
-  if (builderOpen) {
+  if (generatorTpl) {
     return (
-      <CardBuilderModal
-        existingDesign={editingDesign}
-        initialCanvasData={templateCanvas}
-        initialDesignName={undefined}
-        onClose={handleBuilderClose}
-        onSaved={handleDesignSaved}
+      <TemplateGeneratorModal
+        tpl={generatorTpl}
+        onClose={() => { setGeneratorTpl(null); fetchDesigns(); }}
+        onGenerated={fetchDesigns}
       />
     );
   }
@@ -1182,13 +1507,6 @@ const Cards = () => {
                 >
                   <Sparkles size={14} /> AI Studio
                 </button>
-                <button
-                  type="button"
-                  onClick={openNewDesign}
-                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
-                >
-                  <Plus size={14} /> Blank Canvas
-                </button>
               </div>
             </div>
           ) : (
@@ -1197,7 +1515,6 @@ const Cards = () => {
                 <div key={d.id} className="break-inside-avoid mb-4">
                   <HistoryCard
                     design={d}
-                    onOpen={() => openDesign(d)}
                     onDelete={() => setMyDesigns((prev) => prev.filter((x) => x.id !== d.id))}
                   />
                 </div>
@@ -1212,7 +1529,7 @@ const Cards = () => {
         <PreviewModal
           tpl={previewTpl}
           onClose={() => setPreviewTpl(null)}
-          onUse={() => openTemplate(previewTpl)}
+          onUse={() => { setGeneratorTpl(previewTpl); setPreviewTpl(null); }}
         />
       )}
     </div>
