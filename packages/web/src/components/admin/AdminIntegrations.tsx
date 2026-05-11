@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle, ExternalLink, Loader2, Power, SlidersHorizontal, TestTube2, X } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
+import { PlatformLogo } from '../PlatformLogo';
 
 type PlatformField = {
   id: string;
@@ -14,8 +15,6 @@ type PlatformDef = {
   id: string;
   name: string;
   description: string;
-  icon: string;
-  accentClass: string;
   fields: PlatformField[];
   docsUrl: string;
   redirectHint: string;
@@ -45,8 +44,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'wordpress',
     name: 'WordPress',
     description: 'Enable or disable WordPress connections. Users connect with Application Passwords.',
-    icon: 'WP',
-    accentClass: 'bg-slate-100 text-slate-800 font-black',
     fields: [],
     docsUrl: 'https://developer.wordpress.org/rest-api/reference/',
     redirectHint: 'No OAuth redirect needed (Application Password).',
@@ -55,8 +52,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'facebook',
     name: 'Facebook (Meta)',
     description: 'OAuth credentials for Facebook Graph API — pages, publishing, and webhooks.',
-    icon: 'f',
-    accentClass: 'bg-[#1877F2] text-white font-black',
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'From Meta for Developers → App settings.' },
       { id: 'appSecret', label: 'App Secret', placeholder: 'Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
@@ -69,8 +64,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'instagram',
     name: 'Instagram',
     description: 'OAuth credentials for Instagram Basic Display API — publishing and engagement metrics.',
-    icon: 'IG',
-    accentClass: 'bg-gradient-to-br from-[#f58529] via-[#dd2a7b] to-[#8134af] text-white font-black',
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Instagram / Meta App ID', type: 'text', helpText: 'From Meta for Developers. Can be the same app as Facebook.' },
       { id: 'appSecret', label: 'App Secret', placeholder: 'Instagram / Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
@@ -83,8 +76,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'linkedin',
     name: 'LinkedIn',
     description: 'OAuth credentials for publishing UGC posts and analytics.',
-    icon: 'in',
-    accentClass: 'bg-[#0A66C2] text-white font-black',
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'LinkedIn Client ID', type: 'text', helpText: 'From LinkedIn Developer Portal.' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'LinkedIn Client Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
@@ -97,8 +88,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'twitter',
     name: 'X (Twitter)',
     description: 'OAuth 2.0 + PKCE credentials for posting tweets via API v2.',
-    icon: 'X',
-    accentClass: 'bg-black text-white font-black',
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'X OAuth Client ID', type: 'text', helpText: 'From developer.x.com project/app settings.' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'X OAuth Client Secret (optional)', type: 'password', helpText: 'Some setups use PKCE without client secret; include if required by your app.' },
@@ -111,8 +100,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'pinterest',
     name: 'Pinterest',
     description: 'OAuth credentials for creating Pins and listing boards.',
-    icon: 'P',
-    accentClass: 'bg-[#E60023] text-white font-black',
     fields: [
       { id: 'clientId', label: 'App ID', placeholder: 'Pinterest App ID', type: 'text', helpText: 'From developers.pinterest.com app settings.' },
       { id: 'clientSecret', label: 'App Secret', placeholder: 'Pinterest App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
@@ -125,8 +112,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'tiktok',
     name: 'TikTok',
     description: 'OAuth credentials for publishing photo posts and video drafts via Content Posting API.',
-    icon: 'TT',
-    accentClass: 'bg-black text-white font-black',
     fields: [
       { id: 'clientKey', label: 'Client Key', placeholder: 'TikTok Client Key', type: 'text', helpText: 'From developers.tiktok.com → your app → App info. This is the "Client Key" (not Client ID).' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'TikTok Client Secret', type: 'password', helpText: 'Keep this secret. From developers.tiktok.com → your app → App info.' },
@@ -139,8 +124,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'threads',
     name: 'Threads',
     description: 'OAuth credentials for publishing posts to Threads and syncing insights (Meta Graph API).',
-    icon: '@',
-    accentClass: 'bg-black text-white font-black',
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Meta / Threads App ID', type: 'text', helpText: 'From Meta for Developers. Same app can cover Facebook + Instagram + Threads.' },
       { id: 'appSecret', label: 'App Secret', placeholder: 'Meta / Threads App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
@@ -153,8 +136,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'mailchimp',
     name: 'Mailchimp',
     description: 'API key for connecting user Mailchimp accounts to sync contacts and campaigns.',
-    icon: 'MC',
-    accentClass: 'bg-[#FFE01B] text-black font-black',
     fields: [],
     docsUrl: 'https://mailchimp.com/developer/',
     redirectHint: 'No OAuth needed — users connect with their own Mailchimp API key in the Integrations page.',
@@ -163,8 +144,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'hubtel',
     name: 'Hubtel (Payments)',
     description: 'Hubtel payment gateway credentials for processing GHS subscription payments.',
-    icon: '₵',
-    accentClass: 'bg-[#00539B] text-white font-black',
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'Hubtel Client ID', type: 'text', helpText: 'From Hubtel merchant dashboard → API credentials.' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'Hubtel Client Secret', type: 'password', helpText: 'Keep this secret. Used server-side for payment initiation.' },
@@ -177,8 +156,6 @@ const PLATFORMS: PlatformDef[] = [
     id: 'stripe',
     name: 'Stripe (Subscriptions)',
     description: 'Stripe credentials for SaaS subscription billing, checkout, and the customer portal.',
-    icon: 'S',
-    accentClass: 'bg-[#635BFF] text-white font-black',
     fields: [
       { id: 'secretKey', label: 'Secret Key', placeholder: 'sk_live_... or sk_test_...', type: 'password', helpText: 'From Stripe Dashboard → Developers → API keys. Never expose this to the browser.' },
       { id: 'publishableKey', label: 'Publishable Key', placeholder: 'pk_live_... or pk_test_...', type: 'text', helpText: 'Safe to expose client-side. Used if you add Stripe.js elements in future.' },
@@ -341,7 +318,7 @@ export default function AdminIntegrations() {
                 className={`rounded-[20px] border bg-white p-5 transition-all ${isEnabled ? 'border-emerald-200 shadow-sm' : 'border-slate-200'}`}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className={`flex h-12 w-12 items-center justify-center rounded-xl text-sm ${p.accentClass}`}>{p.icon}</div>
+                  <PlatformLogo platform={p.id} size={44} />
                   <button
                     type="button"
                     onClick={() => void toggle(p.id, !isEnabled)}

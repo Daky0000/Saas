@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { PlatformLogo } from '../components/PlatformLogo';
 import {
   BarChart2, ChevronRight, Copy, ExternalLink, Flag, Filter,
   Link2, Loader2, Megaphone, Play, Pause, Plus,
@@ -70,6 +71,29 @@ function getShortLink(link: UtmLink): string {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ChannelIcon({ value, size = 32 }: { value: string; size?: number }) {
+  if (value === 'email') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="16" fill="#6366F1" />
+        <rect x="7" y="11" width="18" height="12" rx="2" stroke="white" strokeWidth="1.5" />
+        <path d="M7 13.5l9 5.5 9-5.5" stroke="white" strokeWidth="1.5" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (value === 'landing_page') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="16" fill="#10B981" />
+        <rect x="7" y="10" width="18" height="13" rx="2" stroke="white" strokeWidth="1.5" />
+        <path d="M7 14.5h18" stroke="white" strokeWidth="1.5" />
+        <path d="M10.5 18.5h7M10.5 21h5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return <PlatformLogo platform={value} size={size} />;
+}
 
 function StatusBadge({ status }: { status: CampaignStatus }) {
   return (
@@ -287,7 +311,7 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
                   const active = selectedChannels.includes(ch.value);
                   return (
                     <button key={ch.value} onClick={() => toggleChannel(ch.value)} className={`flex items-center gap-3 rounded-2xl border p-3.5 text-left transition-all ${active ? 'border-slate-950 bg-slate-950' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                      <span className="flex h-8 w-8 items-center justify-center rounded-xl text-white text-xs font-bold" style={{ backgroundColor: ch.color }}>{ch.label[0]}</span>
+                      <ChannelIcon value={ch.value} size={32} />
                       <span className={`text-sm font-semibold ${active ? 'text-white' : 'text-slate-800'}`}>{ch.label}</span>
                     </button>
                   );
