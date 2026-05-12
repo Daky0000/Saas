@@ -15,7 +15,7 @@ import AdminBillingDashboard from '../components/admin/AdminBillingDashboard';
 import AdminApify from '../components/admin/AdminApify';
 import AdminLearn from '../components/admin/AdminLearn';
 import AdminAgents from '../components/admin/AdminAgents';
-import AdminHiggsfield from '../components/admin/AdminHiggsfield';
+import AdminMagnific from '../components/admin/AdminMagnific';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -44,7 +44,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'apify'
     | 'learn'
     | 'agents'
-    | 'higgsfield';
+    | 'magnific';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -68,7 +68,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     apify: '/admin/apify',
     learn: '/admin/learn',
     agents: '/admin/agents',
-    higgsfield: '/admin/higgsfield',
+    magnific: '/admin/magnific',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -79,7 +79,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents' || window.location.pathname === '/admin/higgsfield');
+  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents' || window.location.pathname === '/admin/magnific');
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -117,11 +117,11 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
     { id: 'learn', label: 'Daky Learn', icon: BookOpen },
     { id: 'agents', label: 'Agent Team', icon: Users },
-    { id: 'higgsfield', label: 'Higgsfield AI', icon: Wand2 },
+    { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents' || activeTab === 'higgsfield';
+  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents' || activeTab === 'magnific';
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -383,7 +383,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'apify' && <AdminApify />}
             {activeTab === 'learn' && <AdminLearn />}
             {activeTab === 'agents' && <AdminAgents />}
-            {activeTab === 'higgsfield' && <AdminHiggsfield />}
+            {activeTab === 'magnific' && <AdminMagnific />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>

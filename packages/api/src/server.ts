@@ -2832,6 +2832,25 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   // ── End Higgsfield ────────────────────────────────────────────────────────────
 
+  // ── Magnific AI ────────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS magnific_generations (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      TEXT REFERENCES users(id) ON DELETE CASCADE,
+      type         TEXT NOT NULL DEFAULT 'image',
+      model        TEXT NOT NULL DEFAULT '',
+      prompt       TEXT NOT NULL DEFAULT '',
+      params       JSONB DEFAULT '{}',
+      task_id      TEXT,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      result_url   TEXT,
+      error        TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  // ── End Magnific ────────────────────────────────────────────────────────────────
+
   // ── Daky Learn ────────────────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS learned_items (
@@ -2939,7 +2958,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     ('meigen_search',   'MeiGen AI Search',   'Search MeiGen AI for design templates and extract generation prompts', 'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
     ('pinterest_search','Pinterest Search',    'Search Pinterest for visual design inspiration by keyword',           'api',     '{"endpoint":"pinterest"}'),
     ('claude_synthesize','Claude Synthesize',  'Use Claude AI to craft a tailored prompt from designs and brand memory','builtin','{"model":"claude-haiku-4-5-20251001"}'),
-    ('generate_image',  'Generate Image',      'Generate an image using the model specified in the prompt or fallback','builtin', '{"fallback_model":"flux-1.1-pro"}'),
+    ('generate_image',  'Generate Image',      'Generate an image using the model specified in the prompt or fallback','builtin', '{"fallback_model":"flux-2-turbo"}'),
     ('save_design',     'Save to Designs',     'Save the generated image to the user designs collection',            'builtin', '{}')
     ON CONFLICT (key) DO NOTHING;
   `).catch(() => undefined);
@@ -2947,7 +2966,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     const _novaSteps = [
       { id: 'step_search',  name: 'Search Designs',       tool: 'meigen_search',    description: 'Find matching design templates on MeiGen AI', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
       { id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize', description: 'Extract visual elements and generation prompts from found designs', prompt_template: 'From these design concepts, extract 3–5 key visual styles with their image generation prompts and recommended AI model.\n\nDesigns: {step_search.result}', params: {} },
-      { id: 'step_tailor',  name: 'Tailor to Brand',       tool: 'claude_synthesize', description: 'Combine design inspiration with user brand memory to produce a final prompt', prompt_template: 'Create a single optimized image generation prompt by blending these design concepts with the user brand:\n- Niche: {brand.niche}\n- Tone: {brand.tone}\n- Audience: {brand.audience}\n\nDesign concepts: {step_extract.result}\n\nReturn ONLY valid JSON (no markdown): { "prompt": "...", "model": "flux-1.1-pro", "style_notes": "..." }', params: {} },
+      { id: 'step_tailor',  name: 'Tailor to Brand',       tool: 'claude_synthesize', description: 'Combine design inspiration with user brand memory to produce a final prompt', prompt_template: 'Create a single optimized image generation prompt by blending these design concepts with the user brand:\n- Niche: {brand.niche}\n- Tone: {brand.tone}\n- Audience: {brand.audience}\n\nDesign concepts: {step_extract.result}\n\nReturn ONLY valid JSON (no markdown): { "prompt": "...", "model": "flux-2-turbo", "style_notes": "..." }', params: {} },
       { id: 'step_generate',name: 'Generate Image',        tool: 'generate_image',    description: 'Generate the final branded image', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
       { id: 'step_save',    name: 'Save Design',           tool: 'save_design',       description: 'Save the generated image to user designs', prompt_template: '', params: {} },
     ];
@@ -24609,6 +24628,313 @@ app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Re
 
 // ── End Higgsfield Admin Routes ────────────────────────────────────────────────
 
+// ─── Magnific AI Routes ────────────────────────────────────────────────────────
+
+const MAGNIFIC_BASE = 'https://api.magnific.com';
+
+async function getMagnificApiKey(): Promise<string> {
+  const envKey = process.env.MAGNIFIC_API_KEY;
+  if (envKey) return envKey;
+  try {
+    const cfg = await pool!.query(
+      `SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`
+    );
+    return cfg.rows[0]?.config?.apiKey ?? '';
+  } catch { return ''; }
+}
+
+async function magnificPost(path: string, body: object, apiKey: string) {
+  return axios.post(`${MAGNIFIC_BASE}${path}`, body, {
+    headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+}
+
+async function pollMagnificTask(
+  taskPath: string,
+  apiKey: string,
+  maxSeconds = 120,
+  onProgress?: (status: string) => void
+): Promise<{ url: string | null; error: string | null }> {
+  const deadline = Date.now() + maxSeconds * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const r = await axios.get(`${MAGNIFIC_BASE}${taskPath}`, {
+      headers: { 'x-magnific-api-key': apiKey },
+      validateStatus: () => true,
+      timeout: 10000,
+    });
+    const data = r.data?.data ?? r.data;
+    const status: string = data?.status ?? '';
+    onProgress?.(status);
+    if (status === 'COMPLETED') {
+      const urls: string[] = data.generated ?? [];
+      return { url: urls[0] ?? null, error: null };
+    }
+    if (status === 'FAILED') {
+      return { url: null, error: data?.error ?? 'Generation failed' };
+    }
+  }
+  return { url: null, error: 'Timeout: generation took too long' };
+}
+
+const MAGNIFIC_IMAGE_MODELS: Record<string, { endpoint: string; pollPath: (id: string) => string; credits: number }> = {
+  'flux-2-turbo':      { endpoint: '/v1/ai/text-to-image/flux-2-turbo',     pollPath: (id) => `/v1/ai/text-to-image/flux-2-turbo/${id}`,     credits: 3 },
+  'flux-2-klein':      { endpoint: '/v1/ai/text-to-image/flux-2-klein',     pollPath: (id) => `/v1/ai/text-to-image/flux-2-klein/${id}`,     credits: 3 },
+  'flux-kontext-pro':  { endpoint: '/v1/ai/text-to-image/flux-kontext-pro', pollPath: (id) => `/v1/ai/text-to-image/flux-kontext-pro/${id}`, credits: 5 },
+  'flux-2-pro':        { endpoint: '/v1/ai/text-to-image/flux-2-pro',       pollPath: (id) => `/v1/ai/text-to-image/flux-2-pro/${id}`,       credits: 5 },
+  'seedream-v5-lite':  { endpoint: '/v1/ai/text-to-image/seedream-v5-lite', pollPath: (id) => `/v1/ai/text-to-image/seedream-v5-lite/${id}`, credits: 4 },
+  'mystic':            { endpoint: '/v1/ai/mystic',                          pollPath: (id) => `/v1/ai/mystic/${id}`,                          credits: 8 },
+};
+
+const MAGNIFIC_VIDEO_MODELS: Record<string, { endpoint: string; pollPath: (id: string) => string; credits: number }> = {
+  'wan-2-7-t2v':      { endpoint: '/v1/ai/text-to-video/wan-2-7',         pollPath: (id) => `/v1/ai/text-to-video/wan-2-7/${id}`,         credits: 25 },
+  'happy-horse-i2v':  { endpoint: '/v1/ai/image-to-video/happy-horse-1',  pollPath: (id) => `/v1/ai/image-to-video/happy-horse-1/${id}`,  credits: 20 },
+  'kling-3-pro':      { endpoint: '/v1/ai/video/kling-v3-pro',            pollPath: (id) => `/v1/ai/video/kling-v3/${id}`,                credits: 35 },
+};
+
+const ASPECT_RATIO_MAP: Record<string, string> = {
+  '1:1':   'square_1_1',
+  '16:9':  'widescreen_16_9',
+  '9:16':  'portrait_9_16',
+  '4:3':   'classic_4_3',
+  '3:4':   'portrait_3_4',
+  '21:9':  'cinematic_21_9',
+};
+
+// GET /api/admin/magnific/config — get masked API key
+app.get('/api/admin/magnific/config', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='magnific' LIMIT 1`);
+    const key: string = r.rows[0]?.config?.apiKey ?? '';
+    const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
+    return res.json({ success: true, hasKey: !!key, maskedKey: masked });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/magnific/config — save API key
+app.put('/api/admin/magnific/config', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const { apiKey } = req.body as { apiKey?: string };
+  if (!apiKey?.trim()) return res.status(400).json({ error: 'apiKey is required' });
+  try {
+    await pool!.query(
+      `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+       VALUES ('magnific', $1, true, NOW())
+       ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
+      [JSON.stringify({ apiKey: apiKey.trim() })]
+    );
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/magnific/test — verify API key works
+app.get('/api/admin/magnific/test', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const apiKey = await getMagnificApiKey();
+  if (!apiKey) return res.status(400).json({ success: false, error: 'No API key configured' });
+  try {
+    const r = await axios.get(`${MAGNIFIC_BASE}/v1/ai/mystic`, {
+      headers: { 'x-magnific-api-key': apiKey },
+      validateStatus: () => true,
+      timeout: 8000,
+    });
+    if (r.status === 401 || r.status === 403) return res.json({ success: false, error: 'Invalid API key' });
+    return res.json({ success: true, status: r.status });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/admin/magnific/generations — list generations
+app.get('/api/admin/magnific/generations', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const { rows } = await pool!.query(
+      `SELECT mg.*, u.email as user_email
+       FROM magnific_generations mg
+       LEFT JOIN users u ON u.id = mg.user_id
+       ORDER BY mg.created_at DESC LIMIT 200`
+    );
+    return res.json({ success: true, generations: rows });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/magnific/task/:id — poll a specific generation's status
+app.get('/api/magnific/task/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const { rows } = await pool!.query(
+      `SELECT status, result_url, error, type, model, created_at FROM magnific_generations WHERE id=$1 AND user_id=$2 LIMIT 1`,
+      [req.params.id, auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    return res.json({ success: true, ...rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/magnific/improve-prompt — enhance a prompt using Magnific
+app.post('/api/magnific/improve-prompt', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  const { prompt } = req.body as { prompt?: string };
+  if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
+  const apiKey = await getMagnificApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Magnific not configured' });
+  try {
+    const r = await axios.post(
+      `${MAGNIFIC_BASE}/v1/ai/improve-prompt`,
+      { prompt: prompt.trim() },
+      { headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 12000 }
+    );
+    const improved: string = r.data?.data?.prompt ?? r.data?.prompt ?? '';
+    if (!improved || r.status >= 400) {
+      return res.status(400).json({ error: r.data?.message ?? 'Failed to improve prompt' });
+    }
+    return res.json({ success: true, prompt: improved });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/magnific/edit — image editing tools (upscale, relight, style-transfer, remove-background)
+app.post('/api/magnific/edit', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { type, image, image_url, reference_image, prompt, scale_factor, optimized_for, creativity, hdr, resemblance, style, change_background, style_strength, structure_strength } = req.body as Record<string, any>;
+
+  if (!type) return res.status(400).json({ error: 'type is required' });
+
+  const editCreditCosts: Record<string, number> = {
+    'upscale': 5, 'relight': 4, 'style-transfer': 5, 'remove-background': 1,
+  };
+  const creditCost = editCreditCosts[type] ?? 5;
+
+  const credRow = await pool!.query<{ credits: number }>(
+    'SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]
+  ).catch(() => ({ rows: [] as { credits: number }[] }));
+  const currentCredits = credRow.rows[0]?.credits ?? 0;
+  if (currentCredits < creditCost) {
+    return res.status(402).json({ error: 'Insufficient credits', credits: currentCredits, required: creditCost });
+  }
+
+  const apiKey = await getMagnificApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Magnific not configured — set up in Admin → Magnific AI.' });
+
+  const genId = randomUUID();
+  await pool!.query(
+    `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+    [genId, auth.userId, type, type, prompt ?? '', JSON.stringify({ type, scale_factor, optimized_for, style })]
+  ).catch(() => undefined);
+
+  try {
+    let resultUrl: string | null = null;
+
+    if (type === 'remove-background') {
+      if (!image_url) return res.status(400).json({ error: 'image_url is required for remove-background' });
+      const r = await axios.post(
+        `${MAGNIFIC_BASE}/v1/ai/beta/remove-background`,
+        { image_url },
+        { headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 30000 }
+      );
+      if (r.status >= 400) return res.status(400).json({ error: r.data?.message ?? 'Remove background failed' });
+      resultUrl = r.data?.high_resolution ?? r.data?.url ?? null;
+
+    } else if (type === 'upscale') {
+      if (!image) return res.status(400).json({ error: 'image (base64) is required for upscale' });
+      const body: Record<string, any> = { image, scale_factor: scale_factor ?? '2x' };
+      if (optimized_for) body.optimized_for = optimized_for;
+      if (creativity != null) body.creativity = creativity;
+      if (hdr != null) body.hdr = hdr;
+      if (resemblance != null) body.resemblance = resemblance;
+      if (prompt) body.prompt = prompt;
+      const r = await magnificPost('/v1/ai/image-upscaler', body, apiKey);
+      if (r.status >= 400) return res.status(400).json({ error: r.data?.message ?? 'Upscale failed' });
+      const taskId: string = r.data?.data?.task_id;
+      if (!taskId) throw new Error('No task_id from upscaler');
+      await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
+      const result = await pollMagnificTask(`/v1/ai/image-upscaler/${taskId}`, apiKey, 120);
+      if (result.error) throw new Error(result.error);
+      resultUrl = result.url;
+
+    } else if (type === 'relight') {
+      if (!image) return res.status(400).json({ error: 'image is required for relight' });
+      const body: Record<string, any> = { image };
+      if (prompt) body.prompt = prompt;
+      if (style) body.style = style;
+      if (change_background != null) body.change_background = change_background;
+      const r = await magnificPost('/v1/ai/image-relight', body, apiKey);
+      if (r.status >= 400) return res.status(400).json({ error: r.data?.message ?? 'Relight failed' });
+      const taskId: string = r.data?.data?.task_id ?? r.data?.task_id;
+      if (!taskId) throw new Error('No task_id from relight');
+      await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
+      const result = await pollMagnificTask(`/v1/ai/image-relight/${taskId}`, apiKey, 120);
+      if (result.error) throw new Error(result.error);
+      resultUrl = result.url;
+
+    } else if (type === 'style-transfer') {
+      if (!image || !reference_image) return res.status(400).json({ error: 'image and reference_image are required for style-transfer' });
+      const body: Record<string, any> = { image, reference_image };
+      if (style_strength != null) body.style_strength = style_strength;
+      if (structure_strength != null) body.structure_strength = structure_strength;
+      if (prompt) body.prompt = prompt;
+      const r = await magnificPost('/v1/ai/image-style-transfer', body, apiKey);
+      if (r.status >= 400) return res.status(400).json({ error: r.data?.message ?? 'Style transfer failed' });
+      const taskId: string = r.data?.task_id ?? r.data?.data?.task_id;
+      if (!taskId) throw new Error('No task_id from style transfer');
+      await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
+      const result = await pollMagnificTask(`/v1/ai/image-style-transfer/${taskId}`, apiKey, 120);
+      if (result.error) throw new Error(result.error);
+      resultUrl = result.url;
+
+    } else {
+      return res.status(400).json({ error: `Unknown edit type: ${type}` });
+    }
+
+    if (!resultUrl) throw new Error('No result URL returned');
+
+    await pool!.query(
+      `UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`,
+      [resultUrl, genId]
+    ).catch(() => undefined);
+
+    // Deduct credits
+    await pool!.query(
+      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
+      [creditCost, auth.userId]
+    ).catch(() => undefined);
+
+    return res.json({ success: true, url: resultUrl, gen_id: genId });
+  } catch (e: any) {
+    await pool!.query(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ── End Magnific AI Routes ─────────────────────────────────────────────────────
+
 // ─── Workspace / Organization Routes ───────────────────────────────────────────
 
 // GET /api/workspace/summary — returns user's orgs with role + member_count
@@ -25866,7 +26192,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
     "style": "visual style description",
     "colors": "main colors used",
     "prompt": "detailed image generation prompt that would create this design",
-    "model": "one of: higgsfield-ai/soul/standard | reve/text-to-image",
+    "model": "one of: flux-2-turbo | flux-kontext-pro | seedream-v5-lite | mystic",
     "thumbnail_description": "brief visual description for display"
   }
 ]`,
@@ -25910,11 +26236,13 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
         } else if (step.tool === 'generate_image') {
           // Parse tailored prompt + model from step_tailor
           let finalPrompt = description || 'professional brand design';
-          let finalModel = 'higgsfield-ai/soul/standard';
+          let finalModel = 'flux-2-turbo';
           const tailorResult = stepResults['step_tailor']?.result ?? '';
           const parsed = _extractJsonFromText(tailorResult);
           if (parsed?.prompt) { finalPrompt = parsed.prompt; finalModel = parsed.model ?? finalModel; }
           else if (tailorResult) { finalPrompt = tailorResult.slice(0, 900); }
+          // Normalize model IDs — map any legacy Higgsfield IDs to Magnific equivalents
+          if (!MAGNIFIC_IMAGE_MODELS[finalModel]) finalModel = 'flux-2-turbo';
 
           // If no memory and not auto-mode, pause for user prompt review
           if (!hasBrandMemory && !auto) {
@@ -25925,59 +26253,57 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
 
           send({ type: 'prompt_ready', prompt: finalPrompt, model: finalModel, has_memory: hasBrandMemory, needs_input: false });
 
-          const cfg = await getHiggsfieldConfig();
-          if (!cfg) {
-            send({ type: 'error', message: 'Image generation not configured — set up Higgsfield in Admin.' });
+          const magnificApiKey = await getMagnificApiKey();
+          if (!magnificApiKey) {
+            send({ type: 'error', message: 'Image generation not configured — set up Magnific in Admin.' });
             send({ type: 'done' });
             return res.end();
           }
 
-          send({ type: 'step_progress', step_id: step.id, message: `Submitting to Higgsfield…` });
+          send({ type: 'step_progress', step_id: step.id, message: `Submitting to Magnific…` });
 
+          const modelCfg = MAGNIFIC_IMAGE_MODELS[finalModel] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo'];
           const genId = randomUUID();
           await dbQuery(
-            `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
-             VALUES ($1, 'image', $2, $3, $4, 'pending')`,
-            [genId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow', user_id: auth.userId })]
+            `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status)
+             VALUES ($1, $2, 'image', $3, $4, $5, 'pending')`,
+            [genId, auth.userId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow' })]
           ).catch(() => undefined);
 
           let imageUrl: string | null = null;
 
           try {
-            // Submit generation request to platform.higgsfield.ai/{model_id}
-            const submitResp = await axios.post(
-              `${cfg.baseUrl}/${finalModel}`,
-              { prompt: finalPrompt, aspect_ratio: '1:1', resolution: '720p' },
-              { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
-            );
+            const submitResp = await magnificPost(modelCfg.endpoint, { prompt: finalPrompt, aspect_ratio: 'square_1_1' }, magnificApiKey);
 
             if (submitResp.status >= 400) {
-              const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
-              await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+              const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
+              await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
               send({ type: 'error', message: errMsg });
               send({ type: 'done' });
               return res.end();
             }
 
-            const requestId: string = submitResp.data?.request_id;
-            if (!requestId) throw new Error('No request_id returned from Higgsfield');
+            const taskId: string = submitResp.data?.data?.task_id;
+            if (!taskId) throw new Error('No task_id returned from Magnific');
 
-            await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+            await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
 
-            // Poll with SSE progress updates
-            imageUrl = await pollHiggsfieldRequest(cfg, requestId, 120000, (status) => {
+            const pollResult = await pollMagnificTask(modelCfg.pollPath(taskId), magnificApiKey, 120, (status) => {
               send({ type: 'step_progress', step_id: step.id, message: `Generation ${status}…` });
             });
 
+            if (pollResult.error) throw new Error(pollResult.error);
+            imageUrl = pollResult.url;
+
           } catch (e: any) {
             const errMsg = e?.message ?? 'Generation failed';
-            await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+            await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
             send({ type: 'error', message: errMsg });
             send({ type: 'done' });
             return res.end();
           }
 
-          await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
+          await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
 
           stepResults[step.id] = { url: imageUrl, gen_id: genId, model: finalModel, prompt: finalPrompt };
           send({ type: 'step_done', step_id: step.id });
@@ -26017,18 +26343,18 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
   }
 });
 
-// POST /api/nova/generate-video — generate video from prompt
+// POST /api/nova/generate-video — generate video from prompt (Magnific)
 app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-  const { prompt = '', model = 'seedance-1-lite' } = req.body as { prompt?: string; model?: string };
+  const { prompt = '', model = 'wan-2-7-t2v', aspect_ratio = '16:9' } = req.body as { prompt?: string; model?: string; aspect_ratio?: string };
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
-  const creditCost = model === 'higgsfield-video' ? 35 : 20;
+  const modelConfig = MAGNIFIC_VIDEO_MODELS[model] ?? MAGNIFIC_VIDEO_MODELS['wan-2-7-t2v'];
+  const creditCost = modelConfig.credits;
 
-  // Check + deduct credits
   const credRow = await pool!.query<{ credits: number }>(
     'SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]
   ).catch(() => ({ rows: [] as { credits: number }[] }));
@@ -26037,39 +26363,46 @@ app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
     return res.status(402).json({ error: 'Insufficient credits', credits: currentCredits, required: creditCost });
   }
 
-  const cfg = await getHiggsfieldConfig();
-  if (!cfg) return res.status(400).json({ error: 'Video generation not configured.' });
+  const apiKey = await getMagnificApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Video generation not configured — set up Magnific in Admin.' });
+
+  const genId = randomUUID();
+  await pool!.query(
+    `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status)
+     VALUES ($1, $2, 'video', $3, $4, $5, 'pending')`,
+    [genId, auth.userId, model, prompt.trim(), JSON.stringify({ aspect_ratio })]
+  ).catch(() => undefined);
 
   try {
-    // Deduct credits
+    const magnificAspect = ASPECT_RATIO_MAP[aspect_ratio] ?? 'widescreen_16_9';
+    const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim(), aspect_ratio: magnificAspect }, apiKey);
+
+    if (submitResp.status >= 400) {
+      const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
+      await pool!.query(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      return res.status(400).json({ error: errMsg });
+    }
+
+    const taskId: string = submitResp.data?.data?.task_id;
+    if (!taskId) throw new Error('No task_id returned from Magnific');
+
+    await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
+
+    // Deduct credits optimistically before poll (long-running)
     await pool!.query(
       `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
       [creditCost, auth.userId]
     ).catch(() => undefined);
 
-    // Call Higgsfield video API — seedance-1-lite or similar
-    const videoModel = model === 'higgsfield-video' ? 'higgsfield-ai/video/standard' : 'bytedance/seedance-1-lite';
-    const submitResp = await axios.post(
-      `${cfg.baseUrl}/${videoModel}`,
-      { prompt: prompt.trim(), aspect_ratio: '9:16', duration: 5 },
-      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
-    );
+    const result = await pollMagnificTask(modelConfig.pollPath(taskId), apiKey, 300);
+    if (result.error) throw new Error(result.error);
+    const videoUrl = result.url!;
 
-    if (submitResp.status >= 400) {
-      // Refund credits on failure
-      await pool!.query(
-        `UPDATE user_credits SET credits = credits + $1, updated_at = NOW() WHERE user_id = $2`,
-        [creditCost, auth.userId]
-      ).catch(() => undefined);
-      return res.status(400).json({ error: higgsfieldErrMsg(submitResp.data, submitResp.status) });
-    }
+    await pool!.query(
+      `UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`,
+      [videoUrl, genId]
+    ).catch(() => undefined);
 
-    const requestId: string = submitResp.data?.request_id;
-    if (!requestId) throw new Error('No request_id from Higgsfield');
-
-    const videoUrl = await pollHiggsfieldRequest(cfg, requestId, 300000);
-
-    // Save to user_designs
     const designId = randomUUID();
     const dName = `AI Video — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
     await pool!.query(
@@ -26078,72 +26411,64 @@ app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
       [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl, prompt: prompt.trim(), model }), videoUrl]
     ).catch(() => undefined);
 
-    return res.json({ success: true, url: videoUrl, design_id: designId });
+    return res.json({ success: true, url: videoUrl, design_id: designId, gen_id: genId });
   } catch (e: any) {
+    await pool!.query(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
     return res.status(500).json({ error: e.message });
   }
 });
 
-// POST /api/nova/generate-image — generate image from an edited prompt (manual mode)
+// POST /api/nova/generate-image — generate image from a prompt (Magnific)
 app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-  const { prompt = '', model = 'higgsfield-ai/soul/standard', save = true } = req.body as { prompt?: string; model?: string; save?: boolean };
+  const { prompt = '', model = 'flux-2-turbo', aspect_ratio = '1:1', save = true } = req.body as { prompt?: string; model?: string; aspect_ratio?: string; save?: boolean };
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
-  // Credit cost by model
-  const imageCreditCosts: Record<string, number> = {
-    'nano_banana_2': 3,
-    'flux-1.1-pro': 5,
-    'nano_banana_pro': 8,
-  };
-  const creditCost = imageCreditCosts[model] ?? 5;
+  const modelConfig = MAGNIFIC_IMAGE_MODELS[model] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo'];
+  const creditCost = modelConfig.credits;
 
-  // Check and deduct credits
+  // Check credits
   const { rows: creditRows } = await dbQuery(
-    `SELECT credits FROM user_credits WHERE user_id = $1`,
-    [auth.userId]
+    `SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]
   ).catch(() => ({ rows: [] as any[] }));
-
-  const currentCredits = creditRows[0]?.credits ?? 50; // default 50 for new users
+  const currentCredits = creditRows[0]?.credits ?? 50;
   if (creditRows.length > 0 && currentCredits < creditCost) {
     return res.status(402).json({ error: 'Insufficient credits' });
   }
 
-  const cfg = await getHiggsfieldConfig();
-  if (!cfg) return res.status(400).json({ error: 'Image generation not configured — set up Higgsfield in Admin.' });
+  const apiKey = await getMagnificApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Image generation not configured — set up Magnific in Admin.' });
 
   const genId = randomUUID();
   await dbQuery(
-    `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
-     VALUES ($1, 'image', $2, $3, $4, 'pending')`,
-    [genId, model, prompt.trim(), JSON.stringify({ source: 'nova_manual', user_id: auth.userId })]
+    `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status)
+     VALUES ($1, $2, 'image', $3, $4, $5, 'pending')`,
+    [genId, auth.userId, model, prompt.trim(), JSON.stringify({ source: 'nova_manual', aspect_ratio })]
   ).catch(() => undefined);
 
   try {
-    // Submit generation request
-    const submitResp = await axios.post(
-      `${cfg.baseUrl}/${model}`,
-      { prompt: prompt.trim(), aspect_ratio: '1:1', resolution: '720p' },
-      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
-    );
+    const magnificAspect = ASPECT_RATIO_MAP[aspect_ratio] ?? 'square_1_1';
+    const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim(), aspect_ratio: magnificAspect }, apiKey);
 
     if (submitResp.status >= 400) {
-      const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
-      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
+      const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
+      await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
 
-    const requestId: string = submitResp.data?.request_id;
-    if (!requestId) throw new Error('No request_id returned from Higgsfield');
+    const taskId: string = submitResp.data?.data?.task_id;
+    if (!taskId) throw new Error('No task_id returned from Magnific');
 
-    await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
+    await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
 
-    // Poll until done
-    const imageUrl = await pollHiggsfieldRequest(cfg, requestId, 120000);
-    await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
+    const result = await pollMagnificTask(modelConfig.pollPath(taskId), apiKey, 120);
+    if (result.error) throw new Error(result.error);
+    const imageUrl = result.url!;
+
+    await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
 
     let designId: string | null = null;
     if (save && imageUrl) {
@@ -26156,7 +26481,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
       ).catch(() => undefined);
     }
 
-    // Deduct credits after successful generation
+    // Deduct credits
     await dbQuery(
       `INSERT INTO user_credits (user_id, credits, updated_at)
        VALUES ($1, GREATEST(0, 50 - $2), NOW())
@@ -26166,7 +26491,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
 
     return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId });
   } catch (e: any) {
-    await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
+    await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
     return res.status(500).json({ error: e.message });
   }
 });
@@ -26267,13 +26592,13 @@ app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Resp
       {
         id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize',
         description: 'Extract the visual style, colors, and generation prompts from found designs',
-        prompt_template: 'Analyze these design concepts and extract:\n1. Key visual elements and composition\n2. Color palette and typography style\n3. The exact image generation prompt for each design\n4. Recommended AI model (higgsfield-ai/soul/standard or reve/text-to-image)\n\nDesigns: {step_search.result}\n\nBe specific about what makes each design effective.',
+        prompt_template: 'Analyze these design concepts and extract:\n1. Key visual elements and composition\n2. Color palette and typography style\n3. The exact image generation prompt for each design\n4. Recommended AI model (one of: flux-2-turbo, flux-kontext-pro, seedream-v5-lite, mystic)\n\nDesigns: {step_search.result}\n\nBe specific about what makes each design effective.',
         params: {},
       },
       {
         id: 'step_tailor', name: 'Tailor to Brand', tool: 'claude_synthesize',
         description: 'Merge design inspiration with the user\'s brand memory to create a tailored prompt',
-        prompt_template: 'Create one optimized image generation prompt by combining the best design elements with this brand\'s identity:\n\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nTarget audience: {brand.audience}\n\nDesign concepts extracted: {step_extract.result}\n\nRequirements:\n- Reflect the brand\'s unique personality\n- Be specific about colors, composition, and mood\n- Keep it under 200 words\n\nReturn ONLY valid JSON (no markdown fences):\n{ "prompt": "...", "model": "higgsfield-ai/soul/standard", "style_notes": "brief note on design choices" }',
+        prompt_template: 'Create one optimized image generation prompt by combining the best design elements with this brand\'s identity:\n\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nTarget audience: {brand.audience}\n\nDesign concepts extracted: {step_extract.result}\n\nRequirements:\n- Reflect the brand\'s unique personality\n- Be specific about colors, composition, and mood\n- Keep it under 200 words\n\nReturn ONLY valid JSON (no markdown fences):\n{ "prompt": "...", "model": "flux-2-turbo", "style_notes": "brief note on design choices" }',
         params: {},
       },
       {
@@ -26516,88 +26841,7 @@ app.get('/api/user-designs/:id/liked', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/nova/generate-video — generate video via Higgsfield
-app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth) return;
-  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
-
-  const { prompt = '', model = 'seedance-1-lite' } = req.body as { prompt?: string; model?: string };
-  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
-
-  // Credit cost by model
-  const creditCosts: Record<string, number> = {
-    'seedance-1-lite': 20,
-    'higgsfield-video': 35,
-  };
-  const creditCost = creditCosts[model] ?? 20;
-
-  // Check user credits
-  const { rows: creditRows } = await dbQuery(
-    `SELECT credits FROM user_credits WHERE user_id = $1`,
-    [auth.userId]
-  ).catch(() => ({ rows: [] as any[] }));
-
-  const currentCredits = creditRows[0]?.credits ?? 0;
-  if (currentCredits < creditCost) {
-    return res.status(402).json({ error: 'Insufficient credits' });
-  }
-
-  const cfg = await getHiggsfieldConfig();
-  if (!cfg) return res.status(400).json({ error: 'Video generation not configured — set up Higgsfield in Admin.' });
-
-  const genId = randomUUID();
-  await dbQuery(
-    `INSERT INTO higgsfield_generations (id, type, model, prompt, params, status)
-     VALUES ($1, 'video', $2, $3, $4, 'pending')`,
-    [genId, model, prompt.trim(), JSON.stringify({ source: 'nova_video', user_id: auth.userId })]
-  ).catch(() => undefined);
-
-  try {
-    // Map model id to Higgsfield endpoint path
-    const modelPath = model === 'higgsfield-video' ? 'higgsfield-ai/film/standard' : model;
-
-    const submitResp = await axios.post(
-      `${cfg.baseUrl}/${modelPath}`,
-      { prompt: prompt.trim(), aspect_ratio: '9:16', duration: 5 },
-      { headers: higgsfieldHeaders(cfg), validateStatus: () => true, timeout: 30000 }
-    );
-
-    if (submitResp.status >= 400) {
-      const errMsg = higgsfieldErrMsg(submitResp.data, submitResp.status);
-      await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
-      return res.status(400).json({ error: errMsg });
-    }
-
-    const requestId: string = submitResp.data?.request_id;
-    if (!requestId) throw new Error('No request_id returned from Higgsfield');
-
-    await dbQuery(`UPDATE higgsfield_generations SET status='processing' WHERE id=$1`, [genId]).catch(() => undefined);
-
-    const videoUrl = await pollHiggsfieldRequest(cfg, requestId, 180000);
-    await dbQuery(`UPDATE higgsfield_generations SET status='completed', result_url=$1 WHERE id=$2`, [videoUrl, genId]).catch(() => undefined);
-
-    // Deduct credits
-    await dbQuery(
-      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
-      [creditCost, auth.userId]
-    ).catch(() => undefined);
-
-    // Save to user_designs
-    const designId = randomUUID();
-    const dName = `AI Video — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-    await dbQuery(
-      `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at)
-       VALUES ($1, $2, $3, 1080, 1920, $4, $5, NOW())`,
-      [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl, prompt: prompt.trim(), model }), videoUrl]
-    ).catch(() => undefined);
-
-    return res.json({ success: true, url: videoUrl, design_id: designId, gen_id: genId });
-  } catch (e: any) {
-    await dbQuery(`UPDATE higgsfield_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
-    return res.status(500).json({ error: e.message });
-  }
-});
+// (duplicate generate-video route removed — see the Magnific version above)
 
 // ── End Credits System Routes ─────────────────────────────────────────────────
 

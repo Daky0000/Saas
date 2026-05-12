@@ -707,8 +707,8 @@ function Features({ onCta }: { onCta: () => void }) {
       title: 'Pro visuals.\nZero design skills.',
       desc: 'Generate AI images or videos with 5 models, or build branded graphics in the canvas editor with templates, layers, and one-click export.',
       bullets: [
-        'AI image generation: 3 models — from ✦3 to ✦8 credits',
-        'AI video generation: 2 models — Seedance Lite or Higgsfield Pro',
+        'AI image generation: 6 models — Flux, Seedream, Mystic (from ✦3 to ✦8)',
+        'AI video generation: 3 models — Happy Horse, WAN 2.7, Kling 3 Pro',
         'Canvas builder with presets for every social platform',
         'Admin-curated Discover template library',
       ],
