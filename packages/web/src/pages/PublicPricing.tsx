@@ -33,31 +33,32 @@ function Arr() {
 
 const FALLBACK: PricingPlan[] = [
   {
-    id: 'starter', name: 'Starter',
-    description: 'For creators and solo brands finding their content rhythm.',
+    id: 'free', name: 'Free',
+    description: 'For creators exploring AI content with no commitment.',
     price: 0, billingPeriod: 'monthly',
-    features: ['200 AI credits/month', '3 social accounts', 'AI text generation', 'Content calendar', 'Basic analytics', 'Card templates'],
+    features: ['100 AI credits/month', '2 social accounts', 'AI text generation (✦1/post)', 'Content calendar', '20+ card templates', 'Basic analytics', '1 team seat'],
     isActive: true, discountPercentage: 0, isOnSale: false, createdAt: '', updatedAt: '',
   },
   {
-    id: 'growth', name: 'Growth',
-    description: 'For professionals and teams that publish across every channel.',
+    id: 'pro', name: 'Pro',
+    description: 'For active brands and creators that need real AI power to publish at scale.',
     price: 29, billingPeriod: 'monthly',
-    features: ['2,000 AI credits/month', '10 social accounts', 'AI image generation', 'Custom brand voice', 'Advanced analytics', 'Priority support', 'Team workspace (3 seats)'],
+    features: ['2,000 AI credits/month', '8 social accounts', 'AI image generation (6 models)', 'Improve Prompt AI feature', 'Custom brand voice', 'Bulk scheduling & auto-republish', 'Advanced analytics & audience insights', '200+ card templates', '3 team seats', 'Priority support'],
     isActive: true, discountPercentage: 0, isOnSale: false, createdAt: '', updatedAt: '',
   },
   {
-    id: 'scale', name: 'Scale',
-    description: 'For agencies and brands managing multiple clients at full velocity.',
+    id: 'agency', name: 'Agency',
+    description: 'For agencies and power users running full-stack content operations.',
     price: 79, billingPeriod: 'monthly',
-    features: ['Unlimited AI credits', 'Unlimited accounts', 'AI video generation', 'White-label exports', 'Client workspaces', 'API access', 'Dedicated support', 'Custom integrations'],
+    features: ['6,000 AI credits/month', 'Unlimited social accounts', 'AI video generation (3 models)', 'Full image editing suite', 'Premium AI models (Mystic)', 'White-label exports', 'Client workspaces', 'API access', 'Dedicated support', '10 team seats'],
     isActive: true, discountPercentage: 0, isOnSale: false, createdAt: '', updatedAt: '',
   },
 ];
 
 const PLAN_CREDITS: Record<string, string> = {
-  starter: '200 credits / mo', growth: '2,000 credits / mo', scale: 'Unlimited credits',
-  free: '200 credits / mo', pro: '2,000 credits / mo', business: 'Unlimited credits',
+  free: '100 credits / mo', starter: '100 credits / mo',
+  pro: '2,000 credits / mo', growth: '2,000 credits / mo',
+  agency: '6,000 credits / mo', scale: '6,000 credits / mo', business: '6,000 credits / mo',
 };
 
 function getCredits(plan: PricingPlan) {
@@ -65,12 +66,12 @@ function getCredits(plan: PricingPlan) {
   for (const [k, v] of Object.entries(PLAN_CREDITS)) {
     if (key.includes(k)) return v;
   }
-  return `${plan.price === 0 ? '200' : '2,000'} credits / mo`;
+  return `${plan.price === 0 ? '100' : '2,000'} credits / mo`;
 }
 
 function isFeatured(plan: PricingPlan) {
   const n = plan.name.toLowerCase();
-  return n.includes('growth') || n.includes('pro') || n.includes('business');
+  return n.includes('pro') || n.includes('growth');
 }
 
 function fmt(price: number) {
@@ -230,7 +231,7 @@ function CreditMeter() {
     <div className="bg-white border border-gray-100 rounded-2xl p-6">
       <div className="flex justify-between items-start mb-5">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1">Growth Plan</div>
+          <div className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1">Pro Plan</div>
           <div className="text-3xl font-black tracking-tight text-[#0a0a0b]">2,000</div>
           <div className="text-[12px] text-gray-400 mt-0.5">credits remaining this month</div>
         </div>
@@ -241,9 +242,9 @@ function CreditMeter() {
       </div>
       <div className="flex flex-col gap-2.5">
         {[
-          { label: 'AI Text generation', used: 420, total: 2000, pct: 21, color: 'linear-gradient(90deg,#5b6cf9,#818cf8)' },
-          { label: 'AI Image generation', used: 180, total: 2000, pct: 9, color: 'linear-gradient(90deg,#10b981,#34d399)' },
-          { label: 'Video generation', used: 60, total: 2000, pct: 3, color: 'linear-gradient(90deg,#f59e0b,#fcd34d)' },
+          { label: 'AI Text generation (✦1 each)', used: 380, total: 2000, pct: 19, color: 'linear-gradient(90deg,#5b6cf9,#818cf8)' },
+          { label: 'AI Image generation (✦3–8 each)', used: 240, total: 2000, pct: 12, color: 'linear-gradient(90deg,#10b981,#34d399)' },
+          { label: 'Image editing tools (✦1–5 each)', used: 45, total: 2000, pct: 2, color: 'linear-gradient(90deg,#f59e0b,#fcd34d)' },
         ].map((b) => (
           <div key={b.label}>
             <div className="flex justify-between text-[11px] text-gray-500 mb-1">
@@ -272,13 +273,17 @@ function CreditMeter() {
 // ── Comparison table ──────────────────────────────────────────────────────────
 
 const TABLE_ROWS = [
-  { section: 'Content Creation' },
-  { label: 'AI text generation', vals: ['200/mo', '2,000/mo', 'Unlimited'] },
-  { label: 'AI image generation', vals: ['—', '✓', '✓'] },
-  { label: 'AI video generation', vals: ['—', '—', '✓'] },
+  { section: 'AI Credits & Generation' },
+  { label: 'AI credits / month', vals: ['100', '2,000', '6,000'] },
+  { label: 'AI text generation (✦1 / post)', vals: ['✓', '✓', '✓'] },
+  { label: 'AI image generation (✦3–8)', vals: ['—', '✓', '✓'] },
+  { label: 'AI video generation (✦20–35)', vals: ['—', '—', '✓'] },
+  { label: 'Image editing suite (✦1–5)', vals: ['—', '—', '✓'] },
+  { label: 'Premium models (Mystic ✦8)', vals: ['—', '—', '✓'] },
+  { label: 'Improve Prompt (AI)', vals: ['—', '✓', '✓'] },
   { label: 'Custom brand voice', vals: ['—', '✓', '✓'] },
   { section: 'Publishing' },
-  { label: 'Social accounts', vals: ['3', '10', 'Unlimited'] },
+  { label: 'Social accounts', vals: ['2', '8', 'Unlimited'] },
   { label: 'Platforms supported', vals: ['6', '6', '6'] },
   { label: 'Content calendar', vals: ['✓', '✓', '✓'] },
   { label: 'Bulk scheduling', vals: ['—', '✓', '✓'] },
@@ -291,8 +296,8 @@ const TABLE_ROWS = [
   { label: 'Performance dashboard', vals: ['Basic', 'Advanced', 'Full suite'] },
   { label: 'Audience insights', vals: ['—', '✓', '✓'] },
   { label: 'Competitor benchmarks', vals: ['—', '—', '✓'] },
-  { section: 'Collaboration' },
-  { label: 'Team seats', vals: ['1', '3', 'Unlimited'] },
+  { section: 'Collaboration & Access' },
+  { label: 'Team seats', vals: ['1', '3', '10'] },
   { label: 'Client workspaces', vals: ['—', '—', '✓'] },
   { label: 'API access', vals: ['—', '—', '✓'] },
 ];
@@ -304,9 +309,9 @@ function CompareTable({ onCta }: { onCta: () => void }) {
         <thead>
           <tr className="border-b-2 border-gray-100">
             <th className="p-4 text-[13px] font-bold text-gray-500 text-left" style={{ width: '40%' }}>Features</th>
-            <th className="p-4 text-[13px] font-bold text-gray-500 text-center">Starter</th>
-            <th className="p-4 text-[13px] font-bold text-[#5b6cf9] text-center bg-[rgba(91,108,249,.04)]">Growth</th>
-            <th className="p-4 text-[13px] font-bold text-gray-500 text-center">Scale</th>
+            <th className="p-4 text-[13px] font-bold text-gray-500 text-center">Free</th>
+            <th className="p-4 text-[13px] font-bold text-[#5b6cf9] text-center bg-[rgba(91,108,249,.04)]">Pro</th>
+            <th className="p-4 text-[13px] font-bold text-gray-500 text-center">Agency</th>
           </tr>
         </thead>
         <tbody>
@@ -342,7 +347,7 @@ function CompareTable({ onCta }: { onCta: () => void }) {
           )}
           <tr>
             <td />
-            {['Starter', 'Growth', 'Scale'].map((n, j) => (
+            {['Free', 'Pro', 'Agency'].map((n, j) => (
               <td key={j} className="px-4 pt-5">
                 <button
                   type="button"
@@ -350,7 +355,7 @@ function CompareTable({ onCta }: { onCta: () => void }) {
                   className="w-full flex items-center justify-center gap-1.5 text-[13px] font-bold py-2.5 px-3.5 rounded-xl border-none cursor-pointer transition-opacity hover:opacity-90"
                   style={{ background: j === 1 ? '#5b6cf9' : '#0a0a0b', color: '#fff' }}
                 >
-                  {n === 'Starter' ? 'Get started free' : `Try ${n}`}
+                  {n === 'Free' ? 'Get started free' : `Try ${n}`}
                 </button>
               </td>
             ))}
@@ -364,7 +369,7 @@ function CompareTable({ onCta }: { onCta: () => void }) {
 // ── FAQ ───────────────────────────────────────────────────────────────────────
 
 const FAQS = [
-  { q: 'What are AI credits and how do they work?', a: 'Credits are the currency for AI-powered actions on Dakyworld Hub. Generating a text post costs 1 credit, an AI image costs 5 credits, and an AI video clip costs 20 credits. Credits refresh every billing cycle so unused credits don\'t carry over.' },
+  { q: 'What are AI credits and how do they work?', a: 'Credits power every AI action on Dakyworld Hub. A text post costs ✦1 credit. AI images range from ✦3 (fast draft) to ✦8 (premium Mystic model). Video generation costs ✦20–35 credits depending on the model. Image editing tools cost ✦1–5 credits. Credits refresh automatically every billing cycle — unused credits don\'t carry over.' },
   { q: 'Can I change or cancel my plan at any time?', a: 'Yes — upgrade, downgrade, or cancel anytime from your account settings. Upgrades take effect immediately. Downgrades apply at the end of your current billing cycle. No cancellation fees.' },
   { q: 'Is there a free trial for paid plans?', a: 'Every paid plan includes a 7-day free trial with full feature access. No credit card required to start. If you decide not to continue, just cancel before day 7.' },
   { q: 'What social platforms do you support?', a: 'We currently support Instagram, LinkedIn, X (Twitter), Facebook, TikTok, and YouTube. We\'re actively adding more platforms based on user demand.' },
@@ -472,7 +477,7 @@ export default function PublicPricing({ onLoginClick }: Props) {
           </h1>
 
           <p className="pp-hero-sub text-[17px] text-gray-500 leading-[1.7] max-w-[500px] mx-auto mb-10">
-            Start free with 200 AI credits. Upgrade when you need more power. No hidden fees, ever.
+            Start free with 100 AI credits. Upgrade for images, video, and full AI generation power. No hidden fees, ever.
           </p>
 
           {/* Toggle */}
@@ -568,9 +573,10 @@ export default function PublicPricing({ onLoginClick }: Props) {
               </p>
               <div className="flex flex-col gap-3.5">
                 {[
-                  { ico: '✍️', bg: '#eef0fe', label: 'AI text post', hint: 'LinkedIn, Twitter, Instagram caption…', cost: '1 cr' },
-                  { ico: '🖼️', bg: '#fdf4ff', label: 'AI image generation', hint: 'Custom graphics, banners, thumbnails…', cost: '5 cr' },
-                  { ico: '🎬', bg: '#fff7ed', label: 'AI short video', hint: 'Reels, TikTok, YouTube Shorts clips…', cost: '20 cr' },
+                  { ico: '✍️', bg: '#eef0fe', label: 'AI text post', hint: 'LinkedIn, Twitter, Instagram caption…', cost: '✦1' },
+                  { ico: '🖼️', bg: '#fdf4ff', label: 'AI image generation', hint: '6 models: Flux, Seedream, Mystic…', cost: '✦3–8' },
+                  { ico: '🎬', bg: '#fff7ed', label: 'AI video generation', hint: 'Happy Horse, WAN 2.7, Kling 3 Pro…', cost: '✦20–35' },
+                  { ico: '✂️', bg: '#f0fdf4', label: 'Image editing tools', hint: 'Upscale, Relight, Style Transfer, Remove BG…', cost: '✦1–5' },
                 ].map((c) => (
                   <div key={c.label} className="flex items-center gap-3.5 px-4 py-3.5 bg-white border border-gray-100 rounded-2xl">
                     <div className="w-9 h-9 rounded-xl flex items-center justify-center text-[17px] flex-shrink-0" style={{ background: c.bg }}>{c.ico}</div>

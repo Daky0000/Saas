@@ -832,9 +832,12 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE user_designs ADD COLUMN IF NOT EXISTS media_type TEXT NOT NULL DEFAULT 'image'`).catch(() => undefined);
 
   // Update existing pricing plans with credit allocations (idempotent — only sets if 0)
-  await pool.query(`UPDATE pricing_plans SET credits_per_month = 200  WHERE name ILIKE '%starter%' AND credits_per_month = 0`).catch(() => undefined);
-  await pool.query(`UPDATE pricing_plans SET credits_per_month = 1000 WHERE name ILIKE '%growth%'  AND credits_per_month = 0`).catch(() => undefined);
-  await pool.query(`UPDATE pricing_plans SET credits_per_month = 5000 WHERE name ILIKE '%scale%'   AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 100  WHERE name ILIKE '%free%'    AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 100  WHERE name ILIKE '%starter%' AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 2000 WHERE name ILIKE '%pro%'     AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 2000 WHERE name ILIKE '%growth%'  AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 6000 WHERE name ILIKE '%agency%'  AND credits_per_month = 0`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 6000 WHERE name ILIKE '%scale%'   AND credits_per_month = 0`).catch(() => undefined);
   // ── end Credits & Likes ───────────────────────────────────────────────────────
 
   // Seed integrations registry (best-effort; idempotent)
@@ -2751,9 +2754,12 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS credits_per_month INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
 
   // Update existing plans with credits_per_month if not already set
-  await pool.query(`UPDATE pricing_plans SET credits_per_month = 50   WHERE name LIKE '%Starter%' AND credits_per_month = 0;`).catch(() => undefined);
-  await pool.query(`UPDATE pricing_plans SET credits_per_month = 500  WHERE name LIKE '%Growth%'  AND credits_per_month = 0;`).catch(() => undefined);
-  await pool.query(`UPDATE pricing_plans SET credits_per_month = 2000 WHERE name LIKE '%Scale%'   AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 100  WHERE name ILIKE '%Free%'    AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 100  WHERE name ILIKE '%Starter%' AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 2000 WHERE name ILIKE '%Pro%'     AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 2000 WHERE name ILIKE '%Growth%'  AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 6000 WHERE name ILIKE '%Agency%'  AND credits_per_month = 0;`).catch(() => undefined);
+  await pool.query(`UPDATE pricing_plans SET credits_per_month = 6000 WHERE name ILIKE '%Scale%'   AND credits_per_month = 0;`).catch(() => undefined);
   // ── End Credits System ────────────────────────────────────────────────────────
 
   // ── User Memory ───────────────────────────────────────────────────────────────
@@ -3949,76 +3955,90 @@ async function ensureSeedUsers() {
 async function ensureSeedPricingPlans() {
   const plans = [
     {
-      name: 'Starter',
-      description: 'For solo creators building posts, cards, and a lean publishing workflow.',
-      monthlyPrice: 19,
-      yearlyPrice: 190,
+      name: 'Free',
+      description: 'For creators exploring AI content with no commitment.',
+      monthlyPrice: 0,
+      yearlyPrice: 0,
       monthlyFeatures: [
-        '200 AI image/video credits per month',
-        'Up to 60 social posts per month',
-        'Access to the social card template editor',
-        'JPG export for final cards',
-        'Up to 3 connected integrations',
-        'Basic analytics overview',
-        '1 team member',
+        '100 AI credits per month',
+        '2 social accounts',
+        'AI text generation (✦1 per post)',
+        'Content calendar',
+        '20+ card templates',
+        'Basic analytics',
+        '1 team seat',
       ],
       yearlyFeatures: [
-        'Everything in Starter monthly',
-        'Save about 2 months each year',
-        '200 AI image/video credits per month',
-        '60 social posts per month',
-        '3 connected integrations',
-        'Basic analytics overview',
-        '1 team member',
+        '100 AI credits per month',
+        '2 social accounts',
+        'AI text generation (✦1 per post)',
+        'Content calendar',
+        '20+ card templates',
+        'Basic analytics',
+        '1 team seat',
       ],
     },
     {
-      name: 'Growth',
-      description: 'For active brands that need more output, more templates, and more connected tools.',
-      monthlyPrice: 49,
-      yearlyPrice: 490,
+      name: 'Pro',
+      description: 'For active brands and creators that need real AI power to publish at scale.',
+      monthlyPrice: 29,
+      yearlyPrice: 276,
       featured: true,
       monthlyFeatures: [
-        '1000 AI image/video credits per month',
-        'Up to 250 social posts per month',
-        'Unlimited card edits and exports',
-        'Advanced template customization',
-        'Up to 10 connected integrations',
-        'Full analytics dashboard and insights',
-        'Up to 5 team members',
+        '2,000 AI credits per month',
+        '8 social accounts',
+        'AI image generation — 6 models (✦3–8)',
+        'Improve Prompt AI feature',
+        'Custom brand voice',
+        'Bulk scheduling & auto-republish',
+        'Advanced analytics & audience insights',
+        '200+ card templates + custom templates',
+        '3 team seats',
+        'Priority support',
       ],
       yearlyFeatures: [
-        'Everything in Growth monthly',
-        '1000 AI image/video credits per month',
-        'Save about 2 months each year',
-        '250 social posts per month',
-        '10 connected integrations',
-        'Advanced editor and analytics access',
-        'Up to 5 team members',
+        '2,000 AI credits per month',
+        '8 social accounts',
+        'AI image generation — 6 models (✦3–8)',
+        'Improve Prompt AI feature',
+        'Custom brand voice',
+        'Bulk scheduling & auto-republish',
+        'Advanced analytics & audience insights',
+        '200+ card templates + custom templates',
+        '3 team seats',
+        'Priority support',
+        'Save ~20% vs monthly billing',
       ],
     },
     {
-      name: 'Scale',
-      description: 'For teams running multi-channel content operations with heavier collaboration needs.',
-      monthlyPrice: 99,
-      yearlyPrice: 990,
+      name: 'Agency',
+      description: 'For agencies and power users running full-stack content operations.',
+      monthlyPrice: 79,
+      yearlyPrice: 756,
       monthlyFeatures: [
-        '5000 AI image/video credits per month',
-        'Unlimited social posts',
-        'Unlimited card templates and exports',
-        'Priority access to new editor features',
-        'Unlimited integrations',
-        'Advanced analytics and export workflows',
-        'Up to 15 team members',
+        '6,000 AI credits per month',
+        'Unlimited social accounts',
+        'AI video generation — 3 models (✦20–35)',
+        'Full image editing suite (✦1–5)',
+        'Premium AI models — Mystic (✦8)',
+        'White-label exports',
+        'Client workspaces (up to 10)',
+        'API access',
+        'Dedicated support',
+        '10 team seats',
       ],
       yearlyFeatures: [
-        'Everything in Scale monthly',
-        '5000 AI image/video credits per month',
-        'Save about 2 months each year',
-        'Unlimited posts and exports',
-        'Unlimited integrations',
-        'Advanced analytics and exports',
-        'Up to 15 team members',
+        '6,000 AI credits per month',
+        'Unlimited social accounts',
+        'AI video generation — 3 models (✦20–35)',
+        'Full image editing suite (✦1–5)',
+        'Premium AI models — Mystic (✦8)',
+        'White-label exports',
+        'Client workspaces (up to 10)',
+        'API access',
+        'Dedicated support',
+        '10 team seats',
+        'Save ~20% vs monthly billing',
       ],
     },
   ];
@@ -8103,17 +8123,17 @@ app.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
 app.get('/api/credits/balance', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
-  if (!hasDatabase()) return res.json({ success: true, credits: 50, reset_date: null });
+  if (!hasDatabase()) return res.json({ success: true, credits: 100, reset_date: null });
   try {
     const { rows } = await pool!.query<{ credits: number; reset_date: string }>(
       'SELECT credits, reset_date FROM user_credits WHERE user_id = $1',
       [auth.userId]
     );
     if (rows.length === 0) {
-      // First time — grant 50 free credits
+      // First time — grant 100 free credits (Free plan)
       await pool!.query(
         `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
-         VALUES ($1, 50, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
+         VALUES ($1, 100, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
          ON CONFLICT (user_id) DO NOTHING`,
         [auth.userId]
       );
@@ -26650,10 +26670,10 @@ app.get('/api/credits/balance', async (req: Request, res: Response) => {
     );
 
     if (rows.length === 0) {
-      // Auto-create with 50 free credits for new users
+      // Auto-create with 100 free credits for new users (Free plan)
       await dbQuery(
         `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
-         VALUES ($1, 50, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
+         VALUES ($1, 100, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
          ON CONFLICT (user_id) DO NOTHING`,
         [auth.userId]
       ).catch(() => undefined);
