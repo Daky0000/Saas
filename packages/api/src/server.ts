@@ -25144,7 +25144,7 @@ app.put('/api/admin/freepik/config', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/freepik/test — verify Magnific/Freepik API key via mystic endpoint
+// GET /api/admin/freepik/test — verify API key via api.freepik.com mystic (not Akamai-blocked)
 app.get('/api/admin/freepik/test', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
@@ -25152,21 +25152,18 @@ app.get('/api/admin/freepik/test', async (req: Request, res: Response) => {
   if (!apiKey) return res.status(400).json({ success: false, error: 'No API key configured — set up Magnific in Admin.' });
   try {
     const keyHint = apiKey.length > 8 ? `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}` : '(short key)';
-    // Submit a mystic task to verify the key (Freepik = Magnific, uses api.magnific.com)
     const r = await axios.post(
-      `${MAGNIFIC_BASE}/v1/ai/mystic`,
+      `${FREEPIK_BASE}/v1/ai/mystic`,
       { prompt: 'a red apple', negative_prompt: '', image: { size: 'square_1_1' }, output_format: 'jpeg', num_images: 1 },
-      { headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 20000 }
+      { headers: { 'x-freepik-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 20000 }
     );
-    const isHtml = typeof r.data === 'string' && r.data.trimStart().startsWith('<');
     if (r.status === 401 || r.status === 403) {
-      const msg = isHtml ? `Service blocked (HTTP ${r.status}) — Magnific/Akamai is blocking requests from this server IP` : `Invalid API key (HTTP ${r.status})`;
-      return res.json({ success: false, error: msg, keyHint });
+      return res.json({ success: false, error: `Invalid API key (HTTP ${r.status})`, keyHint });
     }
     if (r.status >= 400) {
-      return res.json({ success: false, error: `Magnific returned HTTP ${r.status}`, keyHint, response: isHtml ? '(HTML)' : r.data });
+      return res.json({ success: false, error: `Freepik returned HTTP ${r.status}`, keyHint, response: r.data });
     }
-    return res.json({ success: true, status: r.status, keyHint, note: 'Key is valid — task submitted to mystic' });
+    return res.json({ success: true, status: r.status, keyHint, note: 'Key accepted — mystic task submitted' });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
@@ -26433,15 +26430,18 @@ async function runDueDateAlerts() {
   }
 }
 
-// ─── Freepik / Magnific Mystic Integration ────────────────────────────────────
-// Freepik rebranded to Magnific.com — uses api.magnific.com with the same key
+// ─── Freepik Integration (api.freepik.com — not Akamai-blocked unlike api.magnific.com) ──
+// Freepik rebranded to Magnific.com but api.freepik.com still serves the mystic endpoint
+// and is NOT blocked by Akamai on Railway IPs. Used as fallback when Magnific is blocked.
+
+const FREEPIK_BASE = 'https://api.freepik.com';
 
 const FREEPIK_IMAGE_MODELS: Record<string, { credits: number; type: 'async' }> = {
   'freepik-mystic': { credits: 5, type: 'async' },
 };
 
 async function getFreepikApiKey(): Promise<string> {
-  // Try explicit Freepik env var first, then DB, then fall back to Magnific key
+  // Try explicit Freepik env var first, then DB, then fall back to Magnific key (same account)
   const envKey = process.env.FREEPIK_API_KEY;
   if (envKey) return envKey;
   try {
@@ -26459,25 +26459,25 @@ async function freepikGenerateImage(
   apiKey: string,
   onProgress?: (status: string) => void
 ): Promise<{ url: string | null; error: string | null }> {
-  // Freepik is now Magnific — use api.magnific.com/v1/ai/mystic (async)
-  const headers = { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' };
+  // Use api.freepik.com/v1/ai/mystic — same API key as Magnific, different domain, not Akamai-blocked
+  const headers = { 'x-freepik-api-key': apiKey, 'Content-Type': 'application/json' };
   const submitResp = await axios.post(
-    `${MAGNIFIC_BASE}/v1/ai/mystic`,
+    `${FREEPIK_BASE}/v1/ai/mystic`,
     { prompt, negative_prompt: '', image: { size: aspectRatio }, output_format: 'jpeg', num_images: 1, filter_nsfw: true },
     { headers, validateStatus: () => true, timeout: 20000 }
   );
   if (submitResp.status >= 400) {
     const isHtml = typeof submitResp.data === 'string' && submitResp.data.trimStart().startsWith('<');
-    return { url: null, error: isHtml ? `Service blocked (HTTP ${submitResp.status})` : (submitResp.data?.message ?? `Magnific mystic error ${submitResp.status}`) };
+    return { url: null, error: isHtml ? `Service blocked (HTTP ${submitResp.status})` : (submitResp.data?.message ?? `Freepik mystic error ${submitResp.status}`) };
   }
   const taskId = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
-  if (!taskId) return { url: null, error: 'No task_id returned from mystic' };
+  if (!taskId) return { url: null, error: 'No task_id returned from Freepik mystic' };
 
   const deadline = Date.now() + 150_000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 4000));
-    const pollResp = await axios.get(`${MAGNIFIC_BASE}/v1/ai/mystic/${taskId}`, {
-      headers: { 'x-magnific-api-key': apiKey },
+    const pollResp = await axios.get(`${FREEPIK_BASE}/v1/ai/mystic/${taskId}`, {
+      headers: { 'x-freepik-api-key': apiKey },
       validateStatus: () => true,
       timeout: 10000,
     });
@@ -26486,11 +26486,11 @@ async function freepikGenerateImage(
     onProgress?.(status);
     if (status === 'COMPLETED') {
       const imgs: string[] = data?.generated ?? [];
-      return { url: imgs[0] ?? null, error: imgs[0] ? null : 'No image URL in mystic response' };
+      return { url: imgs[0] ?? null, error: imgs[0] ? null : 'No image URL in Freepik response' };
     }
-    if (status === 'FAILED') return { url: null, error: data?.error ?? 'Mystic generation failed' };
+    if (status === 'FAILED') return { url: null, error: data?.error ?? 'Freepik generation failed' };
   }
-  return { url: null, error: 'Timeout: mystic generation took too long' };
+  return { url: null, error: 'Timeout: Freepik generation took too long' };
 }
 
 // ─── Nova Design Agent Routes ─────────────────────────────────────────────────
