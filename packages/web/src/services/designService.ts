@@ -1,4 +1,4 @@
-const API_BASE = '/api';
+import { getApiBaseUrl } from '../utils/apiBase';
 
 function authHeader(): Record<string, string> {
   const token = localStorage.getItem('auth_token');
@@ -18,7 +18,8 @@ export interface UserDesign {
 }
 
 async function request<T>(method: string, path: string, body?: object): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api${path}`, {
     method,
     headers: { 'Content-Type': 'application/json', ...authHeader() },
     body: body ? JSON.stringify(body) : undefined,

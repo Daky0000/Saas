@@ -8373,14 +8373,14 @@ app.get('/api/credits/balance', async (req: Request, res: Response) => {
       [auth.userId]
     );
     if (rows.length === 0) {
-      // First time — grant 100 free credits (Free plan)
+      // First time — grant 100 free credits
       await pool!.query(
         `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
          VALUES ($1, 100, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
          ON CONFLICT (user_id) DO NOTHING`,
         [auth.userId]
       );
-      return res.json({ success: true, credits: 50, reset_date: null });
+      return res.json({ success: true, credits: 100, reset_date: null });
     }
     return res.json({ success: true, credits: rows[0].credits, reset_date: rows[0].reset_date });
   } catch (e: any) {
@@ -27075,13 +27075,21 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
       ).catch(() => undefined);
     }
 
-    // Deduct credits
-    await dbQuery(
-      `INSERT INTO user_credits (user_id, credits, updated_at)
-       VALUES ($1, GREATEST(0, 50 - $2), NOW())
-       ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
-      [auth.userId, creditCost]
-    ).catch(() => undefined);
+    // Deduct credits (UPDATE path — balance endpoint always creates the row on first load)
+    const deductResult = await dbQuery(
+      `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2 RETURNING credits`,
+      [creditCost, auth.userId]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    // Fallback: if no row existed yet, insert it with 100 starting credits minus cost
+    if (deductResult.rows.length === 0) {
+      await dbQuery(
+        `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
+         VALUES ($1, GREATEST(0, 100 - $2), date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
+         ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
+        [auth.userId, creditCost]
+      ).catch((e) => console.error('Credit deduction fallback failed:', e));
+    }
 
     return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId });
   } catch (e: any) {
