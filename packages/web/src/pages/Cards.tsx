@@ -83,8 +83,6 @@ const IMAGE_MODELS: AIModel[] = [
   { id: 'flux-kontext-pro', label: 'Flux Kontext Pro', desc: 'Best for context-aware edits',    creditCost: 5, badge: 'Popular' },
   { id: 'flux-2-pro',       label: 'Flux 2 Pro',       desc: 'High quality text-to-image',      creditCost: 5 },
   { id: 'mystic',           label: 'Mystic',            desc: "Magnific's flagship model",       creditCost: 8 },
-  { id: 'freepik-pikaso',   label: 'Freepik Pikaso',   desc: 'Fast sync generation',            creditCost: 3 },
-  { id: 'freepik-mystic',   label: 'Freepik Mystic',   desc: 'High quality async generation',   creditCost: 5, badge: 'Alt' },
 ];
 
 const VIDEO_MODELS: AIModel[] = [

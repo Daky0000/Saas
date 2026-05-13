@@ -43,17 +43,6 @@ export default function AdminMagnific() {
   const [testRaw, setTestRaw]       = useState<string>('');
   const [saveMsg, setSaveMsg]       = useState('');
 
-  // Freepik state
-  const [fpKey, setFpKey]               = useState('');
-  const [fpMaskedKey, setFpMaskedKey]   = useState('');
-  const [fpHasKey, setFpHasKey]         = useState(false);
-  const [fpSaving, setFpSaving]         = useState(false);
-  const [fpTesting, setFpTesting]       = useState(false);
-  const [fpTestResult, setFpTestResult] = useState<'ok' | 'fail' | null>(null);
-  const [fpTestError, setFpTestError]   = useState('');
-  const [fpSaveMsg, setFpSaveMsg]       = useState('');
-  const [fpSource, setFpSource]         = useState<'env' | 'db' | null>(null);
-
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [loadingGens, setLoadingGens] = useState(false);
   const [genTypeFilter, setGenTypeFilter] = useState<string>('all');
@@ -62,7 +51,6 @@ export default function AdminMagnific() {
 
   useEffect(() => {
     fetchConfig();
-    fetchFreepikConfig();
     fetchGenerations();
   }, []);
 
@@ -96,37 +84,6 @@ export default function AdminMagnific() {
       if (d.success) setTestResult('ok');
       else { setTestResult('fail'); setTestError(d.error ?? 'Connection failed'); }
     } catch (e: any) { setTestResult('fail'); setTestError(e.message); } finally { setTesting(false); }
-  }
-
-  async function fetchFreepikConfig() {
-    try {
-      const r = await fetch(`${getApiBaseUrl()}/api/admin/freepik/config`, { headers });
-      const d = await r.json();
-      if (d.success) { setFpHasKey(d.hasKey); setFpMaskedKey(d.maskedKey ?? ''); setFpSource(d.source ?? null); }
-    } catch { /* ignore */ }
-  }
-
-  async function saveFreepikKey() {
-    if (!fpKey.trim()) return;
-    setFpSaving(true); setFpSaveMsg('');
-    try {
-      const r = await fetch(`${getApiBaseUrl()}/api/admin/freepik/config`, {
-        method: 'PUT', headers, body: JSON.stringify({ apiKey: fpKey.trim() }),
-      });
-      const d = await r.json();
-      if (d.success) { setFpSaveMsg('Saved!'); setFpKey(''); fetchFreepikConfig(); }
-      else setFpSaveMsg(d.error ?? 'Save failed');
-    } catch (e: any) { setFpSaveMsg(e.message); } finally { setFpSaving(false); }
-  }
-
-  async function testFreepikConnection() {
-    setFpTesting(true); setFpTestResult(null); setFpTestError('');
-    try {
-      const r = await fetch(`${getApiBaseUrl()}/api/admin/freepik/test`, { headers });
-      const d = await r.json();
-      if (d.success) setFpTestResult('ok');
-      else { setFpTestResult('fail'); setFpTestError(d.error ?? 'Connection failed'); }
-    } catch (e: any) { setFpTestResult('fail'); setFpTestError(e.message); } finally { setFpTesting(false); }
   }
 
   async function fetchGenerations() {
@@ -192,59 +149,6 @@ export default function AdminMagnific() {
             <pre className="mt-1 text-[10px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap">{testRaw}</pre>
           </details>
         )}
-      </div>
-
-      {/* Freepik API Key Section */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50">
-            <Key size={18} className="text-orange-500" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-slate-900">Freepik API Key</h2>
-            <p className="text-xs text-slate-500">Fallback image generation when Magnific is unavailable — get a key at freepik.com/api</p>
-          </div>
-        </div>
-
-        {fpHasKey && (
-          <div className="flex items-center gap-2 mb-4 rounded-xl bg-slate-50 border border-slate-200 px-3 py-2.5">
-            <CheckCircle2 size={14} className="text-green-500 shrink-0" />
-            <span className="text-xs text-slate-600">
-              Current key: <span className="font-mono font-semibold">{fpMaskedKey}</span>
-              {fpSource === 'env' && <span className="ml-2 rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold text-blue-600">ENV VAR</span>}
-            </span>
-          </div>
-        )}
-
-        {fpSource === 'env' ? (
-          <p className="text-xs text-slate-500 mb-3">Key is set via <code className="font-mono bg-slate-100 px-1 rounded">FREEPIK_API_KEY</code> environment variable. To override it, enter a new key below.</p>
-        ) : null}
-
-        <div className="flex gap-2 mb-3">
-          <input
-            type="password"
-            value={fpKey}
-            onChange={e => setFpKey(e.target.value)}
-            placeholder={fpHasKey ? 'Enter new key to replace…' : 'Enter Freepik API key…'}
-            className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-200"
-          />
-          <button type="button" disabled={!fpKey.trim() || fpSaving} onClick={saveFreepikKey}
-            className="flex items-center gap-1.5 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition">
-            {fpSaving ? <Loader2 size={14} className="animate-spin" /> : null}
-            Save
-          </button>
-        </div>
-        {fpSaveMsg && <p className={`text-xs mb-2 ${fpSaveMsg === 'Saved!' ? 'text-green-600' : 'text-red-500'}`}>{fpSaveMsg}</p>}
-
-        <button type="button" disabled={fpTesting || !fpHasKey} onClick={testFreepikConnection}
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition">
-          {fpTesting ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          Test Connection
-          {fpTestResult === 'ok'   && <CheckCircle2 size={14} className="text-green-500 ml-1" />}
-          {fpTestResult === 'fail' && <XCircle      size={14} className="text-red-500 ml-1" />}
-        </button>
-        {fpTestResult === 'ok'   && <p className="text-xs text-green-600 mt-2">Freepik connection successful — API key is valid.</p>}
-        {fpTestResult === 'fail' && <p className="text-xs text-red-500 mt-2">{fpTestError || 'Connection failed'}</p>}
       </div>
 
       {/* Supported Models */}
