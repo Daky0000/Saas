@@ -3395,6 +3395,38 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   // ── End Workspace Tables ──────────────────────────────────────────────────────
 
+  // ── Workflows ─────────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      org_id      INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      description TEXT,
+      status      TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','inactive')),
+      nodes       JSONB NOT NULL DEFAULT '[]',
+      edges       JSONB NOT NULL DEFAULT '[]',
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflows_user_idx ON workflows (user_id, created_at DESC);`).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workflow_id  UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status       TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','completed','failed','cancelled')),
+      trigger_data JSONB DEFAULT '{}',
+      logs         JSONB DEFAULT '[]',
+      started_at   TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS workflow_runs_workflow_idx ON workflow_runs (workflow_id, started_at DESC);`).catch(() => undefined);
+  // ── End Workflows ─────────────────────────────────────────────────────────────
+
   dbReady = true;
 }
 
@@ -27608,6 +27640,235 @@ app.get('/api/user-designs/:id/liked', async (req: Request, res: Response) => {
 // (duplicate generate-video route removed — see the Magnific version above)
 
 // ── End Credits System Routes ─────────────────────────────────────────────────
+
+// ── Workflow Routes ───────────────────────────────────────────────────────────
+
+// GET /api/workflows — list user's workflows
+app.get('/api/workflows', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.json({ success: true, workflows: [] });
+    const { rows } = await dbQuery(
+      `SELECT id, name, description, status, nodes, edges, created_at, updated_at
+       FROM workflows WHERE user_id = $1 ORDER BY updated_at DESC`,
+      [auth.userId]
+    );
+    return res.json({ success: true, workflows: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/workflows — create workflow
+app.post('/api/workflows', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { name = 'Untitled Workflow', description = '', nodes = [], edges = [] } = req.body;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'DB unavailable' });
+    const { rows } = await dbQuery(
+      `INSERT INTO workflows (user_id, name, description, nodes, edges)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [auth.userId, name, description, JSON.stringify(nodes), JSON.stringify(edges)]
+    );
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/workflows/:id — get single workflow
+app.get('/api/workflows/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'DB unavailable' });
+    const { rows } = await dbQuery(
+      `SELECT * FROM workflows WHERE id = $1 AND user_id = $2`,
+      [req.params.id, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Workflow not found' });
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/workflows/:id — update workflow
+app.put('/api/workflows/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'DB unavailable' });
+    const { name, description, nodes, edges, status } = req.body;
+    const { rows } = await dbQuery(
+      `UPDATE workflows SET
+        name        = COALESCE($3, name),
+        description = COALESCE($4, description),
+        nodes       = COALESCE($5, nodes),
+        edges       = COALESCE($6, edges),
+        status      = COALESCE($7, status),
+        updated_at  = NOW()
+       WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [req.params.id, auth.userId, name ?? null, description ?? null,
+       nodes ? JSON.stringify(nodes) : null, edges ? JSON.stringify(edges) : null, status ?? null]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Workflow not found' });
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/workflows/:id
+app.delete('/api/workflows/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'DB unavailable' });
+    await dbQuery(`DELETE FROM workflows WHERE id = $1 AND user_id = $2`, [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/workflows/:id/activate — toggle active/inactive
+app.post('/api/workflows/:id/activate', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'DB unavailable' });
+    const { rows: current } = await dbQuery(
+      `SELECT status FROM workflows WHERE id = $1 AND user_id = $2`,
+      [req.params.id, auth.userId]
+    );
+    if (!current.length) return res.status(404).json({ success: false, error: 'Not found' });
+    const newStatus = current[0].status === 'active' ? 'inactive' : 'active';
+    const { rows } = await dbQuery(
+      `UPDATE workflows SET status = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [req.params.id, auth.userId, newStatus]
+    );
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/workflows/:id/runs — execution history
+app.get('/api/workflows/:id/runs', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.json({ success: true, runs: [] });
+    const { rows } = await dbQuery(
+      `SELECT r.* FROM workflow_runs r
+       JOIN workflows w ON w.id = r.workflow_id
+       WHERE r.workflow_id = $1 AND w.user_id = $2
+       ORDER BY r.started_at DESC LIMIT 50`,
+      [req.params.id, auth.userId]
+    );
+    return res.json({ success: true, runs: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/workflows/:id/run — manual test-run (executes the workflow synchronously)
+app.post('/api/workflows/:id/run', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'DB unavailable' });
+
+    const { rows: wfRows } = await dbQuery(
+      `SELECT * FROM workflows WHERE id = $1 AND user_id = $2`,
+      [req.params.id, auth.userId]
+    );
+    if (!wfRows.length) return res.status(404).json({ success: false, error: 'Workflow not found' });
+    const wf = wfRows[0];
+
+    const triggerData = req.body.trigger_data ?? {};
+    const logs: { step: string; message: string; ts: string }[] = [];
+    const addLog = (step: string, message: string) =>
+      logs.push({ step, message, ts: new Date().toISOString() });
+
+    const { rows: runRows } = await dbQuery(
+      `INSERT INTO workflow_runs (workflow_id, user_id, trigger_data, logs)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [wf.id, auth.userId, JSON.stringify(triggerData), JSON.stringify(logs)]
+    );
+    const runId = runRows[0].id;
+
+    const nodes: any[] = wf.nodes ?? [];
+    const edges: any[] = wf.edges ?? [];
+
+    const findEdges = (sourceId: string, branch?: string) =>
+      edges.filter((e: any) => e.sourceId === sourceId && (!branch || e.branch === branch));
+
+    let finalStatus = 'completed';
+    try {
+      const triggerNode = nodes.find((n: any) => n.type === 'trigger');
+      if (!triggerNode) throw new Error('No trigger node found');
+      addLog(triggerNode.id, `Trigger fired: ${triggerNode.subType}`);
+
+      const executeNode = async (nodeId: string): Promise<void> => {
+        const node = nodes.find((n: any) => n.id === nodeId);
+        if (!node || node.type === 'end') return;
+
+        if (node.type === 'condition') {
+          const cfg = node.config ?? {};
+          let result = false;
+          if (node.subType === 'has_image') result = !!(triggerData.image_url);
+          else if (node.subType === 'no_image') result = !(triggerData.image_url);
+          else if (node.subType === 'platform_is') result = triggerData.platform === cfg.platform;
+          else if (node.subType === 'keyword_contains')
+            result = (triggerData.content ?? '').toLowerCase().includes((cfg.keyword ?? '').toLowerCase());
+          else result = true;
+
+          addLog(node.id, `Condition "${node.label}": ${result ? 'YES' : 'NO'}`);
+          const branch = result ? 'yes' : 'no';
+          for (const edge of findEdges(node.id, branch)) await executeNode(edge.targetId);
+        } else if (node.type === 'action') {
+          addLog(node.id, `Running action: ${node.label}`);
+          if (node.subType === 'send_notification') {
+            const msg = (node.config?.message ?? 'Workflow action completed').replace(
+              '{{post_title}}', triggerData.title ?? 'your post'
+            );
+            await dbQuery(
+              `INSERT INTO notifications (user_id, type, title, message)
+               VALUES ($1, 'workflow', 'Workflow', $2)`,
+              [auth.userId, msg]
+            ).catch(() => undefined);
+          }
+          addLog(node.id, `Action "${node.label}" done`);
+          for (const edge of findEdges(node.id)) await executeNode(edge.targetId);
+        } else {
+          for (const edge of findEdges(node.id)) await executeNode(edge.targetId);
+        }
+      };
+
+      if (triggerNode) {
+        for (const edge of findEdges(triggerNode.id)) await executeNode(edge.targetId);
+      }
+    } catch (err: any) {
+      finalStatus = 'failed';
+      addLog('engine', `Error: ${err.message}`);
+    }
+
+    await dbQuery(
+      `UPDATE workflow_runs SET status = $2, logs = $3, completed_at = NOW() WHERE id = $1`,
+      [runId, finalStatus, JSON.stringify(logs)]
+    );
+
+    return res.json({ success: true, run_id: runId, status: finalStatus, logs });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End Workflow Routes ───────────────────────────────────────────────────────
 
 // Not found — must be LAST, after all routes
 app.use((req: Request, res: Response) => {

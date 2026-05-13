@@ -27,6 +27,7 @@ import OnboardingWizard from './components/OnboardingWizard';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import Posts from './pages/Posts';
 import Cards from './pages/Cards';
+import WorkflowPage from './pages/Workflow';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
 import Pricing from './pages/Pricing';
@@ -85,7 +86,8 @@ type PageType =
   | 'pricing'
   | 'tasks'
   | 'project-settings'
-  | 'settings';
+  | 'settings'
+  | 'workflow';
 
 type AuthMeResponse = {
   success: boolean;
@@ -120,6 +122,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   tasks: '/tasks',
   'project-settings': '/project/settings',
   settings: '/settings',
+  workflow: '/posts/workflow',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -332,7 +335,7 @@ function AppSidebar({
           type="button"
           data-tour-id="nav-content"
           onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
-          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards')}
+          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
         >
           <FileText size={15} className="shrink-0" />
           <span className="flex-1 text-left">Content</span>
@@ -344,6 +347,7 @@ function AppSidebar({
               { id: 'post-automation' as PageType, label: 'Automation' },
               { id: 'media' as PageType, label: 'Media' },
               { id: 'cards' as PageType, label: 'AI Studio' },
+              { id: 'workflow' as PageType, label: 'Workflow' },
             ] as { id: PageType; label: string }[]).map((c) => (
               <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                 {c.label}
@@ -864,6 +868,7 @@ function App() {
       case 'tasks': return <TasksPage initialFilter={currentTaskFilter} />;
       case 'project-settings': return <ProjectSettings />;
       case 'settings': return <SettingsPage currentUser={authUser} onUserUpdated={handleUserUpdated} onNavigateToBilling={() => navigateToPage('billing')} />;
+      case 'workflow': return <WorkflowPage />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };

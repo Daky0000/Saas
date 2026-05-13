@@ -82,25 +82,59 @@ function InspirationCard({ design }: { design: { title: string; style: string; c
 
 // ── Workflow step indicator ────────────────────────────────────────────────────
 
+const STEP_META: Record<string, { icon: string; desc: string }> = {
+  step_search:   { icon: '🔍', desc: 'Finding matching design references' },
+  step_extract:  { icon: '✦',  desc: 'Pulling style & prompt patterns' },
+  step_tailor:   { icon: '◉',  desc: 'Adapting to your brand palette' },
+  step_generate: { icon: '🎨', desc: 'Rendering your unique image' },
+  step_save:     { icon: '💾', desc: 'Saving to your design history' },
+};
+
 function StepIndicator({ steps }: { steps: { id: string; name: string; status: 'pending' | 'running' | 'done' | 'error' }[] }) {
   return (
-    <div className="space-y-1.5">
-      {steps.map((s) => (
-        <div key={s.id} className="flex items-center gap-2.5 text-sm">
-          <div className="shrink-0 w-5 h-5 flex items-center justify-center">
-            {s.status === 'done'    && <CheckCircle2 size={16} className="text-emerald-500" />}
-            {s.status === 'running' && <Loader2      size={16} className="animate-spin text-[#5b6cf9]" />}
-            {s.status === 'error'   && <AlertCircle  size={16} className="text-red-400" />}
-            {s.status === 'pending' && <div className="w-4 h-4 rounded-full border-2 border-slate-200" />}
+    <div className="space-y-2">
+      {steps.map((s, i) => {
+        const meta = STEP_META[s.id] ?? { icon: '◦', desc: '' };
+        const isLast = i === steps.length - 1;
+        return (
+          <div key={s.id} className="relative flex gap-3">
+            {/* Connector line */}
+            {!isLast && (
+              <div className={`absolute left-[17px] top-8 w-px h-[calc(100%+2px)] transition-colors duration-500 ${s.status === 'done' ? 'bg-emerald-200' : 'bg-slate-100'}`} />
+            )}
+            {/* Step icon */}
+            <div className={`relative shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-base transition-all duration-300
+              ${s.status === 'done'    ? 'bg-emerald-50 border border-emerald-200 shadow-sm' :
+                s.status === 'running' ? 'bg-indigo-50 border border-[#5b6cf9] shadow-[0_0_0_3px_rgba(91,108,249,0.12)]' :
+                s.status === 'error'   ? 'bg-red-50 border border-red-200' :
+                'bg-slate-50 border border-slate-200 opacity-50'}`}
+            >
+              {s.status === 'running'
+                ? <span className="text-[15px] animate-pulse">{meta.icon}</span>
+                : s.status === 'done'
+                  ? <CheckCircle2 size={16} className="text-emerald-500" />
+                  : s.status === 'error'
+                    ? <AlertCircle size={16} className="text-red-400" />
+                    : <span className="text-[13px] text-slate-300">{meta.icon}</span>
+              }
+            </div>
+            {/* Text */}
+            <div className="flex-1 pt-1.5 pb-3">
+              <p className={`text-sm font-semibold transition-colors leading-none
+                ${s.status === 'running' ? 'text-[#5b6cf9]' :
+                  s.status === 'done'    ? 'text-slate-700' :
+                  s.status === 'error'   ? 'text-red-500' :
+                  'text-slate-400'}`}
+              >
+                {s.name}
+              </p>
+              {(s.status === 'running' || s.status === 'done') && meta.desc && (
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">{meta.desc}</p>
+              )}
+            </div>
           </div>
-          <span className={
-            s.status === 'running' ? 'font-semibold text-[#5b6cf9]' :
-            s.status === 'done'    ? 'text-slate-700' :
-            s.status === 'error'   ? 'text-red-500' :
-            'text-slate-400'
-          }>{s.name}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -160,6 +194,9 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   const [errorMsg, setErrorMsg]       = useState<string | null>(null);
   const [generating, setGenerating]   = useState(false);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
+  const generateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (generateTimeoutRef.current) clearTimeout(generateTimeoutRef.current); }, []);
 
   // GenMode & model picker
   const [genMode, setGenMode]         = useState<GenMode>('image');
@@ -256,19 +293,31 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
             }
             break;
           case 'step_progress':
-            if (data.step_id === 'step_generate') setPhase('generating');
+            if (data.step_id === 'step_generate') {
+              setPhase('generating');
+              // Timeout: if image_ready hasn't arrived in 90s, surface an error
+              if (generateTimeoutRef.current) clearTimeout(generateTimeoutRef.current);
+              generateTimeoutRef.current = setTimeout(() => {
+                setErrorMsg('Image generation timed out. The model may be busy — please try again.');
+                setPhase('error');
+                readerRef.current?.cancel().catch(() => {});
+              }, 90_000);
+            }
             break;
           case 'image_ready':
+            if (generateTimeoutRef.current) { clearTimeout(generateTimeoutRef.current); generateTimeoutRef.current = null; }
             setImageUrl(data.url ?? null);
             break;
           case 'saved':
             setSavedDesignId(data.design_id ?? null);
             break;
           case 'error':
+            if (generateTimeoutRef.current) { clearTimeout(generateTimeoutRef.current); generateTimeoutRef.current = null; }
             setErrorMsg(data.message ?? 'An error occurred');
             setPhase('error');
             break;
           case 'done':
+            if (generateTimeoutRef.current) { clearTimeout(generateTimeoutRef.current); generateTimeoutRef.current = null; }
             if (phase !== 'error' && phase !== 'prompt_review') {
               setPhase('done');
             }
@@ -559,41 +608,64 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
   // ── Running / Generating states ───────────────────────────────────────────
 
   if (phase === 'running' || phase === 'generating') {
+    const activeStep = steps.find((s) => s.status === 'running');
+    const doneCount  = steps.filter((s) => s.status === 'done').length;
+
     return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 md:p-8">
-        <div className="flex items-center gap-3 mb-6">
-          <Loader2 size={20} className="animate-spin text-[#5b6cf9]" />
-          <div>
-            <h2 className="text-lg font-black text-slate-900">
-              {phase === 'generating' ? 'Generating image…' : 'Nova is working…'}
-            </h2>
-            <p className="text-sm text-slate-500 truncate max-w-md">"{description}"</p>
-          </div>
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        {/* Animated top bar */}
+        <div className="h-1 bg-slate-100 overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-[#5b6cf9] to-indigo-400 transition-all duration-700 ease-out"
+            style={{ width: `${Math.max(8, (doneCount / steps.length) * 100)}%` }}
+          />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Workflow progress */}
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Workflow</p>
-            <StepIndicator steps={steps} />
-          </div>
-
-          {/* Inspirations */}
-          {inspirations.length > 0 && (
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Design Inspirations</p>
-              <div className="grid grid-cols-2 gap-2">
-                {inspirations.slice(0, 4).map((d, i) => (
-                  <InspirationCard key={i} design={d} />
-                ))}
-              </div>
+        <div className="p-6 md:p-8">
+          {/* Header */}
+          <div className="flex items-start gap-4 mb-8">
+            <div className="relative shrink-0 w-11 h-11 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center">
+              <Sparkles size={18} className="text-[#5b6cf9] animate-pulse" />
             </div>
-          )}
-        </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg font-black text-slate-900">
+                {phase === 'generating' ? 'Rendering your image…' : activeStep ? activeStep.name + '…' : 'Nova is working…'}
+              </h2>
+              <p className="text-sm text-slate-400 truncate mt-0.5">"{description}"</p>
+            </div>
+          </div>
 
-        <button type="button" onClick={resetState} className="mt-6 text-xs text-slate-400 hover:text-slate-600 transition">
-          Cancel
-        </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Step pipeline */}
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Pipeline</p>
+              <StepIndicator steps={steps} />
+            </div>
+
+            {/* Inspirations */}
+            {inspirations.length > 0 ? (
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Design references found</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {inspirations.slice(0, 4).map((d, i) => (
+                    <InspirationCard key={i} design={d} />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-3 py-6 rounded-xl bg-slate-50 border border-dashed border-slate-200">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center">
+                  <Image size={18} className="text-indigo-300" />
+                </div>
+                <p className="text-xs text-slate-400 text-center">Searching for design<br />references…</p>
+              </div>
+            )}
+          </div>
+
+          <button type="button" onClick={resetState} className="mt-8 text-xs text-slate-400 hover:text-slate-600 transition">
+            Cancel
+          </button>
+        </div>
       </div>
     );
   }
