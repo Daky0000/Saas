@@ -40,6 +40,7 @@ export default function AdminMagnific() {
   const [testing, setTesting]       = useState(false);
   const [testResult, setTestResult] = useState<'ok' | 'fail' | null>(null);
   const [testError, setTestError]   = useState('');
+  const [testRaw, setTestRaw]       = useState<string>('');
   const [saveMsg, setSaveMsg]       = useState('');
 
   const [generations, setGenerations] = useState<Generation[]>([]);
@@ -75,10 +76,11 @@ export default function AdminMagnific() {
   }
 
   async function testConnection() {
-    setTesting(true); setTestResult(null); setTestError('');
+    setTesting(true); setTestResult(null); setTestError(''); setTestRaw('');
     try {
       const r = await fetch(`${getApiBaseUrl()}/api/admin/magnific/test`, { headers });
       const d = await r.json();
+      setTestRaw(JSON.stringify(d, null, 2));
       if (d.success) setTestResult('ok');
       else { setTestResult('fail'); setTestError(d.error ?? 'Connection failed'); }
     } catch (e: any) { setTestResult('fail'); setTestError(e.message); } finally { setTesting(false); }
@@ -139,8 +141,14 @@ export default function AdminMagnific() {
           {testResult === 'ok'   && <CheckCircle2 size={14} className="text-green-500 ml-1" />}
           {testResult === 'fail' && <XCircle      size={14} className="text-red-500 ml-1" />}
         </button>
-        {testResult === 'ok'   && <p className="text-xs text-green-600 mt-2">Connection successful — API key is valid.</p>}
+        {testResult === 'ok'   && <p className="text-xs text-green-600 mt-2">Connection successful — API key is valid and image was generated.</p>}
         {testResult === 'fail' && <p className="text-xs text-red-500 mt-2">{testError || 'Connection failed'}</p>}
+        {testRaw && (
+          <details className="mt-2">
+            <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600">Raw API response (debug)</summary>
+            <pre className="mt-1 text-[10px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap">{testRaw}</pre>
+          </details>
+        )}
       </div>
 
       {/* Supported Models */}

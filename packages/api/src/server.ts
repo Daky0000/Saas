@@ -24737,21 +24737,28 @@ async function magnificGenerateImage(
   }
 
   const submitResp = await magnificPost(cfg.endpoint, body, apiKey);
+  console.log(`[Magnific] ${cfg.endpoint} → HTTP ${submitResp.status}`, JSON.stringify(submitResp.data)?.slice(0, 300));
   if (submitResp.status >= 400) {
-    const msg = submitResp.data?.message ?? submitResp.data?.error ?? `Magnific API error ${submitResp.status}`;
-    return { url: null, taskId: null, error: msg };
+    const msg = submitResp.data?.message ?? submitResp.data?.error ?? submitResp.data?.detail ?? JSON.stringify(submitResp.data) ?? `Magnific API error`;
+    return { url: null, taskId: null, error: `HTTP ${submitResp.status}: ${msg}` };
   }
 
   if (cfg.type === 'sync') {
     // Synchronous response — base64 image directly in data[0].base64
     const base64 = submitResp.data?.data?.[0]?.base64;
-    if (!base64) return { url: null, taskId: null, error: 'No image data in Magnific response' };
+    if (!base64) {
+      console.error('[Magnific] sync response missing base64:', JSON.stringify(submitResp.data)?.slice(0, 500));
+      return { url: null, taskId: null, error: 'No image data in Magnific response' };
+    }
     return { url: `data:image/jpeg;base64,${base64}`, taskId: null, error: null };
   }
 
   // Async — poll until COMPLETED
   const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
-  if (!taskId) return { url: null, taskId: null, error: 'No task_id in Magnific response' };
+  if (!taskId) {
+    console.error('[Magnific] async response missing task_id:', JSON.stringify(submitResp.data)?.slice(0, 500));
+    return { url: null, taskId: null, error: 'No task_id in Magnific response' };
+  }
   const poll = await pollMagnificTask(cfg.pollPath!(taskId), apiKey, 120, onProgress);
   return { url: poll.url, taskId, error: poll.error };
 }
@@ -24806,21 +24813,28 @@ app.put('/api/admin/magnific/config', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/magnific/test — verify API key with a minimal synchronous generate call
+// GET /api/admin/magnific/test — verify API key; returns full Magnific response for debugging
 app.get('/api/admin/magnific/test', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const apiKey = await getMagnificApiKey();
   if (!apiKey) return res.status(400).json({ success: false, error: 'No API key configured' });
   try {
+    const reqBody = { prompt: 'a red apple on a white table', image: { size: 'square_1_1' }, num_images: 1, filter_nsfw: true };
     const r = await axios.post(
       `${MAGNIFIC_BASE}/v1/ai/text-to-image`,
-      { prompt: 'test', image: { size: 'square_1_1' }, num_images: 1 },
-      { headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 12000 }
+      reqBody,
+      { headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 30000 }
     );
-    if (r.status === 401 || r.status === 403) return res.json({ success: false, error: 'Invalid API key' });
-    if (r.status >= 500) return res.json({ success: false, error: `Magnific server error (${r.status})` });
-    return res.json({ success: true, status: r.status });
+    const keyHint = apiKey.length > 8 ? `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}` : '(short key)';
+    if (r.status === 401 || r.status === 403) {
+      return res.json({ success: false, error: `Invalid API key (HTTP ${r.status})`, keyHint, magnific_response: r.data });
+    }
+    if (r.status >= 400) {
+      return res.json({ success: false, error: `Magnific returned HTTP ${r.status}`, keyHint, magnific_response: r.data });
+    }
+    const hasImage = !!(r.data?.data?.[0]?.base64);
+    return res.json({ success: true, status: r.status, keyHint, has_image: hasImage, magnific_response: hasImage ? '(base64 omitted)' : r.data });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
