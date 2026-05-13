@@ -26287,14 +26287,6 @@ app.get('/api/projects/:projectId/members', async (req: Request, res: Response) 
 
 // ── End Task Management Routes ─────────────────────────────────────────────────
 
-// Not found
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Not found' });
-});
-
-// Centralized error handling (must be last)
-app.use(errorHandler);
-
 // ── Due-date alert scheduler ───────────────────────────────────────────────────
 // Runs every hour. Sends a notification to each assignee of tasks due in ~24h.
 async function runDueDateAlerts() {
@@ -27616,6 +27608,14 @@ app.get('/api/user-designs/:id/liked', async (req: Request, res: Response) => {
 // (duplicate generate-video route removed — see the Magnific version above)
 
 // ── End Credits System Routes ─────────────────────────────────────────────────
+
+// Not found — must be LAST, after all routes
+app.use((req: Request, res: Response) => {
+  res.status(404).json({ success: false, error: 'Not found' });
+});
+
+// Centralized error handling (must be last)
+app.use(errorHandler);
 
 // Start server
 if (config.nodeEnv !== 'test') {
