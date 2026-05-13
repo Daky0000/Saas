@@ -24699,14 +24699,62 @@ async function pollMagnificTask(
   return { url: null, error: 'Timeout: generation took too long' };
 }
 
-const MAGNIFIC_IMAGE_MODELS: Record<string, { endpoint: string; pollPath: (id: string) => string; credits: number }> = {
-  'flux-2-turbo':      { endpoint: '/v1/ai/text-to-image/flux-2-turbo',     pollPath: (id) => `/v1/ai/text-to-image/flux-2-turbo/${id}`,     credits: 3 },
-  'flux-2-klein':      { endpoint: '/v1/ai/text-to-image/flux-2-klein',     pollPath: (id) => `/v1/ai/text-to-image/flux-2-klein/${id}`,     credits: 3 },
-  'flux-kontext-pro':  { endpoint: '/v1/ai/text-to-image/flux-kontext-pro', pollPath: (id) => `/v1/ai/text-to-image/flux-kontext-pro/${id}`, credits: 5 },
-  'flux-2-pro':        { endpoint: '/v1/ai/text-to-image/flux-2-pro',       pollPath: (id) => `/v1/ai/text-to-image/flux-2-pro/${id}`,       credits: 5 },
-  'seedream-v5-lite':  { endpoint: '/v1/ai/text-to-image/seedream-v5-lite', pollPath: (id) => `/v1/ai/text-to-image/seedream-v5-lite/${id}`, credits: 4 },
-  'mystic':            { endpoint: '/v1/ai/mystic',                          pollPath: (id) => `/v1/ai/mystic/${id}`,                          credits: 8 },
+// type: 'sync'  → endpoint returns base64 directly in response (no task polling)
+// type: 'async' → endpoint returns task_id; use pollPath + pollMagnificTask
+const MAGNIFIC_IMAGE_MODELS: Record<string, {
+  endpoint: string;
+  type: 'sync' | 'async';
+  pollPath?: (id: string) => string;
+  credits: number;
+}> = {
+  // Classic fast text-to-image — synchronous base64 response, body: { prompt, image: { size } }
+  'flux-2-turbo':      { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 3 },
+  'flux-2-klein':      { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 3 },
+  'flux-kontext-pro':  { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 5 },
+  'flux-2-pro':        { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 5 },
+  // Seedream — async task polling, body: { prompt, aspect_ratio }
+  'seedream-v5-lite':  { endpoint: '/v1/ai/text-to-image/seedream', type: 'async', pollPath: (id) => `/v1/ai/text-to-image/seedream/${id}`, credits: 4 },
+  // Mystic — async task polling, body: { prompt, image: { size } }
+  'mystic':            { endpoint: '/v1/ai/mystic', type: 'async', pollPath: (id) => `/v1/ai/mystic/${id}`, credits: 8 },
 };
+
+// Central helper: submit + (optionally) poll a Magnific image generation, return URL
+async function magnificGenerateImage(
+  modelId: string,
+  prompt: string,
+  aspectRatio: string, // Magnific aspect string e.g. 'square_1_1'
+  apiKey: string,
+  onProgress?: (status: string) => void
+): Promise<{ url: string | null; taskId: string | null; error: string | null }> {
+  const cfg = MAGNIFIC_IMAGE_MODELS[modelId] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo'];
+
+  // Build request body based on model
+  let body: object;
+  if (modelId === 'seedream-v5-lite') {
+    body = { prompt, aspect_ratio: aspectRatio };
+  } else {
+    body = { prompt, image: { size: aspectRatio }, num_images: 1, filter_nsfw: true };
+  }
+
+  const submitResp = await magnificPost(cfg.endpoint, body, apiKey);
+  if (submitResp.status >= 400) {
+    const msg = submitResp.data?.message ?? submitResp.data?.error ?? `Magnific API error ${submitResp.status}`;
+    return { url: null, taskId: null, error: msg };
+  }
+
+  if (cfg.type === 'sync') {
+    // Synchronous response — base64 image directly in data[0].base64
+    const base64 = submitResp.data?.data?.[0]?.base64;
+    if (!base64) return { url: null, taskId: null, error: 'No image data in Magnific response' };
+    return { url: `data:image/jpeg;base64,${base64}`, taskId: null, error: null };
+  }
+
+  // Async — poll until COMPLETED
+  const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
+  if (!taskId) return { url: null, taskId: null, error: 'No task_id in Magnific response' };
+  const poll = await pollMagnificTask(cfg.pollPath!(taskId), apiKey, 120, onProgress);
+  return { url: poll.url, taskId, error: poll.error };
+}
 
 const MAGNIFIC_VIDEO_MODELS: Record<string, { endpoint: string; pollPath: (id: string) => string; credits: number }> = {
   'wan-2-7-t2v':      { endpoint: '/v1/ai/text-to-video/wan-2-7',         pollPath: (id) => `/v1/ai/text-to-video/wan-2-7/${id}`,         credits: 25 },
@@ -24758,19 +24806,20 @@ app.put('/api/admin/magnific/config', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/magnific/test — verify API key works
+// GET /api/admin/magnific/test — verify API key with a minimal synchronous generate call
 app.get('/api/admin/magnific/test', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const apiKey = await getMagnificApiKey();
   if (!apiKey) return res.status(400).json({ success: false, error: 'No API key configured' });
   try {
-    const r = await axios.get(`${MAGNIFIC_BASE}/v1/ai/mystic`, {
-      headers: { 'x-magnific-api-key': apiKey },
-      validateStatus: () => true,
-      timeout: 8000,
-    });
+    const r = await axios.post(
+      `${MAGNIFIC_BASE}/v1/ai/text-to-image`,
+      { prompt: 'test', image: { size: 'square_1_1' }, num_images: 1 },
+      { headers: { 'x-magnific-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 12000 }
+    );
     if (r.status === 401 || r.status === 403) return res.json({ success: false, error: 'Invalid API key' });
+    if (r.status >= 500) return res.json({ success: false, error: `Magnific server error (${r.status})` });
     return res.json({ success: true, status: r.status });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
@@ -26293,27 +26342,16 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
           let imageUrl: string | null = null;
 
           try {
-            const submitResp = await magnificPost(modelCfg.endpoint, { prompt: finalPrompt, aspect_ratio: 'square_1_1' }, magnificApiKey);
+            const genResult = await magnificGenerateImage(
+              finalModel, finalPrompt, 'square_1_1', magnificApiKey,
+              (status) => send({ type: 'step_progress', step_id: step.id, message: `Generation ${status}…` })
+            );
 
-            if (submitResp.status >= 400) {
-              const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
-              await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
-              send({ type: 'error', message: errMsg });
-              send({ type: 'done' });
-              return res.end();
+            if (genResult.error) throw new Error(genResult.error);
+            if (genResult.taskId) {
+              await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [genResult.taskId, genId]).catch(() => undefined);
             }
-
-            const taskId: string = submitResp.data?.data?.task_id;
-            if (!taskId) throw new Error('No task_id returned from Magnific');
-
-            await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-
-            const pollResult = await pollMagnificTask(modelCfg.pollPath(taskId), magnificApiKey, 120, (status) => {
-              send({ type: 'step_progress', step_id: step.id, message: `Generation ${status}…` });
-            });
-
-            if (pollResult.error) throw new Error(pollResult.error);
-            imageUrl = pollResult.url;
+            imageUrl = genResult.url;
 
           } catch (e: any) {
             const errMsg = e?.message ?? 'Generation failed';
@@ -26471,22 +26509,18 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
 
   try {
     const magnificAspect = ASPECT_RATIO_MAP[aspect_ratio] ?? 'square_1_1';
-    const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim(), aspect_ratio: magnificAspect }, apiKey);
+    const genResult = await magnificGenerateImage(model, prompt.trim(), magnificAspect, apiKey);
 
-    if (submitResp.status >= 400) {
-      const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
-      await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
-      return res.status(400).json({ error: errMsg });
+    if (genResult.error) {
+      await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [genResult.error, genId]).catch(() => undefined);
+      return res.status(400).json({ error: genResult.error });
     }
 
-    const taskId: string = submitResp.data?.data?.task_id;
-    if (!taskId) throw new Error('No task_id returned from Magnific');
+    if (genResult.taskId) {
+      await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [genResult.taskId, genId]).catch(() => undefined);
+    }
 
-    await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-
-    const result = await pollMagnificTask(modelConfig.pollPath(taskId), apiKey, 120);
-    if (result.error) throw new Error(result.error);
-    const imageUrl = result.url!;
+    const imageUrl = genResult.url!;
 
     await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
 
