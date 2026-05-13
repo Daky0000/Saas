@@ -25104,6 +25104,71 @@ app.get('/api/admin/magnific/generations', async (req: Request, res: Response) =
   }
 });
 
+// GET /api/admin/freepik/config — get masked Freepik API key
+app.get('/api/admin/freepik/config', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const envKey: string = process.env.FREEPIK_API_KEY ?? '';
+    if (envKey) {
+      const masked = envKey.length > 8 ? `${'*'.repeat(envKey.length - 4)}${envKey.slice(-4)}` : '****';
+      return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'env' });
+    }
+    const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='freepik' LIMIT 1`);
+    const key: string = r.rows[0]?.config?.apiKey ?? '';
+    const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
+    return res.json({ success: true, hasKey: !!key, maskedKey: masked, source: 'db' });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/freepik/config — save Freepik API key
+app.put('/api/admin/freepik/config', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const { apiKey } = req.body as { apiKey?: string };
+  if (!apiKey?.trim()) return res.status(400).json({ error: 'apiKey is required' });
+  try {
+    await pool!.query(
+      `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+       VALUES ('freepik', $1, true, NOW())
+       ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
+      [JSON.stringify({ apiKey: apiKey.trim() })]
+    );
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/freepik/test — verify Freepik API key with a quick image generation
+app.get('/api/admin/freepik/test', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const apiKey = await getFreepikApiKey();
+  if (!apiKey) return res.status(400).json({ success: false, error: 'No Freepik API key configured' });
+  try {
+    const keyHint = apiKey.length > 8 ? `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}` : '(short key)';
+    const r = await axios.post(
+      `${FREEPIK_BASE}/v1/ai/image-generation`,
+      { prompt: 'a red apple on a white table', image: { size: 'square_1_1' }, num_images: 1 },
+      { headers: { 'x-freepik-api-key': apiKey, 'Content-Type': 'application/json' }, validateStatus: () => true, timeout: 20000 }
+    );
+    if (r.status === 401 || r.status === 403) {
+      return res.json({ success: false, error: `Invalid API key (HTTP ${r.status})`, keyHint, freepik_response: r.data });
+    }
+    if (r.status >= 400) {
+      return res.json({ success: false, error: `Freepik returned HTTP ${r.status}`, keyHint, freepik_response: r.data });
+    }
+    return res.json({ success: true, status: r.status, keyHint, freepik_response: '(success)' });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // GET /api/magnific/task/:id — poll a specific generation's status
 app.get('/api/magnific/task/:id', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
