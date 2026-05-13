@@ -22,6 +22,7 @@
     "bull": "^4.16.5"
   },
   "devDependencies": {
+    "docx": "^9.6.1",
     "typescript": "^5.9.3"
   }
 }

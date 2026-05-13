@@ -2953,33 +2953,223 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agent_workflows (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      agent_key   TEXT NOT NULL UNIQUE,
+      agent_key   TEXT NOT NULL,
+      name        TEXT NOT NULL DEFAULT 'Default Workflow',
+      description TEXT NOT NULL DEFAULT '',
       steps       JSONB NOT NULL DEFAULT '[]',
       is_active   BOOLEAN NOT NULL DEFAULT true,
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(agent_key, name)
     );
   `).catch(() => undefined);
+  // Migrations: add name/description columns and move from per-agent UNIQUE to per-workflow UNIQUE
+  await pool.query(`ALTER TABLE agent_workflows ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Default Workflow'`).catch(() => undefined);
+  await pool.query(`ALTER TABLE agent_workflows ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`).catch(() => undefined);
+  await pool.query(`ALTER TABLE agent_workflows DROP CONSTRAINT IF EXISTS agent_workflows_agent_key_key`).catch(() => undefined);
+  await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_workflows_agent_key_name_key') THEN ALTER TABLE agent_workflows ADD CONSTRAINT agent_workflows_agent_key_name_key UNIQUE (agent_key, name); END IF; END $$`).catch(() => undefined);
   await pool.query(`
     INSERT INTO agent_tools (key, name, description, type, config) VALUES
-    ('meigen_search',   'MeiGen AI Search',   'Search MeiGen AI for design templates and extract generation prompts', 'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
-    ('pinterest_search','Pinterest Search',    'Search Pinterest for visual design inspiration by keyword',           'api',     '{"endpoint":"pinterest"}'),
-    ('claude_synthesize','Claude Synthesize',  'Use Claude AI to craft a tailored prompt from designs and brand memory','builtin','{"model":"claude-haiku-4-5-20251001"}'),
-    ('generate_image',  'Generate Image',      'Generate an image using the model specified in the prompt or fallback','builtin', '{"fallback_model":"flux-2-turbo"}'),
-    ('save_design',     'Save to Designs',     'Save the generated image to the user designs collection',            'builtin', '{}')
+    ('meigen_search',          'MeiGen AI Search',          'Search MeiGen AI for design templates and extract generation prompts',         'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
+    ('pinterest_search',       'Pinterest Search',          'Search Pinterest for visual design inspiration by keyword',                   'api',     '{"endpoint":"pinterest"}'),
+    ('claude_synthesize',      'Claude Synthesize',         'Use Claude AI to craft a tailored prompt from designs and brand memory',      'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
+    ('draft_content',          'Draft Content',             'Draft marketing copy, captions, or strategic content using Claude AI',        'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
+    ('summarize_content',      'Claude Summarize',          'Summarize and analyze text, data, or reports using Claude AI',               'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
+    ('generate_image',         'Generate Image (Magnific)', 'Generate an image using Magnific AI with the selected model',                'builtin', '{"fallback_model":"flux-2-turbo"}'),
+    ('freepik_generate_image', 'Generate Image (Freepik)',  'Generate a high-quality image via Freepik AI — uses credits per generation', 'api',     '{"provider":"freepik","fallback_model":"freepik-mystic","credits":5}'),
+    ('generate_video',         'Generate Video (Magnific)', 'Generate a short branded video clip via Magnific AI video models',           'builtin', '{"fallback_model":"wan-2-7-t2v"}'),
+    ('save_design',            'Save to Designs',           'Save the generated image to the user designs collection',                   'builtin', '{}')
     ON CONFLICT (key) DO NOTHING;
   `).catch(() => undefined);
+  // ── Seed default named workflows for all 5 agents (UNIQUE agent_key+name = idempotent) ─
   {
-    const _novaSteps = [
-      { id: 'step_search',  name: 'Search Designs',       tool: 'meigen_search',    description: 'Find matching design templates on MeiGen AI', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
-      { id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize', description: 'Extract visual elements and generation prompts from found designs', prompt_template: 'From these design concepts, extract 3–5 key visual styles with their image generation prompts and recommended AI model.\n\nDesigns: {step_search.result}', params: {} },
-      { id: 'step_tailor',  name: 'Tailor to Brand',       tool: 'claude_synthesize', description: 'Combine design inspiration with user brand memory to produce a final prompt', prompt_template: 'Create a single optimized image generation prompt by blending these design concepts with the user brand:\n- Niche: {brand.niche}\n- Tone: {brand.tone}\n- Audience: {brand.audience}\n\nDesign concepts: {step_extract.result}\n\nReturn ONLY valid JSON (no markdown): { "prompt": "...", "model": "flux-2-turbo", "style_notes": "..." }', params: {} },
-      { id: 'step_generate',name: 'Generate Image',        tool: 'generate_image',    description: 'Generate the final branded image', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
-      { id: 'step_save',    name: 'Save Design',           tool: 'save_design',       description: 'Save the generated image to user designs', prompt_template: '', params: {} },
+    const _seeds: { agent_key: string; name: string; description: string; steps: any[] }[] = [
+      // ── Nova — Creative Director ───────────────────────────────────────────
+      {
+        agent_key: 'nova', name: 'Brand Identity Visual',
+        description: 'Search design concepts, tailor to brand memory, then generate a branded image via Freepik AI.',
+        steps: [
+          { id: 'step_search',   name: 'Search Designs',        tool: 'meigen_search',          description: 'Find design templates matching the request', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
+          { id: 'step_extract',  name: 'Extract Style Prompts', tool: 'claude_synthesize',       description: 'Extract visual elements and generation prompts', prompt_template: 'From these design concepts, extract 3–5 key visual styles with image generation prompts.\n\nDesigns: {step_search.result}', params: {} },
+          { id: 'step_tailor',   name: 'Tailor to Brand',       tool: 'claude_synthesize',       description: 'Blend design inspiration with brand memory', prompt_template: 'Create one optimized image prompt combining design concepts with this brand:\nNiche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDesigns: {step_extract.result}\n\nReturn ONLY JSON (no markdown): { "prompt": "...", "model": "freepik-mystic", "style_notes": "..." }', params: {} },
+          { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image',  description: 'Generate the final brand image using Freepik AI', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
+          { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save generated image to designs collection', prompt_template: '', params: {} },
+        ],
+      },
+      {
+        agent_key: 'nova', name: 'Social Media Post Image',
+        description: 'Generate a platform-optimized social media image tailored to brand tone and audience.',
+        steps: [
+          { id: 'step_brief',    name: 'Draft Visual Brief',    tool: 'claude_synthesize',       description: 'Write a detailed visual brief for the social post', prompt_template: 'Write a detailed image generation brief for a {input} social media post.\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nAudience: {brand.audience}\n\nInclude: visual style, color scheme, composition, mood.\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic", "platform": "..." }', params: {} },
+          { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image',  description: 'Generate social media image via Freepik', prompt_template: '{step_brief.prompt}', params: {} },
+          { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save to designs collection', prompt_template: '', params: {} },
+        ],
+      },
+      {
+        agent_key: 'nova', name: 'Product Promo Banner',
+        description: 'Create a promotional banner image for a product or service using brand memory and Freepik.',
+        steps: [
+          { id: 'step_concept',  name: 'Build Promo Concept',   tool: 'claude_synthesize',       description: 'Generate a promo banner concept', prompt_template: 'Create a promotional banner concept for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nSpecify: layout, headline text, visual elements, brand colors.\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic", "headline": "...", "cta": "..." }', params: {} },
+          { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image',  description: 'Generate promo banner via Freepik', prompt_template: '{step_concept.prompt}', params: {} },
+          { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save banner to designs collection', prompt_template: '', params: {} },
+        ],
+      },
+      {
+        agent_key: 'nova', name: 'AI Brand Video',
+        description: 'Generate a short branded video clip using Magnific AI video generation.',
+        steps: [
+          { id: 'step_script',   name: 'Write Video Brief',     tool: 'claude_synthesize',       description: 'Draft a video concept brief', prompt_template: 'Write a text-to-video generation prompt for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDescribe: scene, motion, style, colors, mood (max 120 words).\nReturn ONLY JSON: { "prompt": "...", "model": "wan-2-7-t2v" }', params: {} },
+          { id: 'step_generate', name: 'Generate Video',        tool: 'generate_video',          description: 'Generate branded video via Magnific', prompt_template: '{step_script.prompt}', params: {} },
+        ],
+      },
+      {
+        agent_key: 'nova', name: 'Content Mood Board',
+        description: 'Generate multiple visual concepts and image inspirations for a content campaign.',
+        steps: [
+          { id: 'step_concepts', name: 'Generate Visual Ideas', tool: 'claude_synthesize',       description: 'Create 5 visual mood board concepts', prompt_template: 'Generate 5 distinct visual mood board concepts for: {input}\nBrand: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\nFor each include: name, style, color palette, image prompt.\nReturn ONLY JSON array: [{ "name": "...", "style": "...", "colors": "...", "prompt": "..." }]', params: {} },
+          { id: 'step_generate', name: 'Generate Hero Image',   tool: 'freepik_generate_image',  description: 'Generate the primary mood board image via Freepik', prompt_template: '{step_concepts.result}', params: { use_first_prompt: true } },
+          { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save mood board image to designs', prompt_template: '', params: {} },
+        ],
+      },
+      // ── Sage — Strategy Analyst ────────────────────────────────────────────
+      {
+        agent_key: 'sage', name: 'Competitor Analysis',
+        description: 'Analyze competitors in your niche and summarize their strengths, weaknesses, and market gaps.',
+        steps: [
+          { id: 'step_research', name: 'Research Competitors',  tool: 'claude_synthesize',       description: 'Generate competitor landscape analysis', prompt_template: 'Perform a competitor analysis for a business in: {brand.niche}\nUser request: {input}\nAudience: {brand.audience}\n\nAnalyze: top 3–5 competitors, their positioning, content strategy, strengths/weaknesses, and market gaps. Format as a structured report with actionable insights.', params: {} },
+          { id: 'step_summary',  name: 'Strategic Summary',    tool: 'claude_synthesize',        description: 'Distill into strategic recommendations', prompt_template: 'Based on this competitor analysis:\n{step_research.result}\n\nWrite a concise strategic recommendation covering:\n1. Key differentiation opportunities\n2. Content gaps to exploit\n3. Positioning angle for {brand.niche}\n4. Top 3 immediate action items', params: {} },
+        ],
+      },
+      {
+        agent_key: 'sage', name: 'Content Strategy Plan',
+        description: 'Build a comprehensive 30-day content strategy aligned to brand goals and audience.',
+        steps: [
+          { id: 'step_audit',    name: 'Audit Brand Positioning', tool: 'claude_synthesize',     description: 'Assess current brand positioning and content gaps', prompt_template: 'Audit the content positioning for a {brand.niche} brand.\nTone: {brand.tone}\nAudience: {brand.audience}\nRequest: {input}\n\nAssess: content gaps, audience pain points, content pillars to establish, platforms to prioritize.', params: {} },
+          { id: 'step_plan',     name: 'Build 30-Day Plan',     tool: 'claude_synthesize',       description: 'Create a detailed monthly content plan', prompt_template: 'Using this positioning audit:\n{step_audit.result}\n\nBuild a 30-day content strategy for {brand.niche}:\n- 4 weekly themes\n- Daily post types (educational, promotional, engagement, behind-scenes)\n- Platform mix\n- KPIs to track\n\nFormat as a structured calendar plan.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'sage', name: 'Audience Persona Builder',
+        description: 'Create detailed target audience personas based on brand niche and market insights.',
+        steps: [
+          { id: 'step_research', name: 'Research Audience',    tool: 'claude_synthesize',        description: 'Research target audience characteristics', prompt_template: 'Research the ideal target audience for: {brand.niche}\nCurrent audience info: {brand.audience}\nUser request: {input}\n\nIdentify: demographics, psychographics, pain points, goals, preferred platforms, content habits, purchasing triggers.', params: {} },
+          { id: 'step_personas', name: 'Build 3 Personas',    tool: 'claude_synthesize',         description: 'Create detailed persona profiles', prompt_template: 'Based on this audience research:\n{step_research.result}\n\nCreate 3 detailed audience personas for {brand.niche}. Each persona: name, age/role, goals, pain points, preferred content types, platforms used, and how this brand helps them.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'sage', name: 'Campaign Brief Writer',
+        description: 'Write a complete marketing campaign brief from objectives to execution details.',
+        steps: [
+          { id: 'step_objectives', name: 'Define Objectives',  tool: 'claude_synthesize',        description: 'Clarify campaign goals and success metrics', prompt_template: 'Define campaign objectives for: {input}\nBrand: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nSpecify: primary goal, secondary goals, target segment, KPIs, timeline, and budget framework.', params: {} },
+          { id: 'step_brief',      name: 'Write Full Brief',   tool: 'claude_synthesize',        description: 'Write the comprehensive campaign brief', prompt_template: 'Write a complete marketing campaign brief from these objectives:\n{step_objectives.result}\n\nInclude: campaign concept, messaging framework, content mix, channel strategy, creative direction, timeline milestones, and success criteria.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'sage', name: 'Brand Positioning Statement',
+        description: 'Craft a clear and compelling brand positioning statement that differentiates in the market.',
+        steps: [
+          { id: 'step_analysis',  name: 'Positioning Analysis', tool: 'claude_synthesize',       description: 'Analyze brand differentiators and unique value', prompt_template: 'Analyze positioning potential for {brand.niche}.\nTone: {brand.tone}\nAudience: {brand.audience}\nInput: {input}\n\nIdentify: unique value propositions, key differentiators, emotional benefits, functional benefits, and competitive positioning gaps.', params: {} },
+          { id: 'step_statement', name: 'Write Positioning',    tool: 'claude_synthesize',       description: 'Draft 3 positioning statement options with taglines', prompt_template: 'Based on this analysis:\n{step_analysis.result}\n\nWrite 3 alternative brand positioning statements for {brand.niche}. Each should be clear, compelling, and differentiated. Include a one-sentence brand tagline for each option.', params: {} },
+        ],
+      },
+      // ── Aria — Analytics & Performance ────────────────────────────────────
+      {
+        agent_key: 'aria', name: 'Performance Summary',
+        description: 'Analyze platform KPIs and surface actionable performance insights for your brand.',
+        steps: [
+          { id: 'step_kpis',     name: 'Define Key Metrics',   tool: 'claude_synthesize',        description: 'Identify and explain the most important KPIs', prompt_template: 'For a {brand.niche} brand, identify and explain the 5 most critical performance KPIs.\nRequest: {input}\nAudience: {brand.audience}\n\nFor each KPI: what it measures, why it matters, benchmark targets, and how to improve it.', params: {} },
+          { id: 'step_insights', name: 'Synthesize Insights',  tool: 'claude_synthesize',        description: 'Distill into actionable performance insights', prompt_template: 'Based on these KPIs:\n{step_kpis.result}\n\nWrite a performance summary for {brand.niche}: overall health score (1–10), top performing areas, underperforming areas, and 3 immediate optimization recommendations.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'aria', name: 'Engagement Analysis',
+        description: 'Break down content engagement patterns to identify what resonates with your audience.',
+        steps: [
+          { id: 'step_patterns', name: 'Analyze Patterns',    tool: 'claude_synthesize',         description: 'Identify engagement patterns and trends', prompt_template: 'Analyze content engagement patterns for a {brand.niche} brand targeting {brand.audience}.\nRequest: {input}\n\nBreak down: best performing content types, optimal posting times, engagement rate benchmarks by platform, and content format performance.', params: {} },
+          { id: 'step_recs',     name: 'Engagement Playbook', tool: 'claude_synthesize',         description: 'Create engagement optimization recommendations', prompt_template: 'Based on these patterns:\n{step_patterns.result}\n\nCreate an engagement optimization playbook for {brand.niche}:\n1. Top 3 content formats to prioritize\n2. Posting schedule recommendations\n3. Caption and CTA strategies\n4. Community interaction tactics\n5. A/B test ideas to run this month', params: {} },
+        ],
+      },
+      {
+        agent_key: 'aria', name: 'Growth Opportunity Report',
+        description: 'Identify the highest-impact growth opportunities based on brand data and market analysis.',
+        steps: [
+          { id: 'step_gaps',    name: 'Find Growth Gaps',      tool: 'claude_synthesize',        description: 'Identify underexplored growth channels and tactics', prompt_template: 'Identify growth opportunities for a {brand.niche} brand.\nAudience: {brand.audience}\nTone: {brand.tone}\nRequest: {input}\n\nAnalyze: untapped content formats, underutilized platforms, audience segments to target, SEO/hashtag gaps, partnership opportunities.', params: {} },
+          { id: 'step_report',  name: 'Prioritize & Plan',     tool: 'claude_synthesize',        description: 'Prioritize opportunities by impact and effort', prompt_template: 'Based on these growth opportunities:\n{step_gaps.result}\n\nCreate a prioritized growth plan for {brand.niche}:\n- Quick wins (this week)\n- Medium-term plays (this month)\n- Long-term investments (this quarter)\n\nFor each: opportunity, expected impact, effort required, first action step.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'aria', name: 'Monthly Insights Report',
+        description: 'Compile a comprehensive monthly performance report with insights and next-month recommendations.',
+        steps: [
+          { id: 'step_review',  name: 'Monthly Review',        tool: 'claude_synthesize',        description: 'Review the month across all performance metrics', prompt_template: 'Write a monthly performance review for a {brand.niche} brand.\nRequest: {input}\nAudience: {brand.audience}\n\nCover: content volume, engagement trends, audience growth, top performing content, biggest misses, revenue/lead impact.', params: {} },
+          { id: 'step_forward', name: 'Next Month Strategy',   tool: 'claude_synthesize',        description: 'Draft next month strategic recommendations', prompt_template: 'Based on this monthly review:\n{step_review.result}\n\nWrite a next-month strategy for {brand.niche}:\n1. Double down: what to do more of\n2. Stop/fix: what to change\n3. Test: new experiments to run\n4. Focus KPIs\n5. Content themes and campaign ideas', params: {} },
+        ],
+      },
+      // ── Flux — Automation & Workflows ─────────────────────────────────────
+      {
+        agent_key: 'flux', name: 'Content Repurposer',
+        description: 'Adapt a single piece of content into multiple formats optimized for different platforms.',
+        steps: [
+          { id: 'step_analyze',   name: 'Analyze Source Content',    tool: 'claude_synthesize',  description: 'Understand content intent and extract key messages', prompt_template: 'Analyze this content for repurposing: {input}\nBrand: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nExtract: core message, key quotes, supporting points, target emotion, and content type.', params: {} },
+          { id: 'step_repurpose', name: 'Generate Platform Variants', tool: 'draft_content',     description: 'Create platform-specific content variations', prompt_template: 'Based on this content analysis:\n{step_analyze.result}\n\nRepurpose for these platforms:\n1. Instagram caption (150 chars + hashtags)\n2. LinkedIn post (professional, 200 words)\n3. Twitter/X thread (3–5 tweets)\n4. TikTok script (30-second hook + body)\n5. Email newsletter intro (100 words)\n\nMaintain brand tone: {brand.tone}', params: {} },
+        ],
+      },
+      {
+        agent_key: 'flux', name: 'Caption & Hashtag Generator',
+        description: 'Write engaging captions and build a tiered hashtag strategy for any post topic.',
+        steps: [
+          { id: 'step_caption',   name: 'Write Caption Options', tool: 'draft_content',          description: 'Generate 3 caption variations', prompt_template: 'Write 3 caption variations for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nVariation 1: Hook-driven (question or bold statement)\nVariation 2: Storytelling (personal or relatable)\nVariation 3: Value-first (educational or tip-based)\n\nEach 80–150 characters. Include a CTA.', params: {} },
+          { id: 'step_hashtags',  name: 'Hashtag Strategy',      tool: 'draft_content',          description: 'Research and categorize hashtags by reach', prompt_template: 'Generate a hashtag strategy for: {input}\nNiche: {brand.niche}\n\nProvide 30 hashtags across 3 tiers:\n- 10 High-reach (1M+ posts) — broad awareness\n- 10 Mid-reach (100K–1M posts) — discoverability\n- 10 Niche (10K–100K posts) — targeted engagement\n\nAlso suggest 5 brand-specific hashtags.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'flux', name: 'Weekly Content Plan',
+        description: 'Plan a complete 7-day posting schedule with content types, themes, and captions.',
+        steps: [
+          { id: 'step_themes',   name: 'Define Weekly Themes',    tool: 'draft_content',          description: 'Establish 7-day content themes and pillars', prompt_template: 'Define a content theme framework for the week for {brand.niche}.\nTone: {brand.tone}\nAudience: {brand.audience}\nGoal: {input}\n\nCreate 7 daily themes using content pillars: educational, entertaining, promotional, engagement, behind-the-scenes, user stories, trending.', params: {} },
+          { id: 'step_schedule', name: 'Build Posting Schedule',  tool: 'draft_content',          description: 'Create the full 7-day posting schedule', prompt_template: 'Using these weekly themes:\n{step_themes.result}\n\nBuild a complete 7-day posting plan for {brand.niche}:\n- Day 1–7: time to post, platform, content type, caption idea, visual direction\n- Include 2 reels/videos, 3 static posts, 1 carousel, 1 story series\n- Optimize for {brand.audience} behavior patterns', params: {} },
+        ],
+      },
+      {
+        agent_key: 'flux', name: 'Post Batch Generator',
+        description: 'Generate 10 ready-to-use post ideas with captions and visual direction for bulk scheduling.',
+        steps: [
+          { id: 'step_ideas',    name: 'Generate Post Ideas',  tool: 'draft_content',             description: 'Brainstorm 10 high-quality post concepts', prompt_template: 'Generate 10 post ideas for {brand.niche}.\nTone: {brand.tone}\nAudience: {brand.audience}\nCampaign/topic: {input}\n\nFor each post: title, format (reel/image/carousel/story), hook, main message, platform recommendation, and content angle.', params: {} },
+          { id: 'step_captions', name: 'Write All Captions',   tool: 'draft_content',             description: 'Write full captions for each post', prompt_template: 'Write full captions for all 10 posts:\n{step_ideas.result}\n\nFor each: complete caption (100–200 chars), 3 relevant emojis, CTA, and 5–10 hashtags. Maintain {brand.tone} tone throughout.', params: {} },
+        ],
+      },
+      // ── Daky — Orchestrator & Strategist ──────────────────────────────────
+      {
+        agent_key: 'daky', name: 'Full Campaign Launch',
+        description: 'Orchestrate a complete marketing campaign — strategy, content plan, creative brief, and launch checklist.',
+        steps: [
+          { id: 'step_strategy', name: 'Campaign Strategy',    tool: 'claude_synthesize',         description: 'Define strategy and objectives', prompt_template: 'Build a full campaign strategy for: {input}\nBrand: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDefine: campaign name, objective, key message, target segment, channels, timeline, content mix, and success metrics.', params: {} },
+          { id: 'step_content',  name: 'Content Framework',    tool: 'draft_content',             description: 'Create the content execution plan for the campaign', prompt_template: 'Based on this campaign strategy:\n{step_strategy.result}\n\nCreate a content execution framework for {brand.niche}:\n- Launch week content plan (7 posts)\n- Visual direction brief for Nova\n- Copy tone guide for Flux\n- KPIs for Aria to track\n- Automation setup notes for Flux', params: {} },
+          { id: 'step_brief',    name: 'Master Campaign Brief', tool: 'claude_synthesize',        description: 'Compile the master brief for all agents', prompt_template: 'Compile a master campaign brief from:\nStrategy: {step_strategy.result}\nContent plan: {step_content.result}\n\nFormat as an actionable brief each team member (creative, content, analytics) can execute independently. Include: campaign overview, role briefs, timeline, dependencies, and launch checklist.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'daky', name: 'Brand Onboarding',
+        description: 'Guide a new user through setting up their brand identity and preparing all agents for first use.',
+        steps: [
+          { id: 'step_collect', name: 'Brand Discovery',       tool: 'claude_synthesize',         description: 'Extract and organize core brand information', prompt_template: 'You are onboarding a new brand to Dakyworld Hub.\nInput: {input}\n\nExtract and organize:\n1. Business name and industry\n2. Target audience\n3. Brand tone and personality\n4. Products/services\n5. Competitors\n6. Main marketing goals\n7. Current social media presence\n\nFormat as a structured brand profile.', params: {} },
+          { id: 'step_memory',  name: 'Memory Setup Guide',    tool: 'claude_synthesize',         description: 'Create a memory setup guide for the user', prompt_template: 'Based on this brand profile:\n{step_collect.result}\n\nWrite a memory setup guide explaining:\n1. What to save in Brand Memory\n2. Suggested brand keywords (niche, tone, audience, products)\n3. Which agent handles which task (Nova/Sage/Aria/Flux)\n4. Recommended first workflows to run\n5. Quick-start action plan (first 7 days)', params: {} },
+        ],
+      },
+      {
+        agent_key: 'daky', name: 'Weekly Marketing Review',
+        description: 'Compile a weekly cross-team review covering performance, content output, and next-week priorities.',
+        steps: [
+          { id: 'step_review',  name: 'Weekly Review',         tool: 'claude_synthesize',         description: 'Analyze the week across all marketing dimensions', prompt_template: 'Write a comprehensive weekly marketing review for {brand.niche}.\nContext: {input}\nAudience: {brand.audience}\n\nCover: content performance highlights, engagement trends, top and bottom posts, audience growth, campaign progress, what worked and what did not.', params: {} },
+          { id: 'step_plan',    name: 'Next Week Action Plan', tool: 'claude_synthesize',          description: 'Draft next week priorities for each agent', prompt_template: 'Based on this weekly review:\n{step_review.result}\n\nCreate next week\'s action plan for {brand.niche}:\n- Nova: visual content to create\n- Sage: strategy adjustment needed\n- Flux: automation and scheduling tasks\n- Aria: metrics to focus on\n- Key decisions to make and team tasks', params: {} },
+        ],
+      },
     ];
-    await pool.query(
-      `INSERT INTO agent_workflows (agent_key, steps) VALUES ('nova', $1) ON CONFLICT (agent_key) DO NOTHING`,
-      [JSON.stringify(_novaSteps)]
-    ).catch(() => undefined);
+    for (const wf of _seeds) {
+      await pool.query(
+        `INSERT INTO agent_workflows (agent_key, name, description, steps) VALUES ($1, $2, $3, $4) ON CONFLICT (agent_key, name) DO NOTHING`,
+        [wf.agent_key, wf.name, wf.description, JSON.stringify(wf.steps)]
+      ).catch(() => undefined);
+    }
   }
   // ── End Agent Workflow & Tools ────────────────────────────────────────────────
 
@@ -26127,6 +26317,79 @@ async function runDueDateAlerts() {
   }
 }
 
+// ─── Freepik AI Integration ────────────────────────────────────────────────────
+
+const FREEPIK_BASE = 'https://api.freepik.com';
+
+const FREEPIK_IMAGE_MODELS: Record<string, { credits: number; type: 'sync' | 'async' }> = {
+  'freepik-mystic': { credits: 5, type: 'async' },
+  'freepik-pikaso': { credits: 3, type: 'sync' },
+};
+
+async function getFreepikApiKey(): Promise<string> {
+  const envKey = process.env.FREEPIK_API_KEY;
+  if (envKey) return envKey;
+  try {
+    const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'freepik' LIMIT 1`);
+    return cfg.rows[0]?.config?.apiKey ?? '';
+  } catch { return ''; }
+}
+
+async function freepikGenerateImage(
+  model: string,
+  prompt: string,
+  aspectRatio: string,
+  apiKey: string,
+  onProgress?: (status: string) => void
+): Promise<{ url: string | null; error: string | null }> {
+  const cfg = FREEPIK_IMAGE_MODELS[model] ?? FREEPIK_IMAGE_MODELS['freepik-mystic'];
+  const headers = { 'x-freepik-api-key': apiKey, 'Content-Type': 'application/json' };
+
+  if (cfg.type === 'async') {
+    // Mystic: task-based async generation
+    const submitResp = await axios.post(
+      `${FREEPIK_BASE}/v1/ai/mystic`,
+      { prompt, negative_prompt: '', image: { size: aspectRatio }, output_format: 'jpeg', num_images: 1, filter_nsfw: true },
+      { headers, validateStatus: () => true, timeout: 20000 }
+    );
+    if (submitResp.status >= 400) {
+      return { url: null, error: submitResp.data?.message ?? `Freepik error ${submitResp.status}` };
+    }
+    const taskId = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
+    if (!taskId) return { url: null, error: 'No task_id returned from Freepik' };
+
+    const deadline = Date.now() + 150_000; // 2.5 min timeout
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const pollResp = await axios.get(`${FREEPIK_BASE}/v1/ai/mystic/${taskId}`, {
+        headers: { 'x-freepik-api-key': apiKey },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      const data = pollResp.data?.data ?? pollResp.data;
+      const status: string = data?.status ?? '';
+      onProgress?.(status);
+      if (status === 'COMPLETED') {
+        const imgs: string[] = data?.generated ?? [];
+        return { url: imgs[0] ?? null, error: imgs[0] ? null : 'No image URL in Freepik response' };
+      }
+      if (status === 'FAILED') return { url: null, error: data?.error ?? 'Freepik generation failed' };
+    }
+    return { url: null, error: 'Timeout: Freepik generation took too long' };
+  } else {
+    // Pikaso: synchronous generation returning base64
+    const resp = await axios.post(
+      `${FREEPIK_BASE}/v1/ai/image-generation`,
+      { prompt, negative_prompt: '', resolution: '2048x2048', style: { filterName: 'photo' } },
+      { headers, validateStatus: () => true, timeout: 60000 }
+    );
+    if (resp.status >= 400) return { url: null, error: resp.data?.message ?? `Freepik error ${resp.status}` };
+    const base64 = resp.data?.data?.[0]?.base64;
+    if (base64) return { url: `data:image/jpeg;base64,${base64}`, error: null };
+    return { url: null, error: 'No image in Freepik response' };
+  }
+}
+
 // ─── Nova Design Agent Routes ─────────────────────────────────────────────────
 
 // GET /api/admin/agent-tools — list all available tools
@@ -26141,33 +26404,80 @@ app.get('/api/admin/agent-tools', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/agent-workflows/:key — get workflow for agent
+// GET /api/admin/agent-workflows/:key — list all named workflows for an agent
 app.get('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   try {
-    const { rows } = await dbQuery(`SELECT * FROM agent_workflows WHERE agent_key = $1`, [req.params.key]);
-    return res.json({ success: true, workflow: rows[0] ?? null });
+    const { rows } = await dbQuery(
+      `SELECT * FROM agent_workflows WHERE agent_key = $1 ORDER BY updated_at ASC`,
+      [req.params.key]
+    );
+    return res.json({ success: true, workflows: rows });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// PUT /api/admin/agent-workflows/:key — save workflow
-app.put('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
+// POST /api/admin/agent-workflows/:key — create a new named workflow for an agent
+app.post('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
   const auth = await requireAdmin(req, res);
   if (!auth) return;
-  const { steps, is_active = true } = req.body as { steps: any[]; is_active?: boolean };
-  if (!Array.isArray(steps)) return res.status(400).json({ success: false, error: 'steps must be an array' });
+  const { name, description = '', steps = [], is_active = true } = req.body as {
+    name: string; description?: string; steps?: any[]; is_active?: boolean;
+  };
+  if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
   try {
     const { rows } = await dbQuery(
-      `INSERT INTO agent_workflows (agent_key, steps, is_active, updated_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (agent_key) DO UPDATE SET steps = $2, is_active = $3, updated_at = NOW()
+      `INSERT INTO agent_workflows (agent_key, name, description, steps, is_active, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (agent_key, name) DO UPDATE SET description = $3, steps = $4, is_active = $5, updated_at = NOW()
        RETURNING *`,
-      [req.params.key, JSON.stringify(steps), is_active]
+      [req.params.key, name.trim(), description, JSON.stringify(steps), is_active]
     );
     return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/admin/agent-workflows/:key/:id — update a specific workflow by ID
+app.put('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  const { name, description, steps, is_active } = req.body as {
+    name?: string; description?: string; steps?: any[]; is_active?: boolean;
+  };
+  if (steps !== undefined && !Array.isArray(steps)) {
+    return res.status(400).json({ success: false, error: 'steps must be an array' });
+  }
+  try {
+    const setClauses: string[] = ['updated_at = NOW()'];
+    const vals: any[] = [];
+    let idx = 1;
+    if (name !== undefined)        { setClauses.push(`name = $${idx++}`);        vals.push(name); }
+    if (description !== undefined) { setClauses.push(`description = $${idx++}`); vals.push(description); }
+    if (steps !== undefined)       { setClauses.push(`steps = $${idx++}`);       vals.push(JSON.stringify(steps)); }
+    if (is_active !== undefined)   { setClauses.push(`is_active = $${idx++}`);   vals.push(is_active); }
+    vals.push(req.params.id, req.params.key);
+    const { rows } = await dbQuery(
+      `UPDATE agent_workflows SET ${setClauses.join(', ')} WHERE id = $${idx++} AND agent_key = $${idx} RETURNING *`,
+      vals
+    );
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'Workflow not found' });
+    return res.json({ success: true, workflow: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/admin/agent-workflows/:key/:id — remove a workflow
+app.delete('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  try {
+    await dbQuery(`DELETE FROM agent_workflows WHERE id = $1 AND agent_key = $2`, [req.params.id, req.params.key]);
+    return res.json({ success: true });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
@@ -26381,16 +26691,182 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
           send({ type: 'step_done', step_id: step.id });
           send({ type: 'image_ready', url: imageUrl, model: finalModel, prompt: finalPrompt });
 
+        // ── freepik_generate_image ──────────────────────────────────────────
+        } else if (step.tool === 'freepik_generate_image') {
+          // Resolve prompt from step_tailor or step_brief or step_concept (whichever produced a prompt JSON)
+          let freepikPrompt = description || 'professional brand design';
+          let freepikModel = 'freepik-mystic';
+          const freepikCreditCost = FREEPIK_IMAGE_MODELS[freepikModel]?.credits ?? 5;
+
+          // Parse prompt from any prior synthesis step that returned JSON with a "prompt" field
+          for (const key of Object.keys(stepResults)) {
+            const res = stepResults[key]?.result ?? stepResults[key]?.prompt ?? '';
+            if (res) {
+              const parsed = _extractJsonFromText(res);
+              if (parsed?.prompt) {
+                freepikPrompt = parsed.prompt;
+                if (parsed.model && FREEPIK_IMAGE_MODELS[parsed.model]) freepikModel = parsed.model;
+                break;
+              }
+            }
+          }
+
+          // Credit check before generating
+          const { rows: cRows } = await dbQuery(
+            `SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]
+          ).catch(() => ({ rows: [] as any[] }));
+          const currentCredits = cRows[0]?.credits ?? 0;
+          if (cRows.length > 0 && currentCredits < freepikCreditCost) {
+            send({ type: 'error', message: `Insufficient credits (need ${freepikCreditCost}, have ${currentCredits}). Please upgrade your plan.` });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          const freepikApiKey = await getFreepikApiKey();
+          if (!freepikApiKey) {
+            send({ type: 'error', message: 'Freepik not configured — add FREEPIK_API_KEY in environment or Admin settings.' });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          send({ type: 'prompt_ready', prompt: freepikPrompt, model: freepikModel, has_memory: hasBrandMemory, needs_input: false });
+          send({ type: 'step_progress', step_id: step.id, message: 'Submitting to Freepik…' });
+
+          const freepikResult = await freepikGenerateImage(
+            freepikModel, freepikPrompt, 'square_1_1', freepikApiKey,
+            (status) => send({ type: 'step_progress', step_id: step.id, message: `Freepik: ${status}…` })
+          );
+
+          if (freepikResult.error) {
+            send({ type: 'error', message: freepikResult.error });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          // Deduct credits after successful generation
+          await dbQuery(
+            `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
+            [freepikCreditCost, auth.userId]
+          ).catch(() => undefined);
+
+          const freepikImageUrl = freepikResult.url!;
+          stepResults[step.id] = { url: freepikImageUrl, model: freepikModel, prompt: freepikPrompt };
+          send({ type: 'step_done', step_id: step.id });
+          send({ type: 'image_ready', url: freepikImageUrl, model: freepikModel, prompt: freepikPrompt });
+
+        // ── generate_video ────────────────────────────────────────────────────
+        } else if (step.tool === 'generate_video') {
+          let videoPrompt = description || 'professional branded video';
+          let videoModel = 'wan-2-7-t2v';
+
+          // Parse from prior synthesis step
+          for (const key of Object.keys(stepResults)) {
+            const r = stepResults[key]?.result ?? '';
+            if (r) {
+              const parsed = _extractJsonFromText(r);
+              if (parsed?.prompt) {
+                videoPrompt = parsed.prompt;
+                if (parsed.model && MAGNIFIC_VIDEO_MODELS[parsed.model]) videoModel = parsed.model;
+                break;
+              }
+            }
+          }
+
+          const vidModelCfg = MAGNIFIC_VIDEO_MODELS[videoModel] ?? MAGNIFIC_VIDEO_MODELS['wan-2-7-t2v'];
+          const vidCreditCost = vidModelCfg.credits;
+
+          const { rows: vcRows } = await dbQuery(
+            `SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]
+          ).catch(() => ({ rows: [] as any[] }));
+          const vcCredits = vcRows[0]?.credits ?? 0;
+          if (vcRows.length > 0 && vcCredits < vidCreditCost) {
+            send({ type: 'error', message: `Insufficient credits for video (need ${vidCreditCost}, have ${vcCredits}). Please upgrade your plan.` });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          const vidApiKey = await getMagnificApiKey();
+          if (!vidApiKey) {
+            send({ type: 'error', message: 'Video generation not configured — set up Magnific in Admin.' });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          send({ type: 'step_progress', step_id: step.id, message: 'Submitting video to Magnific…' });
+          const vidSubmit = await magnificPost(vidModelCfg.endpoint, { prompt: videoPrompt, aspect_ratio: 'widescreen_16_9' }, vidApiKey);
+
+          if (vidSubmit.status >= 400) {
+            send({ type: 'error', message: vidSubmit.data?.message ?? `Magnific video error ${vidSubmit.status}` });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          const vidTaskId: string = vidSubmit.data?.data?.task_id;
+          if (!vidTaskId) {
+            send({ type: 'error', message: 'No task_id returned from Magnific for video' });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          // Deduct credits before long poll
+          await dbQuery(
+            `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
+            [vidCreditCost, auth.userId]
+          ).catch(() => undefined);
+
+          const vidPoll = await pollMagnificTask(
+            vidModelCfg.pollPath(vidTaskId), vidApiKey, 300,
+            (status) => send({ type: 'step_progress', step_id: step.id, message: `Video: ${status}…` })
+          );
+
+          if (vidPoll.error) {
+            send({ type: 'error', message: vidPoll.error });
+            send({ type: 'done' });
+            return res.end();
+          }
+
+          stepResults[step.id] = { url: vidPoll.url, model: videoModel, prompt: videoPrompt };
+          send({ type: 'step_done', step_id: step.id });
+          send({ type: 'video_ready', url: vidPoll.url, model: videoModel, prompt: videoPrompt });
+
+        // ── draft_content / summarize_content ────────────────────────────────
+        } else if (step.tool === 'draft_content' || step.tool === 'summarize_content') {
+          let prompt = step.prompt_template
+            .replace('{input}', description || '')
+            .replace('{brand.niche}', brandNiche)
+            .replace('{brand.tone}', brandTone)
+            .replace('{brand.audience}', brandAudience);
+
+          // Inject prior step results
+          for (const key of Object.keys(stepResults)) {
+            const r = stepResults[key]?.result ?? stepResults[key]?.url ?? '';
+            prompt = prompt.replace(`{${key}.result}`, r);
+          }
+
+          if (brandSummary) prompt += `\n\nUSER BRAND MEMORY:\n${brandSummary}`;
+
+          const draftRes = await anthropic.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 2000,
+            messages: [{ role: 'user', content: prompt }],
+          });
+
+          const result = draftRes.content[0].type === 'text' ? draftRes.content[0].text : '';
+          stepResults[step.id] = { result };
+          send({ type: 'step_done', step_id: step.id });
+
         // ── save_design ──────────────────────────────────────────────────────
         } else if (step.tool === 'save_design') {
-          const genStep = stepResults['step_generate'];
-          if (genStep?.url) {
+          // Find the most recent image URL from any generation step
+          const genStep = Object.values(stepResults).reverse().find((r: any) => r?.url && typeof r.url === 'string' && r.url.startsWith('http'));
+          const imageUrl = genStep?.url ?? null;
+          if (imageUrl) {
             const dId = randomUUID();
             const dName = `AI Design — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
             await dbQuery(
               `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at)
                VALUES ($1, $2, $3, 1080, 1080, $4, $5, NOW())`,
-              [dId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl: genStep.url, prompt: genStep.prompt, model: genStep.model }), genStep.url]
+              [dId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, prompt: genStep?.prompt ?? '', model: genStep?.model ?? '' }), imageUrl]
             ).catch(() => undefined);
             stepResults[step.id] = { design_id: dId, name: dName };
             send({ type: 'step_done', step_id: step.id });
@@ -26564,6 +27040,70 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/nova/freepik-image — generate image via Freepik AI with credit enforcement
+app.post('/api/nova/freepik-image', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+
+  const { prompt = '', model = 'freepik-mystic', aspect_ratio = '1:1', save = true } = req.body as {
+    prompt?: string; model?: string; aspect_ratio?: string; save?: boolean;
+  };
+  if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  const modelCfg = FREEPIK_IMAGE_MODELS[model] ?? FREEPIK_IMAGE_MODELS['freepik-mystic'];
+  const creditCost = modelCfg.credits;
+
+  // Credit check
+  const { rows: creditRows } = await dbQuery(
+    `SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const currentCredits = creditRows[0]?.credits ?? 0;
+  if (creditRows.length > 0 && currentCredits < creditCost) {
+    return res.status(402).json({
+      error: 'Insufficient credits',
+      credits: currentCredits,
+      required: creditCost,
+    });
+  }
+
+  const apiKey = await getFreepikApiKey();
+  if (!apiKey) {
+    return res.status(400).json({ error: 'Freepik not configured — set FREEPIK_API_KEY in environment or Admin settings.' });
+  }
+
+  try {
+    const freepikAspect = ASPECT_RATIO_MAP[aspect_ratio] ?? 'square_1_1';
+    const result = await freepikGenerateImage(model, prompt.trim(), freepikAspect, apiKey);
+
+    if (result.error) return res.status(400).json({ error: result.error });
+
+    const imageUrl = result.url!;
+
+    // Deduct credits after successful generation
+    await dbQuery(
+      `INSERT INTO user_credits (user_id, credits, updated_at) VALUES ($1, GREATEST(0, 50 - $2), NOW())
+       ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
+      [auth.userId, creditCost]
+    ).catch(() => undefined);
+
+    let designId: string | null = null;
+    if (save && imageUrl) {
+      designId = randomUUID();
+      const dName = `Freepik Design — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+      await dbQuery(
+        `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at)
+         VALUES ($1, $2, $3, 1080, 1080, $4, $5, NOW())`,
+        [designId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, prompt: prompt.trim(), model, provider: 'freepik' }), imageUrl]
+      ).catch(() => undefined);
+    }
+
+    return res.json({ success: true, url: imageUrl, design_id: designId, provider: 'freepik', credits_used: creditCost });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/nova/suggestions — generate design suggestions from user brand memory
 app.post('/api/nova/suggestions', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
@@ -26644,58 +27184,195 @@ Make each suggestion specific to this brand — reference their niche, audience,
   }
 });
 
-// POST /api/admin/agent-workflows/:key/reset — reset workflow to built-in defaults
+// POST /api/admin/agent-workflows/:key/reset — delete all workflows for agent and re-seed defaults
 app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Response) => {
   const auth = await requireAdmin(req, res);
   if (!auth) return;
 
-  const DEFAULTS: Record<string, any[]> = {
+  type WfSeed = { name: string; description: string; steps: any[] };
+  const DEFAULTS: Record<string, WfSeed[]> = {
     nova: [
       {
-        id: 'step_search', name: 'Search Designs', tool: 'meigen_search',
-        description: 'Search MeiGen AI for design templates matching the user\'s request',
-        prompt_template: 'Search for high-quality designs matching: {input}\nBrand niche: {brand.niche}\nReturn diverse style options including modern, minimal, bold, and elegant variations.',
-        params: { top_n: 5 },
+        name: 'Brand Identity Visual', description: 'Search design concepts, tailor to brand memory, then generate a branded image via Freepik AI.',
+        steps: [
+          { id: 'step_search',   name: 'Search Designs',        tool: 'meigen_search',         description: 'Find design templates', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
+          { id: 'step_extract',  name: 'Extract Style Prompts', tool: 'claude_synthesize',      description: 'Extract visual styles and prompts', prompt_template: 'Extract 3–5 key visual styles with image prompts from:\n{step_search.result}', params: {} },
+          { id: 'step_tailor',   name: 'Tailor to Brand',       tool: 'claude_synthesize',      description: 'Blend inspiration with brand memory', prompt_template: 'Create one optimized image prompt for brand:\nNiche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\nDesigns: {step_extract.result}\n\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic" }', params: {} },
+          { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image', description: 'Generate image via Freepik AI', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
+          { id: 'step_save',     name: 'Save Design',           tool: 'save_design',            description: 'Save to designs collection', prompt_template: '', params: {} },
+        ],
       },
       {
-        id: 'step_extract', name: 'Extract Style Prompts', tool: 'claude_synthesize',
-        description: 'Extract the visual style, colors, and generation prompts from found designs',
-        prompt_template: 'Analyze these design concepts and extract:\n1. Key visual elements and composition\n2. Color palette and typography style\n3. The exact image generation prompt for each design\n4. Recommended AI model (one of: flux-2-turbo, flux-kontext-pro, seedream-v5-lite, mystic)\n\nDesigns: {step_search.result}\n\nBe specific about what makes each design effective.',
-        params: {},
+        name: 'Social Media Post Image', description: 'Generate a platform-optimized social media image tailored to brand and audience.',
+        steps: [
+          { id: 'step_brief',    name: 'Draft Visual Brief',   tool: 'claude_synthesize',       description: 'Write image brief for the post', prompt_template: 'Image brief for {input} social media post.\nNiche: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic" }', params: {} },
+          { id: 'step_generate', name: 'Generate via Freepik', tool: 'freepik_generate_image',  description: 'Generate via Freepik', prompt_template: '{step_brief.prompt}', params: {} },
+          { id: 'step_save',     name: 'Save Design',          tool: 'save_design',             description: 'Save to designs', prompt_template: '', params: {} },
+        ],
       },
       {
-        id: 'step_tailor', name: 'Tailor to Brand', tool: 'claude_synthesize',
-        description: 'Merge design inspiration with the user\'s brand memory to create a tailored prompt',
-        prompt_template: 'Create one optimized image generation prompt by combining the best design elements with this brand\'s identity:\n\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nTarget audience: {brand.audience}\n\nDesign concepts extracted: {step_extract.result}\n\nRequirements:\n- Reflect the brand\'s unique personality\n- Be specific about colors, composition, and mood\n- Keep it under 200 words\n\nReturn ONLY valid JSON (no markdown fences):\n{ "prompt": "...", "model": "flux-2-turbo", "style_notes": "brief note on design choices" }',
-        params: {},
+        name: 'Product Promo Banner', description: 'Create a promotional banner using brand memory and Freepik generation.',
+        steps: [
+          { id: 'step_concept',  name: 'Build Promo Concept',  tool: 'claude_synthesize',       description: 'Generate banner concept', prompt_template: 'Promo banner for: {input}\nNiche: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic", "headline": "..." }', params: {} },
+          { id: 'step_generate', name: 'Generate via Freepik', tool: 'freepik_generate_image',  description: 'Generate banner via Freepik', prompt_template: '{step_concept.prompt}', params: {} },
+          { id: 'step_save',     name: 'Save Design',          tool: 'save_design',             description: 'Save to designs', prompt_template: '', params: {} },
+        ],
       },
       {
-        id: 'step_generate', name: 'Generate Image', tool: 'generate_image',
-        description: 'Generate the final brand-tailored image using the crafted prompt',
-        prompt_template: '{step_tailor.prompt}',
-        params: { auto_if_memory: true },
+        name: 'AI Brand Video', description: 'Generate a short branded video clip using Magnific AI.',
+        steps: [
+          { id: 'step_script',   name: 'Write Video Brief', tool: 'claude_synthesize',          description: 'Draft video concept', prompt_template: 'Text-to-video prompt for: {input}\nNiche: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON: { "prompt": "...", "model": "wan-2-7-t2v" }', params: {} },
+          { id: 'step_generate', name: 'Generate Video',    tool: 'generate_video',             description: 'Generate branded video', prompt_template: '{step_script.prompt}', params: {} },
+        ],
       },
       {
-        id: 'step_save', name: 'Save Design', tool: 'save_design',
-        description: 'Save the generated image to the user\'s design collection',
-        prompt_template: '',
-        params: {},
+        name: 'Content Mood Board', description: 'Generate multiple visual concepts for a content campaign via Freepik.',
+        steps: [
+          { id: 'step_concepts', name: 'Generate Visual Ideas', tool: 'claude_synthesize',      description: 'Create 5 mood board concepts', prompt_template: '5 visual mood board concepts for: {input}\nBrand: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON array: [{ "name": "...", "prompt": "..." }]', params: {} },
+          { id: 'step_generate', name: 'Generate Hero Image',   tool: 'freepik_generate_image', description: 'Generate hero image via Freepik', prompt_template: '{step_concepts.result}', params: { use_first_prompt: true } },
+          { id: 'step_save',     name: 'Save Design',           tool: 'save_design',            description: 'Save to designs', prompt_template: '', params: {} },
+        ],
+      },
+    ],
+    sage: [
+      {
+        name: 'Competitor Analysis', description: 'Analyze competitors and surface strategic differentiation opportunities.',
+        steps: [
+          { id: 'step_research', name: 'Research Competitors', tool: 'claude_synthesize',       description: 'Generate competitor landscape', prompt_template: 'Competitor analysis for {brand.niche}.\nRequest: {input}\nAudience: {brand.audience}\n\nAnalyze top 3–5 competitors: positioning, content strategy, strengths/weaknesses, gaps.', params: {} },
+          { id: 'step_summary',  name: 'Strategic Summary',   tool: 'claude_synthesize',        description: 'Distill into recommendations', prompt_template: 'From this analysis:\n{step_research.result}\n\nWrite strategic recommendations: differentiation opportunities, content gaps, positioning angle, top 3 actions.', params: {} },
+        ],
+      },
+      {
+        name: 'Content Strategy Plan', description: 'Build a 30-day content strategy aligned to brand goals.',
+        steps: [
+          { id: 'step_audit',  name: 'Audit Brand Positioning', tool: 'claude_synthesize',      description: 'Assess positioning and gaps', prompt_template: 'Audit content positioning for {brand.niche}.\nTone: {brand.tone}, audience: {brand.audience}\nRequest: {input}\n\nIdentify: gaps, pain points, content pillars, platforms to prioritize.', params: {} },
+          { id: 'step_plan',   name: 'Build 30-Day Plan',       tool: 'claude_synthesize',      description: 'Create monthly content plan', prompt_template: 'Using this audit:\n{step_audit.result}\n\nBuild a 30-day content strategy: 4 weekly themes, daily post types, platform mix, KPIs to track.', params: {} },
+        ],
+      },
+      {
+        name: 'Audience Persona Builder', description: 'Create 3 detailed target audience personas with actionable insights.',
+        steps: [
+          { id: 'step_research', name: 'Research Audience',  tool: 'claude_synthesize',         description: 'Research audience characteristics', prompt_template: 'Target audience research for {brand.niche}.\nCurrent audience: {brand.audience}\nRequest: {input}\n\nIdentify: demographics, psychographics, pain points, goals, preferred platforms, purchasing triggers.', params: {} },
+          { id: 'step_personas', name: 'Build 3 Personas',  tool: 'claude_synthesize',          description: 'Create persona profiles', prompt_template: 'Create 3 detailed audience personas from:\n{step_research.result}\n\nEach persona: name, age/role, goals, pain points, preferred content, platforms, how this brand helps.', params: {} },
+        ],
+      },
+      {
+        name: 'Campaign Brief Writer', description: 'Write a complete marketing campaign brief from goals to creative direction.',
+        steps: [
+          { id: 'step_objectives', name: 'Define Objectives', tool: 'claude_synthesize',        description: 'Clarify campaign goals', prompt_template: 'Campaign objectives for: {input}\nBrand: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\nSpecify: primary goal, KPIs, target segment, timeline, budget framework.', params: {} },
+          { id: 'step_brief',      name: 'Write Full Brief',  tool: 'claude_synthesize',        description: 'Write comprehensive brief', prompt_template: 'Campaign brief from:\n{step_objectives.result}\n\nInclude: concept, messaging framework, content mix, channel strategy, creative direction, timeline, success criteria.', params: {} },
+        ],
+      },
+      {
+        name: 'Brand Positioning Statement', description: 'Craft a compelling brand positioning statement and tagline.',
+        steps: [
+          { id: 'step_analysis',  name: 'Positioning Analysis', tool: 'claude_synthesize',      description: 'Analyze brand differentiators', prompt_template: 'Positioning analysis for {brand.niche}.\nTone: {brand.tone}, audience: {brand.audience}\nInput: {input}\n\nIdentify: unique value props, differentiators, emotional and functional benefits, competitive gaps.', params: {} },
+          { id: 'step_statement', name: 'Write Positioning',    tool: 'claude_synthesize',      description: 'Draft positioning options', prompt_template: 'From this analysis:\n{step_analysis.result}\n\nWrite 3 brand positioning statements for {brand.niche}. Include a tagline for each.', params: {} },
+        ],
+      },
+    ],
+    aria: [
+      {
+        name: 'Performance Summary', description: 'Analyze KPIs and surface actionable performance insights.',
+        steps: [
+          { id: 'step_kpis',     name: 'Define Key Metrics',  tool: 'claude_synthesize',        description: 'Identify critical KPIs', prompt_template: '5 critical KPIs for {brand.niche}.\nRequest: {input}, audience: {brand.audience}\n\nFor each KPI: what it measures, why it matters, benchmark target, how to improve.', params: {} },
+          { id: 'step_insights', name: 'Synthesize Insights', tool: 'claude_synthesize',        description: 'Distill into recommendations', prompt_template: 'Performance summary from KPIs:\n{step_kpis.result}\n\nFor {brand.niche}: overall health score (1–10), top areas, underperforming areas, 3 immediate optimization recommendations.', params: {} },
+        ],
+      },
+      {
+        name: 'Engagement Analysis', description: 'Break down content engagement patterns to identify what resonates.',
+        steps: [
+          { id: 'step_patterns', name: 'Analyze Patterns',    tool: 'claude_synthesize',        description: 'Identify engagement patterns', prompt_template: 'Engagement patterns for {brand.niche} targeting {brand.audience}.\nRequest: {input}\n\nBreak down: best content types, optimal posting times, engagement benchmarks, format performance.', params: {} },
+          { id: 'step_recs',     name: 'Engagement Playbook', tool: 'claude_synthesize',        description: 'Create optimization playbook', prompt_template: 'From these patterns:\n{step_patterns.result}\n\nPlaybook for {brand.niche}: top 3 formats, posting schedule, caption/CTA strategies, community tactics, A/B test ideas.', params: {} },
+        ],
+      },
+      {
+        name: 'Growth Opportunity Report', description: 'Identify and prioritize the highest-impact growth opportunities.',
+        steps: [
+          { id: 'step_gaps',   name: 'Find Growth Gaps',    tool: 'claude_synthesize',          description: 'Identify underexplored opportunities', prompt_template: 'Growth opportunities for {brand.niche}.\nAudience: {brand.audience}, tone: {brand.tone}\nRequest: {input}\n\nAnalyze: untapped formats, underutilized platforms, audience segments, hashtag/SEO gaps, partnerships.', params: {} },
+          { id: 'step_report', name: 'Prioritize & Plan',   tool: 'claude_synthesize',          description: 'Prioritize by impact and effort', prompt_template: 'From these opportunities:\n{step_gaps.result}\n\nPrioritized growth plan for {brand.niche}: quick wins (this week), medium-term (this month), long-term (this quarter). Each: opportunity, impact, effort, first step.', params: {} },
+        ],
+      },
+      {
+        name: 'Monthly Insights Report', description: 'Compile a comprehensive monthly performance report with next-month strategy.',
+        steps: [
+          { id: 'step_review',  name: 'Monthly Review',       tool: 'claude_synthesize',        description: 'Review monthly performance', prompt_template: 'Monthly review for {brand.niche}.\nRequest: {input}, audience: {brand.audience}\n\nCover: content volume, engagement trends, growth, top posts, biggest misses, revenue/lead impact.', params: {} },
+          { id: 'step_forward', name: 'Next Month Strategy',  tool: 'claude_synthesize',        description: 'Draft next month recommendations', prompt_template: 'From this monthly review:\n{step_review.result}\n\nNext-month strategy for {brand.niche}: double down, stop/fix, tests to run, focus KPIs, content themes.', params: {} },
+        ],
+      },
+    ],
+    flux: [
+      {
+        name: 'Content Repurposer', description: 'Adapt one piece of content into platform-specific formats for maximum reach.',
+        steps: [
+          { id: 'step_analyze',   name: 'Analyze Source Content',     tool: 'claude_synthesize',  description: 'Extract core message and intent', prompt_template: 'Analyze for repurposing: {input}\nBrand: {brand.niche}, tone: {brand.tone}\n\nExtract: core message, key quotes, supporting points, target emotion, content type.', params: {} },
+          { id: 'step_repurpose', name: 'Generate Platform Variants', tool: 'draft_content',      description: 'Write platform-specific variations', prompt_template: 'Repurpose this content:\n{step_analyze.result}\n\nWrite variants for:\n1. Instagram caption (150 chars + hashtags)\n2. LinkedIn post (200 words)\n3. Twitter/X thread (3–5 tweets)\n4. TikTok script (30-sec)\n5. Email newsletter intro (100 words)\n\nTone: {brand.tone}', params: {} },
+        ],
+      },
+      {
+        name: 'Caption & Hashtag Generator', description: 'Write 3 caption variations and a tiered hashtag strategy for any post.',
+        steps: [
+          { id: 'step_caption',  name: 'Write Caption Options', tool: 'draft_content',           description: 'Generate 3 caption variations', prompt_template: '3 caption variations for: {input}\nNiche: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\n1. Hook-driven\n2. Storytelling\n3. Value-first\n\nEach 80–150 chars with CTA.', params: {} },
+          { id: 'step_hashtags', name: 'Hashtag Strategy',      tool: 'draft_content',           description: 'Categorize hashtags by reach tier', prompt_template: 'Hashtag strategy for: {input}\nNiche: {brand.niche}\n\n30 hashtags across 3 tiers:\n- 10 High-reach (1M+ posts)\n- 10 Mid-reach (100K–1M)\n- 10 Niche (10K–100K)\n\nPlus 5 brand-specific hashtags.', params: {} },
+        ],
+      },
+      {
+        name: 'Weekly Content Plan', description: 'Build a complete 7-day posting schedule with themes and caption ideas.',
+        steps: [
+          { id: 'step_themes',   name: 'Define Weekly Themes',    tool: 'draft_content',          description: 'Establish 7 daily content themes', prompt_template: 'Weekly content themes for {brand.niche}.\nTone: {brand.tone}, audience: {brand.audience}, goal: {input}\n\n7 daily themes using pillars: educational, entertaining, promotional, engagement, behind-scenes, user stories, trending.', params: {} },
+          { id: 'step_schedule', name: 'Build Posting Schedule',  tool: 'draft_content',          description: 'Create the full 7-day schedule', prompt_template: 'From these themes:\n{step_themes.result}\n\n7-day posting plan for {brand.niche}: day, time, platform, content type, caption idea, visual direction. Include 2 reels, 3 static posts, 1 carousel, 1 story series.', params: {} },
+        ],
+      },
+      {
+        name: 'Post Batch Generator', description: 'Generate 10 ready-to-use post ideas with captions for bulk scheduling.',
+        steps: [
+          { id: 'step_ideas',    name: 'Generate Post Ideas', tool: 'draft_content',             description: 'Brainstorm 10 post concepts', prompt_template: '10 post ideas for {brand.niche}.\nTone: {brand.tone}, audience: {brand.audience}, topic: {input}\n\nFor each: title, format, hook, message, platform, angle.', params: {} },
+          { id: 'step_captions', name: 'Write All Captions',  tool: 'draft_content',             description: 'Write captions for all posts', prompt_template: 'Captions for all 10 posts:\n{step_ideas.result}\n\nEach: full caption (100–200 chars), 3 emojis, CTA, 5–10 hashtags. Tone: {brand.tone}', params: {} },
+        ],
+      },
+    ],
+    daky: [
+      {
+        name: 'Full Campaign Launch', description: 'Orchestrate a complete campaign — strategy, content framework, and master brief.',
+        steps: [
+          { id: 'step_strategy', name: 'Campaign Strategy',     tool: 'claude_synthesize',       description: 'Define strategy and objectives', prompt_template: 'Full campaign strategy for: {input}\nBrand: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\nDefine: name, objective, key message, target segment, channels, timeline, content mix, success metrics.', params: {} },
+          { id: 'step_content',  name: 'Content Framework',     tool: 'draft_content',           description: 'Create execution content plan', prompt_template: 'Content framework from:\n{step_strategy.result}\n\nFor {brand.niche}: launch week plan (7 posts), visual direction brief for Nova, copy guide for Flux, KPIs for Aria, automation notes for Flux.', params: {} },
+          { id: 'step_brief',    name: 'Master Campaign Brief', tool: 'claude_synthesize',       description: 'Compile master brief for all agents', prompt_template: 'Master brief from:\nStrategy: {step_strategy.result}\nContent: {step_content.result}\n\nActionable brief for each role: creative, content, analytics. Include: overview, role briefs, timeline, dependencies, launch checklist.', params: {} },
+        ],
+      },
+      {
+        name: 'Brand Onboarding', description: 'Guide a new user through brand setup and prepare all agents for first use.',
+        steps: [
+          { id: 'step_collect', name: 'Brand Discovery',    tool: 'claude_synthesize',           description: 'Extract and organize brand information', prompt_template: 'Onboarding a new brand.\nInput: {input}\n\nExtract: business name, industry, target audience, tone/personality, products/services, competitors, marketing goals, social presence. Format as structured brand profile.', params: {} },
+          { id: 'step_memory',  name: 'Memory Setup Guide', tool: 'claude_synthesize',           description: 'Create memory setup guide for the user', prompt_template: 'Memory setup guide from:\n{step_collect.result}\n\nExplain: what to save in Brand Memory, suggested keywords, which agent handles what, recommended first workflows, 7-day quick-start plan.', params: {} },
+        ],
+      },
+      {
+        name: 'Weekly Marketing Review', description: 'Compile a cross-team weekly review with performance insights and next-week priorities.',
+        steps: [
+          { id: 'step_review', name: 'Weekly Review',          tool: 'claude_synthesize',        description: 'Analyze the week across all dimensions', prompt_template: 'Weekly review for {brand.niche}.\nContext: {input}, audience: {brand.audience}\n\nCover: content performance, engagement trends, top/bottom posts, audience growth, campaign progress, what worked and what did not.', params: {} },
+          { id: 'step_plan',   name: 'Next Week Action Plan',  tool: 'claude_synthesize',        description: 'Draft next week priorities per agent', prompt_template: 'From this review:\n{step_review.result}\n\nNext-week action plan for {brand.niche}:\n- Nova: visuals to create\n- Sage: strategy adjustments\n- Flux: automation tasks\n- Aria: metrics to focus on\n- Key decisions and deadlines', params: {} },
+        ],
       },
     ],
   };
 
   const defaults = DEFAULTS[req.params.key];
-  if (!defaults) return res.status(404).json({ success: false, error: 'No defaults for this agent' });
+  if (!defaults) return res.status(404).json({ success: false, error: `No defaults for agent '${req.params.key}'` });
 
   try {
-    const { rows } = await dbQuery(
-      `INSERT INTO agent_workflows (agent_key, steps, is_active, updated_at)
-       VALUES ($1, $2, true, NOW())
-       ON CONFLICT (agent_key) DO UPDATE SET steps = $2, is_active = true, updated_at = NOW()
-       RETURNING *`,
-      [req.params.key, JSON.stringify(defaults)]
-    );
-    return res.json({ success: true, workflow: rows[0] });
+    // Delete all existing workflows for this agent, then re-seed defaults
+    await dbQuery(`DELETE FROM agent_workflows WHERE agent_key = $1`, [req.params.key]);
+    const seeded: any[] = [];
+    for (const wf of defaults) {
+      const { rows } = await dbQuery(
+        `INSERT INTO agent_workflows (agent_key, name, description, steps, is_active, updated_at)
+         VALUES ($1, $2, $3, $4, true, NOW()) RETURNING *`,
+        [req.params.key, wf.name, wf.description, JSON.stringify(wf.steps)]
+      );
+      seeded.push(rows[0]);
+    }
+    return res.json({ success: true, workflows: seeded });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
