@@ -24982,7 +24982,10 @@ async function magnificGenerateImage(
   const submitResp = await magnificPost(cfg.endpoint, body, apiKey);
   console.log(`[Magnific] ${cfg.endpoint} → HTTP ${submitResp.status}`, JSON.stringify(submitResp.data)?.slice(0, 300));
   if (submitResp.status >= 400) {
-    const msg = submitResp.data?.message ?? submitResp.data?.error ?? submitResp.data?.detail ?? JSON.stringify(submitResp.data) ?? `Magnific API error`;
+    const isHtml = typeof submitResp.data === 'string' && submitResp.data.trimStart().startsWith('<');
+    const msg = isHtml
+      ? `Image generation service blocked (HTTP ${submitResp.status}) — API key may be invalid or service is unavailable from this server`
+      : (submitResp.data?.message ?? submitResp.data?.error ?? submitResp.data?.detail ?? JSON.stringify(submitResp.data) ?? `Magnific API error`);
     return { url: null, taskId: null, error: `HTTP ${submitResp.status}: ${msg}` };
   }
 
@@ -27016,17 +27019,20 @@ app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/nova/generate-image — generate image from a prompt (Magnific)
+// POST /api/nova/generate-image — generate image from a prompt (Magnific with Freepik fallback)
 app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-  const { prompt = '', model = 'flux-2-turbo', aspect_ratio = '1:1', save = true } = req.body as { prompt?: string; model?: string; aspect_ratio?: string; save?: boolean };
+  const { prompt = '', model = 'flux-2-turbo', aspect_ratio = '1:1', save = true } = req.body as {
+    prompt?: string; model?: string; aspect_ratio?: string; save?: boolean;
+  };
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
-  const modelConfig = MAGNIFIC_IMAGE_MODELS[model] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo'];
-  const creditCost = modelConfig.credits;
+  const isFreepikModel = !!FREEPIK_IMAGE_MODELS[model];
+  const magnificCfg = !isFreepikModel ? (MAGNIFIC_IMAGE_MODELS[model] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo']) : null;
+  const creditCost = isFreepikModel ? FREEPIK_IMAGE_MODELS[model].credits : magnificCfg!.credits;
 
   // Check credits
   const { rows: creditRows } = await dbQuery(
@@ -27037,9 +27043,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
     return res.status(402).json({ error: 'Insufficient credits' });
   }
 
-  const apiKey = await getMagnificApiKey();
-  if (!apiKey) return res.status(400).json({ error: 'Image generation not configured — set up Magnific in Admin.' });
-
+  const aspectStr = ASPECT_RATIO_MAP[aspect_ratio] ?? 'square_1_1';
   const genId = randomUUID();
   await dbQuery(
     `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status)
@@ -27048,19 +27052,48 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
   ).catch(() => undefined);
 
   try {
-    const magnificAspect = ASPECT_RATIO_MAP[aspect_ratio] ?? 'square_1_1';
-    const genResult = await magnificGenerateImage(model, prompt.trim(), magnificAspect, apiKey);
+    let imageUrl: string | null = null;
+    let actualCreditCost = creditCost;
 
-    if (genResult.error) {
-      await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [genResult.error, genId]).catch(() => undefined);
-      return res.status(400).json({ error: genResult.error });
+    if (!isFreepikModel) {
+      // Try Magnific first
+      const magnificKey = await getMagnificApiKey();
+      if (magnificKey) {
+        const genResult = await magnificGenerateImage(model, prompt.trim(), aspectStr, magnificKey);
+        if (!genResult.error) {
+          imageUrl = genResult.url;
+          if (genResult.taskId) {
+            await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [genResult.taskId, genId]).catch(() => undefined);
+          }
+        } else {
+          const isBlocked = genResult.error.includes('403') || genResult.error.toLowerCase().includes('blocked') || genResult.error.toLowerCase().includes('access denied');
+          if (!isBlocked) {
+            await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [genResult.error, genId]).catch(() => undefined);
+            return res.status(400).json({ error: genResult.error });
+          }
+          console.log('[generate-image] Magnific blocked, falling back to Freepik');
+        }
+      } else {
+        console.log('[generate-image] No Magnific key, falling back to Freepik');
+      }
     }
 
-    if (genResult.taskId) {
-      await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [genResult.taskId, genId]).catch(() => undefined);
+    // Freepik path: either explicitly chosen or fallback from Magnific block
+    if (!imageUrl) {
+      const freepikKey = await getFreepikApiKey();
+      if (!freepikKey) {
+        await dbQuery(`UPDATE magnific_generations SET status='failed', error='No API keys configured' WHERE id=$1`, [genId]).catch(() => undefined);
+        return res.status(400).json({ error: 'Image generation not configured — set up Magnific or Freepik in Admin.' });
+      }
+      const freepikModel = isFreepikModel ? model : 'freepik-mystic';
+      actualCreditCost = FREEPIK_IMAGE_MODELS[freepikModel]?.credits ?? 5;
+      const freepikResult = await freepikGenerateImage(freepikModel, prompt.trim(), aspectStr, freepikKey);
+      if (freepikResult.error) {
+        await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [freepikResult.error, genId]).catch(() => undefined);
+        return res.status(400).json({ error: freepikResult.error });
+      }
+      imageUrl = freepikResult.url;
     }
-
-    const imageUrl = genResult.url!;
 
     await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
 
@@ -27075,19 +27108,17 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
       ).catch(() => undefined);
     }
 
-    // Deduct credits (UPDATE path — balance endpoint always creates the row on first load)
+    // Deduct credits
     const deductResult = await dbQuery(
       `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2 RETURNING credits`,
-      [creditCost, auth.userId]
+      [actualCreditCost, auth.userId]
     ).catch(() => ({ rows: [] as any[] }));
-
-    // Fallback: if no row existed yet, insert it with 100 starting credits minus cost
     if (deductResult.rows.length === 0) {
       await dbQuery(
         `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
          VALUES ($1, GREATEST(0, 100 - $2), date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
          ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
-        [auth.userId, creditCost]
+        [auth.userId, actualCreditCost]
       ).catch((e) => console.error('Credit deduction fallback failed:', e));
     }
 
