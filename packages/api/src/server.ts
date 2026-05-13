@@ -2995,7 +2995,11 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     ('freepik_generate_image', 'Generate Image (Freepik)',  'Generate a high-quality image via Freepik AI — uses credits per generation', 'api',     '{"provider":"freepik","fallback_model":"freepik-mystic","credits":5}'),
     ('generate_video',         'Generate Video (Magnific)', 'Generate a short branded video clip via Magnific AI video models',           'builtin', '{"fallback_model":"wan-2-7-t2v"}'),
     ('save_design',            'Save to Designs',           'Save the generated image to the user designs collection',                   'builtin', '{}')
-    ON CONFLICT (key) DO NOTHING;
+    ON CONFLICT (key) DO UPDATE SET
+      name        = EXCLUDED.name,
+      description = EXCLUDED.description,
+      type        = EXCLUDED.type,
+      config      = EXCLUDED.config;
   `).catch(() => undefined);
   // ── Seed default named workflows for all 5 agents (UNIQUE agent_key+name = idempotent) ─
   {
@@ -26411,9 +26415,10 @@ async function freepikGenerateImage(
 
 // GET /api/admin/agent-tools — list all available tools
 app.get('/api/admin/agent-tools', async (req: Request, res: Response) => {
-  const auth = await requireAdmin(req, res);
-  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
   try {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     const { rows } = await dbQuery(`SELECT * FROM agent_tools ORDER BY type, name`);
     return res.json({ success: true, tools: rows });
   } catch (e: any) {
@@ -26424,9 +26429,9 @@ app.get('/api/admin/agent-tools', async (req: Request, res: Response) => {
 // GET /api/admin/agent-workflows/:key — list all named workflows for an agent
 app.get('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
-  const auth = await requireAdmin(req, res);
-  if (!auth) return;
   try {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     const { rows } = await dbQuery(
       `SELECT * FROM agent_workflows WHERE agent_key = $1 ORDER BY updated_at ASC`,
       [req.params.key]
@@ -26440,13 +26445,13 @@ app.get('/api/admin/agent-workflows/:key', async (req: Request, res: Response) =
 // POST /api/admin/agent-workflows/:key — create a new named workflow for an agent
 app.post('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
-  const auth = await requireAdmin(req, res);
-  if (!auth) return;
   const { name, description = '', steps = [], is_active = true } = req.body as {
     name: string; description?: string; steps?: any[]; is_active?: boolean;
   };
   if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
   try {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     const { rows } = await dbQuery(
       `INSERT INTO agent_workflows (agent_key, name, description, steps, is_active, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
@@ -26463,8 +26468,6 @@ app.post('/api/admin/agent-workflows/:key', async (req: Request, res: Response) 
 // PUT /api/admin/agent-workflows/:key/:id — update a specific workflow by ID
 app.put('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
-  const auth = await requireAdmin(req, res);
-  if (!auth) return;
   const { name, description, steps, is_active } = req.body as {
     name?: string; description?: string; steps?: any[]; is_active?: boolean;
   };
@@ -26472,6 +26475,8 @@ app.put('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Respons
     return res.status(400).json({ success: false, error: 'steps must be an array' });
   }
   try {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     const setClauses: string[] = ['updated_at = NOW()'];
     const vals: any[] = [];
     let idx = 1;
@@ -26494,9 +26499,9 @@ app.put('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Respons
 // DELETE /api/admin/agent-workflows/:key/:id — remove a workflow
 app.delete('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
-  const auth = await requireAdmin(req, res);
-  if (!auth) return;
   try {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     await dbQuery(`DELETE FROM agent_workflows WHERE id = $1 AND agent_key = $2`, [req.params.id, req.params.key]);
     return res.json({ success: true });
   } catch (e: any) {
@@ -27207,8 +27212,7 @@ Make each suggestion specific to this brand — reference their niche, audience,
 
 // POST /api/admin/agent-workflows/:key/reset — delete all workflows for agent and re-seed defaults
 app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Response) => {
-  const auth = await requireAdmin(req, res);
-  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
 
   type WfSeed = { name: string; description: string; steps: any[] };
   const DEFAULTS: Record<string, WfSeed[]> = {
@@ -27382,6 +27386,8 @@ app.post('/api/admin/agent-workflows/:key/reset', async (req: Request, res: Resp
   if (!defaults) return res.status(404).json({ success: false, error: `No defaults for agent '${req.params.key}'` });
 
   try {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     // Delete all existing workflows for this agent, then re-seed defaults
     await dbQuery(`DELETE FROM agent_workflows WHERE agent_key = $1`, [req.params.key]);
     const seeded: any[] = [];
