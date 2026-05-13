@@ -2962,11 +2962,28 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       UNIQUE(agent_key, name)
     );
   `).catch(() => undefined);
-  // Migrations: add name/description columns and move from per-agent UNIQUE to per-workflow UNIQUE
+  // Migrations: add name/description columns and move from per-agent UNIQUE to per-(agent_key, name) UNIQUE
   await pool.query(`ALTER TABLE agent_workflows ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Default Workflow'`).catch(() => undefined);
   await pool.query(`ALTER TABLE agent_workflows ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`).catch(() => undefined);
-  await pool.query(`ALTER TABLE agent_workflows DROP CONSTRAINT IF EXISTS agent_workflows_agent_key_key`).catch(() => undefined);
-  await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_workflows_agent_key_name_key') THEN ALTER TABLE agent_workflows ADD CONSTRAINT agent_workflows_agent_key_name_key UNIQUE (agent_key, name); END IF; END $$`).catch(() => undefined);
+  // Drop any single-column unique constraint on agent_key (old schema), then add the composite one
+  await pool.query(`
+    DO $$
+    DECLARE c TEXT;
+    BEGIN
+      FOR c IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'agent_workflows'::regclass
+          AND contype = 'u'
+          AND conname != 'agent_workflows_agent_key_name_key'
+          AND conname NOT LIKE '%pkey%'
+      LOOP
+        EXECUTE 'ALTER TABLE agent_workflows DROP CONSTRAINT IF EXISTS ' || quote_ident(c);
+      END LOOP;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_workflows_agent_key_name_key') THEN
+        ALTER TABLE agent_workflows ADD CONSTRAINT agent_workflows_agent_key_name_key UNIQUE (agent_key, name);
+      END IF;
+    END $$
+  `).catch(() => undefined);
   await pool.query(`
     INSERT INTO agent_tools (key, name, description, type, config) VALUES
     ('meigen_search',          'MeiGen AI Search',          'Search MeiGen AI for design templates and extract generation prompts',         'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
@@ -23645,7 +23662,7 @@ app.delete('/api/agent-activity/:id', async (req: Request, res: Response) => {
 
 // GET /api/admin/agent-templates — list all 5 templates (admin only)
 app.get('/api/admin/agent-templates', async (req: Request, res: Response) => {
-  const auth = requireAdmin(req, res);
+  const auth = await requireAdmin(req, res);
   if (!auth) return;
   try {
     const { rows } = await dbQuery(`SELECT * FROM agent_templates ORDER BY agent_key`, []);
@@ -23657,7 +23674,7 @@ app.get('/api/admin/agent-templates', async (req: Request, res: Response) => {
 
 // PUT /api/admin/agent-templates/:key — update a template's prompt (admin only)
 app.put('/api/admin/agent-templates/:key', async (req: Request, res: Response) => {
-  const auth = requireAdmin(req, res);
+  const auth = await requireAdmin(req, res);
   if (!auth) return;
   const { key } = req.params;
   const { base_prompt } = req.body as { base_prompt: string };
@@ -26406,6 +26423,7 @@ app.get('/api/admin/agent-tools', async (req: Request, res: Response) => {
 
 // GET /api/admin/agent-workflows/:key — list all named workflows for an agent
 app.get('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   try {
@@ -26421,6 +26439,7 @@ app.get('/api/admin/agent-workflows/:key', async (req: Request, res: Response) =
 
 // POST /api/admin/agent-workflows/:key — create a new named workflow for an agent
 app.post('/api/admin/agent-workflows/:key', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   const { name, description = '', steps = [], is_active = true } = req.body as {
@@ -26443,6 +26462,7 @@ app.post('/api/admin/agent-workflows/:key', async (req: Request, res: Response) 
 
 // PUT /api/admin/agent-workflows/:key/:id — update a specific workflow by ID
 app.put('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   const { name, description, steps, is_active } = req.body as {
@@ -26473,6 +26493,7 @@ app.put('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Respons
 
 // DELETE /api/admin/agent-workflows/:key/:id — remove a workflow
 app.delete('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Response) => {
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   try {
