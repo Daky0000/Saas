@@ -73,6 +73,7 @@ interface AIModel {
   label: string;
   desc: string;
   creditCost: number;
+  maxChars: number;
   badge?: string;
 }
 
@@ -80,26 +81,26 @@ type ImageProvider = 'magnific' | 'freepik' | 'kling';
 
 const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
   magnific: [
-    { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',      desc: 'Fastest — great for drafts',        creditCost: 3 },
-    { id: 'flux-2-klein',          label: 'Flux 2 Klein',      desc: 'Fast with multi-ref support',        creditCost: 3 },
-    { id: 'hyperflux',             label: 'Hyperflux',         desc: 'Ultra-fast Flux variant',            creditCost: 3 },
-    { id: 'flux-dev',              label: 'Flux Dev',          desc: 'Quality Flux development model',     creditCost: 4 },
-    { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',     desc: 'Proven pro — sharp + accurate',      creditCost: 5 },
-    { id: 'flux-2-pro',            label: 'Flux 2 Pro',        desc: 'High quality text-to-image',         creditCost: 5 },
-    { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',  desc: 'Context-aware — best for edits',     creditCost: 5, badge: 'Popular' },
-    { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',   desc: 'New — high coherence & detail',      creditCost: 4, badge: 'NEW' },
-    { id: 'seedream-v4-5',         label: 'Seedream 4.5',      desc: 'Stable Seedream with editing',       creditCost: 4 },
-    { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',  desc: 'Google Gemini — vivid & fast',       creditCost: 6, badge: 'NEW' },
-    { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash', desc: 'Google Nano — ultra-fast',           creditCost: 3 },
-    { id: 'z-image',               label: 'Z-Image Turbo',     desc: 'Budget-friendly fast generation',    creditCost: 2 },
-    { id: 'mystic',                label: 'Mystic',            desc: "Magnific's flagship creative model", creditCost: 8 },
+    { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',      desc: 'Fastest — great for drafts',        creditCost: 3, maxChars: 1000 },
+    { id: 'flux-2-klein',          label: 'Flux 2 Klein',      desc: 'Fast with multi-ref support',        creditCost: 3, maxChars: 1000 },
+    { id: 'hyperflux',             label: 'Hyperflux',         desc: 'Ultra-fast Flux variant',            creditCost: 3, maxChars: 1000 },
+    { id: 'flux-dev',              label: 'Flux Dev',          desc: 'Quality Flux development model',     creditCost: 4, maxChars: 1500 },
+    { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',     desc: 'Proven pro — sharp + accurate',      creditCost: 5, maxChars: 1500 },
+    { id: 'flux-2-pro',            label: 'Flux 2 Pro',        desc: 'High quality text-to-image',         creditCost: 5, maxChars: 1500 },
+    { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',  desc: 'Context-aware — best for edits',     creditCost: 5, maxChars: 2000, badge: 'Popular' },
+    { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',   desc: 'New — high coherence & detail',      creditCost: 4, maxChars: 500,  badge: 'NEW' },
+    { id: 'seedream-v4-5',         label: 'Seedream 4.5',      desc: 'Stable Seedream with editing',       creditCost: 4, maxChars: 500  },
+    { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',  desc: 'Google Gemini — vivid & fast',       creditCost: 6, maxChars: 2000, badge: 'NEW' },
+    { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash', desc: 'Google Nano — ultra-fast',           creditCost: 3, maxChars: 1000 },
+    { id: 'z-image',               label: 'Z-Image Turbo',     desc: 'Budget-friendly fast generation',    creditCost: 2, maxChars: 500  },
+    { id: 'mystic',                label: 'Mystic',            desc: "Magnific's flagship creative model", creditCost: 8, maxChars: 1000 },
   ],
   freepik: [
-    { id: 'freepik-mystic', label: 'Freepik Mystic', desc: 'High-quality creative image generation', creditCost: 5 },
+    { id: 'freepik-mystic', label: 'Freepik Mystic', desc: 'High-quality creative image generation', creditCost: 5, maxChars: 1000 },
   ],
   kling: [
-    { id: 'kling-v1-5', label: 'Kling v1.5', desc: 'Kling image generation — detailed', creditCost: 5 },
-    { id: 'kling-v1',   label: 'Kling v1',   desc: 'Kling image generation — fast',     creditCost: 4 },
+    { id: 'kling-v1-5', label: 'Kling v1.5', desc: 'Kling image generation — detailed', creditCost: 5, maxChars: 500 },
+    { id: 'kling-v1',   label: 'Kling v1',   desc: 'Kling image generation — fast',     creditCost: 4, maxChars: 500 },
   ],
 };
 
@@ -109,12 +110,12 @@ type VideoProvider = 'magnific' | 'kling';
 
 const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
   magnific: [
-    { id: 'wan-2-7-t2v', label: 'WAN 2.7', desc: 'Text-to-video, cinematic quality', creditCost: 25 },
+    { id: 'wan-2-7-t2v',     label: 'WAN 2.7',         desc: 'Text-to-video, cinematic quality', creditCost: 25, maxChars: 1000 },
   ],
   kling: [
-    { id: 'kling-v2.5-turbo', label: 'Kling v2.5 Turbo', desc: 'Fast, high-quality video',  creditCost: 20 },
-    { id: 'kling-v2.6-pro',   label: 'Kling v2.6 Pro',   desc: 'Latest flagship model',      creditCost: 35 },
-    { id: 'kling-v1.6-pro',   label: 'Kling v1.6 Pro',   desc: 'Stable quality video',       creditCost: 25 },
+    { id: 'kling-v2.5-turbo', label: 'Kling v2.5 Turbo', desc: 'Fast, high-quality video',  creditCost: 20, maxChars: 2500 },
+    { id: 'kling-v2.6-pro',   label: 'Kling v2.6 Pro',   desc: 'Latest flagship model',      creditCost: 35, maxChars: 2500 },
+    { id: 'kling-v1.6-pro',   label: 'Kling v1.6 Pro',   desc: 'Stable quality video',       creditCost: 25, maxChars: 2500 },
   ],
 };
 
@@ -335,8 +336,8 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 placeholder="Describe exactly what you want to generate…"
                 className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
               />
-              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${prompt.length > 1800 ? 'text-rose-500' : 'text-slate-400'}`}>
-                {prompt.length}/2000
+              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${prompt.length > selectedImageModel.maxChars * 0.9 ? 'text-rose-500' : 'text-slate-400'}`}>
+                {prompt.length}/{selectedImageModel.maxChars}
               </span>
             </div>
             <button type="button" disabled={!prompt.trim() || generating} onClick={generateImage}
@@ -427,8 +428,8 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 placeholder={firstFrame ? 'Describe what happens in the video…' : 'Describe your video… e.g. a slow-motion ocean wave at sunset with cinematic lighting'}
                 className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
               />
-              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${videoPrompt.length > 900 ? 'text-rose-500' : 'text-slate-400'}`}>
-                {videoPrompt.length}/1000
+              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${videoPrompt.length > selectedVideoModel.maxChars * 0.9 ? 'text-rose-500' : 'text-slate-400'}`}>
+                {videoPrompt.length}/{selectedVideoModel.maxChars}
               </span>
             </div>
             <button type="button" disabled={!videoPrompt.trim() || generatingVideo} onClick={generateVideo}
