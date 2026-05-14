@@ -76,26 +76,34 @@ interface AIModel {
   badge?: string;
 }
 
-const IMAGE_MODELS: AIModel[] = [
-  // Flux family
-  { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',          desc: 'Fastest — great for drafts',         creditCost: 3 },
-  { id: 'flux-2-klein',          label: 'Flux 2 Klein',          desc: 'Fast with multi-ref support',         creditCost: 3 },
-  { id: 'hyperflux',             label: 'Hyperflux',             desc: 'Ultra-fast Flux variant',             creditCost: 3 },
-  { id: 'flux-dev',              label: 'Flux Dev',              desc: 'Quality Flux development model',      creditCost: 4 },
-  { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',         desc: 'Proven pro — sharp + accurate',       creditCost: 5 },
-  { id: 'flux-2-pro',            label: 'Flux 2 Pro',            desc: 'High quality text-to-image',          creditCost: 5 },
-  { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',      desc: 'Context-aware — best for edits',      creditCost: 5, badge: 'Popular' },
-  // Seedream family
-  { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',       desc: 'New — high coherence & detail',       creditCost: 4, badge: 'NEW' },
-  { id: 'seedream-v4-5',         label: 'Seedream 4.5',          desc: 'Stable Seedream with editing',        creditCost: 4 },
-  // Google
-  { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',      desc: 'Google Gemini — vivid & fast',        creditCost: 6, badge: 'NEW' },
-  { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash',     desc: 'Google Nano — ultra-fast',            creditCost: 3 },
-  // Fast alternates
-  { id: 'z-image',               label: 'Z-Image Turbo',         desc: 'Budget-friendly fast generation',     creditCost: 2 },
-  // Mystic
-  { id: 'mystic',                label: 'Mystic',                desc: "Magnific's flagship creative model",  creditCost: 8 },
-];
+type ImageProvider = 'magnific' | 'freepik' | 'kling';
+
+const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
+  magnific: [
+    { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',      desc: 'Fastest — great for drafts',        creditCost: 3 },
+    { id: 'flux-2-klein',          label: 'Flux 2 Klein',      desc: 'Fast with multi-ref support',        creditCost: 3 },
+    { id: 'hyperflux',             label: 'Hyperflux',         desc: 'Ultra-fast Flux variant',            creditCost: 3 },
+    { id: 'flux-dev',              label: 'Flux Dev',          desc: 'Quality Flux development model',     creditCost: 4 },
+    { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',     desc: 'Proven pro — sharp + accurate',      creditCost: 5 },
+    { id: 'flux-2-pro',            label: 'Flux 2 Pro',        desc: 'High quality text-to-image',         creditCost: 5 },
+    { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',  desc: 'Context-aware — best for edits',     creditCost: 5, badge: 'Popular' },
+    { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',   desc: 'New — high coherence & detail',      creditCost: 4, badge: 'NEW' },
+    { id: 'seedream-v4-5',         label: 'Seedream 4.5',      desc: 'Stable Seedream with editing',       creditCost: 4 },
+    { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',  desc: 'Google Gemini — vivid & fast',       creditCost: 6, badge: 'NEW' },
+    { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash', desc: 'Google Nano — ultra-fast',           creditCost: 3 },
+    { id: 'z-image',               label: 'Z-Image Turbo',     desc: 'Budget-friendly fast generation',    creditCost: 2 },
+    { id: 'mystic',                label: 'Mystic',            desc: "Magnific's flagship creative model", creditCost: 8 },
+  ],
+  freepik: [
+    { id: 'freepik-mystic', label: 'Freepik Mystic', desc: 'High-quality creative image generation', creditCost: 5 },
+  ],
+  kling: [
+    { id: 'kling-v1-5', label: 'Kling v1.5', desc: 'Kling image generation — detailed', creditCost: 5 },
+    { id: 'kling-v1',   label: 'Kling v1',   desc: 'Kling image generation — fast',     creditCost: 4 },
+  ],
+};
+
+const KLING_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.kling.map((m) => m.id));
 
 type VideoProvider = 'magnific' | 'kling';
 
@@ -116,7 +124,8 @@ const KLING_MODEL_IDS = new Set(VIDEO_MODELS_BY_PROVIDER.kling.map((m) => m.id))
 
 function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesign) => void; onCreditUsed?: () => void }) {
   const [genMode, setGenMode]                   = useState<GenMode>('image');
-  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS.find((m) => m.id === 'flux-kontext-pro') ?? IMAGE_MODELS[0]);
+  const [imageProvider, setImageProvider] = useState<ImageProvider>('magnific');
+  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS_BY_PROVIDER.magnific.find((m) => m.id === 'flux-kontext-pro') ?? IMAGE_MODELS_BY_PROVIDER.magnific[0]);
   const [videoProvider, setVideoProvider] = useState<VideoProvider>('kling');
   const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS_BY_PROVIDER.kling[0]);
 
@@ -142,7 +151,9 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     setDesignId(null);
     setErrorMsg(null);
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/nova/generate-image`, {
+      const isKlingImage = KLING_IMAGE_MODEL_IDS.has(selectedImageModel.id);
+      const imageEndpoint = isKlingImage ? '/api/kling/generate-image' : '/api/nova/generate-image';
+      const res = await fetch(`${getApiBaseUrl()}${imageEndpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({ prompt: prompt.trim(), model: selectedImageModel.id, save: true }),
@@ -215,9 +226,28 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
         <div className="mb-5">
           {genMode === 'image' ? (
             <>
+              {/* Provider tabs */}
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
+              <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
+                {([
+                  { id: 'magnific' as ImageProvider, label: 'Magnific' },
+                  { id: 'freepik'  as ImageProvider, label: 'Freepik'  },
+                  { id: 'kling'    as ImageProvider, label: 'Kling AI' },
+                ] as const).map((p) => (
+                  <button key={p.id} type="button"
+                    onClick={() => {
+                      setImageProvider(p.id);
+                      setSelectedImageModel(IMAGE_MODELS_BY_PROVIDER[p.id][0]);
+                    }}
+                    className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${imageProvider === p.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              {/* Models for selected provider */}
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
               <div className="flex flex-wrap gap-2">
-                {IMAGE_MODELS.map((m) => (
+                {IMAGE_MODELS_BY_PROVIDER[imageProvider].map((m) => (
                   <button key={m.id} type="button" onClick={() => setSelectedImageModel(m)}
                     className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
                       selectedImageModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
