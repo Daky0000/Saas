@@ -120,6 +120,9 @@ const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
 
 const KLING_MODEL_IDS = new Set(VIDEO_MODELS_BY_PROVIDER.kling.map((m) => m.id));
 
+// Which Kling video models support last-frame (tail) attachment
+const KLING_LAST_FRAME_MODELS = new Set(['kling-v2.6-pro', 'kling-v1.6-pro']);
+
 // ── AI Studio tab ─────────────────────────────────────────────────────────────
 
 function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesign) => void; onCreditUsed?: () => void }) {
@@ -141,6 +144,22 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
   const [videoUrl, setVideoUrl]             = useState<string | null>(null);
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [videoError, setVideoError]         = useState<string | null>(null);
+
+  // Video frame attachments (Kling only)
+  const [firstFrame, setFirstFrame]   = useState<string | null>(null);
+  const [lastFrame, setLastFrame]     = useState<string | null>(null);
+  const firstFrameRef = useRef<HTMLInputElement>(null);
+  const lastFrameRef  = useRef<HTMLInputElement>(null);
+
+  const supportsLastFrame = KLING_LAST_FRAME_MODELS.has(selectedVideoModel.id);
+
+  const readFileAsDataURL = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
 
 
 
@@ -182,10 +201,13 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     try {
       const isKling = KLING_MODEL_IDS.has(selectedVideoModel.id);
       const endpoint = isKling ? '/api/kling/generate-video' : '/api/nova/generate-video';
+      const body: Record<string, any> = { prompt: videoPrompt.trim(), model: selectedVideoModel.id };
+      if (isKling && firstFrame) body.image_url = firstFrame;
+      if (isKling && lastFrame && supportsLastFrame) body.tail_image_url = lastFrame;
       const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
-        body: JSON.stringify({ prompt: videoPrompt.trim(), model: selectedVideoModel.id }),
+        body: JSON.stringify(body),
       });
       const d = await res.json();
       if (!d.success) throw new Error(d.error ?? 'Video generation failed');
@@ -273,6 +295,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                     onClick={() => {
                       setVideoProvider(p.id);
                       setSelectedVideoModel(VIDEO_MODELS_BY_PROVIDER[p.id][0]);
+                      if (p.id !== 'kling') { setFirstFrame(null); setLastFrame(null); }
                     }}
                     className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${videoProvider === p.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                     {p.label}
@@ -283,7 +306,10 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
               <div className="flex flex-wrap gap-2">
                 {VIDEO_MODELS_BY_PROVIDER[videoProvider].map((m) => (
-                  <button key={m.id} type="button" onClick={() => setSelectedVideoModel(m)}
+                  <button key={m.id} type="button" onClick={() => {
+                    setSelectedVideoModel(m);
+                    if (!KLING_LAST_FRAME_MODELS.has(m.id)) setLastFrame(null);
+                  }}
                     className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
                       selectedVideoModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                     }`}>
@@ -300,14 +326,19 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
         {/* Image form */}
         {genMode === 'image' ? (
           <div className="space-y-3">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !generating) generateImage(); }}
-              rows={4}
-              placeholder="Describe exactly what you want to generate…"
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
-            />
+            <div className="relative">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !generating) generateImage(); }}
+                rows={4}
+                placeholder="Describe exactly what you want to generate…"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+              />
+              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${prompt.length > 1800 ? 'text-rose-500' : 'text-slate-400'}`}>
+                {prompt.length}/2000
+              </span>
+            </div>
             <button type="button" disabled={!prompt.trim() || generating} onClick={generateImage}
               className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
               {generating ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Sparkles size={15} /> Generate ✦{selectedImageModel.creditCost}</>}
@@ -322,18 +353,96 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
         ) : (
           /* Video form */
           <div className="space-y-3">
-            <textarea
-              value={videoPrompt}
-              onChange={(e) => setVideoPrompt(e.target.value)}
-              rows={3}
-              placeholder="Describe your video… e.g. a slow-motion ocean wave at sunset with cinematic lighting"
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
-            />
+            {/* Frame attachments — Kling only */}
+            {videoProvider === 'kling' && (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {/* First frame */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                    First Frame <span className="normal-case font-normal text-slate-400">(optional)</span>
+                  </label>
+                  <button type="button" onClick={() => firstFrameRef.current?.click()}
+                    className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#5b6cf9] hover:bg-indigo-50 transition">
+                    {firstFrame ? (
+                      <>
+                        <img src={firstFrame} alt="First frame" className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200" />
+                        <span className="flex-1 text-xs font-semibold text-slate-700 truncate">First frame set</span>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setFirstFrame(null); }}
+                          className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-rose-100 hover:text-rose-600 transition">
+                          <X size={10} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
+                          <Image size={14} />
+                        </div>
+                        <span className="text-xs text-slate-500">Upload first frame</span>
+                      </>
+                    )}
+                  </button>
+                  <input ref={firstFrameRef} type="file" accept="image/*" className="hidden"
+                    onChange={async (e) => { const f = e.target.files?.[0]; if (f) setFirstFrame(await readFileAsDataURL(f)); e.target.value = ''; }} />
+                </div>
+
+                {/* Last frame — only for models that support it */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                    Last Frame{' '}
+                    {supportsLastFrame
+                      ? <span className="normal-case font-normal text-slate-400">(optional)</span>
+                      : <span className="normal-case font-normal text-slate-300">— not supported by this model</span>}
+                  </label>
+                  <button type="button" disabled={!supportsLastFrame} onClick={() => lastFrameRef.current?.click()}
+                    className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#5b6cf9] hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    {lastFrame ? (
+                      <>
+                        <img src={lastFrame} alt="Last frame" className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200" />
+                        <span className="flex-1 text-xs font-semibold text-slate-700 truncate">Last frame set</span>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setLastFrame(null); }}
+                          className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-rose-100 hover:text-rose-600 transition">
+                          <X size={10} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
+                          <Image size={14} />
+                        </div>
+                        <span className="text-xs text-slate-500">Upload last frame</span>
+                      </>
+                    )}
+                  </button>
+                  <input ref={lastFrameRef} type="file" accept="image/*" className="hidden"
+                    onChange={async (e) => { const f = e.target.files?.[0]; if (f) setLastFrame(await readFileAsDataURL(f)); e.target.value = ''; }} />
+                </div>
+              </div>
+            )}
+
+            <div className="relative">
+              <textarea
+                value={videoPrompt}
+                onChange={(e) => setVideoPrompt(e.target.value)}
+                rows={3}
+                placeholder={firstFrame ? 'Describe what happens in the video…' : 'Describe your video… e.g. a slow-motion ocean wave at sunset with cinematic lighting'}
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+              />
+              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${videoPrompt.length > 900 ? 'text-rose-500' : 'text-slate-400'}`}>
+                {videoPrompt.length}/1000
+              </span>
+            </div>
             <button type="button" disabled={!videoPrompt.trim() || generatingVideo} onClick={generateVideo}
               className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
-              {generatingVideo ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Play size={14} /> Generate Video ✦{selectedVideoModel.creditCost}</>}
+              {generatingVideo
+                ? <><Loader2 size={14} className="animate-spin" /> Generating…</>
+                : <><Play size={14} /> {firstFrame ? 'Animate Frame' : 'Generate Video'} ✦{selectedVideoModel.creditCost}</>}
             </button>
-            {videoError && <p className="text-xs text-red-500">{videoError}</p>}
+            {videoError && (
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                <AlertCircle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-red-700">{videoError}</p>
+              </div>
+            )}
           </div>
         )}
       </div>

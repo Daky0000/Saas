@@ -25608,16 +25608,22 @@ app.get('/api/admin/kling/generations', async (req: Request, res: Response) => {
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/kling/generate-video — text-to-video
+// POST /api/kling/generate-video — text-to-video or image-to-video
 app.post('/api/kling/generate-video', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-  const { prompt = '', model = 'kling-v2.5-turbo', aspect_ratio = '16:9', duration = 5, mode = 'standard' } = req.body as {
-    prompt?: string; model?: string; aspect_ratio?: string; duration?: number; mode?: string;
+  const {
+    prompt = '', model = 'kling-v2.5-turbo', aspect_ratio = '16:9', duration = 5,
+    image_url = '', tail_image_url = '',
+  } = req.body as {
+    prompt?: string; model?: string; aspect_ratio?: string; duration?: number;
+    image_url?: string; tail_image_url?: string;
   };
   if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+  const useImageToVideo = !!image_url.trim();
 
   const modelCfg = KLING_VIDEO_MODELS[model] ?? KLING_VIDEO_MODELS['kling-v2.5-turbo'];
   const creditCost = modelCfg.credits;
@@ -25630,21 +25636,31 @@ app.post('/api/kling/generate-video', async (req: Request, res: Response) => {
   }
 
   const genId = randomUUID();
+  const genType = useImageToVideo ? 'image-to-video' : 'video';
   await pool!.query(
     `INSERT INTO kling_generations (id, user_id, type, model, prompt, params, status, credits_used)
-     VALUES ($1,$2,'video',$3,$4,$5,'pending',$6)`,
-    [genId, auth.userId, model, prompt.trim(), JSON.stringify({ aspect_ratio, duration, mode }), creditCost]
+     VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)`,
+    [genId, auth.userId, genType, model, prompt.trim(), JSON.stringify({ aspect_ratio, duration, has_first_frame: useImageToVideo, has_last_frame: !!tail_image_url }), creditCost]
   ).catch(() => undefined);
 
   try {
-    const submitResp = await klingRequest('POST', '/v1/videos/text2video', {
-      model,
-      prompt: prompt.trim(),
-      negative_prompt: '',
-      duration,
-      aspect_ratio,
-      cfg_scale: 0.5,
-    });
+    let submitResp: any;
+    let pollPath: string;
+
+    if (useImageToVideo) {
+      const body: Record<string, any> = {
+        model, image_url: image_url.trim(), prompt: prompt.trim(),
+        negative_prompt: '', duration, aspect_ratio, cfg_scale: 0.5,
+      };
+      if (tail_image_url.trim()) body.tail_image_url = tail_image_url.trim();
+      submitResp = await klingRequest('POST', '/v1/videos/image2video', body);
+      pollPath = 'image2video';
+    } else {
+      submitResp = await klingRequest('POST', '/v1/videos/text2video', {
+        model, prompt: prompt.trim(), negative_prompt: '', duration, aspect_ratio, cfg_scale: 0.5,
+      });
+      pollPath = 'text2video';
+    }
 
     if (submitResp.status >= 400) {
       const errMsg = submitResp.data?.message ?? `Kling API error ${submitResp.status}`;
@@ -25658,7 +25674,7 @@ app.post('/api/kling/generate-video', async (req: Request, res: Response) => {
     await pool!.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
     await pool!.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
 
-    const result = await pollKlingTask(taskId, `/v1/videos/text2video/${taskId}`, 300);
+    const result = await pollKlingTask(taskId, `/v1/videos/${pollPath}/${taskId}`, 300);
     if (result.error) throw new Error(result.error);
 
     await pool!.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);
