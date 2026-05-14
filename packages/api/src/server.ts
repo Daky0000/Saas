@@ -25946,8 +25946,7 @@ async function pollGoogleOperation(
 // ── Admin: Google config ──────────────────────────────────────────────────────
 
 app.get('/api/admin/google/config', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   const key = await getGoogleApiKey();
   const hasKey = !!key;
   const masked = key ? `${key.slice(0, 6)}${'•'.repeat(Math.max(0, key.length - 10))}${key.slice(-4)}` : '';
@@ -25955,8 +25954,7 @@ app.get('/api/admin/google/config', async (req: Request, res: Response) => {
 });
 
 app.put('/api/admin/google/config', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   const { apiKey, imgbbKey } = req.body as { apiKey?: string; imgbbKey?: string };
   try {
     if (apiKey?.trim()) {
@@ -25980,8 +25978,7 @@ app.put('/api/admin/google/config', async (req: Request, res: Response) => {
 });
 
 app.get('/api/admin/google/test', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   const key = await getGoogleApiKey();
   if (!key) return res.status(400).json({ success: false, error: 'No Google API key configured' });
   try {
@@ -25999,8 +25996,7 @@ app.get('/api/admin/google/test', async (req: Request, res: Response) => {
 });
 
 app.get('/api/admin/google/generations', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
   try {
     const { rows } = await pool!.query(
@@ -26224,8 +26220,7 @@ function openaiImageSize(model: string, aspect: string): string {
 // ── Admin: OpenAI config ──────────────────────────────────────────────────────
 
 app.get('/api/admin/openai/config', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   const key = await getOpenAIApiKey();
   const hasKey = !!key;
   const masked = key ? `sk-...${key.slice(-6)}` : '';
@@ -26233,8 +26228,7 @@ app.get('/api/admin/openai/config', async (req: Request, res: Response) => {
 });
 
 app.put('/api/admin/openai/config', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   const { apiKey } = req.body as { apiKey?: string };
   if (!apiKey?.trim()) return res.status(400).json({ error: 'apiKey is required' });
   try {
@@ -26248,8 +26242,7 @@ app.put('/api/admin/openai/config', async (req: Request, res: Response) => {
 });
 
 app.get('/api/admin/openai/test', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   const key = await getOpenAIApiKey();
   if (!key) return res.status(400).json({ success: false, error: 'No OpenAI API key configured' });
   try {
@@ -26269,8 +26262,7 @@ app.get('/api/admin/openai/test', async (req: Request, res: Response) => {
 });
 
 app.get('/api/admin/openai/generations', async (req: Request, res: Response) => {
-  const auth = requireAuth(req, res);
-  if (!auth || auth.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!await requireAdmin(req, res)) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
   try {
     const { rows } = await pool!.query(
