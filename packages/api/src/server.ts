@@ -27150,8 +27150,23 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
     let imageUrl: string | null = null;
     let actualCreditCost = creditCost;
 
-    if (!isFreepikModel) {
-      // Try Magnific first
+    // 1. Try Replicate first — works from Railway (no Akamai block)
+    const replicateKey = await getReplicateApiKey();
+    if (replicateKey) {
+      const result = await replicateGenerateImage(model, prompt.trim(), aspectStr, replicateKey);
+      if (!result.error) {
+        imageUrl = result.url;
+      } else {
+        console.log('[generate-image] Replicate failed:', result.error);
+        if (result.error.includes('Invalid Replicate')) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [result.error, genId]).catch(() => undefined);
+          return res.status(400).json({ error: result.error });
+        }
+      }
+    }
+
+    // 2. Fall back to Magnific if Replicate not configured or failed
+    if (!imageUrl && !isFreepikModel) {
       const magnificKey = await getMagnificApiKey();
       if (magnificKey) {
         const genResult = await magnificGenerateImage(model, prompt.trim(), aspectStr, magnificKey);
@@ -27166,28 +27181,33 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
             await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [genResult.error, genId]).catch(() => undefined);
             return res.status(400).json({ error: genResult.error });
           }
-          console.log('[generate-image] Magnific blocked, falling back to Freepik');
+          console.log('[generate-image] Magnific blocked, trying Freepik');
         }
-      } else {
-        console.log('[generate-image] No Magnific key, falling back to Freepik');
       }
     }
 
-    // Freepik path: either explicitly chosen or fallback from Magnific block
+    // 3. Fall back to Freepik mystic
     if (!imageUrl) {
       const freepikKey = await getFreepikApiKey();
-      if (!freepikKey) {
+      if (!freepikKey && !replicateKey) {
         await dbQuery(`UPDATE magnific_generations SET status='failed', error='No API keys configured' WHERE id=$1`, [genId]).catch(() => undefined);
-        return res.status(400).json({ error: 'Image generation not configured — set up Magnific or Freepik in Admin.' });
+        return res.status(400).json({ error: 'Image generation not configured — add a Replicate API token in Admin → Magnific AI.' });
       }
-      const freepikModel = isFreepikModel ? model : 'freepik-mystic';
-      actualCreditCost = FREEPIK_IMAGE_MODELS[freepikModel]?.credits ?? 5;
-      const freepikResult = await freepikGenerateImage(freepikModel, prompt.trim(), aspectStr, freepikKey);
-      if (freepikResult.error) {
-        await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [freepikResult.error, genId]).catch(() => undefined);
-        return res.status(400).json({ error: freepikResult.error });
+      if (freepikKey) {
+        const freepikModel = isFreepikModel ? model : 'freepik-mystic';
+        actualCreditCost = FREEPIK_IMAGE_MODELS[freepikModel]?.credits ?? 5;
+        const freepikResult = await freepikGenerateImage(freepikModel, prompt.trim(), aspectStr, freepikKey);
+        if (freepikResult.error) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [freepikResult.error, genId]).catch(() => undefined);
+          return res.status(400).json({ error: freepikResult.error });
+        }
+        imageUrl = freepikResult.url;
       }
-      imageUrl = freepikResult.url;
+    }
+
+    if (!imageUrl) {
+      await dbQuery(`UPDATE magnific_generations SET status='failed', error='All providers failed' WHERE id=$1`, [genId]).catch(() => undefined);
+      return res.status(400).json({ error: 'Image generation failed — all providers unavailable.' });
     }
 
     await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
@@ -27222,6 +27242,157 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
     await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
     return res.status(500).json({ error: e.message });
   }
+});
+
+// ─── Replicate AI Integration ─────────────────────────────────────────────────
+// Replicate hosts the same Flux models as Magnific but without Akamai IP blocking.
+// Used as the primary generation path when a Replicate API token is configured.
+
+const REPLICATE_BASE = 'https://api.replicate.com';
+
+// Maps Magnific model IDs → best Replicate Flux equivalent
+const REPLICATE_MODEL_MAP: Record<string, { owner: string; name: string }> = {
+  'flux-2-turbo':     { owner: 'black-forest-labs', name: 'flux-schnell' },
+  'flux-2-klein':     { owner: 'black-forest-labs', name: 'flux-schnell' },
+  'seedream-v5-lite': { owner: 'black-forest-labs', name: 'flux-dev' },
+  'flux-kontext-pro': { owner: 'black-forest-labs', name: 'flux-dev' },
+  'flux-2-pro':       { owner: 'black-forest-labs', name: 'flux-dev' },
+  'mystic':           { owner: 'black-forest-labs', name: 'flux-dev' },
+};
+
+// Maps Magnific aspect strings → Replicate aspect ratio strings
+const REPLICATE_ASPECT_MAP: Record<string, string> = {
+  'square_1_1':      '1:1',
+  'widescreen_16_9': '16:9',
+  'portrait_9_16':   '9:16',
+  'classic_4_3':     '4:3',
+  'portrait_3_4':    '3:4',
+  'cinematic_21_9':  '21:9',
+};
+
+async function getReplicateApiKey(): Promise<string> {
+  const envKey = process.env.REPLICATE_API_TOKEN;
+  if (envKey) return envKey;
+  try {
+    const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'replicate' LIMIT 1`);
+    return cfg.rows[0]?.config?.apiKey ?? '';
+  } catch { return ''; }
+}
+
+async function replicateGenerateImage(
+  magnificModelId: string,
+  prompt: string,
+  magnificAspect: string,
+  apiKey: string
+): Promise<{ url: string | null; error: string | null }> {
+  const mdl = REPLICATE_MODEL_MAP[magnificModelId] ?? { owner: 'black-forest-labs', name: 'flux-schnell' };
+  const aspect = REPLICATE_ASPECT_MAP[magnificAspect] ?? '1:1';
+
+  // Submit prediction — Prefer: wait=30 gives a sync response for fast models
+  const submitResp = await axios.post(
+    `${REPLICATE_BASE}/v1/models/${mdl.owner}/${mdl.name}/predictions`,
+    { input: { prompt, aspect_ratio: aspect, output_format: 'webp', output_quality: 85, num_outputs: 1 } },
+    {
+      headers: {
+        'Authorization': `Token ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'wait=30',
+      },
+      validateStatus: () => true,
+      timeout: 40000,
+    }
+  );
+
+  if (submitResp.status === 401) return { url: null, error: 'Invalid Replicate API token' };
+  if (submitResp.status >= 400) {
+    return { url: null, error: submitResp.data?.detail ?? submitResp.data?.error ?? `Replicate error ${submitResp.status}` };
+  }
+
+  let prediction = submitResp.data;
+
+  // Already done (Prefer: wait worked)
+  if (prediction.status === 'succeeded') {
+    const url: string = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+    return { url: url ?? null, error: url ? null : 'No output from Replicate' };
+  }
+
+  // Poll until complete
+  const pollUrl: string = prediction.urls?.get;
+  if (!pollUrl) return { url: null, error: 'No prediction URL from Replicate' };
+
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const poll = await axios.get(pollUrl, {
+      headers: { 'Authorization': `Token ${apiKey}` },
+      validateStatus: () => true,
+      timeout: 10000,
+    });
+    if (poll.status >= 400) continue;
+    const p = poll.data;
+    if (p.status === 'succeeded') {
+      const url: string = Array.isArray(p.output) ? p.output[0] : p.output;
+      return { url: url ?? null, error: url ? null : 'No output from Replicate' };
+    }
+    if (p.status === 'failed' || p.status === 'canceled') {
+      return { url: null, error: p.error ?? 'Replicate generation failed' };
+    }
+  }
+  return { url: null, error: 'Timeout: Replicate generation took too long' };
+}
+
+// GET /api/admin/replicate/config
+app.get('/api/admin/replicate/config', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const envKey: string = process.env.REPLICATE_API_TOKEN ?? '';
+    if (envKey) {
+      const masked = envKey.length > 8 ? `${'*'.repeat(envKey.length - 4)}${envKey.slice(-4)}` : '****';
+      return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'env' });
+    }
+    const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='replicate' LIMIT 1`);
+    const key: string = r.rows[0]?.config?.apiKey ?? '';
+    const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
+    return res.json({ success: true, hasKey: !!key, maskedKey: masked, source: 'db' });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/admin/replicate/config
+app.put('/api/admin/replicate/config', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const { apiKey } = req.body as { apiKey?: string };
+  if (!apiKey?.trim()) return res.status(400).json({ error: 'apiKey is required' });
+  try {
+    await pool!.query(
+      `INSERT INTO platform_configs (platform, config, enabled, updated_at)
+       VALUES ('replicate', $1, true, NOW())
+       ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
+      [JSON.stringify({ apiKey: apiKey.trim() })]
+    );
+    return res.json({ success: true });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/admin/replicate/test
+app.get('/api/admin/replicate/test', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const apiKey = await getReplicateApiKey();
+  if (!apiKey) return res.status(400).json({ success: false, error: 'No Replicate API token configured' });
+  try {
+    const r = await axios.get(`${REPLICATE_BASE}/v1/models/black-forest-labs/flux-schnell`, {
+      headers: { 'Authorization': `Token ${apiKey}` },
+      validateStatus: () => true,
+      timeout: 10000,
+    });
+    if (r.status === 401) return res.json({ success: false, error: 'Invalid API token (401 Unauthorized)' });
+    if (r.status >= 400) return res.json({ success: false, error: `Replicate returned HTTP ${r.status}` });
+    return res.json({ success: true, model: r.data?.name ?? 'flux-schnell', note: 'Token is valid' });
+  } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
 });
 
 // POST /api/nova/freepik-image — generate image via Freepik AI with credit enforcement

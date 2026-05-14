@@ -43,6 +43,16 @@ export default function AdminMagnific() {
   const [testRaw, setTestRaw]       = useState<string>('');
   const [saveMsg, setSaveMsg]       = useState('');
 
+  // Replicate state
+  const [rpKey, setRpKey]               = useState('');
+  const [rpMaskedKey, setRpMaskedKey]   = useState('');
+  const [rpHasKey, setRpHasKey]         = useState(false);
+  const [rpSaving, setRpSaving]         = useState(false);
+  const [rpTesting, setRpTesting]       = useState(false);
+  const [rpTestResult, setRpTestResult] = useState<'ok' | 'fail' | null>(null);
+  const [rpTestError, setRpTestError]   = useState('');
+  const [rpSaveMsg, setRpSaveMsg]       = useState('');
+
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [loadingGens, setLoadingGens] = useState(false);
   const [genTypeFilter, setGenTypeFilter] = useState<string>('all');
@@ -51,6 +61,7 @@ export default function AdminMagnific() {
 
   useEffect(() => {
     fetchConfig();
+    fetchReplicateConfig();
     fetchGenerations();
   }, []);
 
@@ -86,6 +97,37 @@ export default function AdminMagnific() {
     } catch (e: any) { setTestResult('fail'); setTestError(e.message); } finally { setTesting(false); }
   }
 
+  async function fetchReplicateConfig() {
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/admin/replicate/config`, { headers });
+      const d = await r.json();
+      if (d.success) { setRpHasKey(d.hasKey); setRpMaskedKey(d.maskedKey ?? ''); }
+    } catch { /* ignore */ }
+  }
+
+  async function saveReplicateKey() {
+    if (!rpKey.trim()) return;
+    setRpSaving(true); setRpSaveMsg('');
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/admin/replicate/config`, {
+        method: 'PUT', headers, body: JSON.stringify({ apiKey: rpKey.trim() }),
+      });
+      const d = await r.json();
+      if (d.success) { setRpSaveMsg('Saved!'); setRpKey(''); fetchReplicateConfig(); }
+      else setRpSaveMsg(d.error ?? 'Save failed');
+    } catch (e: any) { setRpSaveMsg(e.message); } finally { setRpSaving(false); }
+  }
+
+  async function testReplicateConnection() {
+    setRpTesting(true); setRpTestResult(null); setRpTestError('');
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/admin/replicate/test`, { headers });
+      const d = await r.json();
+      if (d.success) setRpTestResult('ok');
+      else { setRpTestResult('fail'); setRpTestError(d.error ?? 'Connection failed'); }
+    } catch (e: any) { setRpTestResult('fail'); setRpTestError(e.message); } finally { setRpTesting(false); }
+  }
+
   async function fetchGenerations() {
     setLoadingGens(true);
     try {
@@ -99,7 +141,51 @@ export default function AdminMagnific() {
 
   return (
     <div className="space-y-8">
-      {/* API Key Section */}
+      {/* Replicate API Key — Primary provider (no Akamai block) */}
+      <div className="rounded-2xl border-2 border-[#5b6cf9]/30 bg-[#5b6cf9]/5 p-6">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#5b6cf9]/10">
+            <Key size={18} className="text-[#5b6cf9]" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900">Replicate API Token</h2>
+              <span className="rounded-full bg-[#5b6cf9] px-2 py-0.5 text-[10px] font-bold text-white">RECOMMENDED</span>
+            </div>
+            <p className="text-xs text-slate-500">Primary image generation — same Flux models, no IP restrictions. Get a token at replicate.com</p>
+          </div>
+        </div>
+
+        {rpHasKey && (
+          <div className="flex items-center gap-2 mb-4 mt-4 rounded-xl bg-white border border-slate-200 px-3 py-2.5">
+            <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+            <span className="text-xs text-slate-600">Current token: <span className="font-mono font-semibold">{rpMaskedKey}</span></span>
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-4 mb-3">
+          <input type="password" value={rpKey} onChange={e => setRpKey(e.target.value)}
+            placeholder={rpHasKey ? 'Enter new token to replace…' : 'r8_xxxxxxxxxxxxxxxxxxxx'}
+            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9]/20" />
+          <button type="button" disabled={!rpKey.trim() || rpSaving} onClick={saveReplicateKey}
+            className="flex items-center gap-1.5 rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-semibold text-white hover:bg-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition">
+            {rpSaving ? <Loader2 size={14} className="animate-spin" /> : null}Save
+          </button>
+        </div>
+        {rpSaveMsg && <p className={`text-xs mb-2 ${rpSaveMsg === 'Saved!' ? 'text-green-600' : 'text-red-500'}`}>{rpSaveMsg}</p>}
+
+        <button type="button" disabled={rpTesting || !rpHasKey} onClick={testReplicateConnection}
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition">
+          {rpTesting ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          Test Connection
+          {rpTestResult === 'ok'   && <CheckCircle2 size={14} className="text-green-500 ml-1" />}
+          {rpTestResult === 'fail' && <XCircle      size={14} className="text-red-500 ml-1" />}
+        </button>
+        {rpTestResult === 'ok'   && <p className="text-xs text-green-600 mt-2">Replicate token is valid — image generation will use Replicate.</p>}
+        {rpTestResult === 'fail' && <p className="text-xs text-red-500 mt-2">{rpTestError || 'Connection failed'}</p>}
+      </div>
+
+      {/* Magnific API Key Section */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex items-center gap-3 mb-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#5b6cf9]/10">
