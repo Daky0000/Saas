@@ -25643,7 +25643,6 @@ app.post('/api/kling/generate-video', async (req: Request, res: Response) => {
       negative_prompt: '',
       duration,
       aspect_ratio,
-      mode,
       cfg_scale: 0.5,
     });
 
@@ -25708,7 +25707,7 @@ app.post('/api/kling/image-to-video', async (req: Request, res: Response) => {
 
   try {
     const submitResp = await klingRequest('POST', '/v1/videos/image2video', {
-      model, image_url, prompt: prompt.trim(), negative_prompt: '', duration, aspect_ratio, mode, cfg_scale: 0.5,
+      model, image_url, prompt: prompt.trim(), negative_prompt: '', duration, aspect_ratio, cfg_scale: 0.5,
     });
 
     if (submitResp.status >= 400) {

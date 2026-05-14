@@ -97,24 +97,28 @@ const IMAGE_MODELS: AIModel[] = [
   { id: 'mystic',                label: 'Mystic',                desc: "Magnific's flagship creative model",  creditCost: 8 },
 ];
 
-const VIDEO_MODELS: AIModel[] = [
-  // Magnific-hosted
-  { id: 'wan-2-7-t2v',      label: 'WAN 2.7',              desc: 'Text-to-video, cinematic quality', creditCost: 25 },
-  // Native Kling AI
-  { id: 'kling-v2.5-turbo', label: 'Kling v2.5 Turbo',     desc: 'Fast, high-quality video',         creditCost: 20 },
-  { id: 'kling-v2.6-pro',   label: 'Kling v2.6 Pro',       desc: 'Latest flagship model',            creditCost: 35 },
-  { id: 'kling-v1.6-pro',   label: 'Kling v1.6 Pro',       desc: 'Stable quality video',             creditCost: 25 },
-];
+type VideoProvider = 'magnific' | 'kling';
 
-// Models that go to the native Kling endpoint instead of Magnific
-const KLING_NATIVE_MODEL_IDS = new Set(['kling-v2.6-pro', 'kling-v2.5-turbo', 'kling-v1.6-pro', 'kling-v1.6-standard']);
+const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
+  magnific: [
+    { id: 'wan-2-7-t2v', label: 'WAN 2.7', desc: 'Text-to-video, cinematic quality', creditCost: 25 },
+  ],
+  kling: [
+    { id: 'kling-v2.5-turbo', label: 'Kling v2.5 Turbo', desc: 'Fast, high-quality video',  creditCost: 20 },
+    { id: 'kling-v2.6-pro',   label: 'Kling v2.6 Pro',   desc: 'Latest flagship model',      creditCost: 35 },
+    { id: 'kling-v1.6-pro',   label: 'Kling v1.6 Pro',   desc: 'Stable quality video',       creditCost: 25 },
+  ],
+};
+
+const KLING_MODEL_IDS = new Set(VIDEO_MODELS_BY_PROVIDER.kling.map((m) => m.id));
 
 // ── AI Studio tab ─────────────────────────────────────────────────────────────
 
 function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesign) => void; onCreditUsed?: () => void }) {
   const [genMode, setGenMode]                   = useState<GenMode>('image');
   const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS.find((m) => m.id === 'flux-kontext-pro') ?? IMAGE_MODELS[0]);
-  const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS[0]);
+  const [videoProvider, setVideoProvider] = useState<VideoProvider>('kling');
+  const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS_BY_PROVIDER.kling[0]);
 
   // Image generation state
   const [prompt, setPrompt]         = useState('');
@@ -129,7 +133,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [videoError, setVideoError]         = useState<string | null>(null);
 
-  const currentModel = genMode === 'image' ? selectedImageModel : selectedVideoModel;
+
 
   const generateImage = async () => {
     if (!prompt.trim()) return;
@@ -165,7 +169,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     setVideoUrl(null);
     setVideoError(null);
     try {
-      const isKling = KLING_NATIVE_MODEL_IDS.has(selectedVideoModel.id);
+      const isKling = KLING_MODEL_IDS.has(selectedVideoModel.id);
       const endpoint = isKling ? '/api/kling/generate-video' : '/api/nova/generate-video';
       const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
@@ -209,22 +213,58 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
 
         {/* Model picker */}
         <div className="mb-5">
-          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
-          <div className="flex flex-wrap gap-2">
-            {(genMode === 'image' ? IMAGE_MODELS : VIDEO_MODELS).map((m) => (
-              <button key={m.id} type="button"
-                onClick={() => genMode === 'image' ? setSelectedImageModel(m) : setSelectedVideoModel(m)}
-                className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
-                  currentModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                }`}
-              >
-                {m.badge && <span className="absolute -top-2 -right-2 rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white">{m.badge}</span>}
-                <span className="text-xs font-bold">{m.label}</span>
-                <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
-                <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
-              </button>
-            ))}
-          </div>
+          {genMode === 'image' ? (
+            <>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
+              <div className="flex flex-wrap gap-2">
+                {IMAGE_MODELS.map((m) => (
+                  <button key={m.id} type="button" onClick={() => setSelectedImageModel(m)}
+                    className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
+                      selectedImageModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}>
+                    {m.badge && <span className="absolute -top-2 -right-2 rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white">{m.badge}</span>}
+                    <span className="text-xs font-bold">{m.label}</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
+                    <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Provider tabs */}
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
+              <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
+                {([
+                  { id: 'kling' as VideoProvider,    label: 'Kling AI' },
+                  { id: 'magnific' as VideoProvider, label: 'Magnific' },
+                ] as const).map((p) => (
+                  <button key={p.id} type="button"
+                    onClick={() => {
+                      setVideoProvider(p.id);
+                      setSelectedVideoModel(VIDEO_MODELS_BY_PROVIDER[p.id][0]);
+                    }}
+                    className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${videoProvider === p.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              {/* Models for selected provider */}
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
+              <div className="flex flex-wrap gap-2">
+                {VIDEO_MODELS_BY_PROVIDER[videoProvider].map((m) => (
+                  <button key={m.id} type="button" onClick={() => setSelectedVideoModel(m)}
+                    className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
+                      selectedVideoModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}>
+                    <span className="text-xs font-bold">{m.label}</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
+                    <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Image form */}
