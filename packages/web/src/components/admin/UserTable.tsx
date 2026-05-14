@@ -12,6 +12,7 @@ interface UserTableProps {
   onChangeRole: (user: ManagedUser, role: AdminRole) => void;
   onChangeStatus: (user: ManagedUser, status: ManagedUserStatus) => void;
   onDeleteUser: (user: ManagedUser) => void;
+  onGrantCredits: (user: ManagedUser) => void;
 }
 
 const UserTable = ({
@@ -25,6 +26,7 @@ const UserTable = ({
   onChangeRole,
   onChangeStatus,
   onDeleteUser,
+  onGrantCredits,
 }: UserTableProps) => (
   <div className="overflow-x-auto">
     <table className="min-w-full">
@@ -60,6 +62,7 @@ const UserTable = ({
             onChangeRole={onChangeRole}
             onChangeStatus={onChangeStatus}
             onDeleteUser={onDeleteUser}
+            onGrantCredits={onGrantCredits}
           />
         ))}
       </tbody>

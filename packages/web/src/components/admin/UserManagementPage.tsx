@@ -13,6 +13,7 @@ import {
 import AddUserModal from './AddUserModal';
 import BulkActionsToolbar from './BulkActionsToolbar';
 import EditUserModal from './EditUserModal';
+import GrantCreditsModal from './GrantCreditsModal';
 import Pagination from './Pagination';
 import UserFilters from './UserFilters';
 import UserProfilePanel from './UserProfilePanel';
@@ -36,6 +37,7 @@ const UserManagementPage = ({ currentAdminRole }: UserManagementPageProps) => {
   const [addOpen, setAddOpen] = useState(false);
   const [editUser, setEditUser] = useState<ManagedUser | null>(null);
   const [profileUser, setProfileUser] = useState<ManagedUser | null>(null);
+  const [grantCreditsUser, setGrantCreditsUser] = useState<ManagedUser | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const canDelete = currentAdminRole === 'Admin';
@@ -129,6 +131,10 @@ const UserManagementPage = ({ currentAdminRole }: UserManagementPageProps) => {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to update user role');
     }
+  };
+
+  const handleGrantCredits = async (userId: string, amount: number) => {
+    await adminUserService.grantCredits(userId, amount);
   };
 
   const handleBulkAction = async (type: 'activate' | 'suspend' | 'delete' | 'changeRole', nextRole?: AdminRole) => {
@@ -234,6 +240,7 @@ const UserManagementPage = ({ currentAdminRole }: UserManagementPageProps) => {
           onChangeRole={(user, nextRole) => void handleChangeRole(user, nextRole)}
           onChangeStatus={(user, nextStatus) => void handleChangeStatus(user, nextStatus)}
           onDeleteUser={(user) => void handleDeleteUser(user)}
+          onGrantCredits={setGrantCreditsUser}
         />
 
         <Pagination page={data.page} perPage={data.perPage} total={data.total} onPageChange={setPage} />
@@ -242,6 +249,7 @@ const UserManagementPage = ({ currentAdminRole }: UserManagementPageProps) => {
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onCreate={handleCreateUser} />
       <EditUserModal open={Boolean(editUser)} user={editUser} onClose={() => setEditUser(null)} onSave={handleSaveUser} />
       <UserProfilePanel user={profileUser} onClose={() => setProfileUser(null)} />
+      <GrantCreditsModal user={grantCreditsUser} onClose={() => setGrantCreditsUser(null)} onGrant={handleGrantCredits} />
     </div>
   );
 };

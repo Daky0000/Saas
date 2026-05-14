@@ -141,6 +141,17 @@ export const adminUserService = {
     }
   },
 
+  async grantCredits(userId: string, amount: number): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/credits/admin/grant`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ user_id: userId, amount }),
+    });
+    if (!response.ok) {
+      throw new Error(await extractError(response, 'Failed to grant credits'));
+    }
+  },
+
   async bulkAction(action: BulkUserAction): Promise<void> {
     if (action.type === 'delete') {
       await Promise.all(action.userIds.map((userId) => this.deleteUser(userId)));

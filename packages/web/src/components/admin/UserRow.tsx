@@ -11,6 +11,7 @@ interface UserRowProps {
   onChangeRole: (user: ManagedUser, role: AdminRole) => void;
   onChangeStatus: (user: ManagedUser, status: ManagedUserStatus) => void;
   onDeleteUser: (user: ManagedUser) => void;
+  onGrantCredits: (user: ManagedUser) => void;
 }
 
 const statusClasses: Record<ManagedUserStatus, string> = {
@@ -30,6 +31,7 @@ const UserRow = ({
   onChangeRole,
   onChangeStatus,
   onDeleteUser,
+  onGrantCredits,
 }: UserRowProps) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -67,6 +69,9 @@ const UserRow = ({
             <div className="absolute right-0 z-20 mt-2 w-44 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
               <button type="button" onClick={() => { onViewProfile(user); setMenuOpen(false); }} className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                 View Profile
+              </button>
+              <button type="button" onClick={() => { onGrantCredits(user); setMenuOpen(false); }} className="block w-full rounded-xl px-3 py-2 text-left text-sm text-indigo-600 hover:bg-indigo-50">
+                Grant Credits
               </button>
               <button type="button" onClick={() => { onEditUser(user); setMenuOpen(false); }} className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                 Edit User
