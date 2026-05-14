@@ -77,12 +77,24 @@ interface AIModel {
 }
 
 const IMAGE_MODELS: AIModel[] = [
-  { id: 'flux-2-turbo',     label: 'Flux 2 Turbo',     desc: 'Fastest, great for drafts',       creditCost: 3 },
-  { id: 'flux-2-klein',     label: 'Flux 2 Klein',     desc: 'Fast with reference images',      creditCost: 3 },
-  { id: 'seedream-v5-lite', label: 'Seedream 5 Lite',  desc: 'New — high coherence',            creditCost: 4, badge: 'NEW' },
-  { id: 'flux-kontext-pro', label: 'Flux Kontext Pro', desc: 'Best for context-aware edits',    creditCost: 5, badge: 'Popular' },
-  { id: 'flux-2-pro',       label: 'Flux 2 Pro',       desc: 'High quality text-to-image',      creditCost: 5 },
-  { id: 'mystic',           label: 'Mystic',            desc: "Magnific's flagship model",       creditCost: 8 },
+  // Flux family
+  { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',          desc: 'Fastest — great for drafts',         creditCost: 3 },
+  { id: 'flux-2-klein',          label: 'Flux 2 Klein',          desc: 'Fast with multi-ref support',         creditCost: 3 },
+  { id: 'hyperflux',             label: 'Hyperflux',             desc: 'Ultra-fast Flux variant',             creditCost: 3 },
+  { id: 'flux-dev',              label: 'Flux Dev',              desc: 'Quality Flux development model',      creditCost: 4 },
+  { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',         desc: 'Proven pro — sharp + accurate',       creditCost: 5 },
+  { id: 'flux-2-pro',            label: 'Flux 2 Pro',            desc: 'High quality text-to-image',          creditCost: 5 },
+  { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',      desc: 'Context-aware — best for edits',      creditCost: 5, badge: 'Popular' },
+  // Seedream family
+  { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',       desc: 'New — high coherence & detail',       creditCost: 4, badge: 'NEW' },
+  { id: 'seedream-v4-5',         label: 'Seedream 4.5',          desc: 'Stable Seedream with editing',        creditCost: 4 },
+  // Google
+  { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',      desc: 'Google Gemini — vivid & fast',        creditCost: 6, badge: 'NEW' },
+  { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash',     desc: 'Google Nano — ultra-fast',            creditCost: 3 },
+  // Fast alternates
+  { id: 'z-image',               label: 'Z-Image Turbo',         desc: 'Budget-friendly fast generation',     creditCost: 2 },
+  // Mystic
+  { id: 'mystic',                label: 'Mystic',                desc: "Magnific's flagship creative model",  creditCost: 8 },
 ];
 
 const VIDEO_MODELS: AIModel[] = [
@@ -95,7 +107,7 @@ const VIDEO_MODELS: AIModel[] = [
 
 function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void }) {
   const [genMode, setGenMode]                   = useState<GenMode>('image');
-  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(IMAGE_MODELS[3]);
+  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS.find((m) => m.id === 'flux-kontext-pro') ?? IMAGE_MODELS[0]);
   const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS[0]);
 
   // Image generation state

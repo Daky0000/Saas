@@ -24986,26 +24986,54 @@ async function pollMagnificTask(
   return { url: null, error: 'Timeout: generation took too long' };
 }
 
-// type: 'sync'  → endpoint returns base64 directly in response (no task polling)
-// type: 'async' → endpoint returns task_id; use pollPath + pollMagnificTask
-const MAGNIFIC_IMAGE_MODELS: Record<string, {
-  endpoint: string;
-  type: 'sync' | 'async';
-  pollPath?: (id: string) => string;
-  credits: number;
-}> = {
-  // Classic fast text-to-image — synchronous base64 response, body: { prompt, image: { size } }
-  'flux-2-turbo':      { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 3 },
-  'flux-2-klein':      { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 3 },
-  'flux-kontext-pro':  { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 5 },
-  'flux-2-pro':        { endpoint: '/v1/ai/text-to-image', type: 'sync',  credits: 5 },
-  // Seedream — async task polling, body: { prompt, aspect_ratio }
-  'seedream-v5-lite':  { endpoint: '/v1/ai/text-to-image/seedream', type: 'async', pollPath: (id) => `/v1/ai/text-to-image/seedream/${id}`, credits: 4 },
-  // Mystic — async task polling, body: { prompt, image: { size } }
-  'mystic':            { endpoint: '/v1/ai/mystic', type: 'async', pollPath: (id) => `/v1/ai/mystic/${id}`, credits: 8 },
+// Aspect-ratio string → pixel dimensions for models that use width/height instead of aspect_ratio
+const ASPECT_TO_WH: Record<string, { width: number; height: number }> = {
+  'square_1_1':        { width: 1024, height: 1024 },
+  'widescreen_16_9':   { width: 1280, height: 720 },
+  'portrait_9_16':     { width: 720,  height: 1280 },
+  'social_story_9_16': { width: 720,  height: 1280 },
+  'classic_4_3':       { width: 1024, height: 768 },
+  'portrait_3_4':      { width: 768,  height: 1024 },
+  'traditional_3_4':   { width: 768,  height: 1024 },
+  'cinematic_21_9':    { width: 1024, height: 448 },
+  'portrait_2_3':      { width: 768,  height: 1152 },
+  'standard_3_2':      { width: 1024, height: 683 },
 };
 
-// Central helper: submit + (optionally) poll a Magnific image generation, return URL
+// All models are async — every submission returns a task_id, then pollMagnificTask polls for COMPLETED
+// bodyType:
+//   'aspect_ratio' → { prompt, aspect_ratio } — used by most models
+//   'image_size'   → { prompt, image_size: { width, height } } — Flux 2 Turbo
+//   'width_height' → { prompt, width, height } — Flux 2 Pro
+const MAGNIFIC_IMAGE_MODELS: Record<string, {
+  endpoint: string;
+  pollPath: (id: string) => string;
+  bodyType: 'aspect_ratio' | 'image_size' | 'width_height';
+  credits: number;
+}> = {
+  // ── Flux family ──
+  'flux-2-turbo':          { endpoint: '/v1/ai/text-to-image/flux-2-turbo',                     pollPath: (id) => `/v1/ai/text-to-image/flux-2-turbo/${id}`,                     bodyType: 'image_size',    credits: 3 },
+  'flux-2-klein':          { endpoint: '/v1/ai/text-to-image/flux-2-klein',                     pollPath: (id) => `/v1/ai/text-to-image/flux-2-klein/${id}`,                     bodyType: 'aspect_ratio',  credits: 3 },
+  'flux-kontext-pro':      { endpoint: '/v1/ai/text-to-image/flux-kontext-pro',                 pollPath: (id) => `/v1/ai/text-to-image/flux-kontext-pro/${id}`,                 bodyType: 'aspect_ratio',  credits: 5 },
+  'flux-2-pro':            { endpoint: '/v1/ai/text-to-image/flux-2-pro',                       pollPath: (id) => `/v1/ai/text-to-image/flux-2-pro/${id}`,                       bodyType: 'width_height',  credits: 5 },
+  'flux-dev':              { endpoint: '/v1/ai/text-to-image/flux-dev',                         pollPath: (id) => `/v1/ai/text-to-image/flux-dev/${id}`,                         bodyType: 'aspect_ratio',  credits: 4 },
+  'flux-pro-v1-1':         { endpoint: '/v1/ai/text-to-image/flux-pro-v1-1',                    pollPath: (id) => `/v1/ai/text-to-image/flux-pro-v1-1/${id}`,                    bodyType: 'aspect_ratio',  credits: 5 },
+  'hyperflux':             { endpoint: '/v1/ai/text-to-image/hyperflux',                        pollPath: (id) => `/v1/ai/text-to-image/hyperflux/${id}`,                        bodyType: 'aspect_ratio',  credits: 3 },
+  // ── Seedream family ──
+  'seedream-v5-lite':      { endpoint: '/v1/ai/text-to-image/seedream-v5-lite',                 pollPath: (id) => `/v1/ai/text-to-image/seedream-v5-lite/${id}`,                 bodyType: 'aspect_ratio',  credits: 4 },
+  'seedream-v4-5':         { endpoint: '/v1/ai/text-to-image/seedream-v4-5',                    pollPath: (id) => `/v1/ai/text-to-image/seedream-v4-5/${id}`,                    bodyType: 'aspect_ratio',  credits: 4 },
+  'seedream-v4':           { endpoint: '/v1/ai/text-to-image/seedream-v4',                      pollPath: (id) => `/v1/ai/text-to-image/seedream-v4/${id}`,                      bodyType: 'aspect_ratio',  credits: 5 },
+  // ── Google ──
+  'gemini-flash':          { endpoint: '/v1/ai/text-to-image/gemini-2-5-flash-image-preview',   pollPath: (id) => `/v1/ai/text-to-image/gemini-2-5-flash-image-preview/${id}`,   bodyType: 'aspect_ratio',  credits: 6 },
+  'nano-banana-pro-flash': { endpoint: '/v1/ai/text-to-image/nano-banana-pro-flash',            pollPath: (id) => `/v1/ai/text-to-image/nano-banana-pro-flash/${id}`,            bodyType: 'aspect_ratio',  credits: 3 },
+  'nano-banana-pro':       { endpoint: '/v1/ai/text-to-image/nano-banana-pro',                  pollPath: (id) => `/v1/ai/text-to-image/nano-banana-pro/${id}`,                  bodyType: 'aspect_ratio',  credits: 4 },
+  // ── Other ──
+  'z-image':               { endpoint: '/v1/ai/text-to-image/z-image',                          pollPath: (id) => `/v1/ai/text-to-image/z-image/${id}`,                          bodyType: 'aspect_ratio',  credits: 2 },
+  // ── Mystic (Magnific flagship) ──
+  'mystic':                { endpoint: '/v1/ai/mystic',                                          pollPath: (id) => `/v1/ai/mystic/${id}`,                                          bodyType: 'aspect_ratio',  credits: 8 },
+};
+
+// Central helper: submit + poll a Magnific image generation, return URL
 async function magnificGenerateImage(
   modelId: string,
   prompt: string,
@@ -25015,16 +25043,21 @@ async function magnificGenerateImage(
 ): Promise<{ url: string | null; taskId: string | null; error: string | null }> {
   const cfg = MAGNIFIC_IMAGE_MODELS[modelId] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo'];
 
-  // Build request body based on model
+  // Build request body based on the model's expected format
   let body: object;
-  if (modelId === 'seedream-v5-lite') {
-    body = { prompt, aspect_ratio: aspectRatio };
+  if (cfg.bodyType === 'image_size') {
+    const wh = ASPECT_TO_WH[aspectRatio] ?? { width: 1024, height: 1024 };
+    body = { prompt, image_size: wh, guidance_scale: 2.5, output_format: 'jpeg' };
+  } else if (cfg.bodyType === 'width_height') {
+    const wh = ASPECT_TO_WH[aspectRatio] ?? { width: 1024, height: 768 };
+    body = { prompt, width: wh.width, height: wh.height };
   } else {
-    body = { prompt, image: { size: aspectRatio }, num_images: 1, filter_nsfw: true };
+    // aspect_ratio format — used by most models and mystic
+    body = { prompt, aspect_ratio: aspectRatio };
   }
 
   const submitResp = await magnificPost(cfg.endpoint, body, apiKey);
-  console.log(`[Magnific] ${cfg.endpoint} → HTTP ${submitResp.status}`, JSON.stringify(submitResp.data)?.slice(0, 300));
+  console.log(`[Magnific] ${modelId} ${cfg.endpoint} → HTTP ${submitResp.status}`, JSON.stringify(submitResp.data)?.slice(0, 300));
   if (submitResp.status >= 400) {
     const isHtml = typeof submitResp.data === 'string' && submitResp.data.trimStart().startsWith('<');
     const msg = isHtml
@@ -25033,23 +25066,13 @@ async function magnificGenerateImage(
     return { url: null, taskId: null, error: `HTTP ${submitResp.status}: ${msg}` };
   }
 
-  if (cfg.type === 'sync') {
-    // Synchronous response — base64 image directly in data[0].base64
-    const base64 = submitResp.data?.data?.[0]?.base64;
-    if (!base64) {
-      console.error('[Magnific] sync response missing base64:', JSON.stringify(submitResp.data)?.slice(0, 500));
-      return { url: null, taskId: null, error: 'No image data in Magnific response' };
-    }
-    return { url: `data:image/jpeg;base64,${base64}`, taskId: null, error: null };
-  }
-
-  // Async — poll until COMPLETED
+  // All models are async — poll for COMPLETED status
   const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
   if (!taskId) {
-    console.error('[Magnific] async response missing task_id:', JSON.stringify(submitResp.data)?.slice(0, 500));
+    console.error('[Magnific] response missing task_id:', JSON.stringify(submitResp.data)?.slice(0, 500));
     return { url: null, taskId: null, error: 'No task_id in Magnific response' };
   }
-  const poll = await pollMagnificTask(cfg.pollPath!(taskId), apiKey, 120, onProgress);
+  const poll = await pollMagnificTask(cfg.pollPath(taskId), apiKey, 120, onProgress);
   return { url: poll.url, taskId, error: poll.error };
 }
 
@@ -27270,14 +27293,25 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
 
 const REPLICATE_BASE = 'https://api.replicate.com';
 
-// Maps Magnific model IDs → best Replicate Flux equivalent
+// Maps Magnific model IDs → best Replicate Flux equivalent (used when Magnific is blocked/unavailable)
 const REPLICATE_MODEL_MAP: Record<string, { owner: string; name: string }> = {
-  'flux-2-turbo':     { owner: 'black-forest-labs', name: 'flux-schnell' },
-  'flux-2-klein':     { owner: 'black-forest-labs', name: 'flux-schnell' },
-  'seedream-v5-lite': { owner: 'black-forest-labs', name: 'flux-dev' },
-  'flux-kontext-pro': { owner: 'black-forest-labs', name: 'flux-dev' },
-  'flux-2-pro':       { owner: 'black-forest-labs', name: 'flux-dev' },
-  'mystic':           { owner: 'black-forest-labs', name: 'flux-dev' },
+  // Fast/draft quality → flux-schnell
+  'flux-2-turbo':          { owner: 'black-forest-labs', name: 'flux-schnell' },
+  'flux-2-klein':          { owner: 'black-forest-labs', name: 'flux-schnell' },
+  'hyperflux':             { owner: 'black-forest-labs', name: 'flux-schnell' },
+  'z-image':               { owner: 'black-forest-labs', name: 'flux-schnell' },
+  'nano-banana-pro-flash': { owner: 'black-forest-labs', name: 'flux-schnell' },
+  // High quality → flux-dev
+  'flux-kontext-pro':      { owner: 'black-forest-labs', name: 'flux-dev' },
+  'flux-2-pro':            { owner: 'black-forest-labs', name: 'flux-dev' },
+  'flux-dev':              { owner: 'black-forest-labs', name: 'flux-dev' },
+  'flux-pro-v1-1':         { owner: 'black-forest-labs', name: 'flux-dev' },
+  'seedream-v5-lite':      { owner: 'black-forest-labs', name: 'flux-dev' },
+  'seedream-v4-5':         { owner: 'black-forest-labs', name: 'flux-dev' },
+  'seedream-v4':           { owner: 'black-forest-labs', name: 'flux-dev' },
+  'gemini-flash':          { owner: 'black-forest-labs', name: 'flux-dev' },
+  'nano-banana-pro':       { owner: 'black-forest-labs', name: 'flux-dev' },
+  'mystic':                { owner: 'black-forest-labs', name: 'flux-dev' },
 };
 
 // Maps Magnific aspect strings → Replicate aspect ratio strings
