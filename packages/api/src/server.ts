@@ -8440,6 +8440,26 @@ app.post('/api/credits/admin/grant', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/credits/admin/grant-all  { amount }
+app.post('/api/credits/admin/grant-all', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.json({ success: true, updated: 0 });
+  const { amount } = req.body as { amount: number };
+  if (!amount || amount <= 0) return res.status(400).json({ success: false, error: 'amount must be positive' });
+  try {
+    const result = await pool!.query(
+      `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
+       SELECT id, $1, date_trunc('month', NOW()) + INTERVAL '1 month', NOW() FROM users
+       ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $1, updated_at = NOW()`,
+      [amount]
+    );
+    return res.json({ success: true, updated: result.rowCount });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // POST /api/card-templates/:id/view
 app.post('/api/card-templates/:id/view', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
