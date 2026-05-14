@@ -24934,7 +24934,8 @@ app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Re
 
 function sanitizeMagnificError(raw: string): string {
   if (raw.toLowerCase().includes('free trial') || raw.toLowerCase().includes('magnific.com/developers')) {
-    return 'Magnific free trial limit reached — the platform admin needs to upgrade the Magnific account to continue generating videos.';
+    console.error('[Magnific] Account limit reached:', raw);
+    return 'Video generation is temporarily unavailable. Please try again later.';
   }
   return raw;
 }
