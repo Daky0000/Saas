@@ -2855,6 +2855,19 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       completed_at TIMESTAMPTZ
     );
   `).catch(() => undefined);
+  // ── Discover Feed ─────────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS discover_feed (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      generation_id UUID NOT NULL REFERENCES magnific_generations(id) ON DELETE CASCADE,
+      pushed_by     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      pushed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      visible       BOOLEAN NOT NULL DEFAULT true
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS discover_feed_gen_idx ON discover_feed (generation_id);`).catch(() => undefined);
+  // ── End Discover Feed ──────────────────────────────────────────────────────────
+
   // ── End Magnific ────────────────────────────────────────────────────────────────
 
   // ── Daky Learn ────────────────────────────────────────────────────────────────
@@ -25117,17 +25130,24 @@ app.get('/api/admin/magnific/test', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/magnific/generations — list generations
+// GET /api/admin/magnific/generations — list generations with user info + discover status
 app.get('/api/admin/magnific/generations', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
   try {
     const { rows } = await pool!.query(
-      `SELECT mg.*, u.email as user_email
+      `SELECT mg.*,
+              u.email      AS user_email,
+              u.full_name  AS user_full_name,
+              u.username   AS user_username,
+              u.avatar_url AS user_avatar,
+              df.id        AS discover_id
        FROM magnific_generations mg
        LEFT JOIN users u ON u.id = mg.user_id
-       ORDER BY mg.created_at DESC LIMIT 200`
+       LEFT JOIN discover_feed df ON df.generation_id = mg.id
+       WHERE mg.status = 'completed' AND mg.result_url IS NOT NULL AND mg.type = 'image'
+       ORDER BY mg.created_at DESC LIMIT 300`
     );
     return res.json({ success: true, generations: rows });
   } catch (e: any) {
@@ -27393,6 +27413,78 @@ app.get('/api/admin/replicate/test', async (req: Request, res: Response) => {
     if (r.status >= 400) return res.json({ success: false, error: `Replicate returned HTTP ${r.status}` });
     return res.json({ success: true, model: r.data?.name ?? 'flux-schnell', note: 'Token is valid' });
   } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
+});
+
+// POST /api/admin/generations/:id/push-to-discover — push a generation to discover feed
+app.post('/api/admin/generations/:id/push-to-discover', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const { id } = req.params;
+  try {
+    // Verify generation exists and is completed
+    const { rows: genRows } = await pool!.query(
+      `SELECT id FROM magnific_generations WHERE id=$1 AND status='completed' AND result_url IS NOT NULL`,
+      [id]
+    );
+    if (!genRows.length) return res.status(404).json({ error: 'Generation not found or not completed' });
+
+    const { rows } = await pool!.query(
+      `INSERT INTO discover_feed (generation_id, pushed_by)
+       VALUES ($1, $2)
+       ON CONFLICT (generation_id) DO UPDATE SET visible=true, pushed_at=NOW(), pushed_by=$2
+       RETURNING id`,
+      [id, admin.userId]
+    );
+    return res.json({ success: true, discover_id: rows[0].id });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/admin/discover/:id — remove item from discover feed
+app.delete('/api/admin/discover/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  const { id } = req.params;
+  try {
+    await pool!.query(`DELETE FROM discover_feed WHERE id=$1`, [id]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/discover — user-facing discover feed
+app.get('/api/discover', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+  try {
+    const { rows } = await pool!.query(
+      `SELECT df.id        AS discover_id,
+              df.pushed_at,
+              mg.id        AS generation_id,
+              mg.prompt,
+              mg.model,
+              mg.result_url,
+              mg.created_at,
+              u.id         AS creator_id,
+              u.full_name  AS creator_name,
+              u.username   AS creator_username,
+              u.avatar_url AS creator_avatar
+       FROM discover_feed df
+       JOIN magnific_generations mg ON mg.id = df.generation_id
+       LEFT JOIN users u ON u.id = mg.user_id
+       WHERE df.visible = true
+       ORDER BY df.pushed_at DESC
+       LIMIT 100`
+    );
+    return res.json({ success: true, items: rows });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
 });
 
 // POST /api/nova/freepik-image — generate image via Freepik AI with credit enforcement

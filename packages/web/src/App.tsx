@@ -50,6 +50,7 @@ import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
 import Billing from './pages/Billing';
 import Memory from './pages/Memory';
+import Discover from './pages/Discover';
 import Notifications from './pages/Notifications';
 import TasksPage from './components/tasks/TasksPage';
 import ProjectSettings from './pages/ProjectSettings';
@@ -87,7 +88,8 @@ type PageType =
   | 'tasks'
   | 'project-settings'
   | 'settings'
-  | 'workflow';
+  | 'workflow'
+  | 'discover';
 
 type AuthMeResponse = {
   success: boolean;
@@ -123,6 +125,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'project-settings': '/project/settings',
   settings: '/settings',
   workflow: '/posts/workflow',
+  discover: '/discover',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -335,7 +338,7 @@ function AppSidebar({
           type="button"
           data-tour-id="nav-content"
           onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
-          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
+          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow' || currentPage === 'discover')}
         >
           <FileText size={15} className="shrink-0" />
           <span className="flex-1 text-left">Content</span>
@@ -347,6 +350,7 @@ function AppSidebar({
               { id: 'post-automation' as PageType, label: 'Automation' },
               { id: 'media' as PageType, label: 'Media' },
               { id: 'cards' as PageType, label: 'AI Studio' },
+              { id: 'discover' as PageType, label: 'Discover' },
               { id: 'workflow' as PageType, label: 'Workflow' },
             ] as { id: PageType; label: string }[]).map((c) => (
               <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
@@ -634,7 +638,7 @@ function App() {
   const navigateToPage = useCallback(
     (page: PageType, replace = false) => {
       setCurrentPage(page);
-      if (page === 'posts' || page === 'post-automation') {
+      if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'discover' || page === 'workflow') {
         setPostsMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
@@ -741,9 +745,8 @@ function App() {
     const pageFromPath = getPageFromPath(pathname);
     if (pageFromPath) {
       setCurrentPage(pageFromPath);
-      if (pageFromPath === 'posts' || pageFromPath === 'post-automation') {
-        setPostsMenuOpen(true);
-      }
+      const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
+      if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
       return () => {
         canceled = true;
       };
@@ -775,9 +778,8 @@ function App() {
       const pageFromPath = getPageFromPath(pathname);
       if (pageFromPath) {
         setCurrentPage(pageFromPath);
-        if (pageFromPath === 'posts' || pageFromPath === 'post-automation') {
-          setPostsMenuOpen(true);
-        }
+        const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
+        if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
         return;
       }
 
@@ -869,6 +871,7 @@ function App() {
       case 'project-settings': return <ProjectSettings />;
       case 'settings': return <SettingsPage currentUser={authUser} onUserUpdated={handleUserUpdated} onNavigateToBilling={() => navigateToPage('billing')} />;
       case 'workflow': return <WorkflowPage />;
+      case 'discover': return <Discover />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };
