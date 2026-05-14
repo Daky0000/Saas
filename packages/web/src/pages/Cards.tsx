@@ -98,9 +98,16 @@ const IMAGE_MODELS: AIModel[] = [
 ];
 
 const VIDEO_MODELS: AIModel[] = [
-  { id: 'wan-2-7-t2v',  label: 'WAN 2.7',     desc: 'Text-to-video, cinematic quality', creditCost: 25 },
-  { id: 'kling-3-pro',  label: 'Kling 3 Pro', desc: 'Premium video, long duration',     creditCost: 35 },
+  // Magnific-hosted
+  { id: 'wan-2-7-t2v',      label: 'WAN 2.7',              desc: 'Text-to-video, cinematic quality', creditCost: 25 },
+  // Native Kling AI
+  { id: 'kling-v2.5-turbo', label: 'Kling v2.5 Turbo',     desc: 'Fast, high-quality video',         creditCost: 20 },
+  { id: 'kling-v2.6-pro',   label: 'Kling v2.6 Pro',       desc: 'Latest flagship model',            creditCost: 35 },
+  { id: 'kling-v1.6-pro',   label: 'Kling v1.6 Pro',       desc: 'Stable quality video',             creditCost: 25 },
 ];
+
+// Models that go to the native Kling endpoint instead of Magnific
+const KLING_NATIVE_MODEL_IDS = new Set(['kling-v2.6-pro', 'kling-v2.5-turbo', 'kling-v1.6-pro', 'kling-v1.6-standard']);
 
 // ── AI Studio tab ─────────────────────────────────────────────────────────────
 
@@ -158,7 +165,9 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     setVideoUrl(null);
     setVideoError(null);
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/nova/generate-video`, {
+      const isKling = KLING_NATIVE_MODEL_IDS.has(selectedVideoModel.id);
+      const endpoint = isKling ? '/api/kling/generate-video' : '/api/nova/generate-video';
+      const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({ prompt: videoPrompt.trim(), model: selectedVideoModel.id }),

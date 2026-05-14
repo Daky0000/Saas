@@ -1,4 +1,4 @@
-import { BookOpen, Bot, ChevronDown, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -16,6 +16,7 @@ import AdminApify from '../components/admin/AdminApify';
 import AdminLearn from '../components/admin/AdminLearn';
 import AdminAgents from '../components/admin/AdminAgents';
 import AdminMagnific from '../components/admin/AdminMagnific';
+import AdminKling from '../components/admin/AdminKling';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -44,7 +45,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'apify'
     | 'learn'
     | 'agents'
-    | 'magnific';
+    | 'magnific'
+    | 'kling';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -69,6 +71,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     learn: '/admin/learn',
     agents: '/admin/agents',
     magnific: '/admin/magnific',
+    kling: '/admin/kling',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -79,7 +82,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents' || window.location.pathname === '/admin/magnific');
+  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents' || window.location.pathname === '/admin/magnific' || window.location.pathname === '/admin/kling');
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -118,10 +121,11 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'learn', label: 'Daky Learn', icon: BookOpen },
     { id: 'agents', label: 'Agent Team', icon: Users },
     { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
+    { id: 'kling', label: 'Kling AI', icon: Clapperboard },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents' || activeTab === 'magnific';
+  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents' || activeTab === 'magnific' || activeTab === 'kling';
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -384,6 +388,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'learn' && <AdminLearn />}
             {activeTab === 'agents' && <AdminAgents />}
             {activeTab === 'magnific' && <AdminMagnific />}
+            {activeTab === 'kling' && <AdminKling />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>
