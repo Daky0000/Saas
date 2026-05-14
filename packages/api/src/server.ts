@@ -24895,7 +24895,12 @@ app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Re
 
 // When MAGNIFIC_PROXY_URL is set, route all Magnific/Freepik calls through
 // a Cloudflare Worker proxy to bypass Akamai IP blocks on Railway.
-const _PROXY = (process.env.MAGNIFIC_PROXY_URL ?? '').replace(/\/$/, '');
+const _PROXY = (() => {
+  const raw = (process.env.MAGNIFIC_PROXY_URL ?? '').trim().replace(/\/$/, '');
+  if (!raw) return '';
+  try { new URL(raw); return raw; }
+  catch { console.error(`[proxy] Invalid MAGNIFIC_PROXY_URL "${raw}" — must start with https://. Falling back to direct API.`); return ''; }
+})();
 const MAGNIFIC_BASE = _PROXY ? `${_PROXY}/magnific` : 'https://api.magnific.com';
 
 // Browser-like headers to avoid Akamai bot protection blocking server-to-server requests
