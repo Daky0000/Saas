@@ -77,7 +77,7 @@ interface AIModel {
   badge?: string;
 }
 
-type ImageProvider = 'magnific' | 'freepik' | 'kling';
+type ImageProvider = 'magnific' | 'freepik' | 'kling' | 'google';
 
 const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
   magnific: [
@@ -102,11 +102,20 @@ const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
     { id: 'kling-v1-5', label: 'Kling v1.5', desc: 'Kling image generation — detailed', creditCost: 5, maxChars: 2500 },
     { id: 'kling-v1',   label: 'Kling v1',   desc: 'Kling image generation — fast',     creditCost: 4, maxChars: 2500 },
   ],
+  google: [
+    { id: 'google-imagen-4-fast',   label: 'Imagen 4 Fast',      desc: 'Fast photorealistic generation',  creditCost: 4,  maxChars: 1024 },
+    { id: 'google-imagen-4',        label: 'Imagen 4',           desc: 'High-quality photorealistic',      creditCost: 6,  maxChars: 1024 },
+    { id: 'google-imagen-4-ultra',  label: 'Imagen 4 Ultra',     desc: 'Maximum quality, finest detail',   creditCost: 10, maxChars: 1024 },
+    { id: 'google-gemini-flash',    label: 'Gemini Flash Image', desc: 'Fast multimodal image generation', creditCost: 3,  maxChars: 2000 },
+    { id: 'google-gemini-nano-2',   label: 'Nano Banana 2',      desc: 'Creative image generation',        creditCost: 5,  maxChars: 2000, badge: 'NEW' },
+    { id: 'google-gemini-nano-pro', label: 'Nano Banana Pro',    desc: 'Pro-grade creative generation',    creditCost: 8,  maxChars: 2000 },
+  ],
 };
 
-const KLING_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.kling.map((m) => m.id));
+const KLING_IMAGE_MODEL_IDS  = new Set(IMAGE_MODELS_BY_PROVIDER.kling.map((m) => m.id));
+const GOOGLE_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.google.map((m) => m.id));
 
-type VideoProvider = 'magnific' | 'kling';
+type VideoProvider = 'magnific' | 'kling' | 'google';
 
 const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
   magnific: [
@@ -117,9 +126,14 @@ const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
     { id: 'kling-v2.6-pro',   label: 'Kling v2.6 Pro',   desc: 'Latest flagship model',      creditCost: 35, maxChars: 2500 },
     { id: 'kling-v1.6-pro',   label: 'Kling v1.6 Pro',   desc: 'Stable quality video',       creditCost: 25, maxChars: 2500 },
   ],
+  google: [
+    { id: 'google-veo-3-fast', label: 'Veo 3.1 Fast', desc: 'Fast cinematic video generation', creditCost: 25, maxChars: 2000 },
+    { id: 'google-veo-3',      label: 'Veo 3.1',      desc: "Google's flagship video model",   creditCost: 40, maxChars: 2000 },
+  ],
 };
 
-const KLING_MODEL_IDS = new Set(VIDEO_MODELS_BY_PROVIDER.kling.map((m) => m.id));
+const KLING_MODEL_IDS  = new Set(VIDEO_MODELS_BY_PROVIDER.kling.map((m) => m.id));
+const GOOGLE_VIDEO_MODEL_IDS = new Set(VIDEO_MODELS_BY_PROVIDER.google.map((m) => m.id));
 
 // Which Kling video models support last-frame (tail) attachment
 const KLING_LAST_FRAME_MODELS = new Set(['kling-v2.6-pro', 'kling-v1.6-pro']);
@@ -152,7 +166,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
   const firstFrameRef = useRef<HTMLInputElement>(null);
   const lastFrameRef  = useRef<HTMLInputElement>(null);
 
-  const supportsLastFrame = KLING_LAST_FRAME_MODELS.has(selectedVideoModel.id);
+  const supportsLastFrame = videoProvider === 'kling' && KLING_LAST_FRAME_MODELS.has(selectedVideoModel.id);
 
   const readFileAsDataURL = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -171,8 +185,11 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     setDesignId(null);
     setErrorMsg(null);
     try {
-      const isKlingImage = KLING_IMAGE_MODEL_IDS.has(selectedImageModel.id);
-      const imageEndpoint = isKlingImage ? '/api/kling/generate-image' : '/api/nova/generate-image';
+      const isKlingImage  = KLING_IMAGE_MODEL_IDS.has(selectedImageModel.id);
+      const isGoogleImage = GOOGLE_IMAGE_MODEL_IDS.has(selectedImageModel.id);
+      const imageEndpoint = isKlingImage ? '/api/kling/generate-image'
+                          : isGoogleImage ? '/api/google/generate-image'
+                          : '/api/nova/generate-image';
       const res = await fetch(`${getApiBaseUrl()}${imageEndpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
@@ -200,11 +217,15 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     setVideoUrl(null);
     setVideoError(null);
     try {
-      const isKling = KLING_MODEL_IDS.has(selectedVideoModel.id);
-      const endpoint = isKling ? '/api/kling/generate-video' : '/api/nova/generate-video';
+      const isKling  = KLING_MODEL_IDS.has(selectedVideoModel.id);
+      const isGoogle = GOOGLE_VIDEO_MODEL_IDS.has(selectedVideoModel.id);
+      const endpoint = isKling  ? '/api/kling/generate-video'
+                     : isGoogle ? '/api/google/generate-video'
+                     : '/api/nova/generate-video';
       const body: Record<string, any> = { prompt: videoPrompt.trim(), model: selectedVideoModel.id };
       if (isKling && firstFrame) body.image_url = firstFrame;
       if (isKling && lastFrame && supportsLastFrame) body.tail_image_url = lastFrame;
+      if (isGoogle && firstFrame) body.image_url = firstFrame;
       const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
@@ -253,9 +274,10 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
               <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
                 {([
-                  { id: 'magnific' as ImageProvider, label: 'Magnific' },
-                  { id: 'freepik'  as ImageProvider, label: 'Freepik'  },
-                  { id: 'kling'    as ImageProvider, label: 'Kling AI' },
+                  { id: 'magnific' as ImageProvider, label: 'Magnific'  },
+                  { id: 'freepik'  as ImageProvider, label: 'Freepik'   },
+                  { id: 'kling'    as ImageProvider, label: 'Kling AI'  },
+                  { id: 'google'   as ImageProvider, label: 'Google AI' },
                 ] as const).map((p) => (
                   <button key={p.id} type="button"
                     onClick={() => {
@@ -289,8 +311,9 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
               <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
                 {([
-                  { id: 'kling' as VideoProvider,    label: 'Kling AI' },
-                  { id: 'magnific' as VideoProvider, label: 'Magnific' },
+                  { id: 'kling'    as VideoProvider, label: 'Kling AI'  },
+                  { id: 'google'   as VideoProvider, label: 'Google AI' },
+                  { id: 'magnific' as VideoProvider, label: 'Magnific'  },
                 ] as const).map((p) => (
                   <button key={p.id} type="button"
                     onClick={() => {
@@ -354,8 +377,8 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
         ) : (
           /* Video form */
           <div className="space-y-3">
-            {/* Frame attachments — Kling only */}
-            {videoProvider === 'kling' && (
+            {/* Frame attachments — Kling and Google Veo */}
+            {(videoProvider === 'kling' || videoProvider === 'google') && (
               <div className="grid gap-2 sm:grid-cols-2">
                 {/* First frame */}
                 <div>

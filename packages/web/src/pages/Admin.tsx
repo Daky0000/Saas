@@ -17,6 +17,7 @@ import AdminLearn from '../components/admin/AdminLearn';
 import AdminAgents from '../components/admin/AdminAgents';
 import AdminMagnific from '../components/admin/AdminMagnific';
 import AdminKling from '../components/admin/AdminKling';
+import AdminGoogle from '../components/admin/AdminGoogle';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -46,7 +47,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'learn'
     | 'agents'
     | 'magnific'
-    | 'kling';
+    | 'kling'
+    | 'google';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -72,6 +74,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     agents: '/admin/agents',
     magnific: '/admin/magnific',
     kling: '/admin/kling',
+    google: '/admin/google',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -82,7 +85,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents' || window.location.pathname === '/admin/magnific' || window.location.pathname === '/admin/kling');
+  const [aiOpen, setAiOpen] = useState(() => window.location.pathname.startsWith('/admin/ai') || window.location.pathname === '/admin/learn' || window.location.pathname === '/admin/agents' || window.location.pathname === '/admin/magnific' || window.location.pathname === '/admin/kling' || window.location.pathname === '/admin/google');
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -122,10 +125,11 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'agents', label: 'Agent Team', icon: Users },
     { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
     { id: 'kling', label: 'Kling AI', icon: Clapperboard },
+    { id: 'google', label: 'Google AI', icon: Globe },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents' || activeTab === 'magnific' || activeTab === 'kling';
+  const isAIActive = activeTab.startsWith('ai-') || activeTab === 'learn' || activeTab === 'agents' || activeTab === 'magnific' || activeTab === 'kling' || activeTab === 'google';
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -389,6 +393,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'agents' && <AdminAgents />}
             {activeTab === 'magnific' && <AdminMagnific />}
             {activeTab === 'kling' && <AdminKling />}
+            {activeTab === 'google' && <AdminGoogle />}
             {activeTab === 'settings' && (
               <div className="rounded-2xl border border-slate-200 bg-white p-8">
                 <p className="text-slate-600">Platform Settings coming soon...</p>
