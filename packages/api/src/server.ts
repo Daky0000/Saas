@@ -25499,8 +25499,7 @@ async function klingRequest(method: 'GET' | 'POST', path: string, body?: object)
   return resp;
 }
 
-async function pollKlingTask(taskId: string, type: 'video' | 'image', maxSeconds = 300): Promise<{ url: string | null; error: string | null }> {
-  const pollPath = type === 'video' ? `/v1/videos/${taskId}` : `/v1/images/generations/${taskId}`;
+async function pollKlingTask(taskId: string, pollPath: string, maxSeconds = 300): Promise<{ url: string | null; error: string | null }> {
   const deadline = Date.now() + maxSeconds * 1000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5000));
@@ -25577,7 +25576,17 @@ app.get('/api/admin/kling/test', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   try {
-    const r = await klingRequest('GET', '/v1/account');
+    const now = Date.now();
+    const start = now - 30 * 24 * 60 * 60 * 1000; // last 30 days
+    const keys = await getKlingKeys();
+    if (!keys) return res.json({ success: false, error: 'No Kling keys configured' });
+    const token = generateKlingJWT(keys.ak, keys.sk);
+    const r = await axios.get(`${KLING_BASE}/account/costs`, {
+      params: { start_time: start, end_time: now },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
     if (r.status === 401 || r.status === 403) return res.json({ success: false, error: `Invalid keys (HTTP ${r.status})` });
     if (r.status >= 400) return res.json({ success: false, error: `Kling returned HTTP ${r.status}`, detail: r.data });
     return res.json({ success: true, account: r.data?.data ?? r.data });
@@ -25650,7 +25659,7 @@ app.post('/api/kling/generate-video', async (req: Request, res: Response) => {
     await pool!.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
     await pool!.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
 
-    const result = await pollKlingTask(taskId, 'video', 300);
+    const result = await pollKlingTask(taskId, `/v1/videos/text2video/${taskId}`, 300);
     if (result.error) throw new Error(result.error);
 
     await pool!.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);
@@ -25714,7 +25723,7 @@ app.post('/api/kling/image-to-video', async (req: Request, res: Response) => {
     await pool!.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
     await pool!.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
 
-    const result = await pollKlingTask(taskId, 'video', 300);
+    const result = await pollKlingTask(taskId, `/v1/videos/image2video/${taskId}`, 300);
     if (result.error) throw new Error(result.error);
 
     await pool!.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);
@@ -25777,7 +25786,7 @@ app.post('/api/kling/generate-image', async (req: Request, res: Response) => {
     await pool!.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
     await pool!.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
 
-    const result = await pollKlingTask(taskId, 'image', 120);
+    const result = await pollKlingTask(taskId, `/v1/images/generations/${taskId}`, 120);
     if (result.error) throw new Error(result.error);
 
     await pool!.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);
