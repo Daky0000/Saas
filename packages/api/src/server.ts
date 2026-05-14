@@ -24893,7 +24893,10 @@ app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Re
 
 // ─── Magnific AI Routes ────────────────────────────────────────────────────────
 
-const MAGNIFIC_BASE = 'https://api.magnific.com';
+// When MAGNIFIC_PROXY_URL is set, route all Magnific/Freepik calls through
+// a Cloudflare Worker proxy to bypass Akamai IP blocks on Railway.
+const _PROXY = (process.env.MAGNIFIC_PROXY_URL ?? '').replace(/\/$/, '');
+const MAGNIFIC_BASE = _PROXY ? `${_PROXY}/magnific` : 'https://api.magnific.com';
 
 // Browser-like headers to avoid Akamai bot protection blocking server-to-server requests
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -24909,17 +24912,25 @@ async function getMagnificApiKey(): Promise<string> {
   } catch { return ''; }
 }
 
+function proxyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = {
+    'User-Agent': BROWSER_UA,
+    'Accept': 'application/json, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    ...extra,
+  };
+  if (process.env.MAGNIFIC_PROXY_SECRET) h['X-Proxy-Secret'] = process.env.MAGNIFIC_PROXY_SECRET;
+  return h;
+}
+
 async function magnificPost(path: string, body: object, apiKey: string) {
   return axios.post(`${MAGNIFIC_BASE}${path}`, body, {
-    headers: {
+    headers: proxyHeaders({
       'x-magnific-api-key': apiKey,
       'Content-Type': 'application/json',
-      'User-Agent': BROWSER_UA,
-      'Accept': 'application/json, */*',
-      'Accept-Language': 'en-US,en;q=0.9',
       'Origin': 'https://app.magnific.com',
       'Referer': 'https://app.magnific.com/',
-    },
+    }),
     validateStatus: () => true,
     timeout: 15000,
   });
@@ -24935,13 +24946,11 @@ async function pollMagnificTask(
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 3000));
     const r = await axios.get(`${MAGNIFIC_BASE}${taskPath}`, {
-      headers: {
+      headers: proxyHeaders({
         'x-magnific-api-key': apiKey,
-        'User-Agent': BROWSER_UA,
-        'Accept': 'application/json, */*',
         'Origin': 'https://app.magnific.com',
         'Referer': 'https://app.magnific.com/',
-      },
+      }),
       validateStatus: () => true,
       timeout: 10000,
     });
@@ -26451,7 +26460,7 @@ async function runDueDateAlerts() {
 // Freepik rebranded to Magnific.com but api.freepik.com still serves the mystic endpoint
 // and is NOT blocked by Akamai on Railway IPs. Used as fallback when Magnific is blocked.
 
-const FREEPIK_BASE = 'https://api.freepik.com';
+const FREEPIK_BASE = _PROXY ? `${_PROXY}/freepik` : 'https://api.freepik.com';
 
 const FREEPIK_IMAGE_MODELS: Record<string, { credits: number; type: 'async' }> = {
   'freepik-mystic': { credits: 5, type: 'async' },
@@ -26476,20 +26485,17 @@ async function freepikGenerateImage(
   apiKey: string,
   onProgress?: (status: string) => void
 ): Promise<{ url: string | null; error: string | null }> {
-  // Use api.freepik.com/v1/ai/mystic — same API key as Magnific, different domain
-  const headers = {
+  // Use FREEPIK_BASE/v1/ai/mystic (either api.freepik.com directly or via CF proxy)
+  const freepikHeaders = proxyHeaders({
     'x-freepik-api-key': apiKey,
     'Content-Type': 'application/json',
-    'User-Agent': BROWSER_UA,
-    'Accept': 'application/json, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
     'Origin': 'https://www.freepik.com',
     'Referer': 'https://www.freepik.com/',
-  };
+  });
   const submitResp = await axios.post(
     `${FREEPIK_BASE}/v1/ai/mystic`,
     { prompt, negative_prompt: '', image: { size: aspectRatio }, output_format: 'jpeg', num_images: 1, filter_nsfw: true },
-    { headers, validateStatus: () => true, timeout: 20000 }
+    { headers: freepikHeaders, validateStatus: () => true, timeout: 20000 }
   );
   if (submitResp.status >= 400) {
     const isHtml = typeof submitResp.data === 'string' && submitResp.data.trimStart().startsWith('<');
@@ -26502,13 +26508,11 @@ async function freepikGenerateImage(
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 4000));
     const pollResp = await axios.get(`${FREEPIK_BASE}/v1/ai/mystic/${taskId}`, {
-      headers: {
+      headers: proxyHeaders({
         'x-freepik-api-key': apiKey,
-        'User-Agent': BROWSER_UA,
-        'Accept': 'application/json, */*',
         'Origin': 'https://www.freepik.com',
         'Referer': 'https://www.freepik.com/',
-      },
+      }),
       validateStatus: () => true,
       timeout: 10000,
     });
