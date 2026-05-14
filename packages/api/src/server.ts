@@ -8420,21 +8420,27 @@ app.post('/api/credits/use', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/credits/admin/grant  { user_id, amount }
+// POST /api/credits/admin/grant  { user_id|email, amount }
 app.post('/api/credits/admin/grant', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   if (!hasDatabase()) return res.json({ success: true });
-  const { user_id, amount } = req.body as { user_id: string; amount: number };
-  if (!user_id || !amount) return res.status(400).json({ success: false, error: 'user_id and amount required' });
+  const { user_id, email, amount } = req.body as { user_id?: string; email?: string; amount: number };
+  if ((!user_id && !email) || !amount) return res.status(400).json({ success: false, error: 'user_id or email, and amount required' });
   try {
+    let resolvedId = user_id;
+    if (!resolvedId && email) {
+      const r = await pool!.query(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [email.trim().toLowerCase()]);
+      if (!r.rows[0]) return res.status(404).json({ success: false, error: `No user found with email: ${email}` });
+      resolvedId = r.rows[0].id;
+    }
     await pool!.query(
       `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
        VALUES ($1, $2, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
        ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $2, updated_at = NOW()`,
-      [user_id, amount]
+      [resolvedId, amount]
     );
-    return res.json({ success: true });
+    return res.json({ success: true, user_id: resolvedId });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
