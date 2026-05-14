@@ -40,7 +40,7 @@ function tok() { return localStorage.getItem('auth_token') ?? ''; }
 
 // ── Credit badge ──────────────────────────────────────────────────────────────
 
-function CreditBadge() {
+function CreditBadge({ refreshKey = 0 }: { refreshKey?: number }) {
   const [credits, setCredits] = useState<number | null>(null);
 
   useEffect(() => {
@@ -50,7 +50,7 @@ function CreditBadge() {
       .then((r) => r.json())
       .then((d) => { if (d.success) setCredits(d.credits); })
       .catch(() => {});
-  }, []);
+  }, [refreshKey]);
 
   if (credits === null) return null;
 
@@ -105,7 +105,7 @@ const VIDEO_MODELS: AIModel[] = [
 
 // ── AI Studio tab ─────────────────────────────────────────────────────────────
 
-function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void }) {
+function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesign) => void; onCreditUsed?: () => void }) {
   const [genMode, setGenMode]                   = useState<GenMode>('image');
   const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS.find((m) => m.id === 'flux-kontext-pro') ?? IMAGE_MODELS[0]);
   const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS[0]);
@@ -141,6 +141,7 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
       if (!d.success) throw new Error(d.error ?? 'Generation failed');
       setImageUrl(d.url ?? null);
       setDesignId(d.design_id ?? null);
+      onCreditUsed?.();
       if (d.design_id) {
         // Trigger history refresh — pass a minimal stub so the tab knows to reload
         onDesignSaved({ id: d.design_id } as UserDesign);
@@ -166,6 +167,7 @@ function AIStudio({ onDesignSaved }: { onDesignSaved: (d: UserDesign) => void })
       const d = await res.json();
       if (!d.success) throw new Error(d.error ?? 'Video generation failed');
       setVideoUrl(d.url ?? null);
+      onCreditUsed?.();
     } catch (e: any) {
       setVideoError(e.message ?? 'Video generation failed');
     } finally {
@@ -1216,6 +1218,7 @@ const Cards = () => {
   const [templates, setTemplates]   = useState<CardTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [previewTpl, setPreviewTpl] = useState<CardTemplate | null>(null);
+  const [creditRefreshKey, setCreditRefreshKey] = useState(0);
 
   const fetchDesigns = useCallback(async () => {
     setLoadingDesigns(true);
@@ -1241,6 +1244,7 @@ const Cards = () => {
   useEffect(() => { fetchDesigns(); fetchTemplates(); }, [fetchDesigns, fetchTemplates]);
 
   const handleDesignSaved = (_saved?: UserDesign) => { fetchDesigns(); };
+  const handleCreditUsed = useCallback(() => setCreditRefreshKey((k) => k + 1), []);
 
   const filteredTemplates = useMemo(() => {
     let list = [...templates];
@@ -1268,7 +1272,7 @@ const Cards = () => {
               Generate AI-powered designs tailored to your brand, or build from scratch.
             </p>
           </div>
-          <CreditBadge />
+          <CreditBadge refreshKey={creditRefreshKey} />
         </div>
       </header>
 
@@ -1296,7 +1300,7 @@ const Cards = () => {
 
       {/* Tab content */}
       {tab === 'studio' ? (
-        <AIStudio onDesignSaved={handleDesignSaved} />
+        <AIStudio onDesignSaved={handleDesignSaved} onCreditUsed={handleCreditUsed} />
       ) : tab === 'discover' ? (
         <div className="space-y-4">
           {/* Model filter tabs */}
@@ -1380,7 +1384,7 @@ const Cards = () => {
                   tpl={generateTpl}
                   useMode={generateMode}
                   onClose={() => setGenerateTpl(null)}
-                  onGenerated={() => { fetchDesigns(); }}
+                  onGenerated={() => { fetchDesigns(); handleCreditUsed(); }}
                 />
               </div>
             )}

@@ -27205,11 +27205,13 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
           await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [result.error, genId]).catch(() => undefined);
           return res.status(400).json({ error: result.error });
         }
+        // Non-auth Replicate error — skip Magnific (Akamai-blocked from Railway), fall through to Freepik
+        console.log('[generate-image] Replicate non-auth error, skipping Magnific, trying Freepik');
       }
     }
 
-    // 2. Fall back to Magnific if Replicate not configured or failed
-    if (!imageUrl && !isFreepikModel) {
+    // 2. Fall back to Magnific ONLY if Replicate is not configured (Magnific is Akamai-blocked from Railway)
+    if (!imageUrl && !isFreepikModel && !replicateKey) {
       const magnificKey = await getMagnificApiKey();
       if (magnificKey) {
         const genResult = await magnificGenerateImage(model, prompt.trim(), aspectStr, magnificKey);
