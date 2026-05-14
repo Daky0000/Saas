@@ -25891,8 +25891,8 @@ async function getGoogleApiKey(): Promise<string | null> {
   if (process.env.GOOGLE_API_KEY)  return process.env.GOOGLE_API_KEY;
   if (process.env.GEMINI_API_KEY)  return process.env.GEMINI_API_KEY;
   try {
-    const r = await dbQuery<{ value: string }>('SELECT value FROM platform_configs WHERE key=$1', ['google_api_key']);
-    return r.rows[0]?.value ?? null;
+    const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
+    return r.rows[0]?.config?.api_key ?? null;
   } catch { return null; }
 }
 
@@ -25901,8 +25901,8 @@ async function storeGoogleImage(base64Data: string, mimeType: string): Promise<s
   try {
     let imgbbKey: string | null = process.env.IMGBB_API_KEY ?? null;
     if (!imgbbKey) {
-      const r = await dbQuery<{ value: string }>('SELECT value FROM platform_configs WHERE key=$1', ['imgbb_api_key']);
-      imgbbKey = r.rows[0]?.value ?? null;
+      const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
+      imgbbKey = r.rows[0]?.config?.imgbb_api_key ?? null;
     }
     if (imgbbKey) {
       const params = new URLSearchParams({ key: imgbbKey, image: base64Data });
@@ -25957,21 +25957,15 @@ app.put('/api/admin/google/config', async (req: Request, res: Response) => {
   if (!await requireAdmin(req, res)) return;
   const { apiKey, imgbbKey } = req.body as { apiKey?: string; imgbbKey?: string };
   try {
-    if (apiKey?.trim()) {
+    const patch: Record<string, string> = {};
+    if (apiKey?.trim())    patch.api_key     = apiKey.trim();
+    if (imgbbKey?.trim())  patch.imgbb_api_key = imgbbKey.trim();
+    if (Object.keys(patch).length > 0) {
       await dbQuery(
-        `INSERT INTO platform_configs (key, value, updated_at) VALUES ($1,$2,NOW())
-         ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()`,
-        ['google_api_key', apiKey.trim()]
+        `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ($1, $2::jsonb, true, NOW())
+         ON CONFLICT (platform) DO UPDATE SET config = platform_configs.config || $2::jsonb, enabled=true, updated_at=NOW()`,
+        ['google', JSON.stringify(patch)]
       );
-    }
-    if (imgbbKey !== undefined) {
-      if (imgbbKey.trim()) {
-        await dbQuery(
-          `INSERT INTO platform_configs (key, value, updated_at) VALUES ($1,$2,NOW())
-           ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()`,
-          ['imgbb_api_key', imgbbKey.trim()]
-        );
-      }
     }
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -26198,8 +26192,8 @@ const OPENAI_TTS_CREDITS = { 'tts-1': 2, 'tts-1-hd': 4, 'gpt-4o-mini-tts': 3 } a
 async function getOpenAIApiKey(): Promise<string | null> {
   if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
   try {
-    const r = await dbQuery<{ value: string }>('SELECT value FROM platform_configs WHERE key=$1', ['openai_api_key']);
-    return r.rows[0]?.value ?? null;
+    const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['openai']);
+    return r.rows[0]?.config?.api_key ?? null;
   } catch { return null; }
 }
 
@@ -26233,9 +26227,9 @@ app.put('/api/admin/openai/config', async (req: Request, res: Response) => {
   if (!apiKey?.trim()) return res.status(400).json({ error: 'apiKey is required' });
   try {
     await dbQuery(
-      `INSERT INTO platform_configs (key, value, updated_at) VALUES ($1,$2,NOW())
-       ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()`,
-      ['openai_api_key', apiKey.trim()]
+      `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ($1, $2::jsonb, true, NOW())
+       ON CONFLICT (platform) DO UPDATE SET config = platform_configs.config || $2::jsonb, enabled=true, updated_at=NOW()`,
+      ['openai', JSON.stringify({ api_key: apiKey.trim() })]
     );
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
