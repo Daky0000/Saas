@@ -99,8 +99,8 @@ const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
     { id: 'freepik-mystic', label: 'Freepik Mystic', desc: 'High-quality creative image generation', creditCost: 5, maxChars: 1000 },
   ],
   kling: [
-    { id: 'kling-v1-5', label: 'Kling v1.5', desc: 'Kling image generation — detailed', creditCost: 5, maxChars: 500 },
-    { id: 'kling-v1',   label: 'Kling v1',   desc: 'Kling image generation — fast',     creditCost: 4, maxChars: 500 },
+    { id: 'kling-v1-5', label: 'Kling v1.5', desc: 'Kling image generation — detailed', creditCost: 5, maxChars: 2500 },
+    { id: 'kling-v1',   label: 'Kling v1',   desc: 'Kling image generation — fast',     creditCost: 4, maxChars: 2500 },
   ],
 };
 
