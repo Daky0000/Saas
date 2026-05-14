@@ -1,4 +1,4 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, KeyRound, Menu, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, KeyRound, Menu, Network, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -88,7 +88,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => ['/admin/ai','/admin/learn','/admin/agents','/admin/magnific','/admin/kling','/admin/google','/admin/openai'].some(p => window.location.pathname.startsWith(p)));
+  const [aiOpen, setAiOpen] = useState(() => ['/admin/ai','/admin/learn','/admin/magnific','/admin/kling','/admin/google','/admin/openai'].some(p => window.location.pathname.startsWith(p)));
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -125,7 +125,6 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'ai-config', label: 'Configuration', icon: Bot },
     { id: 'ai-skills', label: 'Create AI Skill', icon: Zap },
     { id: 'learn', label: 'Daky Learn', icon: BookOpen },
-    { id: 'agents', label: 'Agent Team', icon: Users },
     { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
     { id: 'kling', label: 'Kling AI', icon: Clapperboard },
     { id: 'google', label: 'Google AI', icon: Globe },
@@ -133,7 +132,7 @@ const Admin = ({ currentUser }: AdminProps) => {
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || ['learn','agents','magnific','kling','google','openai'].includes(activeTab);
+  const isAIActive = activeTab.startsWith('ai-') || ['learn','magnific','kling','google','openai'].includes(activeTab);
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -142,7 +141,7 @@ const Admin = ({ currentUser }: AdminProps) => {
       if (tab) {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
-        setAiOpen(tab.startsWith('ai-') || tab === 'learn' || tab === 'agents');
+        setAiOpen(tab.startsWith('ai-') || tab === 'learn');
         setApifyOpen(tab === 'apify');
       }
     };
@@ -184,6 +183,23 @@ const Admin = ({ currentUser }: AdminProps) => {
             </button>
           );
         })}
+
+        {/* Agent Team — standalone top-level nav */}
+        <div className="my-1 border-t border-slate-100 pt-1">
+          <button
+            type="button"
+            data-tour-id="admin-tab-agents"
+            onClick={() => navigateTab('agents')}
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+              activeTab === 'agents'
+                ? 'bg-slate-950 text-white'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <Network size={18} />
+            Agent Team
+          </button>
+        </div>
 
         {/* AI Assistant accordion */}
         <div>

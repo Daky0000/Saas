@@ -3,10 +3,44 @@ import {
   CheckCircle, Loader2, RefreshCw, Save, Settings, Wrench,
   GitBranch, Plus, Trash2, ChevronUp, ChevronDown, X, Info,
   ArrowLeft, ToggleLeft, ToggleRight, Edit2,
+  Activity, Play, SlidersHorizontal, Shield,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../../utils/apiBase';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ── Shared helpers ─────────────────────────────────────────────────────────────
+
+function tok() { return localStorage.getItem('auth_token') ?? ''; }
+const BASE = () => getApiBaseUrl();
+
+// ── Admin Platform Agent types ─────────────────────────────────────────────────
+
+type AdminPlatformAgent = {
+  id: string;
+  key: string;
+  name: string;
+  role: string;
+  tier: 'strategic' | 'operational' | 'tactical';
+  model: string;
+  icon: string;
+  color: string;
+  system_prompt: string;
+  autonomy_config: Record<string, any>;
+  status: 'idle' | 'running' | 'error';
+  last_run_at: string | null;
+  updated_at: string;
+};
+
+type AdminAgentRun = {
+  id: string;
+  agent_key: string;
+  trigger: 'scheduled' | 'manual' | 'escalation';
+  summary: string;
+  decisions_made: number;
+  status: 'completed' | 'failed' | 'partial';
+  created_at: string;
+};
+
+// ── User-agents types (existing) ───────────────────────────────────────────────
 
 type AgentTemplate = {
   id: string;
@@ -49,10 +83,27 @@ type AgentWorkflow = {
   updated_at: string;
 };
 
-type TabKey = 'prompt' | 'tools' | 'workflow';
+type UserAgentTabKey = 'prompt' | 'tools' | 'workflow';
 
-function tok() { return localStorage.getItem('auth_token') ?? ''; }
-const BASE = () => getApiBaseUrl();
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const TIER_BADGES: Record<string, string> = {
+  strategic:   'bg-slate-900 text-white',
+  operational: 'bg-indigo-100 text-indigo-700',
+  tactical:    'bg-teal-100 text-teal-700',
+};
+
+const MODEL_LABELS: Record<string, string> = {
+  'claude-opus-4-7':            'Opus 4.7',
+  'claude-sonnet-4-6':          'Sonnet 4.6',
+  'claude-haiku-4-5-20251001':  'Haiku 4.5',
+};
+
+const MODEL_BADGES: Record<string, string> = {
+  'claude-opus-4-7':            'bg-purple-50 text-purple-700',
+  'claude-sonnet-4-6':          'bg-indigo-50 text-indigo-700',
+  'claude-haiku-4-5-20251001':  'bg-teal-50 text-teal-700',
+};
 
 const TOOL_TYPE_BADGE: Record<string, string> = {
   builtin: 'bg-indigo-50 text-indigo-600',
@@ -60,7 +111,499 @@ const TOOL_TYPE_BADGE: Record<string, string> = {
   api:     'bg-emerald-50 text-emerald-600',
 };
 
-// ── Step editor row ────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN AGENTS SECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+function AdminAgentCard({
+  agent,
+  onConfigure,
+}: {
+  agent: AdminPlatformAgent;
+  onConfigure: () => void;
+}) {
+  const canKeys = Object.entries(agent.autonomy_config)
+    .filter(([k, v]) => k.startsWith('can_') && v === true)
+    .map(([k]) => k.replace('can_', '').replace(/_/g, ' '));
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-start gap-4">
+        <div
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-2xl font-black select-none"
+          style={{ background: `${agent.color}18`, color: agent.color }}
+        >
+          {agent.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-black text-xl tracking-tight" style={{ color: agent.color }}>
+              {agent.name}
+            </span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${TIER_BADGES[agent.tier]}`}>
+              {agent.tier}
+            </span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${MODEL_BADGES[agent.model] ?? 'bg-slate-100 text-slate-600'}`}>
+              {MODEL_LABELS[agent.model] ?? agent.model}
+            </span>
+          </div>
+          <p className="text-sm text-slate-500 mt-0.5">{agent.role}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div
+            className={`h-2 w-2 rounded-full ${
+              agent.status === 'running' ? 'bg-amber-400 animate-pulse' :
+              agent.status === 'error'   ? 'bg-red-400' :
+                                           'bg-emerald-400'
+            }`}
+          />
+          <span className="text-[11px] font-semibold text-slate-500 capitalize">{agent.status}</span>
+        </div>
+      </div>
+
+      {canKeys.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {canKeys.map((k) => (
+            <span key={k} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600">
+              {k}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-[11px] text-slate-400">
+          {agent.last_run_at
+            ? `Last run ${new Date(agent.last_run_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+            : 'Never run'}
+        </p>
+        <button
+          type="button"
+          onClick={onConfigure}
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+        >
+          <Settings size={12} /> Configure
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AdminAgentConfigModal({
+  agent,
+  onClose,
+  onSaved,
+}: {
+  agent: AdminPlatformAgent;
+  onClose: () => void;
+  onSaved: (updated: AdminPlatformAgent) => void;
+}) {
+  type ConfigTab = 'prompt' | 'runs' | 'settings';
+  const [tab, setTab] = useState<ConfigTab>('prompt');
+  const [prompt, setPrompt] = useState(agent.system_prompt);
+  const [model, setModel] = useState(agent.model);
+  const [runs, setRuns] = useState<AdminAgentRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== 'runs') return;
+    setRunsLoading(true);
+    fetch(`${BASE()}/api/admin/platform-agents/${agent.key}/runs`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setRuns(d.runs ?? []); })
+      .catch(() => {})
+      .finally(() => setRunsLoading(false));
+  }, [tab, agent.key]);
+
+  const save = async () => {
+    setSaving(true); setSaved(false); setError(null);
+    try {
+      const res = await fetch(`${BASE()}/api/admin/platform-agents/${agent.key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ system_prompt: prompt, model }),
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error ?? 'Save failed');
+      onSaved(d.agent);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const triggerRun = async () => {
+    setTriggering(true); setError(null);
+    try {
+      const res = await fetch(`${BASE()}/api/admin/platform-agents/${agent.key}/run`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok()}` },
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error ?? 'Run failed');
+      setTab('runs');
+      // Reload runs
+      setRunsLoading(true);
+      fetch(`${BASE()}/api/admin/platform-agents/${agent.key}/runs`, {
+        headers: { Authorization: `Bearer ${tok()}` },
+      })
+        .then((r) => r.json())
+        .then((rd) => { if (rd.success) setRuns(rd.runs ?? []); })
+        .finally(() => setRunsLoading(false));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const TABS: { key: ConfigTab; label: string; icon: React.ReactNode }[] = [
+    { key: 'prompt',   label: 'System Prompt',  icon: <Settings size={13} /> },
+    { key: 'runs',     label: 'Decision Log',   icon: <Activity size={13} /> },
+    { key: 'settings', label: 'Settings',       icon: <SlidersHorizontal size={13} /> },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="relative flex w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 shrink-0">
+          <div
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl font-black select-none"
+            style={{ background: `${agent.color}18`, color: agent.color }}
+          >
+            {agent.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-black text-slate-900 text-base" style={{ color: agent.color }}>{agent.name}</p>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${TIER_BADGES[agent.tier]}`}>
+                {agent.tier}
+              </span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${MODEL_BADGES[agent.model] ?? 'bg-slate-100 text-slate-600'}`}>
+                {MODEL_LABELS[agent.model] ?? agent.model}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">{agent.role}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 border-b border-slate-100 px-5 pt-3 shrink-0">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`flex items-center gap-1.5 rounded-t-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                tab === t.key ? 'border-b-2 text-slate-900' : 'text-slate-500 hover:text-slate-800'
+              }`}
+              style={tab === t.key ? { borderColor: agent.color, color: agent.color } : {}}
+            >
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+
+          {tab === 'prompt' && (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">
+                Core identity and instruction set for {agent.name}. This prompt defines the agent's goals, authority, and behavior. Changes take effect on the next run.
+              </p>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={13}
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-800 leading-relaxed outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300 font-mono"
+                placeholder="Enter agent system prompt…"
+              />
+              {error && <p className="text-xs text-red-600">{error}</p>}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={save}
+                  className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition-colors disabled:opacity-50"
+                  style={{ background: saved ? '#10B981' : agent.color }}
+                >
+                  {saving ? <><RefreshCw size={12} className="animate-spin" /> Saving…</> :
+                   saved   ? <><CheckCircle size={12} /> Saved</> :
+                             <><Save size={12} /> Save Prompt</>}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'runs' && (
+            <div className="space-y-3">
+              {runsLoading ? (
+                <div className="flex items-center justify-center py-10 text-slate-400">
+                  <Loader2 size={16} className="animate-spin mr-2" /> Loading runs…
+                </div>
+              ) : runs.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 py-14 text-center">
+                  <Activity size={28} className="mx-auto text-slate-300 mb-3" />
+                  <p className="text-sm font-semibold text-slate-400">No runs yet</p>
+                  <p className="text-xs text-slate-400 mt-1">Trigger a manual run to generate the first digest.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {runs.map((run) => (
+                    <div key={run.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                          run.status === 'completed' ? 'bg-emerald-50 text-emerald-600' :
+                          run.status === 'failed'    ? 'bg-red-50 text-red-600' :
+                                                       'bg-amber-50 text-amber-600'
+                        }`}>{run.status}</span>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                          run.trigger === 'manual'     ? 'bg-blue-50 text-blue-600' :
+                          run.trigger === 'escalation' ? 'bg-orange-50 text-orange-600' :
+                                                         'bg-slate-100 text-slate-500'
+                        }`}>{run.trigger}</span>
+                        {run.decisions_made > 0 && (
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {run.decisions_made} decision{run.decisions_made !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                        <span className="ml-auto text-[10px] text-slate-400">
+                          {new Date(run.created_at).toLocaleString(undefined, {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 leading-relaxed">{run.summary}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'settings' && (
+            <div className="space-y-5">
+              <div>
+                <p className="text-xs font-bold text-slate-700 mb-2">AI Model</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'claude-opus-4-7',           label: 'Opus 4.7',   desc: 'Strategic decisions' },
+                    { id: 'claude-sonnet-4-6',          label: 'Sonnet 4.6', desc: 'Daily operations' },
+                    { id: 'claude-haiku-4-5-20251001',  label: 'Haiku 4.5',  desc: 'Monitoring loops' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setModel(m.id)}
+                      className={`flex flex-col items-start rounded-xl border p-3 text-left transition-colors ${
+                        model === m.id
+                          ? 'border-indigo-300 bg-indigo-50'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <p className="text-xs font-bold text-slate-900">{m.label}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">{m.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-bold text-slate-700 mb-3">Autonomy Configuration</p>
+                <div className="space-y-2.5">
+                  {Object.entries(agent.autonomy_config).map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between">
+                      <p className="text-xs text-slate-600 font-mono">{k}</p>
+                      <p className={`text-xs font-bold ${typeof v === 'boolean' && v ? 'text-emerald-600' : typeof v === 'boolean' ? 'text-slate-400' : 'text-slate-700'}`}>
+                        {typeof v === 'boolean' ? (v ? 'Enabled' : 'Disabled') : String(v)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {error && <p className="text-xs text-red-600">{error}</p>}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={save}
+                  className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition-colors disabled:opacity-50"
+                  style={{ background: saved ? '#10B981' : agent.color }}
+                >
+                  {saving ? <><RefreshCw size={12} className="animate-spin" /> Saving…</> :
+                   saved   ? <><CheckCircle size={12} /> Saved</> :
+                             <><Save size={12} /> Save Settings</>}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-slate-100 px-5 py-3 flex items-center justify-between shrink-0">
+          <p className="text-[11px] text-slate-400">
+            {agent.last_run_at
+              ? `Last run: ${new Date(agent.last_run_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+              : 'Never run'}
+          </p>
+          <button
+            type="button"
+            disabled={triggering}
+            onClick={triggerRun}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            {triggering
+              ? <><Loader2 size={11} className="animate-spin" /> Running…</>
+              : <><Play size={11} /> Run Now</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminAgentsPanel() {
+  const [agents, setAgents] = useState<AdminPlatformAgent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<AdminPlatformAgent | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetch(`${BASE()}/api/admin/platform-agents`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.success) throw new Error(d.error ?? 'Failed to load');
+        setAgents(d.agents);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-3 py-16 justify-center text-slate-500">
+        <Loader2 size={18} className="animate-spin" /> Loading admin agents…
+      </div>
+    );
+  }
+  if (error) {
+    return <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>;
+  }
+
+  const strategic   = agents.filter((a) => a.tier === 'strategic');
+  const operational = agents.filter((a) => a.tier === 'operational');
+
+  return (
+    <div className="space-y-7">
+      {/* Header row */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-black text-slate-950 tracking-[-0.02em]">Admin Agents</h3>
+          <p className="text-sm text-slate-500 mt-0.5">AI-powered C-suite running Dakyworld Hub autonomously</p>
+        </div>
+        <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
+          <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          {agents.length} Active
+        </div>
+      </div>
+
+      {/* Strategic tier */}
+      {strategic.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Strategic Leadership</span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {strategic.map((agent) => (
+              <AdminAgentCard
+                key={agent.key}
+                agent={agent}
+                onConfigure={() => setSelected(agent)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Operational tier */}
+      {operational.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Operations & Revenue</span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {operational.map((agent) => (
+              <AdminAgentCard
+                key={agent.key}
+                agent={agent}
+                onConfigure={() => setSelected(agent)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Autonomy notice */}
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+        <div className="flex items-start gap-3">
+          <Shield size={16} className="text-amber-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-xs font-bold text-amber-800 mb-1.5">Phase 1 — Platform Intelligence</p>
+            <ul className="space-y-1.5 text-xs text-amber-700">
+              <li>• Admin agents are fully autonomous — no human approval required for pricing, user management, or budget allocation.</li>
+              <li>• All agent decisions are logged in the Decision Log for full transparency.</li>
+              <li>• System prompts define each agent's identity, authority scope, and behavioral guardrails.</li>
+              <li>• Phase 2 activates live Anthropic inference with real-time platform data ingestion.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {selected && (
+        <AdminAgentConfigModal
+          agent={selected}
+          onClose={() => setSelected(null)}
+          onSaved={(updated) => {
+            setAgents((prev) => prev.map((a) => a.key === updated.key ? updated : a));
+            setSelected(updated);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USER AGENTS SECTION (existing functionality, preserved)
+// ══════════════════════════════════════════════════════════════════════════════
 
 function StepRow({
   step, index, total, tools, onChange, onDelete, onMoveUp, onMoveDown,
@@ -153,8 +696,6 @@ function StepRow({
   );
 }
 
-// ── Workflow step editor (for a single named workflow) ─────────────────────────
-
 function WorkflowStepEditor({
   workflow, tools, agentColor, onBack, onSaved, onDeleted,
 }: {
@@ -228,7 +769,6 @@ function WorkflowStepEditor({
 
   return (
     <div className="space-y-3">
-      {/* Back + heading */}
       <div className="flex items-center gap-2">
         <button type="button" onClick={onBack}
           className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800 transition">
@@ -236,7 +776,6 @@ function WorkflowStepEditor({
         </button>
       </div>
 
-      {/* Workflow name + description */}
       <div className="space-y-2">
         <div>
           <label className="block text-[11px] font-semibold text-slate-500 mb-1">Workflow Name</label>
@@ -294,8 +833,6 @@ function WorkflowStepEditor({
   );
 }
 
-// ── Workflow list view ─────────────────────────────────────────────────────────
-
 function WorkflowListView({
   agentKey, agentColor, tools,
 }: {
@@ -349,7 +886,7 @@ function WorkflowListView({
       if (!d.success) throw new Error(d.error);
       setWorkflows((prev) => [...prev, d.workflow]);
       setNewName(''); setNewDesc(''); setCreating(false);
-      setEditing(d.workflow); // open editor immediately
+      setEditing(d.workflow);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -416,7 +953,6 @@ function WorkflowListView({
         <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
       )}
 
-      {/* Workflow cards */}
       {workflows.length === 0 && !creating ? (
         <div className="rounded-xl border border-dashed border-slate-200 py-8 text-center">
           <p className="text-sm text-slate-400">No workflows yet.</p>
@@ -453,7 +989,6 @@ function WorkflowListView({
         </div>
       )}
 
-      {/* New workflow form */}
       {creating ? (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <p className="text-xs font-bold text-slate-700">New Workflow</p>
@@ -498,15 +1033,13 @@ function WorkflowListView({
   );
 }
 
-// ── Agent modal ────────────────────────────────────────────────────────────────
-
-function AgentModal({
+function UserAgentModal({
   template, tools, onClose, onTemplateUpdated,
 }: {
   template: AgentTemplate; tools: AgentTool[];
   onClose: () => void; onTemplateUpdated: (t: AgentTemplate) => void;
 }) {
-  const [tab, setTab] = useState<TabKey>('prompt');
+  const [tab, setTab] = useState<UserAgentTabKey>('prompt');
   const [promptText, setPromptText] = useState(template.base_prompt);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [savedPrompt, setSavedPrompt] = useState(false);
@@ -532,16 +1065,15 @@ function AgentModal({
     }
   };
 
-  const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'prompt',   label: 'Prompt',   icon: <Settings size={14} /> },
-    { key: 'tools',    label: 'Tools',    icon: <Wrench size={14} /> },
+  const TABS: { key: UserAgentTabKey; label: string; icon: React.ReactNode }[] = [
+    { key: 'prompt',   label: 'Prompt',    icon: <Settings size={14} /> },
+    { key: 'tools',    label: 'Tools',     icon: <Wrench size={14} /> },
     { key: 'workflow', label: 'Workflows', icon: <GitBranch size={14} /> },
   ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="relative flex w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl max-h-[90vh]">
-        {/* Header */}
         <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 shrink-0">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl text-lg"
             style={{ background: `${template.color}18`, color: template.color }}>
@@ -557,7 +1089,6 @@ function AgentModal({
           </button>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-1 border-b border-slate-100 px-5 pt-3 shrink-0">
           {TABS.map((t) => (
             <button key={t.key} type="button" onClick={() => setTab(t.key)}
@@ -570,9 +1101,7 @@ function AgentModal({
           ))}
         </div>
 
-        {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-
           {tab === 'prompt' && (
             <div className="space-y-3">
               <p className="text-xs text-slate-500">
@@ -646,9 +1175,7 @@ function AgentModal({
   );
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────────
-
-export default function AdminAgents() {
+function UserAgentsPanel() {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [loading, setLoading] = useState(true);
@@ -674,12 +1201,11 @@ export default function AdminAgents() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-3 py-12 justify-center text-slate-500">
-        <Loader2 size={18} className="animate-spin" /> Loading agent templates…
+      <div className="flex items-center gap-3 py-16 justify-center text-slate-500">
+        <Loader2 size={18} className="animate-spin" /> Loading user agents…
       </div>
     );
   }
-
   if (error) {
     return <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>;
   }
@@ -687,9 +1213,9 @@ export default function AdminAgents() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Agent Team</h2>
-        <p className="mt-1.5 text-sm text-slate-500">
-          Configure each agent's system prompt, available tools, and named workflows.
+        <h3 className="text-lg font-black text-slate-950 tracking-[-0.02em]">User Agents</h3>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Configure each agent's system prompt, available tools, and named workflows. These agents power each user's social media team.
         </p>
       </div>
 
@@ -728,17 +1254,18 @@ export default function AdminAgents() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-        <p className="text-xs font-bold text-slate-600 mb-2">How agents and workflows work</p>
+        <p className="text-xs font-bold text-slate-600 mb-2">How user agents work</p>
         <ul className="space-y-1.5 text-xs text-slate-500">
           <li>• Each agent has named workflows — ordered step sequences it follows for specific tasks.</li>
           <li>• Nova uses Freepik AI (5 credits/image) and Magnific AI for image and video generation.</li>
           <li>• Credit balance is checked before any generation step — insufficient credits halt the workflow.</li>
           <li>• Agents are recompiled automatically when users update their brand memory.</li>
+          <li>• User agents propose actions for user approval — they do not act autonomously.</li>
         </ul>
       </div>
 
       {selected && (
-        <AgentModal
+        <UserAgentModal
           template={selected}
           tools={tools}
           onClose={() => setSelected(null)}
@@ -748,6 +1275,53 @@ export default function AdminAgents() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ROOT EXPORT — dual-tab Agent Team page
+// ══════════════════════════════════════════════════════════════════════════════
+
+type AgentTeamTab = 'admin' | 'user';
+
+export default function AdminAgents() {
+  const [activeTab, setActiveTab] = useState<AgentTeamTab>('admin');
+
+  return (
+    <div className="space-y-6">
+      {/* Page header */}
+      <div>
+        <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Agent Team</h2>
+        <p className="mt-1.5 text-sm text-slate-500">
+          Admin agents run the platform autonomously. User agents power each customer's social media team.
+        </p>
+      </div>
+
+      {/* Top-level tab switcher */}
+      <div className="flex gap-1 rounded-2xl bg-slate-100 p-1 w-fit">
+        {([
+          { key: 'admin', label: 'Admin Agents', desc: 'C-Suite AI' },
+          { key: 'user',  label: 'User Agents',  desc: 'Marketing Team' },
+        ] as { key: AgentTeamTab; label: string; desc: string }[]).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            className={`flex flex-col items-start rounded-xl px-5 py-2.5 text-left transition-colors ${
+              activeTab === t.key
+                ? 'bg-white shadow-sm text-slate-950'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <span className={`text-sm font-bold ${activeTab === t.key ? 'text-slate-950' : ''}`}>{t.label}</span>
+            <span className="text-[10px] font-medium text-slate-400">{t.desc}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Panel */}
+      {activeTab === 'admin' ? <AdminAgentsPanel /> : <UserAgentsPanel />}
     </div>
   );
 }

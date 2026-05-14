@@ -3009,6 +3009,83 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   `).catch(() => undefined);
   // ── End Agent System ──────────────────────────────────────────────────────────
 
+  // ── Admin Platform Agents ──────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_agents (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      key             TEXT NOT NULL UNIQUE,
+      name            TEXT NOT NULL,
+      role            TEXT NOT NULL,
+      tier            TEXT NOT NULL DEFAULT 'strategic',
+      model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+      icon            TEXT NOT NULL DEFAULT '◆',
+      color           TEXT NOT NULL DEFAULT '#5B6CF9',
+      system_prompt   TEXT NOT NULL DEFAULT '',
+      autonomy_config JSONB NOT NULL DEFAULT '{}',
+      status          TEXT NOT NULL DEFAULT 'idle',
+      last_run_at     TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_agent_runs (
+      id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_key      TEXT NOT NULL,
+      trigger        TEXT NOT NULL DEFAULT 'scheduled',
+      summary        TEXT NOT NULL DEFAULT '',
+      decisions_made INTEGER NOT NULL DEFAULT 0,
+      status         TEXT NOT NULL DEFAULT 'completed',
+      metadata       JSONB NOT NULL DEFAULT '{}',
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_agent_tasks (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_key    TEXT NOT NULL,
+      action_type  TEXT NOT NULL,
+      payload      JSONB NOT NULL DEFAULT '{}',
+      status       TEXT NOT NULL DEFAULT 'pending',
+      reasoning    TEXT NOT NULL DEFAULT '',
+      severity     TEXT NOT NULL DEFAULT 'low',
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      executed_at  TIMESTAMPTZ
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_notifications (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_key  TEXT NOT NULL,
+      title      TEXT NOT NULL,
+      body       TEXT NOT NULL DEFAULT '',
+      severity   TEXT NOT NULL DEFAULT 'info',
+      is_read    BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  // Seed default admin platform agents
+  await pool.query(`
+    INSERT INTO admin_agents (key, name, role, tier, model, icon, color, system_prompt, autonomy_config) VALUES
+    ('ceo', 'APEX', 'Chief Executive Officer', 'strategic', 'claude-opus-4-7', '◆', '#0f172a',
+     'You are APEX, the AI Chief Executive Officer of Dakyworld Hub. You have full authority over platform strategy, revenue optimization, pricing decisions, and executive coordination. Your decisions are data-driven and focused on sustainable growth. You analyze platform metrics, user behavior, and market conditions to make autonomous executive decisions that maximize platform health and revenue.',
+     '{"can_change_pricing": true, "pricing_range_pct": 15, "can_manage_users": true, "can_allocate_budget": true, "budget_limit_usd": 500, "requires_approval": false}'),
+    ('coo', 'NEXUS', 'Chief Operations Officer', 'strategic', 'claude-sonnet-4-6', '⬡', '#1e3a5f',
+     'You are NEXUS, the AI Chief Operations Officer of Dakyworld Hub. You oversee day-to-day platform operations, user experience quality, operational workflows, and inter-department coordination. You ensure seamless platform operation and resolve escalations from the operational tier autonomously.',
+     '{"can_manage_users": true, "can_suspend_accounts": true, "can_process_refunds": true, "refund_limit_usd": 30, "requires_approval": false}'),
+    ('cco', 'VERA', 'Chief Content Officer', 'operational', 'claude-sonnet-4-6', '◈', '#4c1d95',
+     'You are VERA, the AI Chief Content Officer of Dakyworld Hub. You manage all content strategy, template quality standards, AI-generated content guidelines, and the platform content ecosystem. You ensure content quality meets brand standards and drives user engagement metrics.',
+     '{"can_manage_templates": true, "can_feature_content": true, "can_moderate_content": true, "requires_approval": false}'),
+    ('cto', 'FORGE', 'Chief Technology Officer', 'operational', 'claude-sonnet-4-6', '⟁', '#064e3b',
+     'You are FORGE, the AI Chief Technology Officer of Dakyworld Hub. You monitor platform performance, API health, integration stability, and technical infrastructure. You identify bottlenecks, flag issues autonomously, and escalate critical technical decisions to APEX.',
+     '{"can_flag_issues": true, "can_disable_integrations": true, "can_escalate_to_ceo": true, "requires_approval": false}'),
+    ('cro', 'PULSE', 'Chief Revenue Officer', 'operational', 'claude-sonnet-4-6', '◎', '#7f1d1d',
+     'You are PULSE, the AI Chief Revenue Officer of Dakyworld Hub. You optimize revenue streams, analyze conversion funnels, manage subscription retention, and identify growth opportunities. You make data-driven autonomous decisions to maximize ARR and reduce churn.',
+     '{"can_offer_discounts": true, "discount_limit_pct": 20, "can_trigger_campaigns": true, "can_change_pricing": true, "pricing_range_pct": 10, "requires_approval": false}')
+    ON CONFLICT (key) DO NOTHING;
+  `).catch(() => undefined);
+  // ── End Admin Platform Agents ─────────────────────────────────────────────────
+
   // ── Agent Workflow & Tools ────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agent_tools (
@@ -27680,6 +27757,109 @@ app.delete('/api/admin/agent-workflows/:key/:id', async (req: Request, res: Resp
     return res.status(500).json({ success: false, error: e.message });
   }
 });
+
+// ── Admin Platform Agents Routes ──────────────────────────────────────────────
+
+// GET /api/admin/platform-agents — list all admin platform agents
+app.get('/api/admin/platform-agents', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM admin_agents ORDER BY
+         CASE tier WHEN 'strategic' THEN 1 WHEN 'operational' THEN 2 ELSE 3 END,
+         created_at ASC`
+    );
+    return res.json({ success: true, agents: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/admin/platform-agents/notifications — list recent admin notifications
+app.get('/api/admin/platform-agents/notifications', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM admin_notifications ORDER BY created_at DESC LIMIT 50`
+    );
+    return res.json({ success: true, notifications: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/admin/platform-agents/:key/runs — get recent runs for an agent
+app.get('/api/admin/platform-agents/:key/runs', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM admin_agent_runs WHERE agent_key = $1 ORDER BY created_at DESC LIMIT 25`,
+      [req.params.key]
+    );
+    return res.json({ success: true, runs: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/admin/platform-agents/:key — update system_prompt, model, or autonomy_config
+app.put('/api/admin/platform-agents/:key', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  const { system_prompt, model, autonomy_config } = req.body as {
+    system_prompt?: string; model?: string; autonomy_config?: Record<string, any>;
+  };
+  try {
+    const setClauses: string[] = ['updated_at = NOW()'];
+    const vals: any[] = [];
+    let idx = 1;
+    if (system_prompt !== undefined) { setClauses.push(`system_prompt = $${idx++}`); vals.push(system_prompt); }
+    if (model !== undefined)         { setClauses.push(`model = $${idx++}`);         vals.push(model); }
+    if (autonomy_config !== undefined) { setClauses.push(`autonomy_config = $${idx++}`); vals.push(JSON.stringify(autonomy_config)); }
+    vals.push(req.params.key);
+    const { rows } = await dbQuery(
+      `UPDATE admin_agents SET ${setClauses.join(', ')} WHERE key = $${idx} RETURNING *`,
+      vals
+    );
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'Agent not found' });
+    return res.json({ success: true, agent: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/admin/platform-agents/:key/run — trigger a manual run (Phase 1: read-only digest)
+app.post('/api/admin/platform-agents/:key/run', async (req: Request, res: Response) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+  const { key } = req.params;
+  try {
+    const agentRes = await dbQuery(`SELECT * FROM admin_agents WHERE key = $1`, [key]);
+    if (agentRes.rows.length === 0) return res.status(404).json({ success: false, error: 'Agent not found' });
+    const agent = agentRes.rows[0];
+    // Phase 1: canned digest (Phase 2 will invoke real Anthropic call with live platform data)
+    const summary = `[${agent.name} — ${agent.role}] Manual digest triggered at ${new Date().toUTCString()}. Platform status: nominal. All integrations operational. No critical thresholds breached. Monitoring continues on schedule.`;
+    const { rows } = await dbQuery(
+      `INSERT INTO admin_agent_runs (agent_key, trigger, summary, decisions_made, status)
+       VALUES ($1, 'manual', $2, 0, 'completed') RETURNING *`,
+      [key, summary]
+    );
+    await dbQuery(`UPDATE admin_agents SET status = 'idle', last_run_at = NOW() WHERE key = $1`, [key]);
+    return res.json({ success: true, run: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End Admin Platform Agents Routes ─────────────────────────────────────────
 
 // ── Nova workflow helpers ─────────────────────────────────────────────────────
 
