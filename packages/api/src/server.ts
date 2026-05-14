@@ -24976,7 +24976,8 @@ async function pollMagnificTask(
     const status: string = data?.status ?? '';
     onProgress?.(status);
     if (status === 'COMPLETED') {
-      const urls: string[] = data.generated ?? [];
+      // Different Magnific endpoints use different field names for the result URL
+      const urls: string[] = data.generated ?? data.output ?? (data.output_url ? [data.output_url] : []) ?? (data.url ? [data.url] : []);
       return { url: urls[0] ?? null, error: null };
     }
     if (status === 'FAILED') {
@@ -25067,7 +25068,8 @@ async function magnificGenerateImage(
   }
 
   // All models are async — poll for COMPLETED status
-  const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
+  // Mystic and some endpoints use 'id' instead of 'task_id'
+  const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id ?? submitResp.data?.data?.id ?? submitResp.data?.id;
   if (!taskId) {
     console.error('[Magnific] response missing task_id:', JSON.stringify(submitResp.data)?.slice(0, 500));
     return { url: null, taskId: null, error: 'No task_id in Magnific response' };
