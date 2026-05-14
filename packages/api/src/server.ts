@@ -24932,6 +24932,13 @@ app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Re
 
 // ─── Magnific AI Routes ────────────────────────────────────────────────────────
 
+function sanitizeMagnificError(raw: string): string {
+  if (raw.toLowerCase().includes('free trial') || raw.toLowerCase().includes('magnific.com/developers')) {
+    return 'Magnific free trial limit reached — the platform admin needs to upgrade the Magnific account to continue generating videos.';
+  }
+  return raw;
+}
+
 // When MAGNIFIC_PROXY_URL is set, route all Magnific/Freepik calls through
 // a Cloudflare Worker proxy to bypass Akamai IP blocks on Railway.
 const _PROXY = (() => {
@@ -25090,7 +25097,7 @@ async function magnificGenerateImage(
     const msg = isHtml
       ? `Image generation service blocked (HTTP ${submitResp.status}) — API key may be invalid or service is unavailable from this server`
       : (submitResp.data?.message ?? submitResp.data?.error ?? submitResp.data?.detail ?? JSON.stringify(submitResp.data) ?? `Magnific API error`);
-    return { url: null, taskId: null, error: `HTTP ${submitResp.status}: ${msg}` };
+    return { url: null, taskId: null, error: sanitizeMagnificError(`HTTP ${submitResp.status}: ${msg}`) };
   }
 
   // All models are async — poll for COMPLETED status
@@ -27015,7 +27022,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
           const vidSubmit = await magnificPost(vidModelCfg.endpoint, { prompt: videoPrompt }, vidApiKey);
 
           if (vidSubmit.status >= 400) {
-            send({ type: 'error', message: vidSubmit.data?.message ?? `Magnific video error ${vidSubmit.status}` });
+            send({ type: 'error', message: sanitizeMagnificError(vidSubmit.data?.message ?? `Magnific video error ${vidSubmit.status}`) });
             send({ type: 'done' });
             return res.end();
           }
@@ -27144,7 +27151,7 @@ app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
     const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim() }, apiKey);
 
     if (submitResp.status >= 400) {
-      const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
+      const errMsg = sanitizeMagnificError(submitResp.data?.message ?? `Magnific API error ${submitResp.status}`);
       await pool!.query(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
       return res.status(400).json({ error: errMsg });
     }
