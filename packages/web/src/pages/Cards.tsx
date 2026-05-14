@@ -98,9 +98,8 @@ const IMAGE_MODELS: AIModel[] = [
 ];
 
 const VIDEO_MODELS: AIModel[] = [
-  { id: 'happy-horse-i2v',  label: 'Happy Horse',      desc: 'Image-to-video, smooth motion',   creditCost: 20 },
-  { id: 'wan-2-7-t2v',      label: 'WAN 2.7',          desc: 'Text-to-video, cinematic quality', creditCost: 25 },
-  { id: 'kling-3-pro',      label: 'Kling 3 Pro',      desc: 'Premium video, long duration',    creditCost: 35 },
+  { id: 'wan-2-7-t2v',  label: 'WAN 2.7',     desc: 'Text-to-video, cinematic quality', creditCost: 25 },
+  { id: 'kling-3-pro',  label: 'Kling 3 Pro', desc: 'Premium video, long duration',     creditCost: 35 },
 ];
 
 // ── AI Studio tab ─────────────────────────────────────────────────────────────

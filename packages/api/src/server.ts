@@ -25107,7 +25107,7 @@ async function magnificGenerateImage(
 const MAGNIFIC_VIDEO_MODELS: Record<string, { endpoint: string; pollPath: (id: string) => string; credits: number }> = {
   'wan-2-7-t2v':      { endpoint: '/v1/ai/text-to-video/wan-2-7',         pollPath: (id) => `/v1/ai/text-to-video/wan-2-7/${id}`,         credits: 25 },
   'happy-horse-i2v':  { endpoint: '/v1/ai/image-to-video/happy-horse-1',  pollPath: (id) => `/v1/ai/image-to-video/happy-horse-1/${id}`,  credits: 20 },
-  'kling-3-pro':      { endpoint: '/v1/ai/video/kling-v3-pro',            pollPath: (id) => `/v1/ai/video/kling-v3/${id}`,                credits: 35 },
+  'kling-3-pro':      { endpoint: '/v1/ai/video/kling-v3-pro',            pollPath: (id) => `/v1/ai/video/kling-v3-pro/${id}`,            credits: 35 },
 };
 
 const ASPECT_RATIO_MAP: Record<string, string> = {
@@ -27012,7 +27012,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
           }
 
           send({ type: 'step_progress', step_id: step.id, message: 'Submitting video to Magnific…' });
-          const vidSubmit = await magnificPost(vidModelCfg.endpoint, { prompt: videoPrompt, aspect_ratio: 'widescreen_16_9' }, vidApiKey);
+          const vidSubmit = await magnificPost(vidModelCfg.endpoint, { prompt: videoPrompt }, vidApiKey);
 
           if (vidSubmit.status >= 400) {
             send({ type: 'error', message: vidSubmit.data?.message ?? `Magnific video error ${vidSubmit.status}` });
@@ -27020,7 +27020,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
             return res.end();
           }
 
-          const vidTaskId: string = vidSubmit.data?.data?.task_id;
+          const vidTaskId: string = vidSubmit.data?.data?.task_id ?? vidSubmit.data?.task_id ?? vidSubmit.data?.data?.id ?? vidSubmit.data?.id;
           if (!vidTaskId) {
             send({ type: 'error', message: 'No task_id returned from Magnific for video' });
             send({ type: 'done' });
@@ -27141,8 +27141,7 @@ app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
   ).catch(() => undefined);
 
   try {
-    const magnificAspect = ASPECT_RATIO_MAP[aspect_ratio] ?? 'widescreen_16_9';
-    const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim(), aspect_ratio: magnificAspect }, apiKey);
+    const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim() }, apiKey);
 
     if (submitResp.status >= 400) {
       const errMsg = submitResp.data?.message ?? `Magnific API error ${submitResp.status}`;
@@ -27150,7 +27149,7 @@ app.post('/api/nova/generate-video', async (req: Request, res: Response) => {
       return res.status(400).json({ error: errMsg });
     }
 
-    const taskId: string = submitResp.data?.data?.task_id;
+    const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id ?? submitResp.data?.data?.id ?? submitResp.data?.id;
     if (!taskId) throw new Error('No task_id returned from Magnific');
 
     await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
