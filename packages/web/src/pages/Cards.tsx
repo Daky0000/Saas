@@ -4,7 +4,7 @@ import {
   CheckCircle2, Loader2, RefreshCw, ChevronDown, Download, Edit3,
   AlertCircle, Layers, Trash2, Clock, Image, LayoutTemplate,
   Heart, Eye, Copy, Play, X, Video, Maximize2,
-  RotateCcw, Lock, Share2, Languages,
+  RotateCcw, Lock, Share2, Languages, Mic,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
 import { getApiBaseUrl } from '../utils/apiBase';
@@ -66,7 +66,14 @@ function CreditBadge({ refreshKey = 0 }: { refreshKey?: number }) {
 
 // ── Model definitions ─────────────────────────────────────────────────────────
 
-type GenMode = 'image' | 'video';
+type GenMode = 'image' | 'video' | 'audio';
+
+const TTS_MODELS = [
+  { id: 'tts-1',           label: 'TTS-1',           creditCost: 2, maxChars: 4096, desc: 'Fast, low-latency'      },
+  { id: 'gpt-4o-mini-tts', label: 'GPT-4o Mini TTS', creditCost: 3, maxChars: 4096, desc: 'Natural, expressive'    },
+  { id: 'tts-1-hd',        label: 'TTS-1 HD',        creditCost: 4, maxChars: 4096, desc: 'High-definition audio'  },
+];
+const TTS_VOICES = ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'] as const;
 
 interface AIModel {
   id: string;
@@ -77,7 +84,7 @@ interface AIModel {
   badge?: string;
 }
 
-type ImageProvider = 'magnific' | 'freepik' | 'kling' | 'google';
+type ImageProvider = 'magnific' | 'freepik' | 'kling' | 'google' | 'openai';
 
 const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
   magnific: [
@@ -110,10 +117,16 @@ const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
     { id: 'google-gemini-nano-2',   label: 'Nano Banana 2',      desc: 'Creative image generation',        creditCost: 5,  maxChars: 2000, badge: 'NEW' },
     { id: 'google-gemini-nano-pro', label: 'Nano Banana Pro',    desc: 'Pro-grade creative generation',    creditCost: 8,  maxChars: 2000 },
   ],
+  openai: [
+    { id: 'dall-e-2',    label: 'DALL·E 2',    desc: 'Fast, affordable generation',          creditCost: 3, maxChars: 1000 },
+    { id: 'dall-e-3',    label: 'DALL·E 3',    desc: 'High quality — vivid or natural style', creditCost: 6, maxChars: 4000, badge: 'Popular' },
+    { id: 'gpt-image-1', label: 'GPT Image 1', desc: 'Best instruction-following, latest',    creditCost: 8, maxChars: 4000, badge: 'NEW' },
+  ],
 };
 
 const KLING_IMAGE_MODEL_IDS  = new Set(IMAGE_MODELS_BY_PROVIDER.kling.map((m) => m.id));
 const GOOGLE_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.google.map((m) => m.id));
+const OPENAI_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.openai.map((m) => m.id));
 
 type VideoProvider = 'magnific' | 'kling' | 'google';
 
@@ -168,6 +181,14 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
 
   const supportsLastFrame = videoProvider === 'kling' && KLING_LAST_FRAME_MODELS.has(selectedVideoModel.id);
 
+  // Audio (TTS) state
+  const [selectedTTSModel, setSelectedTTSModel] = useState(TTS_MODELS[0]);
+  const [ttsVoice, setTtsVoice]   = useState<typeof TTS_VOICES[number]>('nova');
+  const [ttsPrompt, setTtsPrompt] = useState('');
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const [generatingTTS, setGeneratingTTS] = useState(false);
+  const [ttsError, setTtsError]   = useState<string | null>(null);
+
   const readFileAsDataURL = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -176,7 +197,27 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
       r.readAsDataURL(file);
     });
 
-
+  const generateTTS = async () => {
+    if (!ttsPrompt.trim()) return;
+    setGeneratingTTS(true);
+    setTtsAudioUrl(null);
+    setTtsError(null);
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/openai/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ text: ttsPrompt.trim(), model: selectedTTSModel.id, voice: ttsVoice }),
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error ?? 'TTS generation failed');
+      setTtsAudioUrl(d.audio_url ?? null);
+      onCreditUsed?.();
+    } catch (e: any) {
+      setTtsError(e.message ?? 'TTS generation failed');
+    } finally {
+      setGeneratingTTS(false);
+    }
+  };
 
   const generateImage = async () => {
     if (!prompt.trim()) return;
@@ -187,8 +228,10 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     try {
       const isKlingImage  = KLING_IMAGE_MODEL_IDS.has(selectedImageModel.id);
       const isGoogleImage = GOOGLE_IMAGE_MODEL_IDS.has(selectedImageModel.id);
-      const imageEndpoint = isKlingImage ? '/api/kling/generate-image'
+      const isOpenAIImage = OPENAI_IMAGE_MODEL_IDS.has(selectedImageModel.id);
+      const imageEndpoint = isKlingImage  ? '/api/kling/generate-image'
                           : isGoogleImage ? '/api/google/generate-image'
+                          : isOpenAIImage ? '/api/openai/generate-image'
                           : '/api/nova/generate-image';
       const res = await fetch(`${getApiBaseUrl()}${imageEndpoint}`, {
         method: 'POST',
@@ -258,7 +301,11 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
 
         {/* Mode toggle */}
         <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-5">
-          {([{ id: 'image' as GenMode, label: 'Image', icon: <Image size={13} /> }, { id: 'video' as GenMode, label: 'Video', icon: <Video size={13} /> }]).map((m) => (
+          {([
+            { id: 'image' as GenMode, label: 'Image', icon: <Image size={13} /> },
+            { id: 'video' as GenMode, label: 'Video', icon: <Video size={13} /> },
+            { id: 'audio' as GenMode, label: 'Audio', icon: <Mic size={13} /> },
+          ]).map((m) => (
             <button key={m.id} type="button" onClick={() => setGenMode(m.id)}
               className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${genMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
               {m.icon} {m.label}
@@ -272,12 +319,13 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
             <>
               {/* Provider tabs */}
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
-              <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
+              <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
                 {([
                   { id: 'magnific' as ImageProvider, label: 'Magnific'  },
                   { id: 'freepik'  as ImageProvider, label: 'Freepik'   },
                   { id: 'kling'    as ImageProvider, label: 'Kling AI'  },
                   { id: 'google'   as ImageProvider, label: 'Google AI' },
+                  { id: 'openai'   as ImageProvider, label: 'OpenAI'    },
                 ] as const).map((p) => (
                   <button key={p.id} type="button"
                     onClick={() => {
@@ -305,7 +353,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 ))}
               </div>
             </>
-          ) : (
+          ) : genMode === 'video' ? (
             <>
               {/* Provider tabs */}
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
@@ -344,7 +392,34 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 ))}
               </div>
             </>
-          )}
+          ) : genMode === 'audio' ? (
+            <>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Model</label>
+              <div className="flex flex-wrap gap-2 mb-5">
+                {TTS_MODELS.map((m) => (
+                  <button key={m.id} type="button" onClick={() => setSelectedTTSModel(m)}
+                    className={`flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
+                      selectedTTSModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}>
+                    <span className="text-xs font-bold">{m.label}</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
+                    <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                  </button>
+                ))}
+              </div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Voice</label>
+              <div className="flex flex-wrap gap-2">
+                {TTS_VOICES.map((v) => (
+                  <button key={v} type="button" onClick={() => setTtsVoice(v)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition ${
+                      ttsVoice === v ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
         </div>
 
         {/* Image form */}
@@ -374,7 +449,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               </div>
             )}
           </div>
-        ) : (
+        ) : genMode === 'video' ? (
           /* Video form */
           <div className="space-y-3">
             {/* Frame attachments — Kling and Google Veo */}
@@ -468,7 +543,34 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               </div>
             )}
           </div>
-        )}
+        ) : genMode === 'audio' ? (
+          /* Audio / TTS form */
+          <div className="space-y-3">
+            <div className="relative">
+              <textarea
+                value={ttsPrompt}
+                onChange={(e) => setTtsPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !generatingTTS) generateTTS(); }}
+                rows={5}
+                placeholder="Enter the text you want to convert to speech…"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+              />
+              <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${ttsPrompt.length > selectedTTSModel.maxChars * 0.9 ? 'text-rose-500' : 'text-slate-400'}`}>
+                {ttsPrompt.length}/{selectedTTSModel.maxChars}
+              </span>
+            </div>
+            <button type="button" disabled={!ttsPrompt.trim() || generatingTTS} onClick={generateTTS}
+              className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
+              {generatingTTS ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Mic size={14} /> Generate Speech ✦{selectedTTSModel.creditCost}</>}
+            </button>
+            {ttsError && (
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                <AlertCircle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-red-700">{ttsError}</p>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* Generating overlay */}
@@ -520,6 +622,27 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
               <Download size={12} /> Download
             </a>
+          </div>
+        </div>
+      )}
+
+      {/* Audio result */}
+      {ttsAudioUrl && !generatingTTS && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+            <Mic size={15} className="text-[#5b6cf9]" /> Generated Speech
+            <span className="ml-auto text-xs font-normal text-slate-400 capitalize">{ttsVoice} · {selectedTTSModel.label}</span>
+          </div>
+          <audio controls src={ttsAudioUrl} className="w-full" />
+          <div className="flex items-center gap-2">
+            <a href={ttsAudioUrl} download="speech.mp3"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+              <Download size={13} /> Download MP3
+            </a>
+            <button type="button" onClick={() => { setTtsAudioUrl(null); setTtsError(null); }}
+              className="ml-auto flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+              <RefreshCw size={13} /> New Audio
+            </button>
           </div>
         </div>
       )}
