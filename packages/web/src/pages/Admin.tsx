@@ -1,4 +1,4 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, KeyRound, Menu, Network, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, Menu, Network, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -19,6 +19,9 @@ import AdminMagnific from '../components/admin/AdminMagnific';
 import AdminKling from '../components/admin/AdminKling';
 import AdminGoogle from '../components/admin/AdminGoogle';
 import AdminOpenAI from '../components/admin/AdminOpenAI';
+import AdminAuditLog from '../components/admin/AdminAuditLog';
+import AdminPlatformSettings from '../components/admin/AdminPlatformSettings';
+import AdminHiggsfield from '../components/admin/AdminHiggsfield';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -50,7 +53,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'magnific'
     | 'kling'
     | 'google'
-    | 'openai';
+    | 'openai'
+    | 'higgsfield';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -78,6 +82,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     kling: '/admin/kling',
     google: '/admin/google',
     openai: '/admin/openai',
+    higgsfield: '/admin/higgsfield',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -88,7 +93,7 @@ const Admin = ({ currentUser }: AdminProps) => {
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => ['/admin/ai','/admin/learn','/admin/magnific','/admin/kling','/admin/google','/admin/openai'].some(p => window.location.pathname.startsWith(p)));
+  const [aiOpen, setAiOpen] = useState(() => ['/admin/ai','/admin/learn','/admin/magnific','/admin/kling','/admin/google','/admin/openai','/admin/higgsfield'].some(p => window.location.pathname.startsWith(p)));
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const currentAdminRole = 'Admin' as const;
@@ -108,8 +113,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
-    { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: false },
-    { id: 'audit', label: 'Audit Log', icon: Waypoints, active: false },
+    { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: true },
+    { id: 'audit', label: 'Audit Log', icon: Waypoints, active: true },
   ] as { id: AdminTab; label: string; icon: React.ElementType; active: boolean; tourId?: string }[];
 
   const pagesItems: { id: AdminTab; label: string }[] = [
@@ -129,10 +134,11 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'kling', label: 'Kling AI', icon: Clapperboard },
     { id: 'google', label: 'Google AI', icon: Globe },
     { id: 'openai', label: 'OpenAI',    icon: Bot   },
+    { id: 'higgsfield', label: 'Higgsfield AI', icon: Film },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || ['learn','magnific','kling','google','openai'].includes(activeTab);
+  const isAIActive = activeTab.startsWith('ai-') || ['learn','magnific','kling','google','openai','higgsfield'].includes(activeTab);
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -141,7 +147,7 @@ const Admin = ({ currentUser }: AdminProps) => {
       if (tab) {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
-        setAiOpen(tab.startsWith('ai-') || tab === 'learn');
+        setAiOpen(tab.startsWith('ai-') || ['learn','magnific','kling','google','openai','higgsfield'].includes(tab));
         setApifyOpen(tab === 'apify');
       }
     };
@@ -415,16 +421,9 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'kling' && <AdminKling />}
             {activeTab === 'google' && <AdminGoogle />}
             {activeTab === 'openai' && <AdminOpenAI />}
-            {activeTab === 'settings' && (
-              <div className="rounded-2xl border border-slate-200 bg-white p-8">
-                <p className="text-slate-600">Platform Settings coming soon...</p>
-              </div>
-            )}
-            {activeTab === 'audit' && (
-              <div className="rounded-2xl border border-slate-200 bg-white p-8">
-                <p className="text-slate-600">Audit Log coming soon...</p>
-              </div>
-            )}
+            {activeTab === 'settings' && <AdminPlatformSettings />}
+            {activeTab === 'audit' && <AdminAuditLog />}
+            {activeTab === 'higgsfield' && <AdminHiggsfield />}
             {activeTab.startsWith('pages-') && (
               <AdminPagesManagement activePage={activeTab} />
             )}

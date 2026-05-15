@@ -494,7 +494,7 @@ function AutomationsTab() {
   const [automations, setAutomations] = useState<MailingAutomation[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', trigger_type: 'signup' });
+  const [form, setForm] = useState({ name: '', trigger_type: 'signup', email_subject: '', email_body: '' });
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -505,9 +505,18 @@ function AutomationsTab() {
   useEffect(() => { void load(); }, []);
 
   const handleAdd = async () => {
-    if (!form.name) return;
+    if (!form.name || !form.email_subject) return;
     setSaving(true);
-    try { await mailingService.createAutomation(form); setForm({ name: '', trigger_type: 'signup' }); setShowAdd(false); await load(); }
+    try {
+      await mailingService.createAutomation({
+        name: form.name,
+        trigger_type: form.trigger_type,
+        actions: [{ subject: form.email_subject, content: form.email_body }],
+      });
+      setForm({ name: '', trigger_type: 'signup', email_subject: '', email_body: '' });
+      setShowAdd(false);
+      await load();
+    }
     catch { /* silent */ } finally { setSaving(false); }
   };
 
@@ -532,20 +541,31 @@ function AutomationsTab() {
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <span className="text-sm font-bold">New Automation</span>
               <button onClick={() => setShowAdd(false)}><X size={18} className="text-slate-400" /></button>
             </div>
             <div className="space-y-3 px-5 py-4">
-              <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="Automation name *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
-              <select value={form.trigger_type} onChange={e => setForm(f => ({...f, trigger_type: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
-                {Object.entries(TRIGGER_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-500">Automation name *</label>
+                <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="e.g. Welcome Email" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-500">Trigger</label>
+                <select value={form.trigger_type} onChange={e => setForm(f => ({...f, trigger_type: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
+                  {Object.entries(TRIGGER_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+              <div className="border-t border-slate-100 pt-3">
+                <p className="mb-2 text-xs font-semibold text-slate-500">Email to send</p>
+                <input value={form.email_subject} onChange={e => setForm(f => ({...f, email_subject: e.target.value}))} placeholder="Subject line *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 mb-2" />
+                <textarea value={form.email_body} onChange={e => setForm(f => ({...f, email_body: e.target.value}))} placeholder="Email body (HTML or plain text)" rows={4} className="w-full resize-none rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
+              </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
               <button onClick={() => setShowAdd(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
-              <button onClick={() => void handleAdd()} disabled={saving || !form.name} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
+              <button onClick={() => void handleAdd()} disabled={saving || !form.name || !form.email_subject} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : 'Create'}
               </button>
             </div>
@@ -567,6 +587,9 @@ function AutomationsTab() {
               <div>
                 <div className="text-sm font-bold text-slate-900">{a.name}</div>
                 <div className="text-xs text-slate-500 mt-0.5">Trigger: {TRIGGER_LABELS[a.trigger_type] || a.trigger_type}</div>
+                {Array.isArray(a.actions) && (a.actions as any[])[0]?.subject && (
+                  <div className="text-xs text-slate-400 mt-0.5 truncate">Email: {(a.actions as any[])[0].subject}</div>
+                )}
               </div>
               <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[a.status] || 'bg-slate-100 text-slate-600'}`}>{a.status}</span>
             </div>

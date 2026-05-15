@@ -9094,6 +9094,41 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
   }
 });
 
+// GET /api/admin/audit-logs — recent audit log entries (admin only)
+app.get('/api/admin/audit-logs', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const limit = Math.min(Number(req.query.limit ?? 200), 500);
+    const offset = Number(req.query.offset ?? 0);
+    const type = String(req.query.type ?? '').trim(); // 'audit' | 'integration' | ''
+    if (type === 'integration') {
+      const { rows, rowCount } = await dbQuery(
+        `SELECT il.id, il.event_type, il.status, il.response, il.created_at,
+                i.slug AS integration, u.email AS user_email
+         FROM integration_logs il
+         LEFT JOIN integrations i ON i.id = il.integration_id
+         LEFT JOIN users u ON u.id = il.user_id
+         ORDER BY il.created_at DESC LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+      return res.json({ success: true, logs: rows, total: rowCount });
+    }
+    // Default: content audit logs
+    const { rows, rowCount } = await dbQuery(
+      `SELECT al.id, al.action, al.post_ids, al.changes, al.created_at,
+              u.email AS user_email, u.full_name AS user_name
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       ORDER BY al.created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    return res.json({ success: true, logs: rows, total: rowCount });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ─── Hubtel Payment Routes ─────────────────────────────────────────────────────
 
 async function getHubtelConfig(): Promise<{ clientId: string; clientSecret: string; merchantAccountNumber: string } | null> {
@@ -27809,6 +27844,53 @@ async function runDueDateAlerts() {
   }
 }
 
+// ── Scheduled post auto-publisher ─────────────────────────────────────────────
+// Runs every 2 minutes. Finds posts whose scheduled_at has passed, promotes them
+// to published, fires social automation + workflow triggers for each.
+async function publishDuePosts() {
+  if (!hasDatabase()) return;
+  try {
+    const { rows } = await pool!.query<{ id: string; user_id: string; title: string }>(
+      `UPDATE blog_posts
+       SET status = 'published', published_at = NOW(), updated_at = NOW()
+       WHERE status = 'scheduled'
+         AND scheduled_at IS NOT NULL
+         AND scheduled_at <= NOW()
+       RETURNING id, user_id, title`
+    );
+    if (!rows.length) return;
+
+    for (const post of rows) {
+      // Fetch full post for social automation + workflow
+      const { rows: full } = await pool!.query(
+        `SELECT p.*,
+          ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id = t.id WHERE pt.post_id = p.id) AS tag_names
+         FROM blog_posts p WHERE p.id = $1`,
+        [post.id]
+      ).catch(() => ({ rows: [] }));
+
+      if (full.length) {
+        await queueSocialAutomationForPublishedPost(post.user_id, full[0]).catch(() => undefined);
+        void fireWorkflowTriggers(post.user_id, 'post_published', full[0]);
+      }
+
+      await dbQuery(
+        `INSERT INTO notifications (user_id, type, title, message, data)
+         VALUES ($1, 'post', 'Post published', $2, $3)`,
+        [
+          post.user_id,
+          `"${post.title}" was automatically published as scheduled.`,
+          JSON.stringify({ post_id: post.id }),
+        ]
+      ).catch(() => undefined);
+    }
+
+    logger.info({ count: rows.length }, 'scheduled_posts_published');
+  } catch (err) {
+    logger.error({ err }, 'scheduled_posts_publish_error');
+  }
+}
+
 // ─── Freepik Integration (api.freepik.com — not Akamai-blocked unlike api.magnific.com) ──
 // Freepik rebranded to Magnific.com but api.freepik.com still serves the mystic endpoint
 // and is NOT blocked by Akamai on Railway IPs. Used as fallback when Magnific is blocked.
@@ -30982,6 +31064,9 @@ if (config.nodeEnv !== 'test') {
     // Run scheduled agent auto-runs every hour
     void runScheduledAgents();
     setInterval(() => void runScheduledAgents(), 60 * 60 * 1000);
+    // Publish due scheduled posts every 2 minutes
+    void publishDuePosts();
+    setInterval(() => void publishDuePosts(), 2 * 60 * 1000);
   });
 }
 
