@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle, ExternalLink, Loader2, Power, SlidersHorizontal, TestTube2, X } from 'lucide-react';
+import { CheckCircle, ExternalLink, Loader2, Power, Send, SlidersHorizontal, TestTube2, X } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 import { PlatformLogo } from '../PlatformLogo';
 
@@ -164,6 +164,32 @@ const PLATFORMS: PlatformDef[] = [
     docsUrl: 'https://stripe.com/docs/api',
     redirectHint: 'Webhook endpoint: POST /webhooks/stripe on your backend URL. Register it in Stripe Dashboard → Developers → Webhooks.',
   },
+  {
+    id: 'resend',
+    name: 'Resend (Transactional Email)',
+    description: 'API key and sender details for all outgoing emails — campaigns, automations, password resets, and notifications.',
+    fields: [
+      { id: 'apiKey', label: 'API Key', placeholder: 're_...', type: 'password', helpText: 'From resend.com → API Keys. Create a key with full access.' },
+      { id: 'fromEmail', label: 'From Email', placeholder: 'noreply@yourdomain.com', type: 'text', helpText: 'Must be a verified domain or address in your Resend account.' },
+      { id: 'fromName', label: 'From Name', placeholder: 'Your App Name', type: 'text', helpText: 'Display name shown to recipients in the From field.' },
+    ],
+    docsUrl: 'https://resend.com/docs',
+    redirectHint: 'Verify your sending domain in the Resend dashboard before going live.',
+  },
+  {
+    id: 'smtp',
+    name: 'SMTP (Email Fallback)',
+    description: 'SMTP server details as a fallback email provider if Resend is not configured.',
+    fields: [
+      { id: 'host', label: 'SMTP Host', placeholder: 'smtp.mailgun.org', type: 'text', helpText: 'Hostname of your SMTP server.' },
+      { id: 'port', label: 'Port', placeholder: '587', type: 'text', helpText: 'Common ports: 587 (STARTTLS), 465 (SSL), 25 (unencrypted).' },
+      { id: 'username', label: 'Username', placeholder: 'postmaster@yourdomain.com', type: 'text', helpText: 'SMTP authentication username.' },
+      { id: 'password', label: 'Password', placeholder: '', type: 'password', helpText: 'SMTP authentication password. Keep this secret.' },
+      { id: 'fromEmail', label: 'From Email', placeholder: 'noreply@yourdomain.com', type: 'text', helpText: 'Default sender address for outgoing mail.' },
+    ],
+    docsUrl: 'https://en.wikipedia.org/wiki/SMTP',
+    redirectHint: 'SMTP is used only when no Resend API key is configured.',
+  },
 ];
 
 export default function AdminIntegrations() {
@@ -177,6 +203,10 @@ export default function AdminIntegrations() {
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [testMessage, setTestMessage] = useState<string | null>(null);
+
+  const [resendTestTo, setResendTestTo] = useState('');
+  const [resendTesting, setResendTesting] = useState(false);
+  const [resendTestResult, setResendTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const activeDef = useMemo(() => PLATFORMS.find((p) => p.id === activeId) ?? null, [activeId]);
 
@@ -209,6 +239,8 @@ export default function AdminIntegrations() {
     setActiveId(id);
     setSaveError(null);
     setTestMessage(null);
+    setResendTestTo('');
+    setResendTestResult(null);
     try {
       const def = PLATFORMS.find((p) => p.id === id) ?? null;
       const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${encodeURIComponent(id)}`, { headers: authHeaders() });
@@ -283,6 +315,25 @@ export default function AdminIntegrations() {
       setTestMessage(e instanceof Error ? e.message : 'Test failed');
     } finally {
       setTesting(null);
+    }
+  };
+
+  const sendResendTest = async () => {
+    if (!resendTestTo.trim()) return;
+    setResendTesting(true);
+    setResendTestResult(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/resend/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ to: resendTestTo.trim() }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      setResendTestResult({ ok: data.success === true, msg: data.message ?? data.error ?? 'Unknown response' });
+    } catch {
+      setResendTestResult({ ok: false, msg: 'Request failed' });
+    } finally {
+      setResendTesting(false);
     }
   };
 
@@ -446,6 +497,35 @@ export default function AdminIntegrations() {
               )}
 
               {saveError ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{saveError}</div> : null}
+
+              {activeDef.id === 'resend' && (
+                <div className="mt-5 border-t border-slate-100 pt-4 space-y-2">
+                  <p className="text-xs font-semibold text-slate-500">Send a test email</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      value={resendTestTo}
+                      onChange={(e) => setResendTestTo(e.target.value)}
+                      placeholder="your@email.com"
+                      className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void sendResendTest()}
+                      disabled={resendTesting || !resendTestTo.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {resendTesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                      Test
+                    </button>
+                  </div>
+                  {resendTestResult && (
+                    <p className={`text-xs font-medium ${resendTestResult.ok ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {resendTestResult.ok ? '✓' : '✗'} {resendTestResult.msg}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="mt-5 flex items-center justify-between">
                 <div className="text-xs text-slate-500">

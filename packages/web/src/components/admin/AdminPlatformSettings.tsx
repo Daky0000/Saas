@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Loader2, Save, Send } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, Save } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
 type PlatformConfig = {
@@ -17,23 +17,6 @@ function authHeaders() {
 }
 
 const PLATFORM_FIELDS: Record<string, { key: string; label: string; secret?: boolean; placeholder?: string }[]> = {
-  resend: [
-    { key: 'apiKey', label: 'API Key', secret: true, placeholder: 're_...' },
-    { key: 'fromEmail', label: 'From Email', placeholder: 'noreply@yourdomain.com' },
-    { key: 'fromName', label: 'From Name', placeholder: 'Your App Name' },
-  ],
-  stripe: [
-    { key: 'secretKey', label: 'Secret Key', secret: true, placeholder: 'sk_live_...' },
-    { key: 'publishableKey', label: 'Publishable Key', placeholder: 'pk_live_...' },
-    { key: 'webhookSecret', label: 'Webhook Secret', secret: true, placeholder: 'whsec_...' },
-  ],
-  smtp: [
-    { key: 'host', label: 'SMTP Host', placeholder: 'smtp.mailgun.org' },
-    { key: 'port', label: 'Port', placeholder: '587' },
-    { key: 'username', label: 'Username', placeholder: 'postmaster@...' },
-    { key: 'password', label: 'Password', secret: true },
-    { key: 'fromEmail', label: 'From Email' },
-  ],
   app: [
     { key: 'appName', label: 'App Name', placeholder: 'My SaaS' },
     { key: 'appUrl', label: 'App URL', placeholder: 'https://myapp.com' },
@@ -42,64 +25,9 @@ const PLATFORM_FIELDS: Record<string, { key: string; label: string; secret?: boo
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
-  resend: 'Resend (Email)',
-  stripe: 'Stripe (Payments)',
-  smtp: 'SMTP (Email fallback)',
   app: 'App Settings',
 };
 
-function ResendTestButton() {
-  const [to, setTo] = useState('');
-  const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  const send = async () => {
-    if (!to.trim()) return;
-    setSending(true);
-    setResult(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/resend/test`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ to: to.trim() }),
-      });
-      const data = await res.json();
-      setResult({ ok: data.success, msg: data.message ?? data.error ?? 'Unknown response' });
-    } catch {
-      setResult({ ok: false, msg: 'Request failed' });
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="border-t border-slate-100 pt-4 space-y-2">
-      <p className="text-xs font-semibold text-slate-500">Send a test email</p>
-      <div className="flex gap-2">
-        <input
-          type="email"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          placeholder="your@email.com"
-          className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-        />
-        <button
-          onClick={() => void send()}
-          disabled={sending || !to.trim()}
-          className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-          Test
-        </button>
-      </div>
-      {result && (
-        <p className={`text-xs font-medium ${result.ok ? 'text-emerald-600' : 'text-red-500'}`}>
-          {result.ok ? '✓' : '✗'} {result.msg}
-        </p>
-      )}
-    </div>
-  );
-}
 
 function PlatformCard({
   config,
@@ -189,8 +117,6 @@ function PlatformCard({
             </button>
           </div>
 
-          {/* Resend-only: test email button */}
-          {config.platform === 'resend' && <ResendTestButton />}
         </div>
       )}
     </div>
@@ -209,7 +135,7 @@ export default function AdminPlatformSettings() {
       });
       const data = await res.json();
       if (data.success) {
-        const known = ['app', 'resend', 'stripe', 'smtp'];
+        const known = ['app'];
         const existing = new Map<string, PlatformConfig>(
           (data.configs as PlatformConfig[]).map((c) => [c.platform, c])
         );
@@ -249,9 +175,10 @@ export default function AdminPlatformSettings() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-black tracking-tight text-slate-950">Platform Settings</h2>
+        <h2 className="text-lg font-black tracking-tight text-slate-950">App Settings</h2>
         <p className="text-sm text-slate-500">
-          Configure platform-level integrations: email delivery, payments, and app metadata.
+          Global app metadata — name, URL, and support email used across emails and notifications.
+          Email and payment integrations are configured under <strong>Integrations</strong>.
         </p>
       </div>
 
