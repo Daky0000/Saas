@@ -9095,8 +9095,13 @@ app.post('/api/admin/platform-configs/resend/test', async (req: Request, res: Re
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const { apiKey: resendKey, fromEmail, fromName } = await getResendConfig();
-    if (!resendKey) return res.status(400).json({ success: false, error: 'No Resend API key configured — save your key in Platform Settings first' });
+    // Allow caller to pass credentials directly (e.g. before saving); fall back to DB/env
+    const saved = await getResendConfig();
+    const resendKey  = String(req.body.apiKey    || saved.apiKey    || '').trim();
+    const fromEmail  = String(req.body.fromEmail || saved.fromEmail || '').trim();
+    const fromName   = String(req.body.fromName  || saved.fromName  || '').trim();
+    if (!resendKey) return res.status(400).json({ success: false, error: 'No Resend API key configured — save your key first' });
+    if (!fromEmail) return res.status(400).json({ success: false, error: 'From Email is required — enter it in the form above' });
     const toEmail = String(req.body.to || '').trim();
     if (!toEmail) return res.status(400).json({ success: false, error: 'Recipient email required' });
     const resend = new Resend(resendKey);
@@ -12405,6 +12410,26 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
         });
         if (resp.status === 200 && resp.data?.data?.viewer) return res.json({ success: true, message: `Connected as ${resp.data.data.viewer.name}` });
         return res.json({ success: false, error: 'Invalid Linear API key' });
+      }
+      case 'resend': {
+        const { apiKey } = cfg;
+        if (!apiKey) return res.json({ success: false, error: 'No Resend API key saved — configure it first' });
+        const resp = await axios.get('https://api.resend.com/domains', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          validateStatus: () => true,
+          timeout: 8000,
+        });
+        if (resp.status === 200) {
+          const domainCount = resp.data?.data?.length ?? 0;
+          return res.json({ success: true, message: `Resend API key valid${domainCount > 0 ? ` — ${domainCount} domain(s) registered` : ' — no verified domains yet'}` });
+        }
+        if (resp.status === 401 || resp.status === 403) return res.json({ success: false, error: 'Invalid Resend API key' });
+        return res.json({ success: false, error: `Resend returned status ${resp.status}` });
+      }
+      case 'smtp': {
+        const { host, port } = cfg;
+        if (!host || !port) return res.json({ success: false, error: 'SMTP host and port are required' });
+        return res.json({ success: true, message: 'SMTP credentials saved. Send a test email to verify delivery.' });
       }
       default: {
         // For OAuth platforms (instagram, facebook, etc.) — check credentials are set

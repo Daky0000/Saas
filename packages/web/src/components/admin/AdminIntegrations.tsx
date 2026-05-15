@@ -326,7 +326,12 @@ export default function AdminIntegrations() {
       const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/resend/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ to: resendTestTo.trim() }),
+        body: JSON.stringify({
+          to: resendTestTo.trim(),
+          apiKey: form.apiKey || undefined,
+          fromEmail: form.fromEmail || undefined,
+          fromName: form.fromName || undefined,
+        }),
       });
       const data = await res.json().catch(() => ({} as any));
       setResendTestResult({ ok: data.success === true, msg: data.message ?? data.error ?? 'Unknown response' });
