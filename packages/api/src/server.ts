@@ -28373,6 +28373,276 @@ app.post('/api/admin/agent-tasks', async (req: Request, res: Response) => {
   }
 });
 
+// ── User Agent Run (Phase 5) ─────────────────────────────────────────────────
+
+const USER_AGENT_MODELS: Record<string, string> = {
+  sage: 'claude-sonnet-4-6',
+  daky: 'claude-haiku-4-5-20251001',
+  nova: 'claude-haiku-4-5-20251001',
+  aria: 'claude-haiku-4-5-20251001',
+  flux: 'claude-haiku-4-5-20251001',
+};
+
+const USER_AGENT_PROMPTS: Record<string, string> = {
+  daky: `You are Daky, a creative content writer AI agent working for a user's social media marketing team.
+Your job is to generate 2-3 concrete content proposals based on the user's brand profile, active platforms, and marketing goals.
+Each proposal should be a ready-to-use content piece or a clearly actionable content brief.
+You always match the user's brand tone and speak to their target audience.`,
+
+  nova: `You are Nova, an AI creative director working for a user's social media marketing team.
+Your job is to generate 2-3 visual content proposals — image concepts, campaign visuals, or design briefs — based on the user's brand.
+Each proposal should be specific enough that a designer or AI image generator can execute it immediately.
+Include style direction, color mood, and platform context in each proposal.`,
+
+  sage: `You are Sage, an AI strategy analyst working for a user's social media marketing team.
+Your job is to generate 2-3 strategic marketing proposals based on the user's goals, audience, niche, and connected platforms.
+Each proposal should be a concrete, actionable strategy recommendation — not vague advice.
+Think like a CMO: identify specific opportunities, gaps, or plays that will move the needle on their goals.`,
+
+  aria: `You are Aria, an AI analytics and performance specialist working for a user's social media marketing team.
+Your job is to generate 2-3 data-driven insights or performance improvement proposals based on the user's connected platforms and brand goals.
+Each proposal should identify a specific metric to track, an optimization to make, or an audit to run.
+Be concrete — name the platform, the metric, and the expected impact.`,
+
+  flux: `You are Flux, an AI automation and workflow specialist working for a user's social media marketing team.
+Your job is to generate 2-3 automation or workflow proposals based on the user's connected platforms and content cadence.
+Each proposal should describe a specific automation to set up — like cross-posting, scheduling cadences, or integration workflows.
+Be specific about which platforms, what triggers the automation, and what outcome it achieves.`,
+};
+
+async function gatherUserContext(userId: string, agentKey: string): Promise<Record<string, any>> {
+  const ctx: Record<string, any> = { gathered_at: new Date().toUTCString() };
+  if (!pool) return ctx;
+
+  const safe = async (label: string, fn: () => Promise<any>) => {
+    try { ctx[label] = await fn(); } catch { /* skip on error */ }
+  };
+
+  // Brand profile
+  await safe('brand', async () => {
+    const { rows } = await dbQuery(`SELECT brand_name, niche, tone, audience, goals, platforms, website, extra_notes FROM brand_profiles WHERE user_id = $1`, [userId]);
+    return rows[0] ?? null;
+  });
+
+  // Existing user memories (brand voice, visual, audience, content)
+  await safe('memories', async () => {
+    const { rows } = await dbQuery(
+      `SELECT category, title, content FROM user_memories WHERE user_id = $1 AND category IN ('brand','audience','content','visual','business') ORDER BY category, sort_order LIMIT 20`,
+      [userId]
+    );
+    return rows.reduce((acc: Record<string, string[]>, r: any) => {
+      if (!acc[r.category]) acc[r.category] = [];
+      acc[r.category].push(`${r.title}: ${r.content}`);
+      return acc;
+    }, {});
+  });
+
+  // Agent-specific memory
+  await safe('agent_memory', async () => {
+    const { rows } = await dbQuery(
+      `SELECT key, value FROM user_agent_memory WHERE user_id = $1 AND (agent_key = $2 OR agent_key = 'global') ORDER BY created_at DESC LIMIT 15`,
+      [userId, agentKey]
+    );
+    return rows.map((r: any) => `${r.key}: ${r.value}`);
+  });
+
+  // Connected social accounts
+  await safe('social_accounts', async () => {
+    const { rows } = await dbQuery(
+      `SELECT platform, account_name, handle, followers, connected FROM social_accounts WHERE user_id = $1 AND connected = true ORDER BY platform`,
+      [userId]
+    );
+    return rows;
+  });
+
+  // User designs count
+  await safe('design_count', async () => {
+    const { rows } = await dbQuery(`SELECT COUNT(*)::int AS total FROM user_designs WHERE user_id = $1`, [userId]);
+    return rows[0]?.total ?? 0;
+  });
+
+  // Recent 5 design names (for Nova / creative context)
+  if (agentKey === 'nova' || agentKey === 'daky') {
+    await safe('recent_designs', async () => {
+      const { rows } = await dbQuery(
+        `SELECT name, created_at FROM user_designs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5`,
+        [userId]
+      );
+      return rows.map((r: any) => r.name);
+    });
+  }
+
+  // Active workflows (for Flux)
+  if (agentKey === 'flux') {
+    await safe('active_workflows', async () => {
+      const { rows } = await dbQuery(
+        `SELECT name, description, is_active FROM agent_workflows WHERE agent_key = $1 AND is_active = true LIMIT 5`,
+        [agentKey]
+      );
+      return rows;
+    });
+  }
+
+  // Recent task decisions (what the user has previously approved/rejected)
+  await safe('past_decisions', async () => {
+    const { rows } = await dbQuery(
+      `SELECT agent_key, task_type, title, status FROM user_agent_tasks WHERE user_id = $1 AND status IN ('approved','rejected') ORDER BY decided_at DESC LIMIT 8`,
+      [userId]
+    );
+    return rows;
+  });
+
+  return ctx;
+}
+
+function buildUserAgentOutputSpec(): string {
+  return `
+Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
+{
+  "proposals": [
+    {
+      "task_type": "content_post|strategy_proposal|analysis_report|visual_concept|workflow_setup",
+      "title": "Short action title (max 80 characters)",
+      "body": "What this is and why you recommend it (max 350 characters)",
+      "payload": { "key_detail": "value" }
+    }
+  ]
+}
+
+Generate 2-3 proposals. Each must be specific and immediately actionable — not vague.
+If the user has no brand profile set up, generate 1 proposal asking them to complete their brand setup.`;
+}
+
+// POST /api/user/agents/:key/run — Phase 5: run a user agent and generate proposals
+app.post('/api/user/agents/:key/run', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  const { key } = req.params;
+  const validKeys = ['daky', 'nova', 'sage', 'aria', 'flux'];
+  if (!validKeys.includes(key)) {
+    return res.status(400).json({ success: false, error: 'Unknown agent key' });
+  }
+
+  // Rate-limit: 1 run per agent per 10 minutes
+  try {
+    const { rows: cooldown } = await dbQuery(
+      `SELECT value FROM user_agent_memory WHERE user_id = $1 AND agent_key = $2 AND key = 'meta:last_run_at'`,
+      [auth.userId, key]
+    );
+    if (cooldown[0]) {
+      const lastRun = new Date(cooldown[0].value).getTime();
+      const elapsed = Date.now() - lastRun;
+      if (elapsed < 10 * 60 * 1000) {
+        const remaining = Math.ceil((10 * 60 * 1000 - elapsed) / 60000);
+        return res.status(429).json({ success: false, error: `Agent ${key} was just run. Try again in ${remaining} minute${remaining !== 1 ? 's' : ''}.` });
+      }
+    }
+  } catch { /* proceed if check fails */ }
+
+  try {
+    // Resolve Anthropic API key
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'Anthropic API key not configured' });
+
+    // Gather user context
+    const ctx = await gatherUserContext(auth.userId, key);
+
+    // Get agent's system prompt from templates, or use default
+    const { rows: tmplRows } = await dbQuery(
+      `SELECT base_prompt FROM agent_templates WHERE agent_key = $1`,
+      [key]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    const systemPrompt = tmplRows[0]?.base_prompt
+      ? `${tmplRows[0].base_prompt}\n\n${USER_AGENT_PROMPTS[key] ?? ''}`
+      : USER_AGENT_PROMPTS[key] ?? '';
+
+    const model = USER_AGENT_MODELS[key] ?? 'claude-haiku-4-5-20251001';
+
+    const userMessage = `Here is the user's current context:\n\n${JSON.stringify(ctx, null, 2)}\n\n${buildUserAgentOutputSpec()}`;
+
+    // Call Claude
+    const client = new Anthropic({ apiKey });
+    const aiRes = await client.messages.create({
+      model,
+      max_tokens: 800,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+
+    const rawText = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+
+    // Parse proposals
+    let proposals: any[] = [];
+    try {
+      const block = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const candidate = block ? block[1] : rawText;
+      const jsonMatch = candidate.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const j = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(j.proposals)) proposals = j.proposals;
+      }
+    } catch { /* fallback: create 1 generic proposal */ }
+
+    if (proposals.length === 0) {
+      proposals = [{
+        task_type: 'strategy_proposal',
+        title: `${key.charAt(0).toUpperCase() + key.slice(1)} — Check in`,
+        body: rawText.slice(0, 350),
+        payload: {},
+      }];
+    }
+
+    // Insert proposals as user_agent_tasks
+    let created = 0;
+    for (const p of proposals.slice(0, 3)) {
+      if (!p?.title) continue;
+      await dbQuery(
+        `INSERT INTO user_agent_tasks (user_id, agent_key, task_type, title, body, payload)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [auth.userId, key, p.task_type ?? 'proposal', String(p.title).slice(0, 80),
+         String(p.body ?? '').slice(0, 400), JSON.stringify(p.payload ?? {})]
+      ).catch(() => {});
+      created++;
+    }
+
+    // Record last run time
+    await dbQuery(
+      `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value)
+       VALUES ($1,$2,'meta','meta:last_run_at',$3)
+       ON CONFLICT (user_id, agent_key, key) DO UPDATE SET value = EXCLUDED.value`,
+      [auth.userId, key, new Date().toISOString()]
+    ).catch(() => {});
+
+    return res.json({ success: true, proposals_created: created, agent_key: key });
+
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/user/agents/status — last run times for all agents
+app.get('/api/user/agents/status', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT agent_key, value AS last_run_at FROM user_agent_memory
+       WHERE user_id = $1 AND key = 'meta:last_run_at'`,
+      [auth.userId]
+    );
+    const status: Record<string, string> = {};
+    for (const r of rows as any[]) status[r.agent_key] = r.last_run_at;
+    return res.json({ success: true, status });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── End User Agent Foundation Routes ─────────────────────────────────────────
 
 // ── Nova workflow helpers ─────────────────────────────────────────────────────

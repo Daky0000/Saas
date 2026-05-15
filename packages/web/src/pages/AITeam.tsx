@@ -3,7 +3,7 @@ import {
   CheckCircle, ChevronRight, Loader2, RefreshCw, Sparkles,
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
   CheckSquare, Square, Clock, ThumbsUp, ThumbsDown, X,
-  Pencil, Bot,
+  Pencil, Bot, Play, PlayCircle,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
 
@@ -351,29 +351,66 @@ function BrandWizard({
 
 // ── Agent Cards ────────────────────────────────────────────────────────────────
 
-function AgentCard({ agent, ready }: { agent: typeof AGENT_DEFS[number]; ready: boolean }) {
+function AgentCard({
+  agent, ready, lastRunAt, onRun, running,
+}: {
+  agent: typeof AGENT_DEFS[number];
+  ready: boolean;
+  lastRunAt: string | null;
+  onRun: (key: string) => void;
+  running: boolean;
+}) {
+  const lastRunLabel = lastRunAt
+    ? (() => {
+        const diff = Date.now() - new Date(lastRunAt).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'Just now';
+        if (mins < 60) return `${mins}m ago`;
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return `${hrs}h ago`;
+        return `${Math.floor(hrs / 24)}d ago`;
+      })()
+    : null;
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition flex flex-col">
       <div className="flex items-start gap-3 mb-3">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl font-black select-none"
           style={{ background: `${agent.color}18`, color: agent.color }}>
-          {agent.icon}
+          {running ? <Loader2 size={20} className="animate-spin" style={{ color: agent.color }} /> : agent.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-black text-lg tracking-tight" style={{ color: agent.color }}>{agent.name}</span>
             <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
-              ready ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+              running ? 'bg-blue-100 text-blue-600' :
+              ready   ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
             }`}>
-              {ready ? 'Ready' : 'Setup needed'}
+              {running ? 'Running…' : ready ? 'Ready' : 'Setup needed'}
             </span>
           </div>
           <p className="text-xs text-slate-500">{agent.role}</p>
         </div>
       </div>
-      <p className="text-xs text-slate-500 leading-relaxed">{agent.description}</p>
+      <p className="text-xs text-slate-500 leading-relaxed flex-1">{agent.description}</p>
+      <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
+        <span className="text-[11px] text-slate-400">
+          {lastRunLabel ? `Last run: ${lastRunLabel}` : 'Never run'}
+        </span>
+        <button
+          type="button"
+          disabled={!ready || running}
+          onClick={() => onRun(agent.key)}
+          className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ background: ready && !running ? agent.color : '#94a3b8' }}
+          title={!ready ? 'Complete brand setup to run this agent' : `Run ${agent.name}`}
+        >
+          {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+          {running ? 'Running…' : 'Run'}
+        </button>
+      </div>
       {!ready && (
-        <p className="mt-3 text-[11px] text-amber-600 font-medium">
+        <p className="mt-2 text-[11px] text-amber-600 font-medium">
           Complete your brand profile to activate this agent.
         </p>
       )}
@@ -575,6 +612,10 @@ function BrandCard({
   );
 }
 
+// ── Run toast ──────────────────────────────────────────────────────────────────
+
+type RunResult = { agent_key: string; proposals_created: number; error?: string };
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function AITeam() {
@@ -583,16 +624,23 @@ export default function AITeam() {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState(false);
+  const [runningAgents, setRunningAgents]   = useState<Set<string>>(new Set());
+  const [runningAll, setRunningAll]         = useState(false);
+  const [runAllStatus, setRunAllStatus]     = useState('');
+  const [lastRunAt, setLastRunAt]           = useState<Record<string, string>>({});
+  const [runToasts, setRunToasts]           = useState<RunResult[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [pr, tr] = await Promise.all([
-        fetch(`${BASE()}/api/user/brand-profile`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
-        fetch(`${BASE()}/api/user/agent-tasks`,   { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+      const [pr, tr, sr] = await Promise.all([
+        fetch(`${BASE()}/api/user/brand-profile`,  { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-tasks`,    { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agents/status`,  { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
       ]);
       setProfile(pr.success ? pr.profile : null);
       setTasks(tr.success ? tr.tasks : []);
+      if (sr.success) setLastRunAt(sr.status ?? {});
       if (!pr.profile?.setup_done) setShowWizard(true);
     } catch (e: any) {
       setError(e.message);
@@ -613,6 +661,48 @@ export default function AITeam() {
     if (d.success) {
       setTasks((prev) => prev.map((t) => t.id === id ? d.task : t));
     }
+  };
+
+  const runAgent = async (key: string) => {
+    setRunningAgents((s) => new Set(s).add(key));
+    try {
+      const res = await fetch(`${BASE()}/api/user/agents/${key}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      });
+      const d = await res.json();
+      const result: RunResult = d.success
+        ? { agent_key: key, proposals_created: d.proposals_created }
+        : { agent_key: key, proposals_created: 0, error: d.error };
+      setRunToasts((prev) => [...prev, result]);
+      setTimeout(() => setRunToasts((prev) => prev.filter((r) => r !== result)), 5000);
+      if (d.success) {
+        setLastRunAt((prev) => ({ ...prev, [key]: new Date().toISOString() }));
+        // Reload tasks to show new proposals
+        const tr = await fetch(`${BASE()}/api/user/agent-tasks`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json());
+        if (tr.success) setTasks(tr.tasks);
+      }
+    } catch (e: any) {
+      const result: RunResult = { agent_key: key, proposals_created: 0, error: e.message };
+      setRunToasts((prev) => [...prev, result]);
+      setTimeout(() => setRunToasts((prev) => prev.filter((r) => r !== result)), 5000);
+    } finally {
+      setRunningAgents((s) => { const ns = new Set(s); ns.delete(key); return ns; });
+    }
+  };
+
+  const runAll = async () => {
+    if (runningAll) return;
+    setRunningAll(true);
+    const keys = AGENT_DEFS.map((a) => a.key);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const name = AGENT_DEFS[i].name;
+      setRunAllStatus(`Running ${name} (${i + 1}/${keys.length})…`);
+      await runAgent(key);
+    }
+    setRunningAll(false);
+    setRunAllStatus('');
   };
 
   const pendingCount = tasks.filter((t) => t.status === 'pending').length;
@@ -637,12 +727,28 @@ export default function AITeam() {
 
   return (
     <div className="space-y-8 max-w-5xl">
+      {/* Run toasts */}
+      {runToasts.length > 0 && (
+        <div className="fixed top-5 right-5 z-50 space-y-2">
+          {runToasts.map((r, i) => (
+            <div key={i} className={`flex items-center gap-2.5 rounded-2xl border px-4 py-3 shadow-lg text-sm font-semibold ${
+              r.error ? 'border-red-200 bg-white text-red-600' : 'border-emerald-200 bg-white text-emerald-700'
+            }`}>
+              {r.error
+                ? <><X size={14} className="shrink-0" /> {r.agent_key}: {r.error}</>
+                : <><CheckCircle size={14} className="shrink-0" /> {r.agent_key} created {r.proposals_created} proposal{r.proposals_created !== 1 ? 's' : ''}</>
+              }
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Page header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">AI Team</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Your personal AI marketing team. Set your brand profile and they'll propose content, strategies, and insights.
+            Your personal AI marketing team. Set your brand profile and run agents to get content, strategies, and insights.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -650,6 +756,20 @@ export default function AITeam() {
             <span className="rounded-full bg-amber-500 text-white text-xs font-bold px-2.5 py-1">
               {pendingCount} pending
             </span>
+          )}
+          {profileReady && (
+            <button
+              type="button"
+              disabled={runningAll || runningAgents.size > 0}
+              onClick={runAll}
+              className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:opacity-50"
+              style={{ background: '#5b6cf9' }}
+            >
+              {runningAll
+                ? <><Loader2 size={12} className="animate-spin" /> {runAllStatus || 'Running…'}</>
+                : <><PlayCircle size={13} /> Run All Agents</>
+              }
+            </button>
           )}
           <button type="button" onClick={load}
             className="rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 transition">
@@ -669,8 +789,8 @@ export default function AITeam() {
         />
       ) : (
         profile && (
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
               <BrandCard profile={profile} onEdit={() => setShowWizard(true)} />
             </div>
             {!profileReady && (
@@ -710,7 +830,14 @@ export default function AITeam() {
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {AGENT_DEFS.map((agent) => (
-            <AgentCard key={agent.key} agent={agent} ready={profileReady} />
+            <AgentCard
+              key={agent.key}
+              agent={agent}
+              ready={profileReady}
+              lastRunAt={lastRunAt[agent.key] ?? null}
+              running={runningAgents.has(agent.key)}
+              onRun={runAgent}
+            />
           ))}
         </div>
       </div>
@@ -723,10 +850,10 @@ export default function AITeam() {
         <p className="text-xs font-bold text-slate-600 mb-2">How your AI team works</p>
         <ul className="space-y-1.5 text-xs text-slate-500">
           <li>• Complete your brand profile so agents know your niche, tone, and goals.</li>
-          <li>• Agents propose content, strategies, and optimisations — you approve or reject each one.</li>
-          <li>• Approved tasks are executed automatically and appear in your content feed.</li>
+          <li>• Click <strong>Run</strong> on any agent — they'll generate 2-3 proposals in seconds.</li>
+          <li>• Agents can only be re-run every 10 minutes to prevent spam.</li>
+          <li>• Review proposals in the Approval Queue and approve or reject each one.</li>
           <li>• Proposals expire after 48 hours if not actioned.</li>
-          <li>• Your brand memory is automatically updated as agents learn your preferences.</li>
         </ul>
       </div>
 
