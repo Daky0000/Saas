@@ -3,7 +3,7 @@ import {
   CheckCircle, ChevronRight, Loader2, RefreshCw, Sparkles,
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
   CheckSquare, Square, Clock, ThumbsUp, ThumbsDown, X,
-  Pencil, Bot, Play, PlayCircle,
+  Pencil, Bot, Play, PlayCircle, ArrowRight, Network,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
 
@@ -612,9 +612,127 @@ function BrandCard({
   );
 }
 
-// ── Run toast ──────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
 type RunResult = { agent_key: string; proposals_created: number; error?: string };
+
+// ── Orchestration pipeline step ───────────────────────────────────────────────
+
+type OrchStep = {
+  key: string;
+  name: string;
+  role: string;
+  color: string;
+  icon: string;
+  status: 'idle' | 'running' | 'done' | 'error';
+  count?: number;
+};
+
+const ORCH_PIPELINE: Omit<OrchStep, 'status'>[] = [
+  { key: 'sage', name: 'Sage', role: 'Strategy', color: '#10B981', icon: '◈' },
+  { key: 'daky', name: 'Daky', role: 'Content', color: '#5b6cf9', icon: '✦' },
+  { key: 'nova', name: 'Nova', role: 'Visuals', color: '#EC4899', icon: '◉' },
+  { key: 'aria', name: 'Aria', role: 'Analytics', color: '#F59E0B', icon: '⊕' },
+  { key: 'flux', name: 'Flux', role: 'Automation', color: '#8B5CF6', icon: '⟳' },
+];
+
+function OrchestrationPanel({
+  steps,
+  running,
+  result,
+  onRun,
+  onDismiss,
+}: {
+  steps: OrchStep[];
+  running: boolean;
+  result: { proposals_by_agent: Record<string, number>; total: number } | null;
+  onRun: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-sm">
+      <div className="flex items-start justify-between mb-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+            <Network size={18} />
+          </div>
+          <div>
+            <p className="font-black text-slate-950 tracking-tight">Orchestrate Full Campaign</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks → Flux automates
+            </p>
+          </div>
+        </div>
+        <button type="button" onClick={onDismiss}
+          className="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Pipeline steps */}
+      <div className="flex items-center gap-1 flex-wrap mb-5">
+        {steps.map((step, i) => (
+          <div key={step.key} className="flex items-center gap-1">
+            <div className={`flex items-center gap-1.5 rounded-xl px-3 py-2 transition ${
+              step.status === 'done'    ? 'bg-white border border-emerald-200' :
+              step.status === 'running' ? 'bg-white border-2 shadow-sm' :
+              step.status === 'error'   ? 'bg-red-50 border border-red-200' :
+              'bg-slate-50 border border-slate-200'
+            }`}
+              style={step.status === 'running' ? { borderColor: step.color } : {}}>
+              <span className="text-sm" style={{ color: step.color }}>{step.icon}</span>
+              <span className="text-xs font-bold text-slate-700">{step.name}</span>
+              {step.status === 'running' && <Loader2 size={11} className="animate-spin" style={{ color: step.color }} />}
+              {step.status === 'done'    && <CheckCircle size={11} className="text-emerald-500" />}
+              {step.status === 'done' && step.count != null && (
+                <span className="text-[10px] font-bold" style={{ color: step.color }}>{step.count}</span>
+              )}
+            </div>
+            {i < steps.length - 1 && (
+              <ArrowRight size={12} className={`shrink-0 ${
+                step.status === 'done' && (steps[i+1].status === 'running' || steps[i+1].status === 'done')
+                  ? 'text-emerald-400' : 'text-slate-300'
+              }`} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {result && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 mb-4">
+          <div className="flex items-center gap-2 mb-1">
+            <CheckCircle size={14} className="text-emerald-600" />
+            <span className="text-sm font-bold text-emerald-800">Orchestration complete — {result.total} proposals created</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(result.proposals_by_agent).map(([k, n]) => (
+              <span key={k} className="text-[11px] font-semibold text-emerald-700 bg-white border border-emerald-200 rounded-full px-2 py-0.5">
+                {AGENT_NAMES[k] ?? k}: {n}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        disabled={running}
+        onClick={onRun}
+        className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition disabled:opacity-50"
+        style={{ background: '#5b6cf9' }}
+      >
+        {running
+          ? <><Loader2 size={14} className="animate-spin" /> Orchestrating…</>
+          : result
+          ? <><Network size={14} /> Run Again</>
+          : <><Network size={14} /> Launch Full Orchestration</>
+        }
+      </button>
+    </div>
+  );
+}
+
+const AGENT_NAMES: Record<string, string> = { daky: 'Daky', nova: 'Nova', sage: 'Sage', aria: 'Aria', flux: 'Flux' };
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -629,6 +747,14 @@ export default function AITeam() {
   const [runAllStatus, setRunAllStatus]     = useState('');
   const [lastRunAt, setLastRunAt]           = useState<Record<string, string>>({});
   const [runToasts, setRunToasts]           = useState<RunResult[]>([]);
+
+  // Phase 8 — orchestration state
+  const [showOrch, setShowOrch]             = useState(false);
+  const [orchRunning, setOrchRunning]       = useState(false);
+  const [orchSteps, setOrchSteps]           = useState<OrchStep[]>(
+    ORCH_PIPELINE.map((s) => ({ ...s, status: 'idle' as const }))
+  );
+  const [orchResult, setOrchResult]         = useState<{ proposals_by_agent: Record<string, number>; total: number } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -705,6 +831,68 @@ export default function AITeam() {
     setRunAllStatus('');
   };
 
+  // Phase 8 — orchestration: streams step-by-step UI updates then calls backend
+  const runOrchestrate = async () => {
+    if (orchRunning) return;
+    setOrchRunning(true);
+    setOrchResult(null);
+    // Reset all steps to idle
+    setOrchSteps(ORCH_PIPELINE.map((s) => ({ ...s, status: 'idle' as const })));
+
+    // Mark steps running one-by-one to show progress (visual only — server does the real sequencing)
+    const DELAYS = [0, 3500, 7000, 10500, 10500]; // approx Haiku latency per step
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+
+    ORCH_PIPELINE.forEach((_step, i) => {
+      timeouts.push(setTimeout(() => {
+        setOrchSteps((prev) =>
+          prev.map((s, j) =>
+            j === i ? { ...s, status: 'running' }
+            : j < i  ? { ...s, status: 'done' }
+            : s
+          )
+        );
+      }, DELAYS[i]));
+    });
+
+    try {
+      const res = await fetch(`${BASE()}/api/user/agents/orchestrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      });
+      const d = await res.json();
+      timeouts.forEach(clearTimeout);
+
+      if (d.success) {
+        setOrchSteps(ORCH_PIPELINE.map((s) => ({
+          ...s,
+          status: 'done' as const,
+          count: d.proposals_by_agent?.[s.key] ?? 0,
+        })));
+        setOrchResult({ proposals_by_agent: d.proposals_by_agent, total: d.total });
+        setLastRunAt((prev) => {
+          const now = new Date().toISOString();
+          const next = { ...prev };
+          for (const k of ['sage','daky','nova','aria','flux']) next[k] = now;
+          return next;
+        });
+        // Reload tasks
+        const tr = await fetch(`${BASE()}/api/user/agent-tasks`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json());
+        if (tr.success) setTasks(tr.tasks);
+      } else {
+        setOrchSteps((prev) => prev.map((s) => s.status === 'running' ? { ...s, status: 'error' as const } : s));
+        const toast: RunResult = { agent_key: 'orchestration', proposals_created: 0, error: d.error };
+        setRunToasts((prev) => [...prev, toast]);
+        setTimeout(() => setRunToasts((prev) => prev.filter((r) => r !== toast)), 5000);
+      }
+    } catch (e: any) {
+      timeouts.forEach(clearTimeout);
+      setOrchSteps((prev) => prev.map((s) => s.status === 'running' ? { ...s, status: 'error' as const } : s));
+    } finally {
+      setOrchRunning(false);
+    }
+  };
+
   const pendingCount = tasks.filter((t) => t.status === 'pending').length;
   const profileReady = Boolean(profile?.setup_done);
 
@@ -751,25 +939,35 @@ export default function AITeam() {
             Your personal AI marketing team. Set your brand profile and run agents to get content, strategies, and insights.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {pendingCount > 0 && (
             <span className="rounded-full bg-amber-500 text-white text-xs font-bold px-2.5 py-1">
               {pendingCount} pending
             </span>
           )}
           {profileReady && (
-            <button
-              type="button"
-              disabled={runningAll || runningAgents.size > 0}
-              onClick={runAll}
-              className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:opacity-50"
-              style={{ background: '#5b6cf9' }}
-            >
-              {runningAll
-                ? <><Loader2 size={12} className="animate-spin" /> {runAllStatus || 'Running…'}</>
-                : <><PlayCircle size={13} /> Run All Agents</>
-              }
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={orchRunning || runningAll || runningAgents.size > 0}
+                onClick={() => setShowOrch((v) => !v)}
+                className="flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition disabled:opacity-50"
+              >
+                <Network size={13} /> Orchestrate
+              </button>
+              <button
+                type="button"
+                disabled={runningAll || runningAgents.size > 0 || orchRunning}
+                onClick={runAll}
+                className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:opacity-50"
+                style={{ background: '#5b6cf9' }}
+              >
+                {runningAll
+                  ? <><Loader2 size={12} className="animate-spin" /> {runAllStatus || 'Running…'}</>
+                  : <><PlayCircle size={13} /> Run All</>
+                }
+              </button>
+            </>
           )}
           <button type="button" onClick={load}
             className="rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 transition">
@@ -777,6 +975,17 @@ export default function AITeam() {
           </button>
         </div>
       </div>
+
+      {/* Phase 8 — Orchestration panel */}
+      {showOrch && profileReady && (
+        <OrchestrationPanel
+          steps={orchSteps}
+          running={orchRunning}
+          result={orchResult}
+          onRun={runOrchestrate}
+          onDismiss={() => setShowOrch(false)}
+        />
+      )}
 
       {/* Brand Wizard / Profile */}
       {showWizard ? (
@@ -849,10 +1058,11 @@ export default function AITeam() {
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <p className="text-xs font-bold text-slate-600 mb-2">How your AI team works</p>
         <ul className="space-y-1.5 text-xs text-slate-500">
-          <li>• Complete your brand profile so agents know your niche, tone, and goals.</li>
-          <li>• Click <strong>Run</strong> on any agent — they'll generate 2-3 proposals in seconds.</li>
-          <li>• Agents can only be re-run every 10 minutes to prevent spam.</li>
-          <li>• Review proposals in the Approval Queue and approve or reject each one.</li>
+          <li>• <strong>Brand Profile</strong> — Complete setup so agents know your niche, tone, and goals.</li>
+          <li>• <strong>Run individual agents</strong> — Each generates 2-3 proposals in seconds (10-min cooldown).</li>
+          <li>• <strong>Orchestrate</strong> — Full campaign pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
+          <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on what you approve.</li>
+          <li>• <strong>Memory</strong> — The more you interact, the more your team learns your preferences.</li>
           <li>• Proposals expire after 48 hours if not actioned.</li>
         </ul>
       </div>

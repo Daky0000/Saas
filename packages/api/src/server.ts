@@ -28328,7 +28328,7 @@ app.get('/api/user/agent-tasks', async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/user/agent-tasks/:id — approve or reject a task
+// PUT /api/user/agent-tasks/:id — approve or reject a task (Phase 7: also updates agent memory)
 app.put('/api/user/agent-tasks/:id', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
@@ -28345,7 +28345,37 @@ app.put('/api/user/agent-tasks/:id', async (req: Request, res: Response) => {
       [decision, req.params.id, auth.userId]
     );
     if (!rows[0]) return res.status(404).json({ success: false, error: 'Task not found or already decided' });
-    return res.json({ success: true, task: rows[0] });
+    const task = rows[0];
+
+    // Phase 7 — write decision pattern to agent memory so future runs learn from it
+    try {
+      const { rows: history } = await dbQuery(
+        `SELECT task_type, title, status FROM user_agent_tasks
+         WHERE user_id=$1 AND agent_key=$2 AND status IN ('approved','rejected')
+         ORDER BY decided_at DESC LIMIT 12`,
+        [auth.userId, task.agent_key]
+      );
+      const approved = history.filter((r: any) => r.status === 'approved')
+        .map((r: any) => `${r.task_type}: "${String(r.title).slice(0, 50)}"`)
+        .join('; ');
+      const rejected = history.filter((r: any) => r.status === 'rejected')
+        .map((r: any) => `${r.task_type}: "${String(r.title).slice(0, 50)}"`)
+        .join('; ');
+      const summary = [
+        approved && `USER APPROVED (${history.filter((r: any) => r.status === 'approved').length}): ${approved}`,
+        rejected && `USER REJECTED (${history.filter((r: any) => r.status === 'rejected').length}): ${rejected}`,
+      ].filter(Boolean).join(' | ');
+      if (summary) {
+        await dbQuery(
+          `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value)
+           VALUES ($1,$2,'preference','decision_history',$3)
+           ON CONFLICT (user_id, agent_key, key) DO UPDATE SET value = EXCLUDED.value`,
+          [auth.userId, task.agent_key, summary.slice(0, 1000)]
+        );
+      }
+    } catch { /* non-fatal */ }
+
+    return res.json({ success: true, task });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
@@ -28373,7 +28403,7 @@ app.post('/api/admin/agent-tasks', async (req: Request, res: Response) => {
   }
 });
 
-// ── User Agent Run (Phase 5) ─────────────────────────────────────────────────
+// ── User Agent Run (Phases 5–8) ──────────────────────────────────────────────
 
 const USER_AGENT_MODELS: Record<string, string> = {
   sage: 'claude-sonnet-4-6',
@@ -28495,9 +28525,8 @@ async function gatherUserContext(userId: string, agentKey: string): Promise<Reco
   return ctx;
 }
 
-function buildUserAgentOutputSpec(): string {
-  return `
-Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
+function buildUserAgentOutputSpec(extraInstruction?: string): string {
+  return `Respond ONLY with valid JSON — no markdown, no extra text:
 {
   "proposals": [
     {
@@ -28509,11 +28538,95 @@ Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
   ]
 }
 
-Generate 2-3 proposals. Each must be specific and immediately actionable — not vague.
-If the user has no brand profile set up, generate 1 proposal asking them to complete their brand setup.`;
+Generate 2-3 highly specific, immediately actionable proposals.${extraInstruction ? '\n' + extraInstruction : ''}
+If the user has no brand profile, return 1 proposal suggesting they complete their brand setup.`;
 }
 
-// POST /api/user/agents/:key/run — Phase 5: run a user agent and generate proposals
+const AGENT_NAMES: Record<string, string> = { daky: 'Daky', nova: 'Nova', sage: 'Sage', aria: 'Aria', flux: 'Flux' };
+
+// Shared helper: call one user agent and return parsed proposals (Phase 8 reuse)
+async function callAgentAndParse(
+  userId: string,
+  agentKey: string,
+  apiKey: string,
+  extraContext?: Record<string, any>,
+  extraInstruction?: string,
+): Promise<any[]> {
+  const ctx = await gatherUserContext(userId, agentKey);
+  const merged = extraContext ? { ...ctx, ...extraContext } : ctx;
+
+  const { rows: tmplRows } = await dbQuery(
+    `SELECT base_prompt FROM agent_templates WHERE agent_key = $1`, [agentKey]
+  ).catch(() => ({ rows: [] as any[] }));
+
+  const systemPrompt = tmplRows[0]?.base_prompt
+    ? `${tmplRows[0].base_prompt}\n\n${USER_AGENT_PROMPTS[agentKey] ?? ''}`
+    : USER_AGENT_PROMPTS[agentKey] ?? '';
+
+  const model = USER_AGENT_MODELS[agentKey] ?? 'claude-haiku-4-5-20251001';
+  const userMessage = `User context:\n\n${JSON.stringify(merged, null, 2)}\n\n${buildUserAgentOutputSpec(extraInstruction)}`;
+
+  const client = new Anthropic({ apiKey });
+  const aiRes = await client.messages.create({
+    model, max_tokens: 800,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+  const rawText = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+
+  let proposals: any[] = [];
+  try {
+    const block = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const candidate = block ? block[1] : rawText;
+    const match = candidate.match(/\{[\s\S]*\}/);
+    if (match) {
+      const j = JSON.parse(match[0]);
+      if (Array.isArray(j.proposals)) proposals = j.proposals;
+    }
+  } catch { /* ignore */ }
+
+  if (proposals.length === 0) {
+    proposals = [{
+      task_type: 'strategy_proposal',
+      title: `${AGENT_NAMES[agentKey] ?? agentKey} — Check in`,
+      body: rawText.slice(0, 350),
+      payload: {},
+    }];
+  }
+  return proposals;
+}
+
+// Helper: bulk-insert proposals for a user + agent, return created count
+async function insertProposals(userId: string, agentKey: string, proposals: any[]): Promise<number> {
+  let created = 0;
+  for (const p of proposals.slice(0, 3)) {
+    if (!p?.title) continue;
+    await dbQuery(
+      `INSERT INTO user_agent_tasks (user_id, agent_key, task_type, title, body, payload)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [userId, agentKey, p.task_type ?? 'proposal', String(p.title).slice(0, 80),
+       String(p.body ?? '').slice(0, 400), JSON.stringify(p.payload ?? {})]
+    ).catch(() => {});
+    created++;
+  }
+  return created;
+}
+
+// Helper: insert in-app notification for agent proposals (Phase 6)
+async function notifyProposals(userId: string, agentKey: string, count: number): Promise<void> {
+  if (count === 0) return;
+  const name = AGENT_NAMES[agentKey] ?? agentKey;
+  await dbQuery(
+    `INSERT INTO notifications (user_id, type, title, message, data)
+     VALUES ($1,'agent_proposal',$2,$3,$4)`,
+    [userId,
+     `${name} has ${count} new proposal${count !== 1 ? 's' : ''} for you`,
+     `${count} proposal${count !== 1 ? 's' : ''} waiting in your AI Team approval queue`,
+     JSON.stringify({ agent_key: agentKey, count, link: '/ai-team' })]
+  ).catch(() => {});
+}
+
+// POST /api/user/agents/:key/run — single agent run (Phases 5 + 6)
 app.post('/api/user/agents/:key/run', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
@@ -28521,93 +28634,33 @@ app.post('/api/user/agents/:key/run', async (req: Request, res: Response) => {
 
   const { key } = req.params;
   const validKeys = ['daky', 'nova', 'sage', 'aria', 'flux'];
-  if (!validKeys.includes(key)) {
-    return res.status(400).json({ success: false, error: 'Unknown agent key' });
-  }
+  if (!validKeys.includes(key)) return res.status(400).json({ success: false, error: 'Unknown agent key' });
 
   // Rate-limit: 1 run per agent per 10 minutes
   try {
-    const { rows: cooldown } = await dbQuery(
-      `SELECT value FROM user_agent_memory WHERE user_id = $1 AND agent_key = $2 AND key = 'meta:last_run_at'`,
+    const { rows: cd } = await dbQuery(
+      `SELECT value FROM user_agent_memory WHERE user_id=$1 AND agent_key=$2 AND key='meta:last_run_at'`,
       [auth.userId, key]
     );
-    if (cooldown[0]) {
-      const lastRun = new Date(cooldown[0].value).getTime();
-      const elapsed = Date.now() - lastRun;
+    if (cd[0]) {
+      const elapsed = Date.now() - new Date(cd[0].value).getTime();
       if (elapsed < 10 * 60 * 1000) {
-        const remaining = Math.ceil((10 * 60 * 1000 - elapsed) / 60000);
-        return res.status(429).json({ success: false, error: `Agent ${key} was just run. Try again in ${remaining} minute${remaining !== 1 ? 's' : ''}.` });
+        const mins = Math.ceil((10 * 60 * 1000 - elapsed) / 60000);
+        return res.status(429).json({ success: false, error: `Agent ${key} was just run. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.` });
       }
     }
-  } catch { /* proceed if check fails */ }
+  } catch { /* proceed */ }
 
   try {
-    // Resolve Anthropic API key
     const { encryptedKey } = await getAIConfig();
     const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
     if (!apiKey) return res.status(503).json({ success: false, error: 'Anthropic API key not configured' });
 
-    // Gather user context
-    const ctx = await gatherUserContext(auth.userId, key);
+    const proposals = await callAgentAndParse(auth.userId, key, apiKey);
+    const created = await insertProposals(auth.userId, key, proposals);
 
-    // Get agent's system prompt from templates, or use default
-    const { rows: tmplRows } = await dbQuery(
-      `SELECT base_prompt FROM agent_templates WHERE agent_key = $1`,
-      [key]
-    ).catch(() => ({ rows: [] as any[] }));
-
-    const systemPrompt = tmplRows[0]?.base_prompt
-      ? `${tmplRows[0].base_prompt}\n\n${USER_AGENT_PROMPTS[key] ?? ''}`
-      : USER_AGENT_PROMPTS[key] ?? '';
-
-    const model = USER_AGENT_MODELS[key] ?? 'claude-haiku-4-5-20251001';
-
-    const userMessage = `Here is the user's current context:\n\n${JSON.stringify(ctx, null, 2)}\n\n${buildUserAgentOutputSpec()}`;
-
-    // Call Claude
-    const client = new Anthropic({ apiKey });
-    const aiRes = await client.messages.create({
-      model,
-      max_tokens: 800,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-
-    const rawText = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
-
-    // Parse proposals
-    let proposals: any[] = [];
-    try {
-      const block = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const candidate = block ? block[1] : rawText;
-      const jsonMatch = candidate.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const j = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(j.proposals)) proposals = j.proposals;
-      }
-    } catch { /* fallback: create 1 generic proposal */ }
-
-    if (proposals.length === 0) {
-      proposals = [{
-        task_type: 'strategy_proposal',
-        title: `${key.charAt(0).toUpperCase() + key.slice(1)} — Check in`,
-        body: rawText.slice(0, 350),
-        payload: {},
-      }];
-    }
-
-    // Insert proposals as user_agent_tasks
-    let created = 0;
-    for (const p of proposals.slice(0, 3)) {
-      if (!p?.title) continue;
-      await dbQuery(
-        `INSERT INTO user_agent_tasks (user_id, agent_key, task_type, title, body, payload)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [auth.userId, key, p.task_type ?? 'proposal', String(p.title).slice(0, 80),
-         String(p.body ?? '').slice(0, 400), JSON.stringify(p.payload ?? {})]
-      ).catch(() => {});
-      created++;
-    }
+    // Phase 6 — in-app notification
+    await notifyProposals(auth.userId, key, created);
 
     // Record last run time
     await dbQuery(
@@ -28618,7 +28671,6 @@ app.post('/api/user/agents/:key/run', async (req: Request, res: Response) => {
     ).catch(() => {});
 
     return res.json({ success: true, proposals_created: created, agent_key: key });
-
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
@@ -28631,13 +28683,103 @@ app.get('/api/user/agents/status', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
   try {
     const { rows } = await dbQuery(
-      `SELECT agent_key, value AS last_run_at FROM user_agent_memory
-       WHERE user_id = $1 AND key = 'meta:last_run_at'`,
+      `SELECT agent_key, value AS last_run_at FROM user_agent_memory WHERE user_id=$1 AND key='meta:last_run_at'`,
       [auth.userId]
     );
     const status: Record<string, string> = {};
     for (const r of rows as any[]) status[r.agent_key] = r.last_run_at;
     return res.json({ success: true, status });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/user/agents/orchestrate — Phase 8: chained multi-agent run
+// Pipeline: Sage (strategy) → Daky (content aligned to strategy) → Nova (visuals for content)
+//           Aria + Flux run independently in parallel using base context
+app.post('/api/user/agents/orchestrate', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'Anthropic API key not configured' });
+
+    const createdByAgent: Record<string, number> = {};
+
+    // ── Step 1: Sage — strategy ───────────────────────────────────────────────
+    const sageProposals = await callAgentAndParse(
+      auth.userId, 'sage', apiKey, {},
+      'This is an orchestrated run. Generate a clear strategy framework that other agents (content writer, creative director) can execute on. Be explicit about themes, messaging angles, and audience priorities.'
+    );
+    createdByAgent['sage'] = await insertProposals(auth.userId, 'sage', sageProposals);
+    await notifyProposals(auth.userId, 'sage', createdByAgent['sage']);
+
+    // Extract strategy summary for downstream agents
+    const strategyContext = {
+      sage_strategy: sageProposals.slice(0, 3).map((p: any) => ({
+        type: p.task_type, title: p.title, brief: p.body,
+      })),
+    };
+
+    // ── Step 2: Daky — content aligned to Sage's strategy ────────────────────
+    const dakyProposals = await callAgentAndParse(
+      auth.userId, 'daky', apiKey, strategyContext,
+      'An orchestrated strategy from Sage is included in your context under "sage_strategy". Create content proposals that directly execute on those strategic themes. Reference the strategy by name when relevant.'
+    );
+    createdByAgent['daky'] = await insertProposals(auth.userId, 'daky', dakyProposals);
+    await notifyProposals(auth.userId, 'daky', createdByAgent['daky']);
+
+    // ── Step 3: Nova — visuals for Daky's content ────────────────────────────
+    const contentContext = {
+      ...strategyContext,
+      daky_content: dakyProposals.slice(0, 3).map((p: any) => ({
+        type: p.task_type, title: p.title, theme: p.body,
+      })),
+    };
+    const novaProposals = await callAgentAndParse(
+      auth.userId, 'nova', apiKey, contentContext,
+      'Sage\'s strategy and Daky\'s content proposals are in your context. Create visual concepts that visually represent those content pieces — match the tone, platform, and message of each content proposal. Reference by title.'
+    );
+    createdByAgent['nova'] = await insertProposals(auth.userId, 'nova', novaProposals);
+    await notifyProposals(auth.userId, 'nova', createdByAgent['nova']);
+
+    // ── Steps 4 & 5: Aria + Flux run independently (no cross-agent context) ──
+    const [ariaProposals, fluxProposals] = await Promise.all([
+      callAgentAndParse(auth.userId, 'aria', apiKey, strategyContext, 'This is part of an orchestrated campaign run. Identify performance metrics and tracking setup that will measure the success of the strategy in your context.'),
+      callAgentAndParse(auth.userId, 'flux', apiKey, strategyContext, 'This is part of an orchestrated campaign run. Design automation workflows to efficiently distribute the content being created as part of this campaign.'),
+    ]);
+    createdByAgent['aria'] = await insertProposals(auth.userId, 'aria', ariaProposals);
+    createdByAgent['flux'] = await insertProposals(auth.userId, 'flux', fluxProposals);
+    await notifyProposals(auth.userId, 'aria', createdByAgent['aria']);
+    await notifyProposals(auth.userId, 'flux', createdByAgent['flux']);
+
+    // Update last-run timestamps for all 5 agents
+    const now = new Date().toISOString();
+    for (const k of ['sage', 'daky', 'nova', 'aria', 'flux']) {
+      await dbQuery(
+        `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value)
+         VALUES ($1,$2,'meta','meta:last_run_at',$3)
+         ON CONFLICT (user_id, agent_key, key) DO UPDATE SET value = EXCLUDED.value`,
+        [auth.userId, k, now]
+      ).catch(() => {});
+    }
+
+    const total = Object.values(createdByAgent).reduce((a, b) => a + b, 0);
+
+    // One combined orchestration notification
+    await dbQuery(
+      `INSERT INTO notifications (user_id, type, title, message, data)
+       VALUES ($1,'orchestration',$2,$3,$4)`,
+      [auth.userId,
+       `Your AI Team completed a full campaign orchestration`,
+       `${total} coordinated proposals created across strategy, content, visuals, analytics & automation`,
+       JSON.stringify({ proposals_by_agent: createdByAgent, total, link: '/ai-team' })]
+    ).catch(() => {});
+
+    return res.json({ success: true, proposals_by_agent: createdByAgent, total });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
