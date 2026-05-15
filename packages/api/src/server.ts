@@ -3404,6 +3404,23 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     );
   `).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_drafts_user_idx ON agent_drafts (user_id, created_at DESC);`).catch(() => undefined);
+
+  // Phase 10 — scheduled auto-runs per user per agent
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_agent_schedules (
+      id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id              UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent_key            TEXT NOT NULL,
+      frequency            TEXT NOT NULL DEFAULT 'off',
+      run_hour             INT  NOT NULL DEFAULT 9,
+      run_day              INT  NOT NULL DEFAULT 1,
+      enabled              BOOLEAN NOT NULL DEFAULT false,
+      last_scheduled_run_at TIMESTAMPTZ,
+      created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, agent_key)
+    );
+  `).catch(() => undefined);
   // ── End User Agent Foundation ─────────────────────────────────────────────────
 
   // ── End User Memory ───────────────────────────────────────────────────────────
@@ -28622,9 +28639,16 @@ async function callAgentAndParse(
     `SELECT base_prompt FROM agent_templates WHERE agent_key = $1`, [agentKey]
   ).catch(() => ({ rows: [] as any[] }));
 
-  const systemPrompt = tmplRows[0]?.base_prompt
+  const baseSystemPrompt = tmplRows[0]?.base_prompt
     ? `${tmplRows[0].base_prompt}\n\n${USER_AGENT_PROMPTS[agentKey] ?? ''}`
     : USER_AGENT_PROMPTS[agentKey] ?? '';
+
+  // Phase 10 — prepend user's standing custom instructions if they exist
+  const customInstr = (merged.agent_memory as string[] | undefined)
+    ?.find((m) => m.startsWith('custom_instructions:'));
+  const systemPrompt = customInstr
+    ? `${baseSystemPrompt}\n\nUSER'S STANDING INSTRUCTIONS FOR YOU:\n${customInstr.replace(/^custom_instructions:\s*/, '').trim()}`
+    : baseSystemPrompt;
 
   const model = USER_AGENT_MODELS[agentKey] ?? 'claude-haiku-4-5-20251001';
   const userMessage = `User context:\n\n${JSON.stringify(merged, null, 2)}\n\n${buildUserAgentOutputSpec(extraInstruction)}`;
@@ -28848,7 +28872,199 @@ app.post('/api/user/agents/orchestrate', async (req: Request, res: Response) => 
   }
 });
 
+// ── Plan 10: Agent Chat ───────────────────────────────────────────────────────
+
+const USER_AGENT_CHAT_PROMPTS: Record<string, string> = {
+  daky: `You are Daky, a creative content writer AI on the user's marketing team. Help them brainstorm content ideas, refine copy, and think through their content strategy. Be conversational, encouraging, and creative. Keep replies focused — 2-4 sentences unless asked for detail.`,
+  nova: `You are Nova, a creative director AI. Chat with the user about visual concepts, design aesthetics, branding decisions, and campaign visuals. Be inspiring and specific. Keep replies focused.`,
+  sage: `You are Sage, a strategic marketing analyst AI. Help the user think through their marketing strategy, audience positioning, and growth priorities. Be thoughtful and data-informed. Keep replies focused.`,
+  aria: `You are Aria, an analytics and performance AI. Help the user understand their KPIs, interpret metrics, and find optimisation opportunities. Be precise and quantitative. Keep replies focused.`,
+  flux: `You are Flux, an automation and workflow AI. Help the user design posting schedules, automation triggers, and workflow sequences. Be practical and step-by-step. Keep replies focused.`,
+};
+
+// POST /api/user/agents/:key/chat — conversational interface per agent
+app.post('/api/user/agents/:key/chat', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  const { key } = req.params;
+  const validKeys = ['daky', 'nova', 'sage', 'aria', 'flux'];
+  if (!validKeys.includes(key)) return res.status(400).json({ success: false, error: 'Unknown agent' });
+
+  const { messages } = req.body as { messages: { role: string; content: string }[] };
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ success: false, error: 'messages required' });
+  }
+
+  try {
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'Anthropic API key not configured' });
+
+    const ctx = await gatherUserContext(auth.userId, key);
+    const systemPrompt = `${USER_AGENT_CHAT_PROMPTS[key] ?? ''}
+
+Current user brand context:
+${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche || 'N/A'}, Tone: ${ctx.brand.tone || 'N/A'}, Audience: ${ctx.brand.audience || 'N/A'}` : 'No brand profile set up yet.'}`;
+
+    const client = new Anthropic({ apiKey });
+    const aiRes = await client.messages.create({
+      model: USER_AGENT_MODELS[key] ?? 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: systemPrompt,
+      messages: messages.map((m) => ({
+        role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: String(m.content).slice(0, 2000),
+      })),
+    });
+    const reply = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+    return res.json({ success: true, reply });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── Plan 10: Agent Schedules ──────────────────────────────────────────────────
+
+// GET /api/user/agent-schedules — list all schedules for the user
+app.get('/api/user/agent-schedules', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM user_agent_schedules WHERE user_id=$1 ORDER BY agent_key`,
+      [auth.userId]
+    );
+    return res.json({ success: true, schedules: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/user/agent-schedules/:key — upsert schedule for one agent
+app.put('/api/user/agent-schedules/:key', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const validKeys = ['daky', 'nova', 'sage', 'aria', 'flux'];
+  if (!validKeys.includes(req.params.key)) return res.status(400).json({ success: false, error: 'Unknown agent' });
+  const { frequency = 'off', run_hour = 9, run_day = 1, enabled = false } = req.body as Record<string, any>;
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO user_agent_schedules (user_id, agent_key, frequency, run_hour, run_day, enabled, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW())
+       ON CONFLICT (user_id, agent_key) DO UPDATE SET
+         frequency  = EXCLUDED.frequency,
+         run_hour   = EXCLUDED.run_hour,
+         run_day    = EXCLUDED.run_day,
+         enabled    = EXCLUDED.enabled,
+         updated_at = NOW()
+       RETURNING *`,
+      [auth.userId, req.params.key, frequency, Number(run_hour), Number(run_day), Boolean(enabled)]
+    );
+    return res.json({ success: true, schedule: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── Plan 10: Scheduled agent runner (hourly background worker) ────────────────
+async function runScheduledAgents(): Promise<void> {
+  if (!pool) return;
+  try {
+    const now = new Date();
+    const currentHour = now.getUTCHours();
+    const currentDay  = now.getUTCDay();
+    const { rows } = await dbQuery(
+      `SELECT * FROM user_agent_schedules
+       WHERE enabled = true AND frequency != 'off'
+       AND (
+         (frequency = 'daily' AND run_hour = $1
+          AND (last_scheduled_run_at IS NULL OR last_scheduled_run_at < NOW() - INTERVAL '23 hours'))
+         OR
+         (frequency = 'weekly' AND run_hour = $1 AND run_day = $2
+          AND (last_scheduled_run_at IS NULL OR last_scheduled_run_at < NOW() - INTERVAL '6 days'))
+       )`,
+      [currentHour, currentDay]
+    );
+    const { encryptedKey } = await getAIConfig().catch(() => ({ encryptedKey: null as string | null }));
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return;
+    for (const sched of rows as any[]) {
+      try {
+        const proposals = await callAgentAndParse(sched.user_id, sched.agent_key, apiKey);
+        const created   = await insertProposals(sched.user_id, sched.agent_key, proposals);
+        await notifyProposals(sched.user_id, sched.agent_key, created);
+        await dbQuery(
+          `UPDATE user_agent_schedules SET last_scheduled_run_at = NOW(), updated_at = NOW() WHERE id = $1`,
+          [sched.id]
+        );
+      } catch { /* skip failing agent */ }
+    }
+  } catch { /* non-fatal */ }
+}
+
 // ── End User Agent Foundation Routes ─────────────────────────────────────────
+
+// ── Plan 11: Brand Voice Extraction ──────────────────────────────────────────
+// POST /api/user/brand-voice-extract — paste content samples → Claude extracts brand voice
+app.post('/api/user/brand-voice-extract', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { samples } = req.body as { samples?: string };
+  if (!samples || samples.trim().length < 20) {
+    return res.status(400).json({ success: false, error: 'Provide at least 20 characters of content samples' });
+  }
+  try {
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) return res.status(503).json({ success: false, error: 'Anthropic API key not configured' });
+
+    const client = new Anthropic({ apiKey });
+    const aiRes = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      messages: [{
+        role: 'user',
+        content: `Analyze these content samples and extract the brand voice. Reply ONLY with valid JSON, no markdown:
+{
+  "tone": "one sentence describing overall tone",
+  "vocabulary": "description of vocabulary style",
+  "personality": ["trait1", "trait2", "trait3"],
+  "do_list": ["writing habit they clearly have", "..."],
+  "dont_list": ["what they clearly avoid", "..."],
+  "one_liner": "one sentence that captures this brand's voice"
+}
+
+CONTENT SAMPLES:
+${samples.slice(0, 3000)}`,
+      }],
+    });
+
+    const raw = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+    let voice: Record<string, any> = {};
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) voice = JSON.parse(match[0]);
+    } catch { voice = { one_liner: raw.slice(0, 200) }; }
+
+    // Save to agent memory so Daky + Nova pick it up automatically
+    const summary = `Tone: ${voice.tone ?? ''}. Personality: ${(voice.personality ?? []).join(', ')}. Do: ${(voice.do_list ?? []).join('; ')}. Avoid: ${(voice.dont_list ?? []).join('; ')}.`;
+    await dbQuery(
+      `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value)
+       VALUES ($1,'global','brand','brand_voice',$2)
+       ON CONFLICT (user_id, agent_key, key) DO UPDATE SET value = EXCLUDED.value`,
+      [auth.userId, summary.slice(0, 800)]
+    ).catch(() => {});
+
+    return res.json({ success: true, voice });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 // ── Nova workflow helpers ─────────────────────────────────────────────────────
 
@@ -30493,6 +30709,9 @@ if (config.nodeEnv !== 'test') {
     // Run due-date alerts immediately, then every hour
     void runDueDateAlerts();
     setInterval(() => void runDueDateAlerts(), 60 * 60 * 1000);
+    // Run scheduled agent auto-runs every hour
+    void runScheduledAgents();
+    setInterval(() => void runScheduledAgents(), 60 * 60 * 1000);
   });
 }
 

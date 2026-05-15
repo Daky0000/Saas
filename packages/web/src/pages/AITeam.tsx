@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle, ChevronRight, Loader2, RefreshCw, Sparkles,
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
   CheckSquare, Square, Clock, ThumbsUp, ThumbsDown, X,
   Pencil, Bot, Play, PlayCircle, ArrowRight, Network,
   FileText, ExternalLink, Lightbulb, LayoutList,
+  MessageCircle, Calendar, ChevronLeft, Send, Settings2,
+  Wand2, CalendarDays, AlarmClock,
   type LucideIcon,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
@@ -57,6 +59,30 @@ type AgentDraft = {
 type ExecToast = {
   message: string;
   blog_post_id?: string | null;
+};
+
+type AgentSchedule = {
+  id: string;
+  agent_key: string;
+  frequency: 'off' | 'daily' | 'weekly';
+  run_hour: number;
+  run_day: number;
+  enabled: boolean;
+  last_scheduled_run_at: string | null;
+};
+
+type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+type VoiceResult = {
+  tone?: string;
+  vocabulary?: string;
+  personality?: string[];
+  do_list?: string[];
+  dont_list?: string[];
+  one_liner?: string;
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -370,15 +396,48 @@ function BrandWizard({
 
 // ── Agent Cards ────────────────────────────────────────────────────────────────
 
+const FREQ_LABELS: Record<string, string> = { off: 'Off', daily: 'Daily', weekly: 'Weekly' };
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => {
+  const h = i % 12 || 12;
+  const ampm = i < 12 ? 'am' : 'pm';
+  return { value: i, label: `${h}:00 ${ampm} UTC` };
+});
+const DAY_OPTIONS = [
+  { value: 0, label: 'Sunday' }, { value: 1, label: 'Monday' }, { value: 2, label: 'Tuesday' },
+  { value: 3, label: 'Wednesday' }, { value: 4, label: 'Thursday' },
+  { value: 5, label: 'Friday' }, { value: 6, label: 'Saturday' },
+];
+
 function AgentCard({
-  agent, ready, lastRunAt, onRun, running,
+  agent, ready, lastRunAt, onRun, running, instructions, schedule, onChat, onSaveInstructions, onSaveSchedule,
 }: {
   agent: typeof AGENT_DEFS[number];
   ready: boolean;
   lastRunAt: string | null;
   onRun: (key: string) => void;
   running: boolean;
+  instructions: string;
+  schedule: AgentSchedule | null;
+  onChat: (key: string) => void;
+  onSaveInstructions: (key: string, value: string) => Promise<void>;
+  onSaveSchedule: (key: string, patch: Partial<AgentSchedule>) => Promise<void>;
 }) {
+  const [showSettings, setShowSettings] = useState(false);
+  const [instrText, setInstrText]       = useState(instructions);
+  const [savingInstr, setSavingInstr]   = useState(false);
+  const [freq, setFreq]     = useState<AgentSchedule['frequency']>(schedule?.frequency ?? 'off');
+  const [hour, setHour]     = useState(schedule?.run_hour ?? 9);
+  const [day, setDay]       = useState(schedule?.run_day ?? 1);
+  const [savingSched, setSavingSched] = useState(false);
+
+  // Sync props → state when parent reloads
+  useEffect(() => { setInstrText(instructions); }, [instructions]);
+  useEffect(() => {
+    setFreq(schedule?.frequency ?? 'off');
+    setHour(schedule?.run_hour ?? 9);
+    setDay(schedule?.run_day ?? 1);
+  }, [schedule]);
+
   const lastRunLabel = lastRunAt
     ? (() => {
         const diff = Date.now() - new Date(lastRunAt).getTime();
@@ -391,47 +450,135 @@ function AgentCard({
       })()
     : null;
 
+  const schedEnabled = freq !== 'off';
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition flex flex-col">
-      <div className="flex items-start gap-3 mb-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl font-black select-none"
-          style={{ background: `${agent.color}18`, color: agent.color }}>
-          {running ? <Loader2 size={20} className="animate-spin" style={{ color: agent.color }} /> : agent.icon}
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition flex flex-col">
+      <div className="p-5 flex flex-col flex-1">
+        <div className="flex items-start gap-3 mb-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl font-black select-none"
+            style={{ background: `${agent.color}18`, color: agent.color }}>
+            {running ? <Loader2 size={20} className="animate-spin" style={{ color: agent.color }} /> : agent.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-black text-lg tracking-tight" style={{ color: agent.color }}>{agent.name}</span>
+              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                running ? 'bg-blue-100 text-blue-600' :
+                ready   ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+              }`}>
+                {running ? 'Running…' : ready ? 'Ready' : 'Setup needed'}
+              </span>
+              {schedEnabled && (
+                <span className="flex items-center gap-1 rounded-full bg-violet-50 text-violet-600 text-[10px] font-bold px-2 py-0.5">
+                  <AlarmClock size={9} /> {FREQ_LABELS[freq]}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">{agent.role}</p>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-black text-lg tracking-tight" style={{ color: agent.color }}>{agent.name}</span>
-            <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
-              running ? 'bg-blue-100 text-blue-600' :
-              ready   ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-            }`}>
-              {running ? 'Running…' : ready ? 'Ready' : 'Setup needed'}
+        <p className="text-xs text-slate-500 leading-relaxed flex-1">{agent.description}</p>
+
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-slate-400">
+              {lastRunLabel ? `Last run: ${lastRunLabel}` : 'Never run'}
             </span>
           </div>
-          <p className="text-xs text-slate-500">{agent.role}</p>
+          <div className="flex items-center gap-1.5">
+            {ready && (
+              <button type="button" onClick={() => onChat(agent.key)}
+                className="flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition"
+                title={`Chat with ${agent.name}`}>
+                <MessageCircle size={11} /> Chat
+              </button>
+            )}
+            <button type="button" onClick={() => setShowSettings((v) => !v)}
+              className="flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition">
+              <Settings2 size={11} /> {showSettings ? 'Close' : 'Settings'}
+            </button>
+            <button
+              type="button"
+              disabled={!ready || running}
+              onClick={() => onRun(agent.key)}
+              className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: ready && !running ? agent.color : '#94a3b8' }}
+              title={!ready ? 'Complete brand setup to run this agent' : `Run ${agent.name}`}
+            >
+              {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+              {running ? 'Running…' : 'Run'}
+            </button>
+          </div>
         </div>
+        {!ready && (
+          <p className="mt-2 text-[11px] text-amber-600 font-medium">
+            Complete your brand profile to activate this agent.
+          </p>
+        )}
       </div>
-      <p className="text-xs text-slate-500 leading-relaxed flex-1">{agent.description}</p>
-      <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
-        <span className="text-[11px] text-slate-400">
-          {lastRunLabel ? `Last run: ${lastRunLabel}` : 'Never run'}
-        </span>
-        <button
-          type="button"
-          disabled={!ready || running}
-          onClick={() => onRun(agent.key)}
-          className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: ready && !running ? agent.color : '#94a3b8' }}
-          title={!ready ? 'Complete brand setup to run this agent' : `Run ${agent.name}`}
-        >
-          {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-          {running ? 'Running…' : 'Run'}
-        </button>
-      </div>
-      {!ready && (
-        <p className="mt-2 text-[11px] text-amber-600 font-medium">
-          Complete your brand profile to activate this agent.
-        </p>
+
+      {/* Settings panel */}
+      {showSettings && (
+        <div className="border-t border-slate-100 px-5 py-4 space-y-4 bg-slate-50/50">
+          {/* Custom Instructions */}
+          <div>
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Standing Instructions</p>
+            <textarea
+              rows={3}
+              value={instrText}
+              onChange={(e) => setInstrText(e.target.value)}
+              placeholder={`Tell ${agent.name} how to approach your brand (e.g. "Always use emojis", "Focus on Instagram Reels")…`}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-300 focus:outline-none resize-none"
+            />
+            <button type="button" disabled={savingInstr} onClick={async () => {
+              setSavingInstr(true);
+              await onSaveInstructions(agent.key, instrText);
+              setSavingInstr(false);
+            }}
+              className="mt-1.5 flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition disabled:opacity-50">
+              {savingInstr ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle size={10} />}
+              Save Instructions
+            </button>
+          </div>
+
+          {/* Schedule */}
+          <div>
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Auto-Run Schedule</p>
+            <div className="flex flex-wrap gap-2 items-end">
+              <select value={freq} onChange={(e) => setFreq(e.target.value as AgentSchedule['frequency'])}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:outline-none">
+                {['off','daily','weekly'].map((f) => <option key={f} value={f}>{FREQ_LABELS[f]}</option>)}
+              </select>
+              {freq !== 'off' && (
+                <select value={hour} onChange={(e) => setHour(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:outline-none">
+                  {HOUR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              )}
+              {freq === 'weekly' && (
+                <select value={day} onChange={(e) => setDay(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:outline-none">
+                  {DAY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              )}
+              <button type="button" disabled={savingSched} onClick={async () => {
+                setSavingSched(true);
+                await onSaveSchedule(agent.key, { frequency: freq, run_hour: hour, run_day: day, enabled: freq !== 'off' });
+                setSavingSched(false);
+              }}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition disabled:opacity-50">
+                {savingSched ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle size={10} />}
+                Save
+              </button>
+            </div>
+            {freq !== 'off' && (
+              <p className="mt-1.5 text-[10px] text-violet-600 font-semibold">
+                {agent.name} will run automatically {freq === 'daily' ? `daily` : `every week on ${DAY_OPTIONS[day]?.label}`} at {HOUR_OPTIONS[hour]?.label}.
+              </p>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -572,13 +719,15 @@ function ApprovalQueue({
 function BrandCard({
   profile,
   onEdit,
+  onExtractVoice,
 }: {
   profile: BrandProfile;
   onEdit: () => void;
+  onExtractVoice: () => void;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl text-base"
             style={{ background: '#10B98118', color: '#10B981' }}>◈</div>
@@ -587,10 +736,16 @@ function BrandCard({
             <p className="text-[11px] text-slate-400">{profile.niche || 'No niche set'}</p>
           </div>
         </div>
-        <button type="button" onClick={onEdit}
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
-          <Pencil size={11} /> Edit
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onExtractVoice}
+            className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition">
+            <Wand2 size={11} /> Extract Voice
+          </button>
+          <button type="button" onClick={onEdit}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+            <Pencil size={11} /> Edit
+          </button>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs">
         {profile.tone && (
@@ -627,6 +782,319 @@ function BrandCard({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Agent Chat Modal ──────────────────────────────────────────────────────────
+
+function AgentChatModal({
+  agentKey, onClose,
+}: { agentKey: string; onClose: () => void }) {
+  const agent = AGENT_DEFS.find((a) => a.key === agentKey)!;
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput]       = useState('');
+  const [sending, setSending]   = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    const next: ChatMessage[] = [...messages, { role: 'user', content: text }];
+    setMessages(next);
+    setInput('');
+    setSending(true);
+    try {
+      const res = await fetch(`${BASE()}/api/user/agents/${agentKey}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ messages: next }),
+      });
+      const d = await res.json();
+      if (d.success) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: d.reply }]);
+      }
+    } catch { /* silent */ } finally { setSending(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-end p-4 pointer-events-none">
+      <div className="pointer-events-auto flex flex-col w-full max-w-sm h-[520px] rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100" style={{ background: `${agent.color}10` }}>
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl text-lg font-black"
+            style={{ background: `${agent.color}20`, color: agent.color }}>{agent.icon}</div>
+          <div className="flex-1">
+            <p className="text-sm font-black text-slate-900">{agent.name}</p>
+            <p className="text-[10px] text-slate-500">{agent.role}</p>
+          </div>
+          <button type="button" onClick={onClose}
+            className="rounded-lg p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.length === 0 && (
+            <p className="text-xs text-slate-400 text-center mt-8">
+              Say hello to {agent.name} — ask anything about {agent.role.toLowerCase()}.
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-indigo-600 text-white rounded-br-sm'
+                  : 'bg-slate-100 text-slate-800 rounded-bl-sm'
+              }`}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {sending && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl rounded-bl-sm bg-slate-100 px-3 py-2">
+                <Loader2 size={14} className="animate-spin text-slate-400" />
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input */}
+        <div className="flex items-end gap-2 px-3 py-3 border-t border-slate-100">
+          <textarea
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
+            placeholder={`Ask ${agent.name} anything…`}
+            className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-400 focus:outline-none"
+            style={{ maxHeight: '80px' }}
+          />
+          <button type="button" onClick={send} disabled={!input.trim() || sending}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white transition disabled:opacity-40"
+            style={{ background: agent.color }}>
+            <Send size={13} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Content Calendar ──────────────────────────────────────────────────────────
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function ContentCalendar({ tasks, drafts, onClose }: {
+  tasks: AgentTask[];
+  drafts: AgentDraft[];
+  onClose: () => void;
+}) {
+  const today = new Date();
+  const [year, setYear]   = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth());
+
+  const prevMonth = () => { if (month === 0) { setYear(y => y-1); setMonth(11); } else setMonth(m => m-1); };
+  const nextMonth = () => { if (month === 11) { setYear(y => y+1); setMonth(0); } else setMonth(m => m+1); };
+
+  // Build a map of day-of-month → items
+  const itemsByDay: Record<number, { label: string; color: string }[]> = {};
+  const addItem = (dateStr: string | null | undefined, label: string, color: string) => {
+    if (!dateStr) return;
+    const d = new Date(dateStr);
+    if (d.getFullYear() === year && d.getMonth() === month) {
+      const day = d.getDate();
+      if (!itemsByDay[day]) itemsByDay[day] = [];
+      itemsByDay[day].push({ label, color });
+    }
+  };
+  tasks.filter(t => t.status === 'approved').forEach(t =>
+    addItem(t.decided_at, t.title, AGENT_COLORS[t.agent_key] ?? '#5b6cf9')
+  );
+  drafts.forEach(d =>
+    addItem(d.created_at, d.title, AGENT_COLORS[d.agent_key] ?? '#5b6cf9')
+  );
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = Array.from({ length: firstDay + daysInMonth }, (_, i) =>
+    i < firstDay ? null : i - firstDay + 1
+  );
+  // Pad to full weeks
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+        <div className="flex items-center gap-3">
+          <CalendarDays size={16} className="text-indigo-500" />
+          <h3 className="font-black text-slate-950 tracking-tight">Content Calendar</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={prevMonth}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 transition">
+            <ChevronLeft size={14} />
+          </button>
+          <span className="text-sm font-bold text-slate-700 w-24 text-center">
+            {MONTH_NAMES[month]} {year}
+          </span>
+          <button type="button" onClick={nextMonth}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 transition">
+            <ChevronRight size={14} />
+          </button>
+          <button type="button" onClick={onClose}
+            className="ml-2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4">
+        {/* Day headers */}
+        <div className="grid grid-cols-7 mb-1">
+          {DAY_NAMES.map(d => (
+            <div key={d} className="text-center text-[10px] font-bold text-slate-400 py-1">{d}</div>
+          ))}
+        </div>
+        {/* Calendar grid */}
+        <div className="grid grid-cols-7 gap-0.5">
+          {cells.map((day, i) => {
+            const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+            const items   = day ? (itemsByDay[day] ?? []) : [];
+            return (
+              <div key={i} className={`min-h-[64px] rounded-xl p-1.5 ${day ? 'bg-slate-50 hover:bg-slate-100 transition' : ''} ${isToday ? 'ring-2 ring-indigo-400 bg-indigo-50' : ''}`}>
+                {day && (
+                  <>
+                    <p className={`text-[11px] font-bold mb-1 ${isToday ? 'text-indigo-600' : 'text-slate-500'}`}>{day}</p>
+                    <div className="space-y-0.5">
+                      {items.slice(0, 3).map((item, j) => (
+                        <div key={j} className="rounded px-1 py-0.5 text-[9px] font-semibold truncate text-white"
+                          style={{ background: item.color }}
+                          title={item.label}>
+                          {item.label.slice(0, 16)}
+                        </div>
+                      ))}
+                      {items.length > 3 && (
+                        <p className="text-[9px] text-slate-400 font-semibold">+{items.length - 3} more</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {Object.keys(itemsByDay).length === 0 && (
+        <p className="text-xs text-slate-400 text-center pb-4">
+          No approved content this month. Approve some proposals to populate the calendar.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Brand Voice Modal ─────────────────────────────────────────────────────────
+
+function BrandVoiceModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [samples, setSamples]   = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [result, setResult]     = useState<VoiceResult | null>(null);
+  const [error, setError]       = useState<string | null>(null);
+
+  const extract = async () => {
+    if (samples.trim().length < 20) return;
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const res = await fetch(`${BASE()}/api/user/brand-voice-extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ samples }),
+      });
+      const d = await res.json();
+      if (d.success) { setResult(d.voice); onSaved(); }
+      else setError(d.error ?? 'Extraction failed');
+    } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <Wand2 size={16} className="text-indigo-500" />
+            <h3 className="font-black text-slate-950 tracking-tight">Extract Brand Voice</h3>
+          </div>
+          <button type="button" onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {!result ? (
+            <>
+              <p className="text-sm text-slate-500">
+                Paste 3–5 examples of your existing posts, captions, or copy. Sage will analyse them and extract your brand voice automatically.
+              </p>
+              <textarea
+                rows={8}
+                value={samples}
+                onChange={(e) => setSamples(e.target.value)}
+                placeholder={"Paste your content samples here…\n\nExample:\n- Your best Instagram caption\n- A tagline you love\n- A blog intro paragraph"}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-indigo-400 focus:outline-none resize-none"
+              />
+              {error && <p className="text-xs text-red-600">{error}</p>}
+              <button type="button" onClick={extract} disabled={loading || samples.trim().length < 20}
+                className="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
+                style={{ background: '#5b6cf9' }}>
+                {loading ? <><Loader2 size={14} className="animate-spin" /> Analysing…</> : <><Wand2 size={14} /> Extract Brand Voice</>}
+              </button>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-bold text-emerald-800 mb-1">Brand Voice Extracted</p>
+                {result.one_liner && <p className="text-sm text-emerald-700 italic">"{result.one_liner}"</p>}
+              </div>
+              {result.tone && <div><p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Tone</p><p className="text-sm text-slate-700">{result.tone}</p></div>}
+              {result.personality && result.personality.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Personality</p>
+                  <div className="flex flex-wrap gap-1">
+                    {result.personality.map((t) => <span key={t} className="rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-semibold px-2 py-0.5">{t}</span>)}
+                  </div>
+                </div>
+              )}
+              {result.do_list && result.do_list.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold text-emerald-600 uppercase tracking-wide mb-1">Do</p>
+                  <ul className="space-y-0.5">{result.do_list.map((d) => <li key={d} className="text-sm text-slate-700 flex gap-1.5"><CheckCircle size={12} className="shrink-0 text-emerald-500 mt-0.5" />{d}</li>)}</ul>
+                </div>
+              )}
+              {result.dont_list && result.dont_list.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold text-red-500 uppercase tracking-wide mb-1">Don't</p>
+                  <ul className="space-y-0.5">{result.dont_list.map((d) => <li key={d} className="text-sm text-slate-700 flex gap-1.5"><X size={12} className="shrink-0 text-red-400 mt-0.5" />{d}</li>)}</ul>
+                </div>
+              )}
+              <p className="text-xs text-slate-400">Saved to your brand memory — all agents will use this going forward.</p>
+              <button type="button" onClick={onClose}
+                className="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white"
+                style={{ background: '#10B981' }}>
+                <CheckCircle size={14} /> Done
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -864,6 +1332,15 @@ export default function AITeam() {
   const [lastRunAt, setLastRunAt]           = useState<Record<string, string>>({});
   const [runToasts, setRunToasts]           = useState<RunResult[]>([]);
   const [execToasts, setExecToasts]         = useState<ExecToast[]>([]);
+  // Plan 10: schedules + per-agent instructions
+  const [schedules, setSchedules]           = useState<Record<string, AgentSchedule>>({});
+  const [agentInstructions, setAgentInstructions] = useState<Record<string, string>>({});
+  // Plan 11: brand voice modal
+  const [showVoice, setShowVoice]           = useState(false);
+  // Plan 10: agent chat
+  const [chatKey, setChatKey]               = useState<string | null>(null);
+  // Plan 12: content calendar
+  const [showCalendar, setShowCalendar]     = useState(false);
 
   // Phase 8 — orchestration state
   const [showOrch, setShowOrch]             = useState(false);
@@ -876,16 +1353,31 @@ export default function AITeam() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [pr, tr, sr, dr] = await Promise.all([
-        fetch(`${BASE()}/api/user/brand-profile`,  { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
-        fetch(`${BASE()}/api/user/agent-tasks`,    { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
-        fetch(`${BASE()}/api/user/agents/status`,  { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
-        fetch(`${BASE()}/api/user/agent-drafts`,   { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+      const h = { Authorization: `Bearer ${tok()}` };
+      const [pr, tr, sr, dr, schr, memr] = await Promise.all([
+        fetch(`${BASE()}/api/user/brand-profile`,    { headers: h }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-tasks`,      { headers: h }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agents/status`,    { headers: h }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-drafts`,     { headers: h }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-schedules`,  { headers: h }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-memory`,     { headers: h }).then((r) => r.json()),
       ]);
       setProfile(pr.success ? pr.profile : null);
       setTasks(tr.success ? tr.tasks : []);
       if (sr.success) setLastRunAt(sr.status ?? {});
       if (dr.success) setDrafts(dr.drafts ?? []);
+      if (schr.success) {
+        const map: Record<string, AgentSchedule> = {};
+        for (const s of (schr.schedules ?? [])) map[s.agent_key] = s;
+        setSchedules(map);
+      }
+      if (memr.success) {
+        const instrMap: Record<string, string> = {};
+        for (const m of (memr.memories ?? [])) {
+          if (m.key === 'custom_instructions') instrMap[m.agent_key] = m.value;
+        }
+        setAgentInstructions(instrMap);
+      }
       if (!pr.profile?.setup_done) setShowWizard(true);
     } catch (e: any) {
       setError(e.message);
@@ -919,6 +1411,25 @@ export default function AITeam() {
           .catch(() => {});
       }
     }
+  };
+
+  const handleSaveInstructions = async (agentKey: string, value: string) => {
+    await fetch(`${BASE()}/api/user/agent-memory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      body: JSON.stringify({ agent_key: agentKey, mem_type: 'instruction', key: 'custom_instructions', value: value || ' ' }),
+    }).catch(() => {});
+    setAgentInstructions((prev) => ({ ...prev, [agentKey]: value }));
+  };
+
+  const handleSaveSchedule = async (agentKey: string, patch: Partial<AgentSchedule>) => {
+    const res = await fetch(`${BASE()}/api/user/agent-schedules/${agentKey}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      body: JSON.stringify(patch),
+    });
+    const d = await res.json();
+    if (d.success) setSchedules((prev) => ({ ...prev, [agentKey]: d.schedule }));
   };
 
   const runAgent = async (key: string) => {
@@ -1078,6 +1589,12 @@ export default function AITeam() {
         </div>
       )}
 
+      {/* Agent chat modal */}
+      {chatKey && <AgentChatModal agentKey={chatKey} onClose={() => setChatKey(null)} />}
+
+      {/* Brand voice modal */}
+      {showVoice && <BrandVoiceModal onClose={() => setShowVoice(false)} onSaved={() => {}} />}
+
       {/* Page header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -1094,6 +1611,10 @@ export default function AITeam() {
           )}
           {profileReady && (
             <>
+              <button type="button" onClick={() => setShowCalendar((v) => !v)}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition">
+                <Calendar size={13} /> Calendar
+              </button>
               <button
                 type="button"
                 disabled={orchRunning || runningAll || runningAgents.size > 0}
@@ -1123,6 +1644,11 @@ export default function AITeam() {
         </div>
       </div>
 
+      {/* Content calendar */}
+      {showCalendar && profileReady && (
+        <ContentCalendar tasks={tasks} drafts={drafts} onClose={() => setShowCalendar(false)} />
+      )}
+
       {/* Phase 8 — Orchestration panel */}
       {showOrch && profileReady && (
         <OrchestrationPanel
@@ -1147,7 +1673,7 @@ export default function AITeam() {
         profile && (
           <div className="flex items-start gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
-              <BrandCard profile={profile} onEdit={() => setShowWizard(true)} />
+              <BrandCard profile={profile} onEdit={() => setShowWizard(true)} onExtractVoice={() => setShowVoice(true)} />
             </div>
             {!profileReady && (
               <button type="button" onClick={() => setShowWizard(true)}
@@ -1193,6 +1719,11 @@ export default function AITeam() {
               lastRunAt={lastRunAt[agent.key] ?? null}
               running={runningAgents.has(agent.key)}
               onRun={runAgent}
+              instructions={agentInstructions[agent.key] ?? ''}
+              schedule={schedules[agent.key] ?? null}
+              onChat={setChatKey}
+              onSaveInstructions={handleSaveInstructions}
+              onSaveSchedule={handleSaveSchedule}
             />
           ))}
         </div>
@@ -1213,6 +1744,10 @@ export default function AITeam() {
           <li>• <strong>Orchestrate</strong> — Full campaign pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
           <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on what you approve.</li>
           <li>• <strong>Executed Drafts</strong> — Approving a <em>content post</em> auto-creates a blog draft you can edit and publish. Other approved proposals are saved as drafts for your reference.</li>
+          <li>• <strong>Chat</strong> — Click Chat on any agent card to have a direct conversation about strategy, content, or ideas.</li>
+          <li>• <strong>Settings</strong> — Each agent has a Settings panel for standing instructions (rules the agent always follows) and an auto-run schedule (daily or weekly).</li>
+          <li>• <strong>Brand Voice</strong> — Click "Extract Voice" on your brand card to paste sample content and have Sage identify your voice automatically.</li>
+          <li>• <strong>Calendar</strong> — The Calendar button shows all approved content and drafts plotted on a monthly grid.</li>
           <li>• <strong>Memory</strong> — The more you interact, the more your team learns your preferences.</li>
           <li>• Proposals expire after 48 hours if not actioned.</li>
         </ul>
