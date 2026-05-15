@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Loader2, Save } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, Save, Send } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
 type PlatformConfig = {
@@ -16,7 +16,6 @@ function authHeaders() {
   };
 }
 
-// Fields to show per platform (in display order)
 const PLATFORM_FIELDS: Record<string, { key: string; label: string; secret?: boolean; placeholder?: string }[]> = {
   resend: [
     { key: 'apiKey', label: 'API Key', secret: true, placeholder: 're_...' },
@@ -48,6 +47,59 @@ const PLATFORM_LABELS: Record<string, string> = {
   smtp: 'SMTP (Email fallback)',
   app: 'App Settings',
 };
+
+function ResendTestButton() {
+  const [to, setTo] = useState('');
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const send = async () => {
+    if (!to.trim()) return;
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/resend/test`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ to: to.trim() }),
+      });
+      const data = await res.json();
+      setResult({ ok: data.success, msg: data.message ?? data.error ?? 'Unknown response' });
+    } catch {
+      setResult({ ok: false, msg: 'Request failed' });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-slate-100 pt-4 space-y-2">
+      <p className="text-xs font-semibold text-slate-500">Send a test email</p>
+      <div className="flex gap-2">
+        <input
+          type="email"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          placeholder="your@email.com"
+          className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+        />
+        <button
+          onClick={() => void send()}
+          disabled={sending || !to.trim()}
+          className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+          Test
+        </button>
+      </div>
+      {result && (
+        <p className={`text-xs font-medium ${result.ok ? 'text-emerald-600' : 'text-red-500'}`}>
+          {result.ok ? '✓' : '✗'} {result.msg}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function PlatformCard({
   config,
@@ -136,6 +188,9 @@ function PlatformCard({
               {saved ? 'Saved!' : 'Save'}
             </button>
           </div>
+
+          {/* Resend-only: test email button */}
+          {config.platform === 'resend' && <ResendTestButton />}
         </div>
       )}
     </div>
@@ -154,7 +209,6 @@ export default function AdminPlatformSettings() {
       });
       const data = await res.json();
       if (data.success) {
-        // Merge known platforms so all appear even if not yet configured
         const known = ['app', 'resend', 'stripe', 'smtp'];
         const existing = new Map<string, PlatformConfig>(
           (data.configs as PlatformConfig[]).map((c) => [c.platform, c])

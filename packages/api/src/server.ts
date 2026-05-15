@@ -4115,6 +4115,15 @@ async function isPlatformEnabled(platform: string): Promise<boolean> {
   return inMemoryPlatformConfigs.get(platform)?.enabled ?? false;
 }
 
+// Returns { apiKey, fromEmail, fromName } for Resend, reading platform_configs first then env-var fallback.
+async function getResendConfig(): Promise<{ apiKey: string; fromEmail: string; fromName: string }> {
+  const cfg = await getPlatformConfig('resend').catch(() => ({} as Record<string, string>));
+  const apiKey    = String(cfg.apiKey    || process.env.RESEND_API_KEY    || '').trim();
+  const fromEmail = String(cfg.fromEmail || process.env.RESEND_FROM_EMAIL || 'noreply@resend.dev').trim();
+  const fromName  = String(cfg.fromName  || process.env.RESEND_FROM_NAME  || '').trim();
+  return { apiKey, fromEmail, fromName };
+}
+
 function upsertInMemoryUser(input: {
   id: string;
   name: string;
@@ -9078,6 +9087,29 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
   } catch (error) {
     console.error('Save platform config error:', error);
     return res.status(500).json({ success: false, error: 'Failed to save platform config' });
+  }
+});
+
+// POST /api/admin/platform-configs/resend/test — send a test email to verify Resend config
+app.post('/api/admin/platform-configs/resend/test', async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const { apiKey: resendKey, fromEmail, fromName } = await getResendConfig();
+    if (!resendKey) return res.status(400).json({ success: false, error: 'No Resend API key configured — save your key in Platform Settings first' });
+    const toEmail = String(req.body.to || '').trim();
+    if (!toEmail) return res.status(400).json({ success: false, error: 'Recipient email required' });
+    const resend = new Resend(resendKey);
+    const fromField = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+    await resend.emails.send({
+      from: fromField,
+      to: toEmail,
+      subject: 'Resend configuration test ✓',
+      html: `<p>Your Resend integration is working correctly.</p><p>From: <strong>${fromField}</strong></p>`,
+    });
+    return res.json({ success: true, message: `Test email sent to ${toEmail}` });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message || 'Failed to send test email' });
   }
 });
 
@@ -18279,7 +18311,7 @@ async function fireMailingAutomations(
 ): Promise<void> {
   if (!hasDatabase()) return;
   try {
-    const resendKey = String(process.env.RESEND_API_KEY || '').trim();
+    const { apiKey: resendKey, fromEmail, fromName } = await getResendConfig();
     if (!resendKey) return;
 
     const { rows: automations } = await pool!.query(
@@ -18288,7 +18320,7 @@ async function fireMailingAutomations(
     );
     if (!automations.length) return;
 
-    const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'noreply@resend.dev');
+    const fromField = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
     const resend = new Resend(resendKey);
 
     for (const automation of automations) {
@@ -18297,7 +18329,7 @@ async function fireMailingAutomations(
       const subject = String(automation.actions?.[0]?.subject || `Message from ${automation.name}`);
       const body = String(automation.actions?.[0]?.content || automation.name);
       try {
-        await resend.emails.send({ from: fromEmail, to: contactEmail, subject, html: body });
+        await resend.emails.send({ from: fromField, to: contactEmail, subject, html: body });
         await pool!.query(
           `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at)
            VALUES ($1, $2, NULL, $3, 'delivered', NOW())`,
@@ -18624,8 +18656,8 @@ app.post('/api/mailing/campaigns/:id/send', async (req: Request, res: Response) 
     const auth = requireAuth(req, res);
     if (!auth) return;
 
-    const resendKey = String(process.env.RESEND_API_KEY || '').trim();
-    if (!resendKey) return res.status(503).json({ success: false, error: 'Email sending is not configured (RESEND_API_KEY missing)' });
+    const { apiKey: resendKey, fromEmail: resendFrom, fromName: resendFromName } = await getResendConfig();
+    if (!resendKey) return res.status(503).json({ success: false, error: 'Email sending is not configured — add your Resend API key in Admin → Platform Settings' });
 
     const { rows: campaignRows } = await pool!.query(
       `SELECT c.*, ms.name AS segment_name FROM mailing_campaigns c
@@ -18649,7 +18681,7 @@ app.post('/api/mailing/campaigns/:id/send', async (req: Request, res: Response) 
 
     if (!contacts.length) return res.status(400).json({ success: false, error: 'No subscribed contacts found' });
 
-    const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'noreply@resend.dev');
+    const fromField = resendFromName ? `${resendFromName} <${resendFrom}>` : resendFrom;
     const resend = new Resend(resendKey);
     let sentCount = 0;
     let failedCount = 0;
@@ -18661,7 +18693,7 @@ app.post('/api/mailing/campaigns/:id/send', async (req: Request, res: Response) 
           : null;
         const htmlBody = `${campaign.content || '(no content)'}${unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`;
         await resend.emails.send({
-          from: fromEmail,
+          from: fromField,
           to: contact.email,
           subject: campaign.subject,
           html: htmlBody.includes('<') ? htmlBody : htmlBody.replace(/\n/g, '<br>'),
