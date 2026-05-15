@@ -4,6 +4,8 @@ import {
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
   CheckSquare, Square, Clock, ThumbsUp, ThumbsDown, X,
   Pencil, Bot, Play, PlayCircle, ArrowRight, Network,
+  FileText, ExternalLink, Lightbulb, LayoutList,
+  type LucideIcon,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
 
@@ -38,6 +40,23 @@ type AgentTask = {
   expires_at: string;
   decided_at: string | null;
   created_at: string;
+};
+
+type AgentDraft = {
+  id: string;
+  agent_key: string;
+  task_id: string | null;
+  task_type: string;
+  title: string;
+  content: string;
+  payload: Record<string, any>;
+  blog_post_id: string | null;
+  created_at: string;
+};
+
+type ExecToast = {
+  message: string;
+  blog_post_id?: string | null;
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -612,6 +631,102 @@ function BrandCard({
   );
 }
 
+function navigateToPosts() {
+  window.history.pushState({}, '', '/posts');
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+const DRAFT_TYPE_LABELS: Record<string, string> = {
+  content_post:       'Blog Draft',
+  strategy_proposal:  'Strategy',
+  analysis_report:    'Analysis',
+  visual_concept:     'Visual Brief',
+  workflow_setup:     'Workflow',
+};
+
+const DRAFT_TYPE_ICONS: Record<string, LucideIcon> = {
+  content_post:      FileText,
+  strategy_proposal: Lightbulb,
+  analysis_report:   BarChart2,
+  visual_concept:    Sparkles,
+  workflow_setup:    LayoutList,
+};
+
+function AgentDraftsPanel({ drafts }: { drafts: AgentDraft[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (drafts.length === 0) return null;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-black text-slate-950 tracking-tight">Executed Drafts</h3>
+        <span className="rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold px-2 py-0.5">
+          {drafts.length}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {drafts.map((draft) => {
+          const color   = AGENT_COLORS[draft.agent_key] ?? '#5b6cf9';
+          const icon    = AGENT_ICONS[draft.agent_key]  ?? '◆';
+          const DraftIcon = DRAFT_TYPE_ICONS[draft.task_type] ?? FileText;
+          const isOpen  = expanded === draft.id;
+          return (
+            <div key={draft.id}
+              className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              <button
+                type="button"
+                onClick={() => setExpanded(isOpen ? null : draft.id)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-base"
+                  style={{ background: `${color}18`, color }}>
+                  {icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold" style={{ color }}>
+                      {AGENT_NAMES[draft.agent_key] ?? draft.agent_key}
+                    </span>
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
+                      <DraftIcon size={9} />
+                      {DRAFT_TYPE_LABELS[draft.task_type] ?? draft.task_type}
+                    </span>
+                    {draft.blog_post_id && (
+                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 rounded-full px-2 py-0.5">
+                        blog draft
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{draft.title}</p>
+                </div>
+                <ChevronRight size={14} className={`shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+              </button>
+
+              {isOpen && (
+                <div className="px-4 pb-4 border-t border-slate-100 pt-3">
+                  {draft.content && (
+                    <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap mb-3">
+                      {draft.content}
+                    </p>
+                  )}
+                  {draft.blog_post_id && (
+                    <button
+                      type="button"
+                      onClick={navigateToPosts}
+                      className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition">
+                      <ExternalLink size={11} /> Open in Posts
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type RunResult = { agent_key: string; proposals_created: number; error?: string };
@@ -739,6 +854,7 @@ const AGENT_NAMES: Record<string, string> = { daky: 'Daky', nova: 'Nova', sage: 
 export default function AITeam() {
   const [profile, setProfile]   = useState<BrandProfile | null>(null);
   const [tasks, setTasks]       = useState<AgentTask[]>([]);
+  const [drafts, setDrafts]     = useState<AgentDraft[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState(false);
@@ -747,6 +863,7 @@ export default function AITeam() {
   const [runAllStatus, setRunAllStatus]     = useState('');
   const [lastRunAt, setLastRunAt]           = useState<Record<string, string>>({});
   const [runToasts, setRunToasts]           = useState<RunResult[]>([]);
+  const [execToasts, setExecToasts]         = useState<ExecToast[]>([]);
 
   // Phase 8 — orchestration state
   const [showOrch, setShowOrch]             = useState(false);
@@ -759,14 +876,16 @@ export default function AITeam() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [pr, tr, sr] = await Promise.all([
+      const [pr, tr, sr, dr] = await Promise.all([
         fetch(`${BASE()}/api/user/brand-profile`,  { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
         fetch(`${BASE()}/api/user/agent-tasks`,    { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
         fetch(`${BASE()}/api/user/agents/status`,  { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-drafts`,   { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
       ]);
       setProfile(pr.success ? pr.profile : null);
       setTasks(tr.success ? tr.tasks : []);
       if (sr.success) setLastRunAt(sr.status ?? {});
+      if (dr.success) setDrafts(dr.drafts ?? []);
       if (!pr.profile?.setup_done) setShowWizard(true);
     } catch (e: any) {
       setError(e.message);
@@ -786,6 +905,19 @@ export default function AITeam() {
     const d = await res.json();
     if (d.success) {
       setTasks((prev) => prev.map((t) => t.id === id ? d.task : t));
+      if (decision === 'approved' && d.execution) {
+        const exec = d.execution as { type: string; blog_post_id?: string; draft_id?: string };
+        const toast: ExecToast = exec.type === 'blog_draft'
+          ? { message: 'Blog draft created!', blog_post_id: exec.blog_post_id }
+          : { message: 'Draft saved to your team!' };
+        setExecToasts((prev) => [...prev, toast]);
+        setTimeout(() => setExecToasts((prev) => prev.filter((t) => t !== toast)), 7000);
+        // Reload drafts list
+        fetch(`${BASE()}/api/user/agent-drafts`, { headers: { Authorization: `Bearer ${tok()}` } })
+          .then((r) => r.json())
+          .then((dr) => { if (dr.success) setDrafts(dr.drafts ?? []); })
+          .catch(() => {});
+      }
     }
   };
 
@@ -916,7 +1048,7 @@ export default function AITeam() {
   return (
     <div className="space-y-8 max-w-5xl">
       {/* Run toasts */}
-      {runToasts.length > 0 && (
+      {(runToasts.length > 0 || execToasts.length > 0) && (
         <div className="fixed top-5 right-5 z-50 space-y-2">
           {runToasts.map((r, i) => (
             <div key={i} className={`flex items-center gap-2.5 rounded-2xl border px-4 py-3 shadow-lg text-sm font-semibold ${
@@ -926,6 +1058,21 @@ export default function AITeam() {
                 ? <><X size={14} className="shrink-0" /> {r.agent_key}: {r.error}</>
                 : <><CheckCircle size={14} className="shrink-0" /> {r.agent_key} created {r.proposals_created} proposal{r.proposals_created !== 1 ? 's' : ''}</>
               }
+            </div>
+          ))}
+          {execToasts.map((t, i) => (
+            <div key={`exec-${i}`}
+              className="flex items-center gap-2.5 rounded-2xl border border-indigo-200 bg-white px-4 py-3 shadow-lg text-sm font-semibold text-indigo-700">
+              <CheckCircle size={14} className="shrink-0 text-indigo-500" />
+              <span>{t.message}</span>
+              {t.blog_post_id && (
+                <button
+                  type="button"
+                  onClick={navigateToPosts}
+                  className="ml-2 flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline">
+                  Open in Posts <ExternalLink size={10} />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -1054,6 +1201,9 @@ export default function AITeam() {
       {/* Approval queue */}
       <ApprovalQueue tasks={tasks} onDecide={handleDecide} />
 
+      {/* Executed Drafts */}
+      <AgentDraftsPanel drafts={drafts} />
+
       {/* Info panel */}
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <p className="text-xs font-bold text-slate-600 mb-2">How your AI team works</p>
@@ -1062,6 +1212,7 @@ export default function AITeam() {
           <li>• <strong>Run individual agents</strong> — Each generates 2-3 proposals in seconds (10-min cooldown).</li>
           <li>• <strong>Orchestrate</strong> — Full campaign pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
           <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on what you approve.</li>
+          <li>• <strong>Executed Drafts</strong> — Approving a <em>content post</em> auto-creates a blog draft you can edit and publish. Other approved proposals are saved as drafts for your reference.</li>
           <li>• <strong>Memory</strong> — The more you interact, the more your team learns your preferences.</li>
           <li>• Proposals expire after 48 hours if not actioned.</li>
         </ul>

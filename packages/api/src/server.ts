@@ -3388,6 +3388,22 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `).catch(() => undefined);
+  // Phase 9 — agent_drafts: executed proposals (blog drafts + other content artifacts)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_drafts (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent_key    TEXT NOT NULL,
+      task_id      UUID REFERENCES user_agent_tasks(id) ON DELETE SET NULL,
+      task_type    TEXT NOT NULL DEFAULT 'content_post',
+      title        TEXT NOT NULL,
+      content      TEXT NOT NULL DEFAULT '',
+      payload      JSONB NOT NULL DEFAULT '{}',
+      blog_post_id TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_drafts_user_idx ON agent_drafts (user_id, created_at DESC);`).catch(() => undefined);
   // ── End User Agent Foundation ─────────────────────────────────────────────────
 
   // ── End User Memory ───────────────────────────────────────────────────────────
@@ -28307,6 +28323,22 @@ app.delete('/api/user/agent-memory/:id', async (req: Request, res: Response) => 
   }
 });
 
+// GET /api/user/agent-drafts — list executed drafts for user (Phase 9)
+app.get('/api/user/agent-drafts', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM agent_drafts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      [auth.userId]
+    );
+    return res.json({ success: true, drafts: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // GET /api/user/agent-tasks — list own agent task proposals
 app.get('/api/user/agent-tasks', async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
@@ -28375,7 +28407,38 @@ app.put('/api/user/agent-tasks/:id', async (req: Request, res: Response) => {
       }
     } catch { /* non-fatal */ }
 
-    return res.json({ success: true, task });
+    // Phase 9 — Proposal Execution: materialise approved proposals into real artifacts
+    let execution: Record<string, any> | null = null;
+    if (decision === 'approved') {
+      try {
+        if (task.task_type === 'content_post') {
+          const postId = randomUUID();
+          const postSlug = slugify(task.title) || postId;
+          await dbQuery(
+            `INSERT INTO blog_posts (id,user_id,title,slug,content,status)
+             VALUES ($1,$2,$3,$4,$5,'draft')`,
+            [postId, auth.userId, task.title, postSlug, task.body || '']
+          );
+          const { rows: dr } = await dbQuery(
+            `INSERT INTO agent_drafts (user_id,agent_key,task_id,task_type,title,content,payload,blog_post_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+            [auth.userId, task.agent_key, task.id, task.task_type, task.title, task.body || '',
+             JSON.stringify(task.payload || {}), postId]
+          );
+          execution = { type: 'blog_draft', draft_id: dr[0]?.id, blog_post_id: postId };
+        } else {
+          const { rows: dr } = await dbQuery(
+            `INSERT INTO agent_drafts (user_id,agent_key,task_id,task_type,title,content,payload)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+            [auth.userId, task.agent_key, task.id, task.task_type, task.title, task.body || '',
+             JSON.stringify(task.payload || {})]
+          );
+          execution = { type: 'agent_draft', draft_id: dr[0]?.id };
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    return res.json({ success: true, task, execution });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
