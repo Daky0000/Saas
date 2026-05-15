@@ -27835,26 +27835,307 @@ app.put('/api/admin/platform-agents/:key', async (req: Request, res: Response) =
   }
 });
 
-// POST /api/admin/platform-agents/:key/run — trigger a manual run (Phase 1: read-only digest)
+// ── Admin Agent helpers ───────────────────────────────────────────────────────
+
+async function gatherPlatformSnapshot(agentKey: string): Promise<Record<string, any>> {
+  if (!pool) return {};
+  const data: Record<string, any> = { snapshot_at: new Date().toUTCString() };
+
+  const safe = async (label: string, fn: () => Promise<any>) => {
+    try { data[label] = await fn(); } catch { /* skip incomplete data */ }
+  };
+
+  // Core user metrics — all agents
+  await safe('users', async () => {
+    const { rows } = await dbQuery(`
+      SELECT
+        COUNT(*)                                                           AS total,
+        COUNT(*) FILTER (WHERE status='active')                           AS active,
+        COUNT(*) FILTER (WHERE status='suspended')                        AS suspended,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')   AS new_7d,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') AS new_24h
+      FROM users WHERE role = 'user'
+    `);
+    return rows[0];
+  });
+
+  // Revenue data — CEO, CRO
+  if (['ceo', 'cro'].includes(agentKey)) {
+    await safe('revenue', async () => {
+      const { rows } = await dbQuery(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status='success'), 0)                                    AS total_revenue,
+          COALESCE(SUM(amount) FILTER (WHERE status='success' AND created_at > NOW()-INTERVAL '30 days'), 0) AS revenue_30d,
+          COALESCE(SUM(amount) FILTER (WHERE status='success' AND created_at > NOW()-INTERVAL '7 days'), 0)  AS revenue_7d,
+          COUNT(*) FILTER (WHERE status='success')  AS successful_transactions,
+          COUNT(*) FILTER (WHERE status='failed')   AS failed_transactions,
+          COUNT(*) FILTER (WHERE status='pending')  AS pending_transactions
+        FROM payment_transactions
+      `);
+      return rows[0];
+    });
+    await safe('pricing_plans', async () => {
+      const { rows } = await dbQuery(`
+        SELECT id, name, price, billing_period, is_active, is_on_sale, discount_percentage
+        FROM pricing_plans ORDER BY price ASC
+      `);
+      return rows;
+    });
+  }
+
+  // Operations data — COO
+  if (agentKey === 'coo') {
+    await safe('recent_payments', async () => {
+      const { rows } = await dbQuery(`
+        SELECT id, amount, currency, status, customer_email, created_at
+        FROM payment_transactions ORDER BY created_at DESC LIMIT 10
+      `);
+      return rows;
+    });
+    await safe('social_connections', async () => {
+      const { rows } = await dbQuery(`
+        SELECT platform, COUNT(*) AS total, COUNT(*) FILTER (WHERE connected) AS connected
+        FROM social_accounts GROUP BY platform ORDER BY total DESC
+      `);
+      return rows;
+    });
+  }
+
+  // Technology data — CTO
+  if (agentKey === 'cto') {
+    await safe('integrations', async () => {
+      const { rows } = await dbQuery(`
+        SELECT platform, enabled, updated_at FROM platform_configs ORDER BY platform
+      `);
+      return rows;
+    });
+    await safe('social_connections', async () => {
+      const { rows } = await dbQuery(`
+        SELECT platform, COUNT(*) AS total, COUNT(*) FILTER (WHERE connected) AS connected
+        FROM social_accounts GROUP BY platform ORDER BY total DESC
+      `);
+      return rows;
+    });
+  }
+
+  // Content data — CCO
+  if (agentKey === 'cco') {
+    await safe('card_templates', async () => {
+      const { rows } = await dbQuery(`
+        SELECT id, name, is_published, created_at FROM card_templates ORDER BY created_at DESC LIMIT 20
+      `);
+      return rows;
+    });
+    await safe('user_designs', async () => {
+      const { rows } = await dbQuery(`SELECT COUNT(*) AS total FROM user_designs`);
+      return rows[0];
+    });
+  }
+
+  return data;
+}
+
+function buildActionsPrompt(agentKey: string, autonomyConfig: Record<string, any>): string {
+  const lines: string[] = [
+    '- **create_notification**: Alert the admin team. Payload: { "title": string, "body": string, "severity": "info"|"warning"|"critical" }',
+  ];
+  if ((agentKey === 'ceo' || agentKey === 'cro') && autonomyConfig.can_change_pricing) {
+    const pct = autonomyConfig.pricing_range_pct ?? 15;
+    lines.push(`- **update_pricing_plan**: Adjust a plan price (max ±${pct}% from current). Payload: { "plan_id": string, "current_price": number, "new_price": number }`);
+  }
+  if (agentKey === 'coo' && autonomyConfig.can_suspend_accounts) {
+    lines.push('- **suspend_user**: Suspend a violating user. Payload: { "user_id": string, "reason": string }');
+  }
+  if (agentKey === 'cco' && autonomyConfig.can_manage_templates) {
+    lines.push('- **feature_template**: Publish or unpublish a template. Payload: { "template_id": string, "publish": boolean }');
+  }
+  if (agentKey === 'cto' && autonomyConfig.can_disable_integrations) {
+    lines.push('- **disable_integration**: Disable a malfunctioning integration. Payload: { "platform": string }');
+  }
+  return lines.join('\n');
+}
+
+async function executeAgentDecision(
+  agentKey: string,
+  decision: { action_type: string; payload: Record<string, any>; reasoning: string; severity: string },
+  autonomyConfig: Record<string, any>
+): Promise<void> {
+  const { action_type, payload } = decision;
+  switch (action_type) {
+    case 'create_notification': {
+      await dbQuery(
+        `INSERT INTO admin_notifications (agent_key, title, body, severity) VALUES ($1, $2, $3, $4)`,
+        [agentKey, String(payload.title ?? 'Agent Notification'), String(payload.body ?? ''), String(payload.severity ?? 'info')]
+      );
+      break;
+    }
+    case 'update_pricing_plan': {
+      if (!autonomyConfig.can_change_pricing) throw new Error('Not authorized for pricing changes');
+      const maxPct = Number(autonomyConfig.pricing_range_pct ?? 15);
+      const planRes = await dbQuery(`SELECT price FROM pricing_plans WHERE id = $1`, [payload.plan_id]);
+      if (!planRes.rows.length) throw new Error(`Plan ${payload.plan_id} not found`);
+      const current = parseFloat(planRes.rows[0].price);
+      const newPrice = parseFloat(payload.new_price);
+      if (isNaN(newPrice) || newPrice <= 0) throw new Error('Invalid price value');
+      const changePct = Math.abs((newPrice - current) / current * 100);
+      if (changePct > maxPct) throw new Error(`±${changePct.toFixed(1)}% exceeds authorized limit of ±${maxPct}%`);
+      await dbQuery(`UPDATE pricing_plans SET price = $1, updated_at = NOW() WHERE id = $2`, [newPrice, payload.plan_id]);
+      break;
+    }
+    case 'suspend_user': {
+      if (!autonomyConfig.can_suspend_accounts) throw new Error('Not authorized for user suspension');
+      if (!payload.user_id) throw new Error('user_id required');
+      await dbQuery(`UPDATE users SET status = 'suspended' WHERE id = $1 AND role = 'user'`, [payload.user_id]);
+      break;
+    }
+    case 'feature_template': {
+      if (!autonomyConfig.can_manage_templates) throw new Error('Not authorized for template management');
+      if (!payload.template_id) throw new Error('template_id required');
+      await dbQuery(
+        `UPDATE card_templates SET is_published = $1, updated_at = NOW() WHERE id = $2`,
+        [payload.publish !== false, payload.template_id]
+      );
+      break;
+    }
+    case 'disable_integration': {
+      if (!autonomyConfig.can_disable_integrations) throw new Error('Not authorized to disable integrations');
+      if (!payload.platform) throw new Error('platform required');
+      await dbQuery(`UPDATE platform_configs SET enabled = false, updated_at = NOW() WHERE platform = $1`, [payload.platform]);
+      break;
+    }
+    default:
+      throw new Error(`Unknown action type: ${action_type}`);
+  }
+}
+
+// POST /api/admin/platform-agents/:key/run — Phase 2+3: live Anthropic inference + autonomous action execution
 app.post('/api/admin/platform-agents/:key/run', async (req: Request, res: Response) => {
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
   const { key } = req.params;
+  const trigger = (req.body?.trigger as string) || 'manual';
+
   try {
     const agentRes = await dbQuery(`SELECT * FROM admin_agents WHERE key = $1`, [key]);
     if (agentRes.rows.length === 0) return res.status(404).json({ success: false, error: 'Agent not found' });
     const agent = agentRes.rows[0];
-    // Phase 1: canned digest (Phase 2 will invoke real Anthropic call with live platform data)
-    const summary = `[${agent.name} — ${agent.role}] Manual digest triggered at ${new Date().toUTCString()}. Platform status: nominal. All integrations operational. No critical thresholds breached. Monitoring continues on schedule.`;
-    const { rows } = await dbQuery(
-      `INSERT INTO admin_agent_runs (agent_key, trigger, summary, decisions_made, status)
-       VALUES ($1, 'manual', $2, 0, 'completed') RETURNING *`,
-      [key, summary]
+
+    // Mark running
+    await dbQuery(`UPDATE admin_agents SET status = 'running' WHERE key = $1`, [key]);
+
+    // Resolve API key
+    const { encryptedKey } = await getAIConfig();
+    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) {
+      await dbQuery(`UPDATE admin_agents SET status = 'error' WHERE key = $1`, [key]);
+      return res.status(503).json({ success: false, error: 'Anthropic API key not configured. Set it in Admin → AI Assistant → Configuration.' });
+    }
+
+    // Gather live platform data
+    const snapshot = await gatherPlatformSnapshot(key);
+    const actionsPrompt = buildActionsPrompt(key, agent.autonomy_config ?? {});
+
+    const userMessage = `Analyze the current Dakyworld Hub platform state and take any autonomous actions within your authority.
+
+## Live Platform Snapshot
+\`\`\`json
+${JSON.stringify(snapshot, null, 2)}
+\`\`\`
+
+## Available Autonomous Actions
+${actionsPrompt}
+
+## Response Format
+Respond ONLY with a JSON object in this exact format (no extra text):
+\`\`\`json
+{
+  "summary": "2-3 sentence executive summary of platform health and your key observations",
+  "health_score": <integer 1-10>,
+  "decisions": [
+    {
+      "action_type": "action_name",
+      "reasoning": "specific, data-driven reason for this action",
+      "payload": { ... },
+      "severity": "low|medium|high|critical"
+    }
+  ]
+}
+\`\`\`
+
+Only take actions when data clearly justifies them. If the platform is healthy, return an empty decisions array.`;
+
+    // Call Claude
+    const client = new Anthropic({ apiKey });
+    const aiResponse = await client.messages.create({
+      model: agent.model || 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: agent.system_prompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+
+    const rawText = aiResponse.content[0]?.type === 'text' ? aiResponse.content[0].text : '';
+
+    // Parse structured response
+    let parsed: { summary: string; health_score?: number; decisions: any[] } = {
+      summary: rawText.slice(0, 600),
+      decisions: [],
+    };
+    try {
+      const block = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const candidate = block ? block[1] : rawText;
+      const jsonMatch = candidate.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const j = JSON.parse(jsonMatch[0]);
+        parsed = {
+          summary: String(j.summary ?? rawText.slice(0, 600)),
+          health_score: typeof j.health_score === 'number' ? j.health_score : undefined,
+          decisions: Array.isArray(j.decisions) ? j.decisions : [],
+        };
+      }
+    } catch { /* use raw text as summary */ }
+
+    // Execute decisions (Phase 3 — autonomous actions)
+    let executedCount = 0;
+    const decisionErrors: string[] = [];
+
+    for (const decision of parsed.decisions) {
+      if (!decision?.action_type) continue;
+      let taskStatus: 'executed' | 'rejected' = 'rejected';
+      let taskError = '';
+      try {
+        await executeAgentDecision(key, decision, agent.autonomy_config ?? {});
+        taskStatus = 'executed';
+        executedCount++;
+      } catch (e: any) {
+        taskError = e.message;
+        decisionErrors.push(`${decision.action_type}: ${e.message}`);
+      }
+      await dbQuery(
+        `INSERT INTO admin_agent_tasks (agent_key, action_type, payload, status, reasoning, severity)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [key, decision.action_type, JSON.stringify(decision.payload ?? {}), taskStatus,
+         (decision.reasoning ?? '') + (taskError ? ` [error: ${taskError}]` : ''), decision.severity ?? 'low']
+      ).catch(() => {});
+    }
+
+    // Build run summary
+    const healthTag = parsed.health_score != null ? ` [Health: ${parsed.health_score}/10]` : '';
+    const actTag = executedCount > 0 ? ` — ${executedCount} action${executedCount !== 1 ? 's' : ''} executed.` : '';
+    const errTag = decisionErrors.length > 0 ? ` Skipped: ${decisionErrors.join('; ')}.` : '';
+    const fullSummary = `${parsed.summary}${healthTag}${actTag}${errTag}`.slice(0, 2000);
+
+    const { rows: runRows } = await dbQuery(
+      `INSERT INTO admin_agent_runs (agent_key, trigger, summary, decisions_made, status, metadata)
+       VALUES ($1, $2, $3, $4, 'completed', $5) RETURNING *`,
+      [key, trigger, fullSummary, executedCount, JSON.stringify({ health_score: parsed.health_score, errors: decisionErrors })]
     );
+
     await dbQuery(`UPDATE admin_agents SET status = 'idle', last_run_at = NOW() WHERE key = $1`, [key]);
-    return res.json({ success: true, run: rows[0] });
+    return res.json({ success: true, run: runRows[0] });
+
   } catch (e: any) {
+    await dbQuery(`UPDATE admin_agents SET status = 'error' WHERE key = $1`, [key]).catch(() => {});
     return res.status(500).json({ success: false, error: e.message });
   }
 });

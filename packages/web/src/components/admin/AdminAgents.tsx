@@ -3,7 +3,8 @@ import {
   CheckCircle, Loader2, RefreshCw, Save, Settings, Wrench,
   GitBranch, Plus, Trash2, ChevronUp, ChevronDown, X, Info,
   ArrowLeft, ToggleLeft, ToggleRight, Edit2,
-  Activity, Play, SlidersHorizontal, Shield,
+  Activity, Play, SlidersHorizontal, Shield, Bell, Zap,
+  AlertTriangle, AlertCircle,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../../utils/apiBase';
 
@@ -37,6 +38,16 @@ type AdminAgentRun = {
   summary: string;
   decisions_made: number;
   status: 'completed' | 'failed' | 'partial';
+  created_at: string;
+};
+
+type AdminNotification = {
+  id: string;
+  agent_key: string;
+  title: string;
+  body: string;
+  severity: 'info' | 'warning' | 'critical';
+  is_read: boolean;
   created_at: string;
 };
 
@@ -483,25 +494,58 @@ function AdminAgentConfigModal({
 
 function AdminAgentsPanel() {
   const [agents, setAgents] = useState<AdminPlatformAgent[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AdminPlatformAgent | null>(null);
+  const [runningAll, setRunningAll] = useState(false);
+  const [runAllStatus, setRunAllStatus] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch(`${BASE()}/api/admin/platform-agents`, {
-      headers: { Authorization: `Bearer ${tok()}` },
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        if (!d.success) throw new Error(d.error ?? 'Failed to load');
-        setAgents(d.agents);
+    Promise.all([
+      fetch(`${BASE()}/api/admin/platform-agents`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+      fetch(`${BASE()}/api/admin/platform-agents/notifications`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+    ])
+      .then(([ad, nd]) => {
+        if (!ad.success) throw new Error(ad.error ?? 'Failed to load agents');
+        setAgents(ad.agents);
+        setNotifications(nd.success ? (nd.notifications ?? []) : []);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const reloadNotifications = () => {
+    fetch(`${BASE()}/api/admin/platform-agents/notifications`, { headers: { Authorization: `Bearer ${tok()}` } })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setNotifications(d.notifications ?? []); })
+      .catch(() => {});
+  };
+
+  const runAllAgents = async () => {
+    setRunningAll(true);
+    setRunAllStatus('Starting full C-suite run…');
+    const keys = agents.map((a) => a.key);
+    let done = 0;
+    for (const key of keys) {
+      const agent = agents.find((a) => a.key === key);
+      setRunAllStatus(`Running ${agent?.name ?? key} (${done + 1}/${keys.length})…`);
+      try {
+        await fetch(`${BASE()}/api/admin/platform-agents/${key}/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+          body: JSON.stringify({ trigger: 'manual' }),
+        });
+      } catch { /* continue to next */ }
+      done++;
+    }
+    setRunAllStatus(null);
+    setRunningAll(false);
+    load(); // reload agents + notifications
+  };
 
   if (loading) {
     return (
@@ -516,20 +560,47 @@ function AdminAgentsPanel() {
 
   const strategic   = agents.filter((a) => a.tier === 'strategic');
   const operational = agents.filter((a) => a.tier === 'operational');
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   return (
     <div className="space-y-7">
       {/* Header row */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h3 className="text-lg font-black text-slate-950 tracking-[-0.02em]">Admin Agents</h3>
           <p className="text-sm text-slate-500 mt-0.5">AI-powered C-suite running Dakyworld Hub autonomously</p>
         </div>
-        <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
-          <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          {agents.length} Active
+        <div className="flex items-center gap-2">
+          {unreadCount > 0 && (
+            <div className="flex items-center gap-1.5 rounded-full bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700">
+              <Bell size={12} />
+              {unreadCount} alert{unreadCount !== 1 ? 's' : ''}
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
+            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            {agents.length} Active
+          </div>
+          <button
+            type="button"
+            disabled={runningAll}
+            onClick={runAllAgents}
+            className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-60"
+          >
+            {runningAll
+              ? <><Loader2 size={12} className="animate-spin" /> Running…</>
+              : <><Zap size={12} /> Run All Agents</>}
+          </button>
         </div>
       </div>
+
+      {/* Run-all progress */}
+      {runAllStatus && (
+        <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs font-semibold text-indigo-700">
+          <Loader2 size={13} className="animate-spin shrink-0" />
+          {runAllStatus}
+        </div>
+      )}
 
       {/* Strategic tier */}
       {strategic.length > 0 && (
@@ -541,11 +612,7 @@ function AdminAgentsPanel() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             {strategic.map((agent) => (
-              <AdminAgentCard
-                key={agent.key}
-                agent={agent}
-                onConfigure={() => setSelected(agent)}
-              />
+              <AdminAgentCard key={agent.key} agent={agent} onConfigure={() => setSelected(agent)} />
             ))}
           </div>
         </div>
@@ -561,27 +628,81 @@ function AdminAgentsPanel() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {operational.map((agent) => (
-              <AdminAgentCard
-                key={agent.key}
-                agent={agent}
-                onConfigure={() => setSelected(agent)}
-              />
+              <AdminAgentCard key={agent.key} agent={agent} onConfigure={() => setSelected(agent)} />
             ))}
           </div>
         </div>
       )}
 
+      {/* Notifications feed */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-px w-8 bg-slate-200" />
+            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Agent Activity Feed</span>
+          </div>
+          <button
+            type="button"
+            onClick={reloadNotifications}
+            className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-slate-700 transition-colors"
+          >
+            <RefreshCw size={11} /> Refresh
+          </button>
+        </div>
+
+        {notifications.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center">
+            <Bell size={24} className="mx-auto text-slate-300 mb-2" />
+            <p className="text-sm text-slate-400">No agent activity yet.</p>
+            <p className="text-xs text-slate-400 mt-1">Run agents to generate notifications and decision logs.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {notifications.slice(0, 15).map((n) => {
+              const Icon = n.severity === 'critical' ? AlertCircle : n.severity === 'warning' ? AlertTriangle : Bell;
+              const colors = n.severity === 'critical'
+                ? 'border-red-200 bg-red-50'
+                : n.severity === 'warning'
+                  ? 'border-amber-200 bg-amber-50'
+                  : 'border-slate-200 bg-white';
+              const iconColor = n.severity === 'critical' ? 'text-red-500' : n.severity === 'warning' ? 'text-amber-500' : 'text-slate-400';
+              const agentObj = agents.find((a) => a.key === n.agent_key);
+              return (
+                <div key={n.id} className={`flex items-start gap-3 rounded-xl border p-4 ${colors}`}>
+                  <Icon size={15} className={`${iconColor} mt-0.5 shrink-0`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <p className="text-sm font-semibold text-slate-900">{n.title}</p>
+                      {agentObj && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                          style={{ background: `${agentObj.color}18`, color: agentObj.color }}>
+                          {agentObj.name}
+                        </span>
+                      )}
+                    </div>
+                    {n.body && <p className="text-xs text-slate-600 leading-relaxed">{n.body}</p>}
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      {new Date(n.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Autonomy notice */}
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
         <div className="flex items-start gap-3">
-          <Shield size={16} className="text-amber-600 mt-0.5 shrink-0" />
+          <Shield size={16} className="text-emerald-600 mt-0.5 shrink-0" />
           <div>
-            <p className="text-xs font-bold text-amber-800 mb-1.5">Phase 1 — Platform Intelligence</p>
-            <ul className="space-y-1.5 text-xs text-amber-700">
-              <li>• Admin agents are fully autonomous — no human approval required for pricing, user management, or budget allocation.</li>
-              <li>• All agent decisions are logged in the Decision Log for full transparency.</li>
-              <li>• System prompts define each agent's identity, authority scope, and behavioral guardrails.</li>
-              <li>• Phase 2 activates live Anthropic inference with real-time platform data ingestion.</li>
+            <p className="text-xs font-bold text-emerald-800 mb-1.5">Phase 2+3 — Live Intelligence & Autonomous Actions</p>
+            <ul className="space-y-1.5 text-xs text-emerald-700">
+              <li>• Agents analyze real platform data (users, revenue, integrations) using Claude AI.</li>
+              <li>• Autonomous actions execute immediately — pricing changes, user management, content moderation.</li>
+              <li>• Every decision is logged in each agent's Decision Log for full transparency.</li>
+              <li>• Use "Run All Agents" for a full C-suite platform review.</li>
             </ul>
           </div>
         </div>
@@ -594,6 +715,7 @@ function AdminAgentsPanel() {
           onSaved={(updated) => {
             setAgents((prev) => prev.map((a) => a.key === updated.key ? updated : a));
             setSelected(updated);
+            reloadNotifications();
           }}
         />
       )}
