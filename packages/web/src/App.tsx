@@ -3,6 +3,7 @@ import {
   AlertCircle,
   BarChart4,
   Bell,
+  Bot,
   CheckCircle2,
   ChevronDown,
   CreditCard,
@@ -50,6 +51,7 @@ import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
 import Billing from './pages/Billing';
 import Memory from './pages/Memory';
+import AITeam from './pages/AITeam';
 import Discover from './pages/Discover';
 import Notifications from './pages/Notifications';
 import TasksPage from './components/tasks/TasksPage';
@@ -89,7 +91,8 @@ type PageType =
   | 'project-settings'
   | 'settings'
   | 'workflow'
-  | 'discover';
+  | 'discover'
+  | 'ai-team';
 
 type AuthMeResponse = {
   success: boolean;
@@ -126,6 +129,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   settings: '/settings',
   workflow: '/posts/workflow',
   discover: '/discover',
+  'ai-team': '/ai-team',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -359,6 +363,12 @@ function AppSidebar({
             ))}
           </div>
         )}
+
+        {/* AI Team */}
+        <button type="button" onClick={() => go('ai-team')} className={cls(currentPage === 'ai-team')}>
+          <Bot size={15} className="shrink-0" />
+          <span className="flex-1 text-left">AI Team</span>
+        </button>
 
         {/* Analytics */}
         <button type="button" data-tour-id="nav-analytics" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
@@ -872,6 +882,7 @@ function App() {
       case 'settings': return <SettingsPage currentUser={authUser} onUserUpdated={handleUserUpdated} onNavigateToBilling={() => navigateToPage('billing')} />;
       case 'workflow': return <WorkflowPage />;
       case 'discover': return <Discover />;
+      case 'ai-team': return <AITeam />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };

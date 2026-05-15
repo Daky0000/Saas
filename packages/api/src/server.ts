@@ -3343,6 +3343,53 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   }
   // ── End Agent Workflow & Tools ────────────────────────────────────────────────
 
+  // ── User Agent Foundation (Phase 4) ──────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS brand_profiles (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      brand_name  TEXT NOT NULL DEFAULT '',
+      niche       TEXT NOT NULL DEFAULT '',
+      tone        TEXT NOT NULL DEFAULT 'professional',
+      audience    TEXT NOT NULL DEFAULT '',
+      goals       TEXT[] NOT NULL DEFAULT '{}',
+      platforms   TEXT[] NOT NULL DEFAULT '{}',
+      website     TEXT NOT NULL DEFAULT '',
+      extra_notes TEXT NOT NULL DEFAULT '',
+      setup_done  BOOLEAN NOT NULL DEFAULT false,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_agent_memory (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent_key  TEXT NOT NULL DEFAULT 'global',
+      mem_type   TEXT NOT NULL DEFAULT 'general',
+      key        TEXT NOT NULL,
+      value      TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, agent_key, key)
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_agent_tasks (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent_key   TEXT NOT NULL,
+      task_type   TEXT NOT NULL DEFAULT 'proposal',
+      title       TEXT NOT NULL,
+      body        TEXT NOT NULL DEFAULT '',
+      payload     JSONB NOT NULL DEFAULT '{}',
+      status      TEXT NOT NULL DEFAULT 'pending',
+      expires_at  TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '48 hours',
+      decided_at  TIMESTAMPTZ,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  // ── End User Agent Foundation ─────────────────────────────────────────────────
+
   // ── End User Memory ───────────────────────────────────────────────────────────
 
   // ─── Workspace & Organizations ────────────────────────────────────────────────
@@ -28141,6 +28188,192 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
 });
 
 // ── End Admin Platform Agents Routes ─────────────────────────────────────────
+
+// ── User Agent Foundation Routes (Phase 4) ───────────────────────────────────
+
+// GET /api/user/agent-templates — public list of all 5 agent templates (user-accessible)
+app.get('/api/user/agent-templates', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT agent_key, name, role, icon, color, base_prompt FROM agent_templates ORDER BY agent_key`,
+      []
+    );
+    return res.json({ success: true, templates: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/user/brand-profile — get own brand profile
+app.get('/api/user/brand-profile', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(`SELECT * FROM brand_profiles WHERE user_id = $1`, [auth.userId]);
+    return res.json({ success: true, profile: rows[0] ?? null });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/user/brand-profile — upsert brand profile
+app.put('/api/user/brand-profile', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const {
+    brand_name = '', niche = '', tone = 'professional', audience = '',
+    goals = [], platforms = [], website = '', extra_notes = '', setup_done = false,
+  } = req.body as Record<string, any>;
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO brand_profiles (user_id, brand_name, niche, tone, audience, goals, platforms, website, extra_notes, setup_done, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         brand_name  = EXCLUDED.brand_name,
+         niche       = EXCLUDED.niche,
+         tone        = EXCLUDED.tone,
+         audience    = EXCLUDED.audience,
+         goals       = EXCLUDED.goals,
+         platforms   = EXCLUDED.platforms,
+         website     = EXCLUDED.website,
+         extra_notes = EXCLUDED.extra_notes,
+         setup_done  = EXCLUDED.setup_done,
+         updated_at  = NOW()
+       RETURNING *`,
+      [auth.userId, brand_name, niche, tone, audience,
+       Array.isArray(goals) ? goals : [], Array.isArray(platforms) ? platforms : [],
+       website, extra_notes, Boolean(setup_done)]
+    );
+    return res.json({ success: true, profile: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/user/agent-memory — list own memory entries
+app.get('/api/user/agent-memory', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    const { rows } = await dbQuery(
+      `SELECT * FROM user_agent_memory WHERE user_id = $1 ORDER BY agent_key, created_at DESC`,
+      [auth.userId]
+    );
+    return res.json({ success: true, memories: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/user/agent-memory — upsert a memory entry
+app.post('/api/user/agent-memory', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { agent_key = 'global', mem_type = 'general', key, value } = req.body as Record<string, any>;
+  if (!key || !value) return res.status(400).json({ success: false, error: 'key and value required' });
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (user_id, agent_key, key) DO UPDATE SET
+         value    = EXCLUDED.value,
+         mem_type = EXCLUDED.mem_type
+       RETURNING *`,
+      [auth.userId, agent_key, mem_type, key, value]
+    );
+    return res.json({ success: true, memory: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/user/agent-memory/:id
+app.delete('/api/user/agent-memory/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    await dbQuery(`DELETE FROM user_agent_memory WHERE id = $1 AND user_id = $2`, [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/user/agent-tasks — list own agent task proposals
+app.get('/api/user/agent-tasks', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  try {
+    // Auto-expire overdue pending tasks
+    await dbQuery(
+      `UPDATE user_agent_tasks SET status='expired' WHERE user_id=$1 AND status='pending' AND expires_at < NOW()`,
+      [auth.userId]
+    ).catch(() => {});
+    const { rows } = await dbQuery(
+      `SELECT * FROM user_agent_tasks WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+      [auth.userId]
+    );
+    return res.json({ success: true, tasks: rows });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/user/agent-tasks/:id — approve or reject a task
+app.put('/api/user/agent-tasks/:id', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { decision } = req.body as { decision: string };
+  if (!['approved', 'rejected'].includes(decision)) {
+    return res.status(400).json({ success: false, error: "decision must be 'approved' or 'rejected'" });
+  }
+  try {
+    const { rows } = await dbQuery(
+      `UPDATE user_agent_tasks SET status=$1, decided_at=NOW()
+       WHERE id=$2 AND user_id=$3 AND status='pending'
+       RETURNING *`,
+      [decision, req.params.id, auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'Task not found or already decided' });
+    return res.json({ success: true, task: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/admin/agent-tasks — admin/agent creates a task proposal for a user (Phase 5 use)
+app.post('/api/admin/agent-tasks', async (req: Request, res: Response) => {
+  const adm = requireAdmin(req, res);
+  if (!adm) return;
+  if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  const { user_id, agent_key, task_type = 'proposal', title, body = '', payload = {}, expires_hours = 48 } = req.body as Record<string, any>;
+  if (!user_id || !agent_key || !title) {
+    return res.status(400).json({ success: false, error: 'user_id, agent_key, title required' });
+  }
+  try {
+    const { rows } = await dbQuery(
+      `INSERT INTO user_agent_tasks (user_id, agent_key, task_type, title, body, payload, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6, NOW() + ($7 || ' hours')::interval)
+       RETURNING *`,
+      [user_id, agent_key, task_type, title, body, JSON.stringify(payload), String(Number(expires_hours) || 48)]
+    );
+    return res.json({ success: true, task: rows[0] });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── End User Agent Foundation Routes ─────────────────────────────────────────
 
 // ── Nova workflow helpers ─────────────────────────────────────────────────────
 
