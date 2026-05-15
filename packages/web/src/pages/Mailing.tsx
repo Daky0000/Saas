@@ -6,6 +6,7 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Send,
   Tag,
   Trash2,
   Upload,
@@ -337,6 +338,8 @@ function CampaignsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: '', subject: '', preview_text: '', segment_id: '', content: '' });
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -361,6 +364,21 @@ function CampaignsTab() {
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this campaign?')) return;
     await mailingService.deleteCampaign(id); await load();
+  };
+
+  const handleSend = async (id: string, name: string) => {
+    if (!confirm(`Send "${name}" to all subscribed contacts now?`)) return;
+    setSending(id);
+    setSendResult(null);
+    try {
+      const result = await mailingService.sendCampaign(id);
+      setSendResult(`Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
+      await load();
+    } catch (err) {
+      setSendResult(err instanceof Error ? err.message : 'Send failed');
+    } finally {
+      setSending(null);
+    }
   };
 
   return (
@@ -399,6 +417,13 @@ function CampaignsTab() {
         </div>
       )}
 
+      {sendResult && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
+          {sendResult}
+          <button onClick={() => setSendResult(null)} className="ml-2 text-emerald-500 hover:text-emerald-700">✕</button>
+        </div>
+      )}
+
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
         {loading ? (
           <div className="flex justify-center py-12 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
@@ -430,7 +455,19 @@ function CampaignsTab() {
                   </td>
                   <td className="px-4 py-3 text-slate-500">{formatDate(c.created_at)}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => void handleDelete(c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                    <div className="flex items-center gap-1 justify-end">
+                      {c.status !== 'sent' && (
+                        <button
+                          onClick={() => void handleSend(c.id, c.name)}
+                          disabled={sending === c.id}
+                          title="Send campaign"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40"
+                        >
+                          {sending === c.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                        </button>
+                      )}
+                      <button onClick={() => void handleDelete(c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                    </div>
                   </td>
                 </tr>
               ))}

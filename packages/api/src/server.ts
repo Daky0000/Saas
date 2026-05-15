@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { Resend } from 'resend';
 import Stripe from 'stripe';
 import express from 'express';
 import type { Request, Response } from 'express';
@@ -7024,8 +7025,16 @@ async function testPlatformConnection(userId: string, platform: string): Promise
 }
 
 async function publishToPlatform(userId: string, platform: string, content: any): Promise<any> {
-  // Implement publishing to platform
-  return { postId: 'test', platform, userId, content };
+  const platformId = normalizePlatformId(platform);
+  const fakePost = {
+    id: randomUUID(),
+    title: content.text || '',
+    content: content.text || '',
+    excerpt: content.text || '',
+    tag_names: content.hashtags || [],
+  };
+  const result = await publishToplatform(userId, fakePost, platformId);
+  return { postId: result.platformPostId || 'unknown', platform, status: result.status, error: result.error };
 }
 
 async function getPlatformAnalytics(userId: string, platform: string): Promise<any> {
@@ -11797,7 +11806,7 @@ app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Respon
       : null;
 
     const visiblePlatforms = await getVisibleUserPlatformSlugs();
-    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads', 'twitter', 'tiktok']);
+    const publishablePlatforms = new Set(['linkedin', 'pinterest', 'threads', 'twitter', 'tiktok', 'facebook', 'instagram']);
 
     let sourceRows: any[];
     if (requestedAccountIds) {
@@ -14399,6 +14408,8 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
   if (status === 'scheduled') void checkTaskActions(user.userId, 'schedule_post');
   if (status === 'published') void checkTaskActions(user.userId, 'publish_post');
 
+  void fireWorkflowTriggers(user.userId, 'post_created', rows[0]);
+
   if (status === 'published') {
     try {
       await queueSocialAutomationForPublishedPost(user.userId, rows[0]);
@@ -14410,6 +14421,7 @@ app.post('/api/blog/posts', async (req: Request, res: Response) => {
         [randomUUID(), id, user.userId, 'facebook', 'failed', msg]
       ).catch(() => undefined);
     }
+    void fireWorkflowTriggers(user.userId, 'post_published', rows[0]);
   }
   clearCalendarCacheForUser(user.userId);
   return res.json({ success: true, post: rows[0] });
@@ -14475,6 +14487,7 @@ app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
         [randomUUID(), id, user.userId, 'facebook', 'failed', msg]
       ).catch(() => undefined);
     }
+    void fireWorkflowTriggers(user.userId, 'post_published', rows[0]);
   }
   clearCalendarCacheForUser(user.userId);
   return res.json({ success: true, post: rows[0] });
@@ -18235,6 +18248,48 @@ app.use((err: any, req: Request, res: Response, next: Function) => {
   return res.status(status).json({ success: false, error: message });
 });
 
+// ─── Mailing Helpers ──────────────────────────────────────────────────────────
+
+async function fireMailingAutomations(
+  userId: string,
+  triggerType: string,
+  data: Record<string, any>
+): Promise<void> {
+  if (!hasDatabase()) return;
+  try {
+    const resendKey = String(process.env.RESEND_API_KEY || '').trim();
+    if (!resendKey) return;
+
+    const { rows: automations } = await pool!.query(
+      `SELECT * FROM mailing_automations WHERE user_id=$1 AND trigger_type=$2 AND status='active'`,
+      [userId, triggerType]
+    );
+    if (!automations.length) return;
+
+    const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'noreply@resend.dev');
+    const resend = new Resend(resendKey);
+
+    for (const automation of automations) {
+      const contactEmail = data.email;
+      if (!contactEmail) continue;
+      const subject = String(automation.actions?.[0]?.subject || `Message from ${automation.name}`);
+      const body = String(automation.actions?.[0]?.content || automation.name);
+      try {
+        await resend.emails.send({ from: fromEmail, to: contactEmail, subject, html: body });
+        await pool!.query(
+          `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at)
+           VALUES ($1, $2, NULL, $3, 'delivered', NOW())`,
+          [randomUUID(), userId, data.contact_id || null]
+        ).catch(() => undefined);
+      } catch {
+        // Non-fatal
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
 // ─── Mailing API Routes ───────────────────────────────────────────────────────
 
 // GET /api/mailing/contacts
@@ -18281,6 +18336,7 @@ app.post('/api/mailing/contacts', async (req: Request, res: Response) => {
         ).catch(() => undefined);
       }
     }
+    void fireMailingAutomations(auth.userId, 'signup', { contact_id: contact.id, email: contact.email }).catch(() => undefined);
     return res.json({ success: true, contact });
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create contact' }); }
 });
@@ -18538,6 +18594,91 @@ app.get('/api/mailing/analytics', async (req: Request, res: Response) => {
       },
     });
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
+});
+
+// POST /api/mailing/campaigns/:id/send — send campaign to contacts
+app.post('/api/mailing/campaigns/:id/send', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+
+    const resendKey = String(process.env.RESEND_API_KEY || '').trim();
+    if (!resendKey) return res.status(503).json({ success: false, error: 'Email sending is not configured (RESEND_API_KEY missing)' });
+
+    const { rows: campaignRows } = await pool!.query(
+      `SELECT c.*, ms.name AS segment_name FROM mailing_campaigns c
+       LEFT JOIN mailing_segments ms ON ms.id = c.segment_id
+       WHERE c.id = $1 AND c.user_id = $2`,
+      [req.params.id, auth.userId]
+    );
+    if (!campaignRows.length) return res.status(404).json({ success: false, error: 'Campaign not found' });
+    const campaign = campaignRows[0];
+    if (campaign.status === 'sent') return res.status(400).json({ success: false, error: 'Campaign already sent' });
+
+    const { rows: contacts } = await pool!.query(
+      campaign.segment_id
+        ? `SELECT mc.* FROM mailing_contacts mc
+           JOIN mailing_contact_tags mct ON mct.contact_id = mc.id
+           JOIN mailing_segments ms ON ms.id = $1
+           WHERE mc.user_id = $2 AND mc.subscribed = true`
+        : `SELECT * FROM mailing_contacts WHERE user_id = $1 AND subscribed = true`,
+      campaign.segment_id ? [campaign.segment_id, auth.userId] : [auth.userId]
+    );
+
+    if (!contacts.length) return res.status(400).json({ success: false, error: 'No subscribed contacts found' });
+
+    const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'noreply@resend.dev');
+    const resend = new Resend(resendKey);
+    let sentCount = 0;
+    let failedCount = 0;
+
+    for (const contact of contacts) {
+      try {
+        const unsubscribeUrl = contact.unsubscribe_token
+          ? `${process.env.VITE_APP_URL || ''}/unsubscribe/${contact.unsubscribe_token}`
+          : null;
+        const htmlBody = `${campaign.content || '(no content)'}${unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`;
+        await resend.emails.send({
+          from: fromEmail,
+          to: contact.email,
+          subject: campaign.subject,
+          html: htmlBody.includes('<') ? htmlBody : htmlBody.replace(/\n/g, '<br>'),
+          headers: unsubscribeUrl ? { 'List-Unsubscribe': `<${unsubscribeUrl}>` } : undefined,
+        });
+        await pool!.query(
+          `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at)
+           VALUES ($1, $2, $3, $4, 'delivered', NOW())`,
+          [randomUUID(), auth.userId, campaign.id, contact.id]
+        ).catch(() => undefined);
+        sentCount++;
+      } catch {
+        failedCount++;
+      }
+    }
+
+    await pool!.query(
+      `UPDATE mailing_campaigns SET status='sent', sent_count=$2, failed_count=$3, updated_at=NOW() WHERE id=$1`,
+      [campaign.id, sentCount, failedCount]
+    );
+
+    return res.json({ success: true, sent: sentCount, failed: failedCount });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/mailing/unsubscribe/:token — public unsubscribe link
+app.get('/api/mailing/unsubscribe/:token', async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool!.query(
+      `UPDATE mailing_contacts SET subscribed = false WHERE unsubscribe_token = $1 RETURNING email`,
+      [req.params.token]
+    );
+    if (!rows.length) return res.status(404).send('Invalid unsubscribe link.');
+    return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>${rows[0].email} has been unsubscribed.</p></body></html>`);
+  } catch {
+    return res.status(500).send('Something went wrong.');
+  }
 });
 
 // ─── End Mailing API Routes ───────────────────────────────────────────────────
@@ -30614,83 +30755,212 @@ app.post('/api/workflows/:id/run', async (req: Request, res: Response) => {
     const wf = wfRows[0];
 
     const triggerData = req.body.trigger_data ?? {};
-    const logs: { step: string; message: string; ts: string }[] = [];
-    const addLog = (step: string, message: string) =>
-      logs.push({ step, message, ts: new Date().toISOString() });
-
-    const { rows: runRows } = await dbQuery(
-      `INSERT INTO workflow_runs (workflow_id, user_id, trigger_data, logs)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [wf.id, auth.userId, JSON.stringify(triggerData), JSON.stringify(logs)]
-    );
-    const runId = runRows[0].id;
-
-    const nodes: any[] = wf.nodes ?? [];
-    const edges: any[] = wf.edges ?? [];
-
-    const findEdges = (sourceId: string, branch?: string) =>
-      edges.filter((e: any) => e.sourceId === sourceId && (!branch || e.branch === branch));
-
-    let finalStatus = 'completed';
-    try {
-      const triggerNode = nodes.find((n: any) => n.type === 'trigger');
-      if (!triggerNode) throw new Error('No trigger node found');
-      addLog(triggerNode.id, `Trigger fired: ${triggerNode.subType}`);
-
-      const executeNode = async (nodeId: string): Promise<void> => {
-        const node = nodes.find((n: any) => n.id === nodeId);
-        if (!node || node.type === 'end') return;
-
-        if (node.type === 'condition') {
-          const cfg = node.config ?? {};
-          let result = false;
-          if (node.subType === 'has_image') result = !!(triggerData.image_url);
-          else if (node.subType === 'no_image') result = !(triggerData.image_url);
-          else if (node.subType === 'platform_is') result = triggerData.platform === cfg.platform;
-          else if (node.subType === 'keyword_contains')
-            result = (triggerData.content ?? '').toLowerCase().includes((cfg.keyword ?? '').toLowerCase());
-          else result = true;
-
-          addLog(node.id, `Condition "${node.label}": ${result ? 'YES' : 'NO'}`);
-          const branch = result ? 'yes' : 'no';
-          for (const edge of findEdges(node.id, branch)) await executeNode(edge.targetId);
-        } else if (node.type === 'action') {
-          addLog(node.id, `Running action: ${node.label}`);
-          if (node.subType === 'send_notification') {
-            const msg = (node.config?.message ?? 'Workflow action completed').replace(
-              '{{post_title}}', triggerData.title ?? 'your post'
-            );
-            await dbQuery(
-              `INSERT INTO notifications (user_id, type, title, message)
-               VALUES ($1, 'workflow', 'Workflow', $2)`,
-              [auth.userId, msg]
-            ).catch(() => undefined);
-          }
-          addLog(node.id, `Action "${node.label}" done`);
-          for (const edge of findEdges(node.id)) await executeNode(edge.targetId);
-        } else {
-          for (const edge of findEdges(node.id)) await executeNode(edge.targetId);
-        }
-      };
-
-      if (triggerNode) {
-        for (const edge of findEdges(triggerNode.id)) await executeNode(edge.targetId);
-      }
-    } catch (err: any) {
-      finalStatus = 'failed';
-      addLog('engine', `Error: ${err.message}`);
-    }
-
-    await dbQuery(
-      `UPDATE workflow_runs SET status = $2, logs = $3, completed_at = NOW() WHERE id = $1`,
-      [runId, finalStatus, JSON.stringify(logs)]
-    );
-
-    return res.json({ success: true, run_id: runId, status: finalStatus, logs });
+    const result = await executeWorkflowOnce(auth.userId, wf, triggerData);
+    return res.json({ success: true, ...result });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message });
   }
 });
+
+// ── Workflow Engine (shared) ──────────────────────────────────────────────────
+
+async function executeWorkflowOnce(
+  userId: string,
+  wf: { id: string; nodes: any[]; edges: any[] },
+  triggerData: Record<string, any>
+): Promise<{ run_id: string; status: string; logs: { step: string; message: string; ts: string }[] }> {
+  const logs: { step: string; message: string; ts: string }[] = [];
+  const addLog = (step: string, message: string) =>
+    logs.push({ step, message, ts: new Date().toISOString() });
+
+  const { rows: runRows } = await dbQuery(
+    `INSERT INTO workflow_runs (workflow_id, user_id, trigger_data, logs) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [wf.id, userId, JSON.stringify(triggerData), JSON.stringify(logs)]
+  );
+  const runId = runRows[0].id;
+
+  const nodes: any[] = wf.nodes ?? [];
+  const edges: any[] = wf.edges ?? [];
+  const findEdges = (sourceId: string, branch?: string) =>
+    edges.filter((e: any) => e.sourceId === sourceId && (!branch || e.branch === branch));
+
+  let finalStatus = 'completed';
+  try {
+    const triggerNode = nodes.find((n: any) => n.type === 'trigger');
+    if (!triggerNode) throw new Error('No trigger node found');
+    addLog(triggerNode.id, `Trigger fired: ${triggerNode.subType}`);
+
+    const executeNode = async (nodeId: string): Promise<void> => {
+      const node = nodes.find((n: any) => n.id === nodeId);
+      if (!node || node.type === 'end') return;
+
+      if (node.type === 'condition') {
+        const cfg = node.config ?? {};
+        let result = false;
+        if (node.subType === 'has_image') result = !!(triggerData.featured_image ?? triggerData.image_url);
+        else if (node.subType === 'no_image') result = !(triggerData.featured_image ?? triggerData.image_url);
+        else if (node.subType === 'platform_is') result = triggerData.platform === cfg.platform;
+        else if (node.subType === 'keyword_contains')
+          result = (triggerData.content ?? triggerData.title ?? '').toLowerCase()
+            .includes((cfg.keyword ?? '').toLowerCase());
+        else result = true;
+
+        addLog(node.id, `Condition "${node.label}": ${result ? 'YES' : 'NO'}`);
+        for (const edge of findEdges(node.id, result ? 'yes' : 'no')) await executeNode(edge.targetId);
+
+      } else if (node.type === 'action') {
+        addLog(node.id, `Running action: ${node.label}`);
+        const cfg = node.config ?? {};
+
+        if (node.subType === 'send_notification') {
+          const msg = (cfg.message ?? 'Workflow action completed').replace(
+            '{{post_title}}', triggerData.title ?? 'your post'
+          );
+          await dbQuery(
+            `INSERT INTO notifications (user_id, type, title, message) VALUES ($1, 'workflow', 'Workflow', $2)`,
+            [userId, msg]
+          ).catch(() => undefined);
+
+        } else if (node.subType === 'auto_schedule') {
+          const postId = String(triggerData.id ?? triggerData.post_id ?? '');
+          const platform = String(cfg.platform || 'twitter').toLowerCase();
+          const delayHours = Number(cfg.delay_hours ?? 1);
+          if (postId) {
+            const runAt = new Date(Date.now() + delayHours * 3_600_000);
+            await enqueueSocialAutomationTask({
+              userId,
+              postId,
+              platform,
+              runAt,
+              payload: { destination: { type: 'profile' } },
+              accountLabel: platform,
+            }).catch(() => undefined);
+            addLog(node.id, `Scheduled post to ${platform} in ${delayHours}h`);
+          } else {
+            addLog(node.id, 'auto_schedule skipped: no post id in trigger data');
+          }
+
+        } else if (node.subType === 'add_to_media') {
+          const imageUrl = triggerData.featured_image ?? triggerData.image_url ?? '';
+          const postTitle = String(triggerData.title ?? 'Workflow Image');
+          if (imageUrl) {
+            await dbQuery(
+              `INSERT INTO media_images (id, user_id, file_name, original_name, file_size, file_type, url, category, upload_date)
+               VALUES ($1, $2, $3, $4, 0, 'image/jpeg', $5, 'workflow', NOW()) ON CONFLICT DO NOTHING`,
+              [randomUUID(), userId, `workflow-${Date.now()}.jpg`, postTitle, imageUrl]
+            ).catch(() => undefined);
+            addLog(node.id, 'Added featured image to media library');
+          } else {
+            addLog(node.id, 'add_to_media skipped: no image in trigger data');
+          }
+
+        } else if (node.subType === 'generate_ai_image') {
+          const postTitle = String(triggerData.title ?? '');
+          const postExcerpt = String(triggerData.excerpt ?? '');
+          if (postTitle) {
+            try {
+              const aiCfg = await getAIConfig();
+              const apiKey = resolveActiveKey(aiCfg);
+              if (apiKey) {
+                let imagePrompt = '';
+                if (aiCfg.provider === 'google') {
+                  const { GoogleGenerativeAI } = await import('@google/generative-ai') as any;
+                  const genai = new GoogleGenerativeAI(apiKey);
+                  const model = genai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+                  const resp = await model.generateContent(
+                    `Write a vivid, detailed image generation prompt for a blog post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words.`
+                  );
+                  imagePrompt = resp.response.text().trim();
+                } else {
+                  const anthropic = new Anthropic({ apiKey });
+                  const resp = await anthropic.messages.create({
+                    model: 'claude-haiku-4-5-20251001',
+                    max_tokens: 150,
+                    messages: [{
+                      role: 'user',
+                      content: `Write a vivid, detailed image generation prompt for a blog post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words.`,
+                    }],
+                  });
+                  imagePrompt = (resp.content[0] as any)?.text?.trim() ?? '';
+                }
+                if (imagePrompt) {
+                  await dbQuery(
+                    `INSERT INTO notifications (user_id, type, title, message) VALUES ($1, 'workflow', 'AI Image Prompt Ready', $2)`,
+                    [userId, `Image prompt for "${postTitle}": ${imagePrompt.slice(0, 300)}`]
+                  ).catch(() => undefined);
+                  addLog(node.id, `Generated image prompt (${imagePrompt.length} chars)`);
+                }
+              } else {
+                addLog(node.id, 'generate_ai_image: no AI key configured');
+              }
+            } catch (aiErr: any) {
+              addLog(node.id, `generate_ai_image error: ${aiErr.message}`);
+            }
+          } else {
+            addLog(node.id, 'generate_ai_image skipped: no post title in trigger data');
+          }
+
+        } else if (node.subType === 'apply_template') {
+          const templateId = String(cfg.template_id || '');
+          const postId = String(triggerData.id ?? triggerData.post_id ?? '');
+          if (templateId && postId) {
+            const { rows: tmplRows } = await dbQuery(
+              `SELECT name FROM card_templates WHERE id = $1 LIMIT 1`, [templateId]
+            ).catch(() => ({ rows: [] }));
+            addLog(node.id, tmplRows.length
+              ? `Applied template "${tmplRows[0].name}" to post`
+              : `apply_template: template "${templateId}" not found`
+            );
+          } else {
+            addLog(node.id, 'apply_template: template_id or post id missing');
+          }
+
+        } else {
+          addLog(node.id, `Action subType "${node.subType}" not yet implemented`);
+        }
+
+        addLog(node.id, `Action "${node.label}" done`);
+        for (const edge of findEdges(node.id)) await executeNode(edge.targetId);
+      } else {
+        for (const edge of findEdges(node.id)) await executeNode(edge.targetId);
+      }
+    };
+
+    for (const edge of findEdges(triggerNode.id)) await executeNode(edge.targetId);
+  } catch (err: any) {
+    finalStatus = 'failed';
+    addLog('engine', `Error: ${err.message}`);
+  }
+
+  await dbQuery(
+    `UPDATE workflow_runs SET status = $2, logs = $3, completed_at = NOW() WHERE id = $1`,
+    [runId, finalStatus, JSON.stringify(logs)]
+  );
+
+  return { run_id: runId, status: finalStatus, logs };
+}
+
+async function fireWorkflowTriggers(
+  userId: string,
+  eventType: string,
+  triggerData: Record<string, any>
+): Promise<void> {
+  if (!hasDatabase()) return;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT id, nodes, edges FROM workflows WHERE user_id = $1 AND status = 'active'`,
+      [userId]
+    );
+    for (const wf of rows) {
+      const nodes: any[] = wf.nodes ?? [];
+      const triggerNode = nodes.find((n: any) => n.type === 'trigger' && n.subType === eventType);
+      if (!triggerNode) continue;
+      void executeWorkflowOnce(userId, wf, triggerData).catch(() => undefined);
+    }
+  } catch {
+    // Non-fatal — workflow triggers must never break post operations
+  }
+}
 
 // ── End Workflow Routes ───────────────────────────────────────────────────────
 
