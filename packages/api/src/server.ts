@@ -5872,19 +5872,10 @@ app.post('/api/posts/:platform/publish', async (req: Request, res: Response) => 
   }
 });
 
-// Get analytics
+// NOTE: analytics routes are at /api/analytics/social/* and /api/blog/analytics/*
+// The legacy /api/analytics/:platform route was removed (it returned null and was unused)
 app.get('/api/analytics/:platform', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-
-    const { platform } = req.params;
-    const analytics = await getPlatformAnalytics(auth.userId, platform);
-    return res.json({ success: true, data: analytics });
-  } catch (error) {
-    console.error('Analytics error:', error);
-    return res.status(500).json({ success: false, error: 'Failed to fetch analytics' });
-  }
+  return res.status(410).json({ success: false, error: 'Use /api/analytics/social/accounts or /api/blog/analytics/dashboard' });
 });
 
 // OAuth Exchange Functions — credentials read from DB first, then env vars
@@ -7037,10 +7028,6 @@ async function publishToPlatform(userId: string, platform: string, content: any)
   return { postId: result.platformPostId || 'unknown', platform, status: result.status, error: result.error };
 }
 
-async function getPlatformAnalytics(userId: string, platform: string): Promise<any> {
-  // Implement fetching analytics
-  return null;
-}
 
 function resolveRedirectUri(uri: string | undefined): string {
   if (!uri) return '';
@@ -30885,7 +30872,13 @@ async function executeWorkflowOnce(
         else if (node.subType === 'keyword_contains')
           result = (triggerData.content ?? triggerData.title ?? '').toLowerCase()
             .includes((cfg.keyword ?? '').toLowerCase());
-        else result = true;
+        else if (node.subType === 'post_type_is') {
+          // Infer post type: has featured_image → 'image', has video_url → 'video', else 'text'
+          const postType = triggerData.post_type
+            ?? (triggerData.featured_image ? 'image' : triggerData.video_url ? 'video' : 'text');
+          result = postType === cfg.type;
+        }
+        else result = false;
 
         addLog(node.id, `Condition "${node.label}": ${result ? 'YES' : 'NO'}`);
         for (const edge of findEdges(node.id, result ? 'yes' : 'no')) await executeNode(edge.targetId);
@@ -30984,17 +30977,30 @@ async function executeWorkflowOnce(
 
         } else if (node.subType === 'apply_template') {
           const templateId = String(cfg.template_id || '');
-          const postId = String(triggerData.id ?? triggerData.post_id ?? '');
-          if (templateId && postId) {
+          const postTitle = String(triggerData.title ?? 'Untitled');
+          if (templateId) {
             const { rows: tmplRows } = await dbQuery(
-              `SELECT name FROM card_templates WHERE id = $1 LIMIT 1`, [templateId]
+              `SELECT id, name, design_data FROM card_templates WHERE id = $1 LIMIT 1`, [templateId]
             ).catch(() => ({ rows: [] }));
-            addLog(node.id, tmplRows.length
-              ? `Applied template "${tmplRows[0].name}" to post`
-              : `apply_template: template "${templateId}" not found`
-            );
+            if (tmplRows.length) {
+              const tmpl = tmplRows[0];
+              const designId = randomUUID();
+              await dbQuery(
+                `INSERT INTO user_designs (id, user_id, name, description, design_data, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
+                 ON CONFLICT DO NOTHING`,
+                [designId, userId, `${postTitle} — ${tmpl.name}`, `Auto-created from workflow template`, JSON.stringify(tmpl.design_data)]
+              ).catch(() => undefined);
+              await dbQuery(
+                `INSERT INTO notifications (user_id, type, title, message) VALUES ($1, 'workflow', 'Card Created', $2)`,
+                [userId, `A card was created from template "${tmpl.name}" for your post "${postTitle}".`]
+              ).catch(() => undefined);
+              addLog(node.id, `Created design "${postTitle} — ${tmpl.name}" from template`);
+            } else {
+              addLog(node.id, `apply_template: template "${templateId}" not found`);
+            }
           } else {
-            addLog(node.id, 'apply_template: template_id or post id missing');
+            addLog(node.id, 'apply_template: no template selected');
           }
 
         } else {

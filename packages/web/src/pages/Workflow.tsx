@@ -136,6 +136,38 @@ function timeAgo(iso: string) {
 
 // ── Node Config Form ──────────────────────────────────────────────────────────
 
+function TemplateSelect({ value, onChange }: { value: string; onChange: (id: string, name: string) => void }) {
+  const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/card-templates/published`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d.templates)) setTemplates(d.templates); })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text-xs text-slate-400">Loading templates…</p>;
+  if (!templates.length) return <p className="text-xs text-slate-400">No published card templates yet.</p>;
+
+  return (
+    <select
+      value={value}
+      onChange={(e) => {
+        const t = templates.find((t) => t.id === e.target.value);
+        onChange(e.target.value, t?.name ?? '');
+      }}
+      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+    >
+      <option value="">— Select a template —</option>
+      {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+    </select>
+  );
+}
+
 function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Record<string, any>) => void }) {
   const cfg = node.config;
 
@@ -246,6 +278,21 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
         >
           {platforms.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
+      </div>
+    );
+  }
+
+  if (node.subType === 'apply_template') {
+    return (
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Card Template</label>
+        <TemplateSelect
+          value={cfg.template_id ?? ''}
+          onChange={(id, name) => onChange({ ...cfg, template_id: id, template_name: name })}
+        />
+        {cfg.template_name && (
+          <p className="text-[11px] text-slate-400">Selected: {cfg.template_name}</p>
+        )}
       </div>
     );
   }
