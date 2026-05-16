@@ -4977,11 +4977,20 @@ async function requireOrgMembership(
 // ── Agent System Definitions & Helpers ───────────────────────────────────────
 
 const AGENT_DEFS: Record<string, { name: string; role: string; icon: string; color: string; memoryKeywords: string[] }> = {
-  daky: { name: 'Daky', role: 'Orchestrator & Strategist',  icon: '✦', color: '#5B6CF9', memoryKeywords: [] },
-  nova: { name: 'Nova', role: 'Creative Director',          icon: '◉', color: '#EC4899', memoryKeywords: ['brand','voice','visual','content','product','audience'] },
-  sage: { name: 'Sage', role: 'Strategy Analyst',           icon: '◈', color: '#10B981', memoryKeywords: ['goal','competit','strategy','industry','market','target','campaign'] },
-  aria: { name: 'Aria', role: 'Analytics & Performance',    icon: '⊕', color: '#F59E0B', memoryKeywords: ['analytic','performance','kpi','metric','business'] },
-  flux: { name: 'Flux', role: 'Automation & Workflows',     icon: '⟳', color: '#8B5CF6', memoryKeywords: ['automat','workflow','platform','social','schedule'] },
+  daky:             { name: 'Daky',    role: 'Content Writer',        icon: '✦', color: '#5B6CF9', memoryKeywords: [] },
+  nova:             { name: 'Nova',    role: 'Creative Director',     icon: '◉', color: '#EC4899', memoryKeywords: ['brand','voice','visual','content','product','audience'] },
+  sage:             { name: 'Sage',    role: 'Strategy Analyst',      icon: '◈', color: '#10B981', memoryKeywords: ['goal','competit','strategy','industry','market','target','campaign'] },
+  aria:             { name: 'Aria',    role: 'Analytics & Perf.',     icon: '⊕', color: '#F59E0B', memoryKeywords: ['analytic','performance','kpi','metric','business'] },
+  flux:             { name: 'Flux',    role: 'Automation',            icon: '⟳', color: '#8B5CF6', memoryKeywords: ['automat','workflow','platform','social','schedule'] },
+  trend_research:   { name: 'Trend',   role: 'Trend Research',        icon: '◎', color: '#06B6D4', memoryKeywords: ['trend','viral','niche','topic','content','platform'] },
+  audience_research:{ name: 'Persona', role: 'Audience Research',    icon: '◑', color: '#7C3AED', memoryKeywords: ['audience','persona','pain','objection','customer','demographic'] },
+  seo_research:     { name: 'SEO',     role: 'SEO Keyword Research',  icon: '⊗', color: '#059669', memoryKeywords: ['seo','keyword','search','organic','traffic','content'] },
+  hook_writing:     { name: 'Hook',    role: 'Hook Writing',          icon: '⚡', color: '#D97706', memoryKeywords: ['hook','headline','attention','opening','subject','ad'] },
+  social_caption:   { name: 'Caption', role: 'Social Caption',        icon: '✎', color: '#DB2777', memoryKeywords: ['caption','social','instagram','tiktok','linkedin','hashtag'] },
+  video_script:     { name: 'Script',  role: 'Video Script',          icon: '▶', color: '#DC2626', memoryKeywords: ['video','script','youtube','reels','tiktok','short','long'] },
+  ad_copy:          { name: 'Ads',     role: 'Ad Copy',               icon: '◆', color: '#EA580C', memoryKeywords: ['ad','copy','meta','google','facebook','conversion','cta'] },
+  thumbnail_design: { name: 'Thumb',   role: 'Thumbnail Design',      icon: '▣', color: '#9333EA', memoryKeywords: ['thumbnail','youtube','visual','design','creative','click'] },
+  meta_ads:         { name: 'Meta',    role: 'Paid Social Manager',   icon: '⊛', color: '#1877F2', memoryKeywords: ['meta','facebook','instagram','paid','campaign','budget','roas'] },
 };
 
 async function provisionUserAgents(userId: string): Promise<void> {
@@ -28940,6 +28949,42 @@ Be concrete — name the platform, the metric, and the expected impact.`,
 Your job is to generate 2-3 automation or workflow proposals based on the user's connected platforms and content cadence.
 Each proposal should describe a specific automation to set up — like cross-posting, scheduling cadences, or integration workflows.
 Be specific about which platforms, what triggers the automation, and what outcome it achieves.`,
+
+  trend_research: `You are Trend, an AI trend research specialist for a user's marketing team.
+Your job is to generate 2-3 proposals identifying trending topics, viral formats, or rising niche conversations the brand should act on.
+Each proposal should name a specific trend, explain why it's relevant to this brand, and suggest a concrete content angle to capitalize on it.`,
+
+  audience_research: `You are Persona, an AI audience research specialist for a user's marketing team.
+Your job is to generate 2-3 audience insight proposals — detailed personas, pain-point analyses, or objection maps — tailored to the brand's niche.
+Each proposal should be specific enough to directly inform content creation or messaging strategy.`,
+
+  seo_research: `You are SEO, an AI keyword research specialist for a user's marketing team.
+Your job is to generate 2-3 SEO proposals — keyword clusters, content brief outlines, or search-intent analyses — that will drive organic traffic.
+Each proposal should name specific keywords, explain the search intent, and suggest a content format to target them.`,
+
+  hook_writing: `You are Hook, an AI hook-writing specialist for a user's marketing team.
+Your job is to generate 2-3 proposals each containing 5-10 scroll-stopping hook variations — opening lines, subject lines, or ad headlines — for the brand's content.
+Each proposal should be tied to a specific platform or content type and explain why the hooks work.`,
+
+  social_caption: `You are Caption, an AI social caption specialist for a user's marketing team.
+Your job is to generate 2-3 platform-specific caption proposals with hooks, body copy, CTAs, and relevant hashtags.
+Tailor each proposal to the platform's format (Instagram, TikTok, LinkedIn, Twitter/X) and the brand's tone.`,
+
+  video_script: `You are Script, an AI video script writer for a user's marketing team.
+Your job is to generate 2-3 video script proposals — either short-form (under 60 seconds for Reels/TikTok) or long-form (YouTube).
+Each proposal should include a hook, structured outline, and key talking points with retention-focused transitions.`,
+
+  ad_copy: `You are Ads, an AI ad copywriter for a user's marketing team.
+Your job is to generate 2-3 ad copy proposals — each targeting a specific angle (pain, benefit, social proof) for Meta, Google, or YouTube ads.
+Include multiple headline and body copy variations per proposal with a clear CTA.`,
+
+  thumbnail_design: `You are Thumb, an AI thumbnail design strategist for a user's marketing team.
+Your job is to generate 2-3 thumbnail design proposals for YouTube or social ads — including concept direction, text overlay copy, color palette, and A/B test variants.
+Each proposal should be specific enough for a designer or AI image tool to execute.`,
+
+  meta_ads: `You are Meta, an AI paid social manager for a user's marketing team.
+Your job is to generate 2-3 Meta (Facebook/Instagram) campaign proposals — including campaign objective, audience targeting, budget structure, and creative direction.
+Each proposal should include a brief performance optimization checklist.`,
 };
 
 async function gatherUserContext(userId: string, agentKey: string): Promise<Record<string, any>> {
@@ -29044,7 +29089,7 @@ Generate 2-3 highly specific, immediately actionable proposals.${extraInstructio
 If the user has no brand profile, return 1 proposal suggesting they complete their brand setup.`;
 }
 
-const AGENT_NAMES: Record<string, string> = { daky: 'Daky', nova: 'Nova', sage: 'Sage', aria: 'Aria', flux: 'Flux' };
+const AGENT_NAMES: Record<string, string> = Object.fromEntries(Object.entries(AGENT_DEFS).map(([k, v]) => [k, v.name]));
 
 // Shared helper: call one user agent and return parsed proposals (Phase 8 reuse)
 async function callAgentAndParse(
@@ -29142,8 +29187,7 @@ app.post('/api/user/agents/:key/run', async (req: Request, res: Response) => {
   if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   const { key } = req.params;
-  const validKeys = ['daky', 'nova', 'sage', 'aria', 'flux'];
-  if (!validKeys.includes(key)) return res.status(400).json({ success: false, error: 'Unknown agent key' });
+  if (!AGENT_DEFS[key]) return res.status(400).json({ success: false, error: 'Unknown agent key' });
 
   // Rate-limit: 1 run per agent per 10 minutes
   try {
