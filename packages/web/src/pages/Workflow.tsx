@@ -457,9 +457,26 @@ function FlowNodeCard({
 
 // ── Branch Column ─────────────────────────────────────────────────────────────
 
+function AddStepBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="flex flex-col items-center">
+      <div className="w-px h-3 bg-slate-200" />
+      <button
+        onClick={onClick}
+        className="flex items-center gap-1 rounded-lg border border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-[#5b6cf9] transition-all"
+      >
+        <Plus size={10} /> Add step
+      </button>
+      <div className="w-px h-3 bg-slate-200" />
+    </div>
+  );
+}
+
 function BranchColumn({
   label,
   color,
+  conditionNodeId,
+  branchSide,
   nodes,
   selectedId,
   onSelectNode,
@@ -468,6 +485,8 @@ function BranchColumn({
 }: {
   label: string;
   color: string;
+  conditionNodeId: string;
+  branchSide: 'yes' | 'no';
   nodes: WFNode[];
   selectedId: string | null;
   onSelectNode: (id: string) => void;
@@ -477,28 +496,23 @@ function BranchColumn({
   return (
     <div className="flex flex-col items-center gap-0 min-w-[260px]">
       <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border mb-3 ${color}`}>{label}</span>
-      {nodes.map((node) => (
+      {nodes.map((node, i) => (
         <div key={node.id} className="flex flex-col items-center w-full">
+          {/* Empty branch: show Add step BEFORE the end node */}
+          {node.type === 'end' && i === 0 && (
+            <AddStepBtn onClick={() => onAddStep(conditionNodeId, branchSide)} />
+          )}
           <div className="w-full max-w-[260px]">
             <FlowNodeCard
               node={node}
               isSelected={selectedId === node.id}
               onSelect={() => onSelectNode(node.id)}
               onDelete={() => onDeleteNode(node.id)}
-              showDeleteBtn={true}
+              showDeleteBtn={node.type !== 'end'}
             />
           </div>
           {node.type !== 'end' && (
-            <div className="flex flex-col items-center gap-0">
-              <div className="w-px h-4 bg-slate-200" />
-              <button
-                onClick={() => onAddStep(node.id)}
-                className="w-6 h-6 rounded-full border-2 border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 flex items-center justify-center text-slate-400 hover:text-[#5b6cf9] transition-all"
-              >
-                <Plus size={12} />
-              </button>
-              <div className="w-px h-4 bg-slate-200" />
-            </div>
+            <AddStepBtn onClick={() => onAddStep(node.id)} />
           )}
         </div>
       ))}
@@ -681,6 +695,8 @@ function WorkflowBuilder({
               <BranchColumn
                 label="Yes"
                 color="text-emerald-600 bg-emerald-50 border-emerald-200"
+                conditionNodeId={node.id}
+                branchSide="yes"
                 nodes={branches.yes}
                 selectedId={selectedId}
                 onSelectNode={setSelectedId}
@@ -690,6 +706,8 @@ function WorkflowBuilder({
               <BranchColumn
                 label="No"
                 color="text-red-500 bg-red-50 border-red-200"
+                conditionNodeId={node.id}
+                branchSide="no"
                 nodes={branches.no}
                 selectedId={selectedId}
                 onSelectNode={setSelectedId}
@@ -714,16 +732,7 @@ function WorkflowBuilder({
             />
           </div>
           {node.type !== 'end' && (
-            <div className="flex flex-col items-center">
-              <div className="w-px h-4 bg-slate-200" />
-              <button
-                onClick={() => setAddAfter({ nodeId: node.id })}
-                className="w-6 h-6 rounded-full border-2 border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 flex items-center justify-center text-slate-400 hover:text-[#5b6cf9] transition-all"
-              >
-                <Plus size={12} />
-              </button>
-              <div className="w-px h-4 bg-slate-200" />
-            </div>
+            <AddStepBtn onClick={() => setAddAfter({ nodeId: node.id })} />
           )}
         </div>
       );
