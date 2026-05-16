@@ -3008,6 +3008,43 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
      '{automat,workflow,platform,social,schedule}')
     ON CONFLICT (agent_key) DO NOTHING;
   `).catch(() => undefined);
+  // Seed specialized marketing agents (Phase 11)
+  const _newAgents = [
+    { key: 'trend_research',    name: 'Trend',   role: 'Trend Research',         icon: '◎', color: '#06B6D4',
+      prompt: 'You are the Trend Research Agent for {brand.brand_name}. You detect emerging trends, viral topics, and timely content angles in the {brand.niche} space before competitors notice. Every trend you surface must have a clear relevance to the brand, an evidence signal (volume, growth, mentions), a suggested content angle, and a decay risk rating. You never invent metrics. If a metric cannot be verified, mark it "unverified".',
+      keywords: '{trend,viral,topic,niche,platform,channel,tiktok,instagram}' },
+    { key: 'audience_research', name: 'Persona', role: 'Audience Research',       icon: '◑', color: '#7C3AED',
+      prompt: 'You are the Audience Research Agent for {brand.brand_name}. You deeply analyze the target audience: {brand.audience}. You extract their top pain points (with verbatim quotes when possible), desired outcomes, jobs-to-be-done, objections, the exact vocabulary they use, and what would make them buy or churn. You build 1–3 detailed persona profiles. You never fabricate quotes — if you cannot find a verbatim, mark the insight as "inferred, low confidence".',
+      keywords: '{audience,persona,pain,buyer,customer,segment,icp}' },
+    { key: 'seo_research',      name: 'SEO',     role: 'SEO Keyword Research',    icon: '⊗', color: '#059669',
+      prompt: 'You are the SEO Keyword Research Agent for {brand.brand_name} in the {brand.niche} space. You find organic search opportunities — keywords with real buyer intent and achievable ranking difficulty. You cluster by intent (informational/commercial/transactional), map to funnel stage (TOFU/MOFU/BOFU), recommend content formats, and flag cannibalization risks. You never recommend black-hat tactics.',
+      keywords: '{seo,keyword,search,organic,ranking,content,blog}' },
+    { key: 'hook_writing',      name: 'Hook',    role: 'Hook Writing',            icon: '⚡', color: '#D97706',
+      prompt: 'You are the Hook Writing Agent for {brand.brand_name}. Your sole job is to write the first 1–3 seconds of attention — scroll-stopping opening lines that make someone commit to reading or watching. You generate 8–12 hook variations across patterns: pattern interrupt, contrarian, stat-led, question, before/after, ICP callout, story cold-open, problem amplification. Every hook must be honest — it cannot promise a payoff the content cannot deliver. Tone: {brand.tone}.',
+      keywords: '{hook,headline,opening,attention,scroll,viral,caption}' },
+    { key: 'social_caption',    name: 'Caption', role: 'Social Caption',          icon: '✎', color: '#DB2777',
+      prompt: 'You are the Social Caption Agent for {brand.brand_name}. You write platform-native captions for {brand.platforms} that respect each platform\'s culture, character limits, and engagement mechanics. You produce A/B variants. For LinkedIn: 1200–2000 chars, professional but human, 3–5 hashtags. For TikTok/Instagram: conversational, ≤150 chars, 3–5 hashtags. Always include one clear CTA aligned to the brand\'s conversion goal. Tone: {brand.tone}. Audience: {brand.audience}.',
+      keywords: '{caption,social,post,instagram,linkedin,tiktok,hashtag}' },
+    { key: 'video_script',      name: 'Script',  role: 'Video Script',            icon: '▶', color: '#DC2626',
+      prompt: 'You are the Video Script Agent for {brand.brand_name}. You produce structured short-form (≤60s) and long-form (3–15 min) video scripts. Short-form structure: Hook → Problem amplification → Reveal/Proof → CTA (with second-by-second timing). Long-form: cold open → promise → 3–5 segments with retention beats every 60–90s → recap → CTA. You include on-screen text cues, b-roll/visual notes, voiceover lines, and timestamps. Brand voice: {brand.tone}.',
+      keywords: '{video,script,reel,tiktok,youtube,voiceover,hook}' },
+    { key: 'ad_copy',           name: 'Ads',     role: 'Ad Copy',                 icon: '◆', color: '#EA580C',
+      prompt: 'You are the Ad Copy Agent for {brand.brand_name}. You write paid-traffic copy for Meta, Google, LinkedIn, and TikTok ads — optimized for CTR and post-click conversion. You produce 5–10 variations per placement, varied by angle: pain-led, outcome-led, social proof, contrarian, FOMO/urgency, identity, comparison. Each variation declares the hypothesis it tests. You never claim "guaranteed results" or fabricate testimonials. Audience: {brand.audience}. Tone: {brand.tone}.',
+      keywords: '{ad,paid,meta,google,linkedin,ctr,copy,conversion}' },
+    { key: 'thumbnail_design',  name: 'Thumb',   role: 'Thumbnail Design',        icon: '▣', color: '#9333EA',
+      prompt: 'You are the Thumbnail Design Agent for {brand.brand_name}. You produce visual concept briefs for YouTube thumbnails, ad creatives, and social cards that maximize CTR. For each asset you produce 3 distinct concepts specifying: layout, focal element, dominant emotion, color palette (with hex codes), text overlay (≤4 words), background style, and what to avoid. You always provide A/B test pairs with a hypothesis. Principles: high contrast, single focal point, readable at thumbnail size.',
+      keywords: '{thumbnail,visual,creative,design,youtube,banner,image}' },
+    { key: 'meta_ads',          name: 'Meta',    role: 'Paid Social Manager',     icon: '⊛', color: '#1877F2',
+      prompt: 'You are the Meta Ads Manager for {brand.brand_name}. You plan Facebook and Instagram paid campaign structures — objective → ad sets → audiences → creatives. You define decision rules: pause when CPA exceeds 1.5× target after 2× spend; scale when ROAS ≥ target for 2 consecutive days (≤20%/day increase); flag creative fatigue when frequency > 3 and CTR drops >30%. You produce daily performance reports with clear recommended actions. You never exceed pre-approved budget caps.',
+      keywords: '{meta,facebook,instagram,ads,roas,cpa,budget,paid}' },
+  ];
+  for (const a of _newAgents) {
+    await pool.query(
+      `INSERT INTO agent_templates (agent_key, name, role, icon, color, base_prompt, memory_keywords)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (agent_key) DO NOTHING`,
+      [a.key, a.name, a.role, a.icon, a.color, a.prompt, `{${a.keywords.replace(/[{}]/g,'')}}`]
+    ).catch(() => undefined);
+  }
   // ── End Agent System ──────────────────────────────────────────────────────────
 
   // ── Admin Platform Agents ──────────────────────────────────────────────────────
@@ -3332,6 +3369,124 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
         steps: [
           { id: 'step_review',  name: 'Weekly Review',         tool: 'claude_synthesize',         description: 'Analyze the week across all marketing dimensions', prompt_template: 'Write a comprehensive weekly marketing review for {brand.niche}.\nContext: {input}\nAudience: {brand.audience}\n\nCover: content performance highlights, engagement trends, top and bottom posts, audience growth, campaign progress, what worked and what did not.', params: {} },
           { id: 'step_plan',    name: 'Next Week Action Plan', tool: 'claude_synthesize',          description: 'Draft next week priorities for each agent', prompt_template: 'Based on this weekly review:\n{step_review.result}\n\nCreate next week\'s action plan for {brand.niche}:\n- Nova: visual content to create\n- Sage: strategy adjustment needed\n- Flux: automation and scheduling tasks\n- Aria: metrics to focus on\n- Key decisions to make and team tasks', params: {} },
+        ],
+      },
+      // ── Trend Research ────────────────────────────────────────────────────────
+      {
+        agent_key: 'trend_research', name: 'Niche Trend Scan',
+        description: 'Scan for emerging trends in your niche, cluster signals by relevance and decay risk, and surface 3–5 content angles your brand can act on now.',
+        steps: [
+          { id: 'step_scan',    name: 'Scan Trend Signals',    tool: 'claude_synthesize', description: 'Surface trending topics and signals in the niche', prompt_template: 'You are the Trend Research Agent. Scan for emerging trends relevant to a {brand.niche} brand targeting {brand.audience}.\n\nInput context: {input}\n\nIdentify 5–7 trend candidates. For each: trend name, why it is relevant to this brand, suggested content angle, channel fit (Instagram/TikTok/LinkedIn/YouTube), and decay risk (low/medium/high).', params: {} },
+          { id: 'step_rank',    name: 'Rank & Filter',         tool: 'claude_synthesize', description: 'Rank trends by opportunity score and brand fit', prompt_template: 'From these trend candidates:\n{step_scan.result}\n\nRank them by opportunity score (relevance × volume × brand fit ÷ decay risk). Select the top 3. For each, write: opportunity summary (2 sentences), recommended content format, and the single most important angle to lead with. Audience: {brand.audience}. Tone: {brand.tone}.', params: {} },
+          { id: 'step_brief',   name: 'Create Content Angles', tool: 'draft_content',     description: 'Turn top trends into actionable content angle proposals', prompt_template: 'Turn these top trend opportunities into 3 ready-to-brief content angles for {brand.brand_name}:\n{step_rank.result}\n\nFor each angle: working title, format (reel/post/carousel/thread), platform, hook idea, and key message. Tone: {brand.tone}.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'trend_research', name: 'Viral Content Autopsy',
+        description: 'Analyze what is going viral in your space, reverse-engineer the formula, and extract repeatable patterns for your brand.',
+        steps: [
+          { id: 'step_autopsy', name: 'Viral Pattern Analysis', tool: 'claude_synthesize', description: 'Reverse-engineer viral content patterns', prompt_template: 'Analyze viral content patterns in the {brand.niche} space.\nAudience: {brand.audience}\nContext/example: {input}\n\nIdentify: the hook formula used, emotional driver (curiosity/fear/status/relief), format type, posting time pattern, engagement mechanic (debate/save/share trigger), and what made it spread.', params: {} },
+          { id: 'step_adapt',   name: 'Brand-Fit Adaptation',   tool: 'draft_content',     description: 'Adapt viral formula to brand voice', prompt_template: 'Using these viral patterns:\n{step_autopsy.result}\n\nCreate 2 content ideas adapted to {brand.brand_name} (niche: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}) that use the same formula but fit the brand authentically. Include: format, hook, key message, CTA.', params: {} },
+        ],
+      },
+      // ── Audience Research ─────────────────────────────────────────────────────
+      {
+        agent_key: 'audience_research', name: 'Audience Persona Builder',
+        description: 'Build 2–3 detailed audience personas from real pain points, vocabulary, buying triggers, and objections — ready to hand to every other agent.',
+        steps: [
+          { id: 'step_pains',   name: 'Extract Pain Points',   tool: 'claude_synthesize', description: 'Surface top pains, desires, and vocabulary', prompt_template: 'You are the Audience Research Agent for {brand.brand_name} ({brand.niche}).\nTarget audience: {brand.audience}\nAdditional context: {input}\n\nExtract the top 5 pain points (with plausible verbatim quotes), top 5 desired outcomes, 3 main objections to buying, and the exact vocabulary this audience uses (jargon, phrases, metaphors they favour). Cite the type of source each insight likely comes from (reviews/forums/support).', params: {} },
+          { id: 'step_persona', name: 'Build Personas',        tool: 'claude_synthesize', description: 'Create 2 detailed buyer personas', prompt_template: 'Using this audience intelligence:\n{step_pains.result}\n\nBuild 2 distinct buyer personas for {brand.brand_name}. For each: name, role/demographic, daily friction, success metric, where they spend time online, what would make them switch to this brand, what would make them churn, and their decision-making style.', params: {} },
+          { id: 'step_hooks',   name: 'Messaging Hooks',       tool: 'draft_content',     description: 'Generate messaging hooks from persona insights', prompt_template: 'From these personas:\n{step_persona.result}\n\nCreate 5 messaging hooks for {brand.brand_name} that speak directly to this audience\'s vocabulary and pain. Each hook should be ≤12 words. Tone: {brand.tone}.', params: {} },
+        ],
+      },
+      // ── SEO Research ──────────────────────────────────────────────────────────
+      {
+        agent_key: 'seo_research', name: 'Keyword Cluster Report',
+        description: 'Generate keyword clusters by search intent and funnel stage, with content format recommendations and quick-win opportunities.',
+        steps: [
+          { id: 'step_seeds',   name: 'Generate Seed Keywords', tool: 'claude_synthesize', description: 'Generate seed and long-tail keywords', prompt_template: 'You are the SEO Keyword Research Agent for {brand.brand_name} ({brand.niche}).\nAudience: {brand.audience}\nSeed topic: {input}\n\nGenerate 20–30 keyword ideas across: head terms (high volume, high competition), mid-tail (specific, moderate), and long-tail (low competition, high intent). Group by search intent: informational | commercial | transactional.', params: {} },
+          { id: 'step_cluster', name: 'Cluster & Prioritise',   tool: 'claude_synthesize', description: 'Cluster keywords and prioritize by opportunity', prompt_template: 'From these keywords:\n{step_seeds.result}\n\nCluster them into 5–8 topic clusters. For each cluster: cluster name, primary keyword, estimated intent (TOFU/MOFU/BOFU), competition level (low/medium/high), recommended content format (blog/landing page/comparison/tool), and why this cluster matters for {brand.niche}. Flag the top 3 quick-win clusters (low competition + commercial intent).', params: {} },
+          { id: 'step_briefs',  name: 'Content Briefs',         tool: 'draft_content',     description: 'Create content briefs for top clusters', prompt_template: 'For the top 3 quick-win keyword clusters:\n{step_cluster.result}\n\nWrite a content brief for each: target keyword, title, audience ({brand.audience}), 5 key sections to cover, 3 competitor angles to beat, and the CTA. Tone: {brand.tone}.', params: {} },
+        ],
+      },
+      // ── Hook Writing ──────────────────────────────────────────────────────────
+      {
+        agent_key: 'hook_writing', name: 'Hook Generator',
+        description: 'Generate 10 scroll-stopping hooks for a topic across 5 distinct patterns — ready for captions, scripts, and ad copy.',
+        steps: [
+          { id: 'step_hooks',   name: 'Generate Hook Variants', tool: 'claude_synthesize', description: 'Generate 10 hook variations', prompt_template: 'You are the Hook Writing Agent for {brand.brand_name} ({brand.niche}).\nAudience: {brand.audience}\nTone: {brand.tone}\nTopic/angle: {input}\n\nGenerate 10 hook variations (each ≤12 words for video, ≤80 chars for text) across these patterns:\n1. Pattern interrupt\n2. Contrarian\n3. Stat-led\n4. Direct question\n5. Before/after\n6. ICP callout\n7. Story cold open\n8. Problem amplification\n9. FOMO/urgency\n10. Bold claim\n\nFor each: the hook text, pattern type, emotional driver (curiosity/status/fear/relief), and best channel fit.', params: {} },
+          { id: 'step_top3',    name: 'Select & Justify Top 3', tool: 'draft_content',     description: 'Select the 3 strongest hooks with reasoning', prompt_template: 'From these hooks:\n{step_hooks.result}\n\nSelect the 3 strongest for {brand.brand_name} targeting {brand.audience}. For each: the hook, why it works for this audience, which platform it fits best, and a suggested follow-up sentence to build on it.', params: {} },
+        ],
+      },
+      // ── Social Caption ────────────────────────────────────────────────────────
+      {
+        agent_key: 'social_caption', name: 'Multi-Platform Captions',
+        description: 'Write A/B caption variants for your top 3 platforms — platform-native tone, right hashtags, one clear CTA each.',
+        steps: [
+          { id: 'step_draft',   name: 'Draft Captions',         tool: 'claude_synthesize', description: 'Write platform-native captions', prompt_template: 'You are the Social Caption Agent for {brand.brand_name}.\nTone: {brand.tone}\nAudience: {brand.audience}\nPlatforms: {brand.platforms}\nContent topic/hook: {input}\n\nWrite 2 caption variants (A and B) for each of the top 3 platforms in the list. Platform rules:\n- LinkedIn: 800–1500 chars, professional-human, 3–5 hashtags, no hashtag spam\n- Instagram: 150–400 chars, emojis if tone permits, 5–8 hashtags\n- TikTok: ≤150 chars, conversational, 2–4 hashtags\n- Twitter/X: ≤280 chars, punchy, no hashtags unless campaign-tagged\n\nEach caption must end with one clear CTA.', params: {} },
+          { id: 'step_refine',  name: 'Refine & Schedule Hint', tool: 'draft_content',     description: 'Add scheduling hints and finalize', prompt_template: 'Review these captions for {brand.brand_name}:\n{step_draft.result}\n\nFor each platform pair: select the stronger variant with justification, add a posting-time recommendation (best window for each platform), and note any hashtags to refine. Produce final ready-to-post captions.', params: {} },
+        ],
+      },
+      // ── Video Script ──────────────────────────────────────────────────────────
+      {
+        agent_key: 'video_script', name: 'Short-Form Script (≤60s)',
+        description: 'Write a timed short-form video script with hook, on-screen text, b-roll notes, voiceover, and CTA placement.',
+        steps: [
+          { id: 'step_outline', name: 'Script Outline',          tool: 'claude_synthesize', description: 'Create structure and timing outline', prompt_template: 'You are the Video Script Agent for {brand.brand_name} ({brand.niche}).\nAudience: {brand.audience}\nTone: {brand.tone}\nTopic/brief: {input}\n\nCreate a short-form video outline (≤60 seconds):\n- 0:00–0:03: Hook (from Hook Writing Agent if available)\n- 0:03–0:15: Problem amplification\n- 0:15–0:45: Reveal / proof / key message\n- 0:45–0:60: CTA\n\nFor each segment: timing, voiceover script, on-screen text, b-roll/visual direction.', params: {} },
+          { id: 'step_script',  name: 'Full Script',              tool: 'draft_content',     description: 'Write the complete timestamped script', prompt_template: 'Expand this outline into a complete short-form video script for {brand.brand_name}:\n{step_outline.result}\n\nDeliver: final VO lines (natural speech rhythm, {brand.tone} tone), on-screen text overlays (≤5 words each), b-roll descriptions, and a thumbnail concept (1 sentence visual direction).', params: {} },
+        ],
+      },
+      {
+        agent_key: 'video_script', name: 'Long-Form Script (5–10 min)',
+        description: 'Write a structured long-form video script with retention beats every 90 seconds, timestamps, and a dual CTA.',
+        steps: [
+          { id: 'step_frame',   name: 'Framework & Segments',    tool: 'claude_synthesize', description: 'Define segments, retention beats, and CTA placements', prompt_template: 'You are the Video Script Agent for {brand.brand_name} ({brand.niche}).\nAudience: {brand.audience}\nTone: {brand.tone}\nTopic: {input}\n\nDesign a long-form video framework (5–10 min):\n- Cold open (0:00–0:30): hook + promise\n- 3–5 main segments with re-engagement beats every 60–90s\n- Recap (last 60s)\n- CTA: mid-point + end\n\nFor each segment: title, key message, duration, retention hook.', params: {} },
+          { id: 'step_full',    name: 'Full Script Draft',        tool: 'draft_content',     description: 'Write complete long-form script', prompt_template: 'Write the complete long-form script for {brand.brand_name} based on this framework:\n{step_frame.result}\n\nInclude: VO lines, on-screen text, b-roll notes, timestamps, chapter titles for YouTube chapters, and thumbnail concept.', params: {} },
+        ],
+      },
+      // ── Ad Copy ───────────────────────────────────────────────────────────────
+      {
+        agent_key: 'ad_copy', name: 'Meta Ad Copy Pack',
+        description: 'Generate 8 Meta ad copy variations across 4 angles — pain-led, outcome-led, social proof, and FOMO — with A/B hypothesis for each.',
+        steps: [
+          { id: 'step_angles',  name: 'Define Angles & Strategy', tool: 'claude_synthesize', description: 'Plan ad angles and messaging strategy', prompt_template: 'You are the Ad Copy Agent for {brand.brand_name} ({brand.niche}).\nAudience: {brand.audience}\nOffer/campaign: {input}\nConversion goal: sign-up or purchase\n\nDefine 4 distinct ad angles:\n1. Pain-led (amplify the problem)\n2. Outcome-led (paint the result)\n3. Social proof (credibility-first)\n4. FOMO/urgency (scarcity or time)\n\nFor each angle: headline direction (≤40 chars), primary text direction (≤125 chars), hypothesis to test.', params: {} },
+          { id: 'step_copy',    name: 'Write All Variations',     tool: 'claude_synthesize', description: 'Write complete ad copy for all angles', prompt_template: 'Write 2 complete Meta ad copy variants per angle for {brand.brand_name}:\n{step_angles.result}\n\nFor each variant:\n- Primary text (125 chars ideal)\n- Headline (40 chars max)\n- Description (30 chars)\n- CTA button label\n- Hypothesis being tested\n\nTone: {brand.tone}. Audience: {brand.audience}. Never fabricate testimonials.', params: {} },
+          { id: 'step_google',  name: 'Google Search Ads',        tool: 'draft_content',     description: 'Write Google Search ad headlines and descriptions', prompt_template: 'Using the ad strategy:\n{step_angles.result}\n\nWrite Google Search ad assets for {brand.brand_name}:\n- 10 headlines (30 chars each, varied by angle)\n- 4 descriptions (90 chars each)\n- 3 sitelink text options\n\nFocus on search intent keywords for {brand.niche}.', params: {} },
+        ],
+      },
+      // ── Thumbnail Design ──────────────────────────────────────────────────────
+      {
+        agent_key: 'thumbnail_design', name: 'YouTube Thumbnail Pack',
+        description: 'Design 3 CTR-optimized YouTube thumbnail concepts with layout, focal element, palette, overlay text, and A/B test hypothesis.',
+        steps: [
+          { id: 'step_concepts', name: 'Generate 3 Concepts',    tool: 'claude_synthesize', description: 'Create 3 distinct thumbnail visual concepts', prompt_template: 'You are the Thumbnail Design Agent for {brand.brand_name} ({brand.niche}).\nVideo title/hook: {input}\nBrand tone: {brand.tone}\n\nCreate 3 distinct thumbnail concepts. For each:\n- Layout (describe where focal element and text sit)\n- Focal element (face emotion / product / graphic)\n- Dominant emotion to convey\n- Color palette (2–3 hex codes, high contrast)\n- Overlay text (≤4 words, must be readable at 200px wide)\n- What NOT to include\n- CTR hypothesis (why this will outperform average)', params: {} },
+          { id: 'step_ab',       name: 'A/B Test Brief',          tool: 'draft_content',     description: 'Define the A/B test pair and rationale', prompt_template: 'From these 3 thumbnail concepts for {brand.brand_name}:\n{step_concepts.result}\n\nSelect the 2 strongest as the A/B test pair. Write the test brief:\n- Concept A (full spec)\n- Concept B (full spec)\n- What variable is being tested\n- Success metric (CTR target)\n- Recommended design tools (Canva/Figma) and how to execute each concept.', params: {} },
+        ],
+      },
+      {
+        agent_key: 'thumbnail_design', name: 'Social Ad Creative Brief',
+        description: 'Write a visual creative brief for Meta/LinkedIn/TikTok ad creatives — single image and carousel formats.',
+        steps: [
+          { id: 'step_brief',    name: 'Creative Brief',          tool: 'claude_synthesize', description: 'Write full creative brief for ad visuals', prompt_template: 'You are the Thumbnail Design Agent for {brand.brand_name} ({brand.niche}).\nCampaign/offer: {input}\nAudience: {brand.audience}\nTone: {brand.tone}\n\nWrite a visual creative brief for social ad creatives covering:\n1. Single image ad: layout, focal element, copy placement, palette, emotion\n2. Carousel (3 frames): frame 1 hook visual, frame 2 proof/feature, frame 3 CTA\n3. Video cover frame: 1-sentence visual direction\n\nFor each: what to avoid, design notes, and the brand rule that must be maintained.', params: {} },
+          { id: 'step_deliver',  name: 'Production Checklist',    tool: 'draft_content',     description: 'Produce a delivery-ready creative checklist', prompt_template: 'From this creative brief for {brand.brand_name}:\n{step_brief.result}\n\nCreate a production-ready checklist:\n- Asset dimensions for each format (Meta: 1080×1080, 1200×628, etc.)\n- File format requirements\n- Text safe zones\n- Brand elements required (logo placement, color, font)\n- QA checklist (text legibility, contrast ratio, CTA visibility)', params: {} },
+        ],
+      },
+      // ── Meta Ads ──────────────────────────────────────────────────────────────
+      {
+        agent_key: 'meta_ads', name: 'Campaign Structure Plan',
+        description: 'Design a complete Meta campaign structure — objective, ad sets, audiences, budget allocation, and decision rules for scaling.',
+        steps: [
+          { id: 'step_structure', name: 'Campaign Architecture',  tool: 'claude_synthesize', description: 'Design the full campaign structure', prompt_template: 'You are the Meta Ads Manager for {brand.brand_name} ({brand.niche}).\nAudience: {brand.audience}\nCampaign goal: {input}\n\nDesign a Meta campaign structure:\n1. Campaign objective (awareness/traffic/leads/sales)\n2. 3 ad set audience types: cold (broad/LAL), warm (retargeting), hot (CRM/custom)\n3. Budget allocation % across cold/warm/hot\n4. Placement recommendation (Reels/Feed/Stories)\n5. Conversion event to optimise for\n6. Exclusion audiences', params: {} },
+          { id: 'step_rules',     name: 'Decision Rules & KPIs',  tool: 'claude_synthesize', description: 'Define performance thresholds and scaling rules', prompt_template: 'For this campaign structure:\n{step_structure.result}\n\nDefine operational rules for {brand.brand_name}:\n- Target CPA: set based on average LTV assumption\n- Target ROAS: set based on margin assumption\n- Pause rule: CPA > 1.5× target after 2× spend, OR CTR < 0.8% after 24h\n- Scale rule: ROAS ≥ target 2 consecutive days → increase budget ≤20%/day\n- Creative fatigue rule: frequency > 3 + CTR drop >30% → request new creative\n- Frequency cap recommendation', params: {} },
+          { id: 'step_launch',    name: 'Launch Checklist',       tool: 'draft_content',     description: 'Create a pre-launch QA checklist', prompt_template: 'Create a complete Meta ads launch checklist for {brand.brand_name}:\n{step_rules.result}\n\nCover: pixel verification, conversion event test, audience sizes, creative specs, UTM parameters, brand safety exclusions, budget approval, and post-launch monitoring schedule (24h, 72h, 7d checkpoints).', params: {} },
+        ],
+      },
+      {
+        agent_key: 'meta_ads', name: 'Daily Performance Report',
+        description: 'Generate a structured daily performance report with spend summary, KPI status, decisions made, and next recommended actions.',
+        steps: [
+          { id: 'step_report',    name: 'Performance Summary',    tool: 'claude_synthesize', description: 'Write a structured daily performance report', prompt_template: 'You are the Meta Ads Manager for {brand.brand_name} ({brand.niche}).\nPerformance data or context: {input}\n\nWrite a structured daily Meta ads report:\n- Spend summary\n- CPA vs target (green/amber/red)\n- ROAS vs target\n- Top performing ad set and creative\n- Decisions made today (paused/scaled/iterated)\n- Requests to other agents (new creative needed?)\n- Tomorrow\'s focus', params: {} },
+          { id: 'step_actions',   name: 'Action Items',           tool: 'draft_content',     description: 'List specific actions for each team member', prompt_template: 'From this performance report for {brand.brand_name}:\n{step_report.result}\n\nList specific action items:\n- Ad Copy Agent: any new variations needed\n- Thumbnail Design Agent: any creative refreshes\n- Analytics Agent: what to monitor\n- Campaign Manager: any budget decisions needed\n\nPrioritize by urgency (do today / do this week / monitor).', params: {} },
         ],
       },
     ];

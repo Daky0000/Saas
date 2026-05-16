@@ -3,10 +3,10 @@ import {
   CheckCircle, ChevronRight, Loader2, RefreshCw, Sparkles,
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
   CheckSquare, Square, Clock, ThumbsUp, ThumbsDown, X,
-  Pencil, Bot, Play, PlayCircle, ArrowRight, Network,
+  Pencil, Bot, Play, ArrowRight, Network,
   FileText, ExternalLink, Lightbulb, LayoutList,
-  MessageCircle, Calendar, ChevronLeft, Send, Settings2,
-  Wand2, CalendarDays, AlarmClock,
+  MessageCircle, Calendar, ChevronLeft, Send,
+  Wand2, CalendarDays, Rocket,
   type LucideIcon,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
@@ -61,16 +61,6 @@ type ExecToast = {
   blog_post_id?: string | null;
 };
 
-type AgentSchedule = {
-  id: string;
-  agent_key: string;
-  frequency: 'off' | 'daily' | 'weekly';
-  run_hour: number;
-  run_day: number;
-  enabled: boolean;
-  last_scheduled_run_at: string | null;
-};
-
 type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
@@ -88,25 +78,65 @@ type VoiceResult = {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const AGENT_DEFS = [
-  {
-    key: 'daky', name: 'Daky', role: 'Content Writer', icon: '✦', color: '#5b6cf9',
-    description: 'Crafts social media captions, blog posts, and marketing copy tailored to your brand voice.',
-  },
-  {
-    key: 'nova', name: 'Nova', role: 'Creative Director', icon: '◉', color: '#EC4899',
-    description: 'Generates branded visuals, images, and video concepts using AI image generators.',
-  },
+  // Strategy & Intelligence
   {
     key: 'sage', name: 'Sage', role: 'Strategy Analyst', icon: '◈', color: '#10B981',
     description: 'Builds marketing strategies, competitor analyses, and 30-day content roadmaps.',
   },
   {
+    key: 'trend_research', name: 'Trend', role: 'Trend Research', icon: '◎', color: '#06B6D4',
+    description: 'Scans viral content, rising topics, and niche trends to keep your brand ahead of the curve.',
+  },
+  {
+    key: 'audience_research', name: 'Persona', role: 'Audience Research', icon: '◑', color: '#7C3AED',
+    description: 'Builds detailed audience personas from pain points, objections, and buying motivations.',
+  },
+  {
+    key: 'seo_research', name: 'SEO', role: 'SEO Keyword Research', icon: '⊗', color: '#059669',
+    description: 'Discovers keyword clusters, search intent, and content briefs optimized for organic growth.',
+  },
+  // Content Creation
+  {
+    key: 'daky', name: 'Daky', role: 'Content Writer', icon: '✦', color: '#5b6cf9',
+    description: 'Crafts long-form blog posts, articles, and marketing copy that drives traffic and conversions.',
+  },
+  {
+    key: 'hook_writing', name: 'Hook', role: 'Hook Writing', icon: '⚡', color: '#D97706',
+    description: 'Generates scroll-stopping opening lines, subject lines, and ad headlines built to capture attention.',
+  },
+  {
+    key: 'social_caption', name: 'Caption', role: 'Social Caption', icon: '✎', color: '#DB2777',
+    description: 'Writes platform-optimized captions with hooks, CTAs, and hashtag strategies for every network.',
+  },
+  {
+    key: 'video_script', name: 'Script', role: 'Video Script', icon: '▶', color: '#DC2626',
+    description: 'Scripts short-form Reels/TikTok content and long-form YouTube videos with retention structure.',
+  },
+  // Creative & Paid
+  {
+    key: 'nova', name: 'Nova', role: 'Creative Director', icon: '◉', color: '#EC4899',
+    description: 'Generates visual concepts, creative briefs, and branded image/video direction for campaigns.',
+  },
+  {
+    key: 'ad_copy', name: 'Ads', role: 'Ad Copy', icon: '◆', color: '#EA580C',
+    description: 'Creates high-converting ad copy packs for Meta, Google, and YouTube with multiple angle variations.',
+  },
+  {
+    key: 'thumbnail_design', name: 'Thumb', role: 'Thumbnail Design', icon: '▣', color: '#9333EA',
+    description: 'Produces YouTube thumbnail concepts, A/B test briefs, and social creative direction.',
+  },
+  {
+    key: 'meta_ads', name: 'Meta', role: 'Paid Social Manager', icon: '⊛', color: '#1877F2',
+    description: 'Plans campaign structures, audience targeting, budget allocation, and daily performance optimizations.',
+  },
+  // Analytics & Automation
+  {
     key: 'aria', name: 'Aria', role: 'Analytics & Performance', icon: '⊕', color: '#F59E0B',
-    description: 'Tracks KPIs, surfaces performance insights, and recommends data-driven optimisations.',
+    description: 'Tracks KPIs, surfaces performance insights, and recommends data-driven optimizations.',
   },
   {
     key: 'flux', name: 'Flux', role: 'Automation & Workflows', icon: '⟳', color: '#8B5CF6',
-    description: 'Automates post scheduling, platform integrations, and workflow orchestration.',
+    description: 'Automates post scheduling, platform integrations, and end-to-end workflow orchestration.',
   },
 ];
 
@@ -130,6 +160,13 @@ const GOAL_OPTIONS = [
 const PLATFORM_OPTIONS = [
   'Instagram', 'Facebook', 'Twitter / X', 'LinkedIn',
   'TikTok', 'YouTube', 'Pinterest', 'Threads',
+];
+
+const AGENT_GROUPS = [
+  { label: 'Strategy & Intelligence', keys: ['sage', 'trend_research', 'audience_research', 'seo_research'] },
+  { label: 'Content Creation', keys: ['daky', 'hook_writing', 'social_caption', 'video_script'] },
+  { label: 'Creative & Paid', keys: ['nova', 'ad_copy', 'thumbnail_design', 'meta_ads'] },
+  { label: 'Analytics & Automation', keys: ['aria', 'flux'] },
 ];
 
 // ── Brand Wizard ───────────────────────────────────────────────────────────────
@@ -396,48 +433,16 @@ function BrandWizard({
 
 // ── Agent Cards ────────────────────────────────────────────────────────────────
 
-const FREQ_LABELS: Record<string, string> = { off: 'Off', daily: 'Daily', weekly: 'Weekly' };
-const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => {
-  const h = i % 12 || 12;
-  const ampm = i < 12 ? 'am' : 'pm';
-  return { value: i, label: `${h}:00 ${ampm} UTC` };
-});
-const DAY_OPTIONS = [
-  { value: 0, label: 'Sunday' }, { value: 1, label: 'Monday' }, { value: 2, label: 'Tuesday' },
-  { value: 3, label: 'Wednesday' }, { value: 4, label: 'Thursday' },
-  { value: 5, label: 'Friday' }, { value: 6, label: 'Saturday' },
-];
-
 function AgentCard({
-  agent, ready, lastRunAt, onRun, running, instructions, schedule, onChat, onSaveInstructions, onSaveSchedule,
+  agent, ready, lastRunAt, onRun, running, onChat,
 }: {
   agent: typeof AGENT_DEFS[number];
   ready: boolean;
   lastRunAt: string | null;
   onRun: (key: string) => void;
   running: boolean;
-  instructions: string;
-  schedule: AgentSchedule | null;
   onChat: (key: string) => void;
-  onSaveInstructions: (key: string, value: string) => Promise<void>;
-  onSaveSchedule: (key: string, patch: Partial<AgentSchedule>) => Promise<void>;
 }) {
-  const [showSettings, setShowSettings] = useState(false);
-  const [instrText, setInstrText]       = useState(instructions);
-  const [savingInstr, setSavingInstr]   = useState(false);
-  const [freq, setFreq]     = useState<AgentSchedule['frequency']>(schedule?.frequency ?? 'off');
-  const [hour, setHour]     = useState(schedule?.run_hour ?? 9);
-  const [day, setDay]       = useState(schedule?.run_day ?? 1);
-  const [savingSched, setSavingSched] = useState(false);
-
-  // Sync props → state when parent reloads
-  useEffect(() => { setInstrText(instructions); }, [instructions]);
-  useEffect(() => {
-    setFreq(schedule?.frequency ?? 'off');
-    setHour(schedule?.run_hour ?? 9);
-    setDay(schedule?.run_day ?? 1);
-  }, [schedule]);
-
   const lastRunLabel = lastRunAt
     ? (() => {
         const diff = Date.now() - new Date(lastRunAt).getTime();
@@ -449,8 +454,6 @@ function AgentCard({
         return `${Math.floor(hrs / 24)}d ago`;
       })()
     : null;
-
-  const schedEnabled = freq !== 'off';
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition flex flex-col">
@@ -469,11 +472,6 @@ function AgentCard({
               }`}>
                 {running ? 'Running…' : ready ? 'Ready' : 'Setup needed'}
               </span>
-              {schedEnabled && (
-                <span className="flex items-center gap-1 rounded-full bg-violet-50 text-violet-600 text-[10px] font-bold px-2 py-0.5">
-                  <AlarmClock size={9} /> {FREQ_LABELS[freq]}
-                </span>
-              )}
             </div>
             <p className="text-xs text-slate-500">{agent.role}</p>
           </div>
@@ -481,11 +479,9 @@ function AgentCard({
         <p className="text-xs text-slate-500 leading-relaxed flex-1">{agent.description}</p>
 
         <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-slate-400">
-              {lastRunLabel ? `Last run: ${lastRunLabel}` : 'Never run'}
-            </span>
-          </div>
+          <span className="text-[11px] text-slate-400">
+            {lastRunLabel ? `Last run: ${lastRunLabel}` : 'Never run'}
+          </span>
           <div className="flex items-center gap-1.5">
             {ready && (
               <button type="button" onClick={() => onChat(agent.key)}
@@ -494,20 +490,16 @@ function AgentCard({
                 <MessageCircle size={11} /> Chat
               </button>
             )}
-            <button type="button" onClick={() => setShowSettings((v) => !v)}
-              className="flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition">
-              <Settings2 size={11} /> {showSettings ? 'Close' : 'Settings'}
-            </button>
             <button
               type="button"
               disabled={!ready || running}
               onClick={() => onRun(agent.key)}
               className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ background: ready && !running ? agent.color : '#94a3b8' }}
-              title={!ready ? 'Complete brand setup to run this agent' : `Run ${agent.name}`}
+              title={!ready ? 'Complete brand setup to run this agent' : `Begin ${agent.name}`}
             >
               {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-              {running ? 'Running…' : 'Run'}
+              {running ? 'Running…' : 'Begin'}
             </button>
           </div>
         </div>
@@ -517,69 +509,6 @@ function AgentCard({
           </p>
         )}
       </div>
-
-      {/* Settings panel */}
-      {showSettings && (
-        <div className="border-t border-slate-100 px-5 py-4 space-y-4 bg-slate-50/50">
-          {/* Custom Instructions */}
-          <div>
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Standing Instructions</p>
-            <textarea
-              rows={3}
-              value={instrText}
-              onChange={(e) => setInstrText(e.target.value)}
-              placeholder={`Tell ${agent.name} how to approach your brand (e.g. "Always use emojis", "Focus on Instagram Reels")…`}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-300 focus:outline-none resize-none"
-            />
-            <button type="button" disabled={savingInstr} onClick={async () => {
-              setSavingInstr(true);
-              await onSaveInstructions(agent.key, instrText);
-              setSavingInstr(false);
-            }}
-              className="mt-1.5 flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition disabled:opacity-50">
-              {savingInstr ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle size={10} />}
-              Save Instructions
-            </button>
-          </div>
-
-          {/* Schedule */}
-          <div>
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Auto-Run Schedule</p>
-            <div className="flex flex-wrap gap-2 items-end">
-              <select value={freq} onChange={(e) => setFreq(e.target.value as AgentSchedule['frequency'])}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:outline-none">
-                {['off','daily','weekly'].map((f) => <option key={f} value={f}>{FREQ_LABELS[f]}</option>)}
-              </select>
-              {freq !== 'off' && (
-                <select value={hour} onChange={(e) => setHour(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:outline-none">
-                  {HOUR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              )}
-              {freq === 'weekly' && (
-                <select value={day} onChange={(e) => setDay(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:outline-none">
-                  {DAY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              )}
-              <button type="button" disabled={savingSched} onClick={async () => {
-                setSavingSched(true);
-                await onSaveSchedule(agent.key, { frequency: freq, run_hour: hour, run_day: day, enabled: freq !== 'off' });
-                setSavingSched(false);
-              }}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition disabled:opacity-50">
-                {savingSched ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle size={10} />}
-                Save
-              </button>
-            </div>
-            {freq !== 'off' && (
-              <p className="mt-1.5 text-[10px] text-violet-600 font-semibold">
-                {agent.name} will run automatically {freq === 'daily' ? `daily` : `every week on ${DAY_OPTIONS[day]?.label}`} at {HOUR_OPTIONS[hour]?.label}.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -588,9 +517,15 @@ function AgentCard({
 
 const AGENT_COLORS: Record<string, string> = {
   daky: '#5b6cf9', nova: '#EC4899', sage: '#10B981', aria: '#F59E0B', flux: '#8B5CF6',
+  trend_research: '#06B6D4', audience_research: '#7C3AED', seo_research: '#059669',
+  hook_writing: '#D97706', social_caption: '#DB2777', video_script: '#DC2626',
+  ad_copy: '#EA580C', thumbnail_design: '#9333EA', meta_ads: '#1877F2',
 };
 const AGENT_ICONS: Record<string, string> = {
   daky: '✦', nova: '◉', sage: '◈', aria: '⊕', flux: '⟳',
+  trend_research: '◎', audience_research: '◑', seo_research: '⊗',
+  hook_writing: '⚡', social_caption: '✎', video_script: '▶',
+  ad_copy: '◆', thumbnail_design: '▣', meta_ads: '⊛',
 };
 
 const STATUS_STYLES: Record<AgentTask['status'], string> = {
@@ -1315,7 +1250,12 @@ function OrchestrationPanel({
   );
 }
 
-const AGENT_NAMES: Record<string, string> = { daky: 'Daky', nova: 'Nova', sage: 'Sage', aria: 'Aria', flux: 'Flux' };
+const AGENT_NAMES: Record<string, string> = {
+  daky: 'Daky', nova: 'Nova', sage: 'Sage', aria: 'Aria', flux: 'Flux',
+  trend_research: 'Trend', audience_research: 'Persona', seo_research: 'SEO',
+  hook_writing: 'Hook', social_caption: 'Caption', video_script: 'Script',
+  ad_copy: 'Ads', thumbnail_design: 'Thumb', meta_ads: 'Meta',
+};
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -1332,13 +1272,13 @@ export default function AITeam() {
   const [lastRunAt, setLastRunAt]           = useState<Record<string, string>>({});
   const [runToasts, setRunToasts]           = useState<RunResult[]>([]);
   const [execToasts, setExecToasts]         = useState<ExecToast[]>([]);
-  // Plan 10: schedules + per-agent instructions
-  const [schedules, setSchedules]           = useState<Record<string, AgentSchedule>>({});
-  const [agentInstructions, setAgentInstructions] = useState<Record<string, string>>({});
-  // Plan 11: brand voice modal
+  // brand voice modal
   const [showVoice, setShowVoice]           = useState(false);
-  // Plan 10: agent chat
+  // agent chat
   const [chatKey, setChatKey]               = useState<string | null>(null);
+  // campaign launch modal
+  const [showCampaignModal, setShowCampaignModal] = useState(false);
+  const [campaignBrief, setCampaignBrief]   = useState('');
   // Plan 12: content calendar
   const [showCalendar, setShowCalendar]     = useState(false);
 
@@ -1354,30 +1294,16 @@ export default function AITeam() {
     setLoading(true); setError(null);
     try {
       const h = { Authorization: `Bearer ${tok()}` };
-      const [pr, tr, sr, dr, schr, memr] = await Promise.all([
+      const [pr, tr, sr, dr] = await Promise.all([
         fetch(`${BASE()}/api/user/brand-profile`,    { headers: h }).then((r) => r.json()),
         fetch(`${BASE()}/api/user/agent-tasks`,      { headers: h }).then((r) => r.json()),
         fetch(`${BASE()}/api/user/agents/status`,    { headers: h }).then((r) => r.json()),
         fetch(`${BASE()}/api/user/agent-drafts`,     { headers: h }).then((r) => r.json()),
-        fetch(`${BASE()}/api/user/agent-schedules`,  { headers: h }).then((r) => r.json()),
-        fetch(`${BASE()}/api/user/agent-memory`,     { headers: h }).then((r) => r.json()),
       ]);
       setProfile(pr.success ? pr.profile : null);
       setTasks(tr.success ? tr.tasks : []);
       if (sr.success) setLastRunAt(sr.status ?? {});
       if (dr.success) setDrafts(dr.drafts ?? []);
-      if (schr.success) {
-        const map: Record<string, AgentSchedule> = {};
-        for (const s of (schr.schedules ?? [])) map[s.agent_key] = s;
-        setSchedules(map);
-      }
-      if (memr.success) {
-        const instrMap: Record<string, string> = {};
-        for (const m of (memr.memories ?? [])) {
-          if (m.key === 'custom_instructions') instrMap[m.agent_key] = m.value;
-        }
-        setAgentInstructions(instrMap);
-      }
       if (!pr.profile?.setup_done) setShowWizard(true);
     } catch (e: any) {
       setError(e.message);
@@ -1413,25 +1339,6 @@ export default function AITeam() {
     }
   };
 
-  const handleSaveInstructions = async (agentKey: string, value: string) => {
-    await fetch(`${BASE()}/api/user/agent-memory`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
-      body: JSON.stringify({ agent_key: agentKey, mem_type: 'instruction', key: 'custom_instructions', value: value || ' ' }),
-    }).catch(() => {});
-    setAgentInstructions((prev) => ({ ...prev, [agentKey]: value }));
-  };
-
-  const handleSaveSchedule = async (agentKey: string, patch: Partial<AgentSchedule>) => {
-    const res = await fetch(`${BASE()}/api/user/agent-schedules/${agentKey}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
-      body: JSON.stringify(patch),
-    });
-    const d = await res.json();
-    if (d.success) setSchedules((prev) => ({ ...prev, [agentKey]: d.schedule }));
-  };
-
   const runAgent = async (key: string) => {
     setRunningAgents((s) => new Set(s).add(key));
     try {
@@ -1463,15 +1370,19 @@ export default function AITeam() {
   const runAll = async () => {
     if (runningAll) return;
     setRunningAll(true);
-    const keys = AGENT_DEFS.map((a) => a.key);
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
-      const name = AGENT_DEFS[i].name;
-      setRunAllStatus(`Running ${name} (${i + 1}/${keys.length})…`);
-      await runAgent(key);
+    const agents = AGENT_DEFS;
+    for (let i = 0; i < agents.length; i++) {
+      setRunAllStatus(`Running ${agents[i].name} (${i + 1}/${agents.length})…`);
+      await runAgent(agents[i].key);
     }
     setRunningAll(false);
     setRunAllStatus('');
+  };
+
+  const launchCampaign = async () => {
+    setShowCampaignModal(false);
+    await runAll();
+    setCampaignBrief('');
   };
 
   // Phase 8 — orchestration: streams step-by-step UI updates then calls backend
@@ -1595,18 +1506,68 @@ export default function AITeam() {
       {/* Brand voice modal */}
       {showVoice && <BrandVoiceModal onClose={() => setShowVoice(false)} onSaved={() => {}} />}
 
+      {/* Launch Campaign modal */}
+      {showCampaignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+                  <Rocket size={16} />
+                </div>
+                <h3 className="font-black text-slate-950 tracking-tight">Launch Campaign</h3>
+              </div>
+              <button type="button" onClick={() => setShowCampaignModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Give your AI team a campaign brief. All {AGENT_DEFS.length} agents will run in sequence and generate proposals based on your brand profile and this brief.
+            </p>
+            <textarea
+              rows={4}
+              value={campaignBrief}
+              onChange={(e) => setCampaignBrief(e.target.value)}
+              placeholder="e.g. Launch our new product to early adopters on LinkedIn and Instagram — focus on pain points around manual workflows and show how we automate the repetitive stuff…"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-indigo-300 focus:bg-white focus:outline-none resize-none mb-4"
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setShowCampaignModal(false)}
+                className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50 transition">
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={runningAll || runningAgents.size > 0}
+                onClick={launchCampaign}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
+                style={{ background: '#5b6cf9' }}
+              >
+                <Rocket size={14} /> Begin All Agents
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Page header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">AI Team</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Your personal AI marketing team. Set your brand profile and run agents to get content, strategies, and insights.
+            Your full AI marketing team — 14 specialized agents powered by your brand profile.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {pendingCount > 0 && (
             <span className="rounded-full bg-amber-500 text-white text-xs font-bold px-2.5 py-1">
               {pendingCount} pending
+            </span>
+          )}
+          {runningAll && (
+            <span className="text-xs font-semibold text-slate-500">
+              <Loader2 size={12} className="inline animate-spin mr-1" />{runAllStatus}
             </span>
           )}
           {profileReady && (
@@ -1626,14 +1587,11 @@ export default function AITeam() {
               <button
                 type="button"
                 disabled={runningAll || runningAgents.size > 0 || orchRunning}
-                onClick={runAll}
+                onClick={() => setShowCampaignModal(true)}
                 className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:opacity-50"
                 style={{ background: '#5b6cf9' }}
               >
-                {runningAll
-                  ? <><Loader2 size={12} className="animate-spin" /> {runAllStatus || 'Running…'}</>
-                  : <><PlayCircle size={13} /> Run All</>
-                }
+                <Rocket size={13} /> Launch Campaign
               </button>
             </>
           )}
@@ -1700,33 +1658,39 @@ export default function AITeam() {
         </div>
       )}
 
-      {/* Agent grid */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-black text-slate-950 tracking-tight">Your Marketing Team</h3>
-          {profileReady && (
-            <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
-              <Zap size={12} /> All agents ready
-            </span>
-          )}
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {AGENT_DEFS.map((agent) => (
-            <AgentCard
-              key={agent.key}
-              agent={agent}
-              ready={profileReady}
-              lastRunAt={lastRunAt[agent.key] ?? null}
-              running={runningAgents.has(agent.key)}
-              onRun={runAgent}
-              instructions={agentInstructions[agent.key] ?? ''}
-              schedule={schedules[agent.key] ?? null}
-              onChat={setChatKey}
-              onSaveInstructions={handleSaveInstructions}
-              onSaveSchedule={handleSaveSchedule}
-            />
-          ))}
-        </div>
+      {/* Agent grid — grouped by category */}
+      <div className="space-y-8">
+        {AGENT_GROUPS.map((group) => {
+          const agents = group.keys
+            .map((k) => AGENT_DEFS.find((a) => a.key === k))
+            .filter((a): a is typeof AGENT_DEFS[number] => Boolean(a));
+          return (
+            <div key={group.label}>
+              <div className="flex items-center gap-3 mb-4">
+                <h3 className="text-sm font-black text-slate-700 tracking-tight whitespace-nowrap">{group.label}</h3>
+                <div className="flex-1 h-px bg-slate-100" />
+                {profileReady && (
+                  <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 whitespace-nowrap">
+                    <Zap size={10} /> {agents.length} ready
+                  </span>
+                )}
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {agents.map((agent) => (
+                  <AgentCard
+                    key={agent.key}
+                    agent={agent}
+                    ready={profileReady}
+                    lastRunAt={lastRunAt[agent.key] ?? null}
+                    running={runningAgents.has(agent.key)}
+                    onRun={runAgent}
+                    onChat={setChatKey}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Approval queue */}
@@ -1739,16 +1703,15 @@ export default function AITeam() {
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <p className="text-xs font-bold text-slate-600 mb-2">How your AI team works</p>
         <ul className="space-y-1.5 text-xs text-slate-500">
-          <li>• <strong>Brand Profile</strong> — Complete setup so agents know your niche, tone, and goals.</li>
-          <li>• <strong>Run individual agents</strong> — Each generates 2-3 proposals in seconds (10-min cooldown).</li>
-          <li>• <strong>Orchestrate</strong> — Full campaign pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
-          <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on what you approve.</li>
-          <li>• <strong>Executed Drafts</strong> — Approving a <em>content post</em> auto-creates a blog draft you can edit and publish. Other approved proposals are saved as drafts for your reference.</li>
+          <li>• <strong>Brand Profile</strong> — Complete setup so all 14 agents know your niche, tone, goals, and audience.</li>
+          <li>• <strong>Begin individual agents</strong> — Each generates 2-3 proposals tailored to your brand in seconds.</li>
+          <li>• <strong>Launch Campaign</strong> — Runs all 14 agents sequentially. Provide a brief and your full team gets to work.</li>
+          <li>• <strong>Orchestrate</strong> — Structured pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
+          <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on your feedback.</li>
+          <li>• <strong>Executed Drafts</strong> — Approving a <em>content post</em> auto-creates a blog draft you can edit and publish.</li>
           <li>• <strong>Chat</strong> — Click Chat on any agent card to have a direct conversation about strategy, content, or ideas.</li>
-          <li>• <strong>Settings</strong> — Each agent has a Settings panel for standing instructions (rules the agent always follows) and an auto-run schedule (daily or weekly).</li>
           <li>• <strong>Brand Voice</strong> — Click "Extract Voice" on your brand card to paste sample content and have Sage identify your voice automatically.</li>
-          <li>• <strong>Calendar</strong> — The Calendar button shows all approved content and drafts plotted on a monthly grid.</li>
-          <li>• <strong>Memory</strong> — The more you interact, the more your team learns your preferences.</li>
+          <li>• <strong>Calendar</strong> — Shows all approved content and drafts plotted on a monthly grid.</li>
           <li>• Proposals expire after 48 hours if not actioned.</li>
         </ul>
       </div>
