@@ -559,13 +559,17 @@ function WorkflowBuilder({
   const addNode = (type: NodeType, subType: string, label: string) => {
     if (!addAfter) return;
     const newNode: WFNode = { id: uid(), type, subType: subType as any, label, config: {} };
-    const endNode: WFNode = { id: uid(), type: 'end', subType: 'end', label: 'End Flow', config: {} };
 
     const newNodes = [...nodes, newNode];
+    // Remove the existing outgoing edge from addAfter.nodeId (splice it out so we can re-route)
     const newEdges = [...edges];
+    const existingIdx = newEdges.findIndex(
+      (e) => e.sourceId === addAfter.nodeId &&
+        (addAfter.branch ? e.branch === addAfter.branch : !e.branch)
+    );
+    const existingNext = existingIdx >= 0 ? newEdges.splice(existingIdx, 1)[0] : null;
 
     if (type === 'condition') {
-      // Yes branch → end, No branch → end
       const yesEnd: WFNode = { id: uid(), type: 'end', subType: 'end', label: 'End Flow', config: {} };
       const noEnd:  WFNode = { id: uid(), type: 'end', subType: 'end', label: 'End Flow', config: {} };
       newNodes.push(yesEnd, noEnd);
@@ -575,10 +579,15 @@ function WorkflowBuilder({
         { id: uid(), sourceId: newNode.id, targetId: noEnd.id,  branch: 'no' },
       );
     } else {
-      newNodes.push(endNode);
+      // Re-route: addAfter.nodeId → newNode → (whatever was after addAfter.nodeId before)
+      const afterTargetId = existingNext?.targetId ?? (() => {
+        const e: WFNode = { id: uid(), type: 'end', subType: 'end', label: 'End Flow', config: {} };
+        newNodes.push(e);
+        return e.id;
+      })();
       newEdges.push(
         { id: uid(), sourceId: addAfter.nodeId, targetId: newNode.id, branch: addAfter.branch },
-        { id: uid(), sourceId: newNode.id, targetId: endNode.id },
+        { id: uid(), sourceId: newNode.id, targetId: afterTargetId },
       );
     }
 
@@ -856,6 +865,19 @@ function WorkflowBuilder({
               </div>
             )}
             <NodeConfigForm node={selectedNode} onChange={updateNodeConfig} />
+            {selectedNode.type === 'trigger' && (
+              <button
+                onClick={() => {
+                  setNodes([]);
+                  setEdges([]);
+                  setSelectedId(null);
+                  setShowTriggerPicker(true);
+                }}
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 px-3 py-2 text-xs font-semibold transition"
+              >
+                <Zap size={12} /> Change Trigger
+              </button>
+            )}
             {selectedNode.type !== 'trigger' && selectedNode.type !== 'end' && (
               <button
                 onClick={() => { deleteNode(selectedNode.id); setSelectedId(null); }}
