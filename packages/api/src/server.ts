@@ -3785,7 +3785,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     CREATE TABLE IF NOT EXISTS workflows (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      org_id      INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+      org_id      TEXT REFERENCES organizations(id) ON DELETE CASCADE,
       name        TEXT NOT NULL,
       description TEXT,
       status      TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','inactive')),
