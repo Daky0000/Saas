@@ -898,25 +898,44 @@ function WorkflowBuilder({
 export default function WorkflowPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Workflow | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
-    const r = await api('GET', '/api/workflows');
-    setLoading(false);
-    if (r.success) setWorkflows(r.workflows);
+    setLoadError(null);
+    try {
+      const r = await api('GET', '/api/workflows');
+      if (r.success) setWorkflows(r.workflows ?? []);
+      else setLoadError(r.error ?? 'Failed to load workflows');
+    } catch (e: any) {
+      setLoadError(e.message ?? 'Network error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
 
   const createNew = async () => {
     setCreating(true);
-    const r = await api('POST', '/api/workflows', { name: 'New Workflow', description: '', nodes: [], edges: [] });
-    setCreating(false);
-    if (r.success) setEditing(r.workflow);
+    setCreateError(null);
+    try {
+      const r = await api('POST', '/api/workflows', { name: 'New Workflow', description: '', nodes: [], edges: [] });
+      if (r.success) {
+        setEditing(r.workflow);
+      } else {
+        setCreateError(r.error ?? 'Failed to create workflow');
+      }
+    } catch (e: any) {
+      setCreateError(e.message ?? 'Network error');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const toggleActive = async (wf: Workflow) => {
@@ -963,6 +982,20 @@ export default function WorkflowPage() {
         </button>
       </div>
 
+      {/* Errors */}
+      {createError && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <XCircle size={14} className="shrink-0" /> {createError}
+          <button onClick={() => setCreateError(null)} className="ml-auto text-red-400 hover:text-red-600"><X size={12} /></button>
+        </div>
+      )}
+      {loadError && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <XCircle size={14} className="shrink-0" /> {loadError}
+          <button onClick={load} className="ml-auto text-xs font-semibold underline">Retry</button>
+        </div>
+      )}
+
       {/* Empty state */}
       {!loading && workflows.length === 0 && (
         <div className="flex flex-col items-center justify-center py-24 gap-5">
@@ -984,7 +1017,8 @@ export default function WorkflowPage() {
             disabled={creating}
             className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition"
           >
-            {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create your first workflow
+            {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            {creating ? 'Creating…' : 'Create your first workflow'}
           </button>
 
           {/* How it works */}
