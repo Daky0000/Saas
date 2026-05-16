@@ -3348,7 +3348,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS brand_profiles (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id     UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      user_id     TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
       brand_name  TEXT NOT NULL DEFAULT '',
       niche       TEXT NOT NULL DEFAULT '',
       tone        TEXT NOT NULL DEFAULT 'professional',
@@ -3365,7 +3365,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_agent_memory (
       id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       agent_key  TEXT NOT NULL DEFAULT 'global',
       mem_type   TEXT NOT NULL DEFAULT 'general',
       key        TEXT NOT NULL,
@@ -3377,7 +3377,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_agent_tasks (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       agent_key   TEXT NOT NULL,
       task_type   TEXT NOT NULL DEFAULT 'proposal',
       title       TEXT NOT NULL,
@@ -3393,7 +3393,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agent_drafts (
       id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       agent_key    TEXT NOT NULL,
       task_id      UUID REFERENCES user_agent_tasks(id) ON DELETE SET NULL,
       task_type    TEXT NOT NULL DEFAULT 'content_post',
@@ -3410,7 +3410,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_agent_schedules (
       id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id              UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id              TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       agent_key            TEXT NOT NULL,
       frequency            TEXT NOT NULL DEFAULT 'off',
       run_hour             INT  NOT NULL DEFAULT 9,
