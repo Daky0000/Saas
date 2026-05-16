@@ -3784,7 +3784,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workflows (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       org_id      INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
       name        TEXT NOT NULL,
       description TEXT,
@@ -3801,7 +3801,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     CREATE TABLE IF NOT EXISTS workflow_runs (
       id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       workflow_id  UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
-      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       status       TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','completed','failed','cancelled')),
       trigger_data JSONB DEFAULT '{}',
       logs         JSONB DEFAULT '[]',
