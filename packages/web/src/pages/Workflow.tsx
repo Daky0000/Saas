@@ -518,7 +518,8 @@ function BranchColumn({
               showDeleteBtn={node.type !== 'end'}
             />
           </div>
-          {node.type !== 'end' && (
+          {/* Don't show "Add step" after a condition inside a branch — you add inside its sub-branches */}
+          {node.type !== 'end' && node.type !== 'condition' && (
             <AddStepBtn onClick={() => onAddStep(node.id)} />
           )}
         </div>
@@ -556,9 +557,12 @@ function WorkflowBuilder({
 
   const triggerNode = nodes.find((n) => n.type === 'trigger');
 
-  // Build the linear chain from trigger → first condition/action
-  const buildChain = useCallback((fromId: string, branch?: 'yes' | 'no'): WFNode[] => {
-    const edge = edges.find((e) => e.sourceId === fromId && (!branch || e.branch === branch));
+  // Build the linear chain — only follow non-branch edges (edges without branch set).
+  // Branch edges (yes/no) belong to condition nodes and are handled by getConditionBranches.
+  // Using (!branch || e.branch === branch) was wrong: with branch=undefined it matched ANY
+  // edge including yes/no branches, causing added steps to be skipped in rendering.
+  const buildChain = useCallback((fromId: string): WFNode[] => {
+    const edge = edges.find((e) => e.sourceId === fromId && !e.branch);
     if (!edge) return [];
     const next = nodes.find((n) => n.id === edge.targetId);
     if (!next) return [];
