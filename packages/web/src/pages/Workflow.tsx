@@ -457,24 +457,26 @@ function FlowNodeCard({
 
 // ── Branch Column ─────────────────────────────────────────────────────────────
 
-function AddStepBtn({ onClick }: { onClick: () => void }) {
+function AddStepBtn({ onClick, label = '+ Add step' }: { onClick: () => void; label?: string }) {
   return (
-    <div className="flex flex-col items-center">
-      <div className="w-px h-3 bg-slate-200" />
+    <div className="flex flex-col items-center py-1">
+      <div className="w-px h-4 bg-slate-200" />
       <button
         onClick={onClick}
-        className="flex items-center gap-1 rounded-lg border border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-[#5b6cf9] transition-all"
+        className="flex items-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 px-4 py-2 text-xs font-bold text-slate-500 hover:text-[#5b6cf9] transition-all shadow-sm bg-white"
       >
-        <Plus size={10} /> Add step
+        <Plus size={13} className="shrink-0" /> {label}
       </button>
-      <div className="w-px h-3 bg-slate-200" />
+      <div className="w-px h-4 bg-slate-200" />
     </div>
   );
 }
 
 function BranchColumn({
   label,
-  color,
+  bgColor,
+  borderColor,
+  labelColor,
   conditionNodeId,
   branchSide,
   nodes,
@@ -484,7 +486,9 @@ function BranchColumn({
   onAddStep,
 }: {
   label: string;
-  color: string;
+  bgColor: string;
+  borderColor: string;
+  labelColor: string;
   conditionNodeId: string;
   branchSide: 'yes' | 'no';
   nodes: WFNode[];
@@ -494,13 +498,16 @@ function BranchColumn({
   onAddStep: (afterId: string, branch?: 'yes' | 'no') => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-0 min-w-[260px]">
-      <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border mb-3 ${color}`}>{label}</span>
+    <div className={`flex flex-col items-center rounded-2xl border-2 ${borderColor} ${bgColor} px-4 pt-3 pb-4 min-w-[280px]`}>
+      <span className={`text-[11px] font-black uppercase tracking-widest mb-4 ${labelColor}`}>{label}</span>
       {nodes.map((node, i) => (
         <div key={node.id} className="flex flex-col items-center w-full">
           {/* Empty branch: show Add step BEFORE the end node */}
           {node.type === 'end' && i === 0 && (
-            <AddStepBtn onClick={() => onAddStep(conditionNodeId, branchSide)} />
+            <AddStepBtn
+              onClick={() => onAddStep(conditionNodeId, branchSide)}
+              label="+ Add step to this branch"
+            />
           )}
           <div className="w-full max-w-[260px]">
             <FlowNodeCard
@@ -686,15 +693,13 @@ function WorkflowBuilder({
                 showDeleteBtn={true}
               />
             </div>
-            {/* branch lines */}
-            <div className="flex w-full justify-center gap-8 mt-0">
-              <div className="w-px h-6 bg-emerald-300 ml-auto mr-auto" style={{ marginLeft: '25%' }} />
-              <div className="w-px h-6 bg-red-300 ml-auto mr-auto" style={{ marginRight: '25%' }} />
-            </div>
-            <div className="flex gap-6 w-full justify-center">
+            <div className="w-px h-4 bg-slate-200" />
+            <div className="flex gap-4 w-full justify-center items-start">
               <BranchColumn
-                label="Yes"
-                color="text-emerald-600 bg-emerald-50 border-emerald-200"
+                label="✓  If Yes"
+                bgColor="bg-emerald-50/60"
+                borderColor="border-emerald-200"
+                labelColor="text-emerald-700"
                 conditionNodeId={node.id}
                 branchSide="yes"
                 nodes={branches.yes}
@@ -704,8 +709,10 @@ function WorkflowBuilder({
                 onAddStep={(afterId, branch) => setAddAfter({ nodeId: afterId, branch })}
               />
               <BranchColumn
-                label="No"
-                color="text-red-500 bg-red-50 border-red-200"
+                label="✗  If No"
+                bgColor="bg-red-50/60"
+                borderColor="border-red-200"
+                labelColor="text-red-600"
                 conditionNodeId={node.id}
                 branchSide="no"
                 nodes={branches.no}
