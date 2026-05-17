@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Plus, Zap, GitBranch, Play, Trash2, ChevronRight, ChevronDown,
   CheckCircle2, XCircle, AlertCircle, Loader2,
@@ -455,14 +455,15 @@ function FlowNodeCard({
   );
 }
 
-// ── Branch Column ─────────────────────────────────────────────────────────────
+// ── Flow renderer ─────────────────────────────────────────────────────────────
 
 function AddStepBtn({ onClick, label = '+ Add step' }: { onClick: () => void; label?: string }) {
   return (
     <div className="flex flex-col items-center py-1">
       <div className="w-px h-4 bg-slate-200" />
       <button
-        onClick={onClick}
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
         className="flex items-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 px-4 py-2 text-xs font-bold text-slate-500 hover:text-[#5b6cf9] transition-all shadow-sm bg-white"
       >
         <Plus size={13} className="shrink-0" /> {label}
@@ -472,58 +473,97 @@ function AddStepBtn({ onClick, label = '+ Add step' }: { onClick: () => void; la
   );
 }
 
-function BranchColumn({
-  label,
-  bgColor,
-  borderColor,
-  labelColor,
-  conditionNodeId,
-  branchSide,
-  nodes,
+function BranchBox({ label, bgColor, borderColor, labelColor, children }: {
+  label: string; bgColor: string; borderColor: string; labelColor: string; children: React.ReactNode;
+}) {
+  return (
+    <div className={`flex flex-col items-center rounded-2xl border-2 ${borderColor} ${bgColor} px-4 pt-3 pb-4 min-w-[280px]`}>
+      <span className={`text-[11px] font-black uppercase tracking-widest mb-3 ${labelColor}`}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+// Recursive flow component — works for main chain AND inside branches at any depth.
+// condCtx: when set, we're the first node of an empty branch; if it's an end node we show
+// "Add step to this branch" before the End Flow card.
+function FlowChain({
+  nodeId,
+  condCtx,
+  allNodes,
+  edges,
   selectedId,
   onSelectNode,
   onDeleteNode,
   onAddStep,
 }: {
-  label: string;
-  bgColor: string;
-  borderColor: string;
-  labelColor: string;
-  conditionNodeId: string;
-  branchSide: 'yes' | 'no';
-  nodes: WFNode[];
+  nodeId: string | null;
+  condCtx: { nodeId: string; branch: 'yes' | 'no' } | null;
+  allNodes: WFNode[];
+  edges: WFEdge[];
   selectedId: string | null;
   onSelectNode: (id: string) => void;
   onDeleteNode: (id: string) => void;
   onAddStep: (afterId: string, branch?: 'yes' | 'no') => void;
-}) {
-  return (
-    <div className={`flex flex-col items-center rounded-2xl border-2 ${borderColor} ${bgColor} px-4 pt-3 pb-4 min-w-[280px]`}>
-      <span className={`text-[11px] font-black uppercase tracking-widest mb-4 ${labelColor}`}>{label}</span>
-      {nodes.map((node, i) => (
-        <div key={node.id} className="flex flex-col items-center w-full">
-          {/* Empty branch: show Add step BEFORE the end node */}
-          {node.type === 'end' && i === 0 && (
-            <AddStepBtn
-              onClick={() => onAddStep(conditionNodeId, branchSide)}
-              label="+ Add step to this branch"
-            />
-          )}
-          <div className="w-full max-w-[260px]">
-            <FlowNodeCard
-              node={node}
-              isSelected={selectedId === node.id}
-              onSelect={() => onSelectNode(node.id)}
-              onDelete={() => onDeleteNode(node.id)}
-              showDeleteBtn={node.type !== 'end'}
-            />
-          </div>
-          {/* Don't show "Add step" after a condition inside a branch — you add inside its sub-branches */}
-          {node.type !== 'end' && node.type !== 'condition' && (
-            <AddStepBtn onClick={() => onAddStep(node.id)} />
-          )}
+}): React.ReactElement | null {
+  if (!nodeId) return null;
+  const node = allNodes.find((n) => n.id === nodeId);
+  if (!node) return null;
+
+  // ── End node ──
+  if (node.type === 'end') {
+    return (
+      <div className="flex flex-col items-center w-full">
+        {condCtx && (
+          <AddStepBtn
+            onClick={() => onAddStep(condCtx.nodeId, condCtx.branch)}
+            label="+ Add step to this branch"
+          />
+        )}
+        <div className="w-full max-w-[300px]">
+          <FlowNodeCard node={node} isSelected={selectedId === node.id} onSelect={() => onSelectNode(node.id)} onDelete={() => onDeleteNode(node.id)} showDeleteBtn={false} />
         </div>
-      ))}
+      </div>
+    );
+  }
+
+  // ── Condition node ──
+  if (node.type === 'condition') {
+    const yesEdge = edges.find((e) => e.sourceId === node.id && e.branch === 'yes');
+    const noEdge  = edges.find((e) => e.sourceId === node.id && e.branch === 'no');
+    const nextEdge = edges.find((e) => e.sourceId === node.id && !e.branch);
+    return (
+      <div className="flex flex-col items-center w-full">
+        <div className="w-full max-w-[300px]">
+          <FlowNodeCard node={node} isSelected={selectedId === node.id} onSelect={() => onSelectNode(node.id)} onDelete={() => onDeleteNode(node.id)} showDeleteBtn={true} />
+        </div>
+        <div className="w-px h-4 bg-slate-200" />
+        <div className="flex gap-4 w-full justify-center items-start">
+          <BranchBox label="✓  If Yes" bgColor="bg-emerald-50/60" borderColor="border-emerald-200" labelColor="text-emerald-700">
+            <FlowChain nodeId={yesEdge?.targetId ?? null} condCtx={{ nodeId: node.id, branch: 'yes' }} allNodes={allNodes} edges={edges} selectedId={selectedId} onSelectNode={onSelectNode} onDeleteNode={onDeleteNode} onAddStep={onAddStep} />
+          </BranchBox>
+          <BranchBox label="✗  If No" bgColor="bg-red-50/60" borderColor="border-red-200" labelColor="text-red-600">
+            <FlowChain nodeId={noEdge?.targetId ?? null} condCtx={{ nodeId: node.id, branch: 'no' }} allNodes={allNodes} edges={edges} selectedId={selectedId} onSelectNode={onSelectNode} onDeleteNode={onDeleteNode} onAddStep={onAddStep} />
+          </BranchBox>
+        </div>
+        {nextEdge && (
+          <FlowChain nodeId={nextEdge.targetId} condCtx={null} allNodes={allNodes} edges={edges} selectedId={selectedId} onSelectNode={onSelectNode} onDeleteNode={onDeleteNode} onAddStep={onAddStep} />
+        )}
+      </div>
+    );
+  }
+
+  // ── Trigger / Action node ──
+  const nextEdge = edges.find((e) => e.sourceId === node.id && !e.branch);
+  return (
+    <div className="flex flex-col items-center w-full">
+      <div className="w-full max-w-[300px]">
+        <FlowNodeCard node={node} isSelected={selectedId === node.id} onSelect={() => onSelectNode(node.id)} onDelete={() => onDeleteNode(node.id)} showDeleteBtn={node.type !== 'trigger'} />
+      </div>
+      <AddStepBtn onClick={() => onAddStep(node.id)} />
+      {nextEdge && (
+        <FlowChain nodeId={nextEdge.targetId} condCtx={null} allNodes={allNodes} edges={edges} selectedId={selectedId} onSelectNode={onSelectNode} onDeleteNode={onDeleteNode} onAddStep={onAddStep} />
+      )}
     </div>
   );
 }
@@ -556,30 +596,6 @@ function WorkflowBuilder({
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 
   const triggerNode = nodes.find((n) => n.type === 'trigger');
-
-  // Build the linear chain — only follow non-branch edges (edges without branch set).
-  // Branch edges (yes/no) belong to condition nodes and are handled by getConditionBranches.
-  // Using (!branch || e.branch === branch) was wrong: with branch=undefined it matched ANY
-  // edge including yes/no branches, causing added steps to be skipped in rendering.
-  const buildChain = useCallback((fromId: string): WFNode[] => {
-    const edge = edges.find((e) => e.sourceId === fromId && !e.branch);
-    if (!edge) return [];
-    const next = nodes.find((n) => n.id === edge.targetId);
-    if (!next) return [];
-    return [next, ...buildChain(next.id)];
-  }, [nodes, edges]);
-
-  // For condition nodes, find their yes/no branches
-  const getConditionBranches = (condId: string) => {
-    const yesEdge = edges.find((e) => e.sourceId === condId && e.branch === 'yes');
-    const noEdge  = edges.find((e) => e.sourceId === condId && e.branch === 'no');
-    const yesFirst = yesEdge ? nodes.find((n) => n.id === yesEdge.targetId) : null;
-    const noFirst  = noEdge  ? nodes.find((n) => n.id === noEdge.targetId)  : null;
-    return {
-      yes: yesFirst ? [yesFirst, ...buildChain(yesFirst.id)] : [],
-      no:  noFirst  ? [noFirst,  ...buildChain(noFirst.id)]  : [],
-    };
-  };
 
   const addNode = (type: NodeType, subType: string, label: string) => {
     if (!addAfter) return;
@@ -662,7 +678,6 @@ function WorkflowBuilder({
     if (showHistory) loadRuns();
   }, [showHistory]);
 
-  // Render the flow — handle condition branches specially
   const renderFlow = () => {
     if (!triggerNode) {
       return (
@@ -680,84 +695,18 @@ function WorkflowBuilder({
         </div>
       );
     }
-
-    const elements: React.ReactNode[] = [];
-
-    const renderNode = (node: WFNode, depth = 0) => {
-      if (node.type === 'condition') {
-        const branches = getConditionBranches(node.id);
-        elements.push(
-          <div key={node.id} className="flex flex-col items-center w-full">
-            <div className="w-full max-w-[300px]">
-              <FlowNodeCard
-                node={node}
-                isSelected={selectedId === node.id}
-                onSelect={() => setSelectedId(node.id)}
-                onDelete={() => deleteNode(node.id)}
-                showDeleteBtn={true}
-              />
-            </div>
-            <div className="w-px h-4 bg-slate-200" />
-            <div className="flex gap-4 w-full justify-center items-start">
-              <BranchColumn
-                label="✓  If Yes"
-                bgColor="bg-emerald-50/60"
-                borderColor="border-emerald-200"
-                labelColor="text-emerald-700"
-                conditionNodeId={node.id}
-                branchSide="yes"
-                nodes={branches.yes}
-                selectedId={selectedId}
-                onSelectNode={setSelectedId}
-                onDeleteNode={deleteNode}
-                onAddStep={(afterId, branch) => setAddAfter({ nodeId: afterId, branch })}
-              />
-              <BranchColumn
-                label="✗  If No"
-                bgColor="bg-red-50/60"
-                borderColor="border-red-200"
-                labelColor="text-red-600"
-                conditionNodeId={node.id}
-                branchSide="no"
-                nodes={branches.no}
-                selectedId={selectedId}
-                onSelectNode={setSelectedId}
-                onDeleteNode={deleteNode}
-                onAddStep={(afterId, branch) => setAddAfter({ nodeId: afterId, branch })}
-              />
-            </div>
-          </div>
-        );
-        return; // children handled inside BranchColumn
-      }
-
-      elements.push(
-        <div key={node.id} className="flex flex-col items-center w-full">
-          <div className="w-full max-w-[300px]">
-            <FlowNodeCard
-              node={node}
-              isSelected={selectedId === node.id}
-              onSelect={() => setSelectedId(node.id)}
-              onDelete={() => deleteNode(node.id)}
-              showDeleteBtn={node.type !== 'trigger'}
-            />
-          </div>
-          {node.type !== 'end' && (
-            <AddStepBtn onClick={() => setAddAfter({ nodeId: node.id })} />
-          )}
-        </div>
-      );
-
-      // Recurse into next in main chain (only for non-condition nodes)
-      const nextEdge = edges.find((e) => e.sourceId === node.id && !e.branch);
-      if (nextEdge) {
-        const nextNode = nodes.find((n) => n.id === nextEdge.targetId);
-        if (nextNode) renderNode(nextNode, depth + 1);
-      }
-    };
-
-    renderNode(triggerNode);
-    return elements;
+    return (
+      <FlowChain
+        nodeId={triggerNode.id}
+        condCtx={null}
+        allNodes={nodes}
+        edges={edges}
+        selectedId={selectedId}
+        onSelectNode={setSelectedId}
+        onDeleteNode={deleteNode}
+        onAddStep={(afterId, branch) => setAddAfter({ nodeId: afterId, branch })}
+      />
+    );
   };
 
   return (
