@@ -23,7 +23,9 @@ export type Lead = {
   id: string;
   group_id: string;
   data: Record<string, string>;
+  sync_key: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 export const leadService = {
@@ -67,5 +69,19 @@ export const leadService = {
 
   async deleteLead(id: string): Promise<void> {
     await fetch(`${BASE}/${id}`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  async syncLeads(groupId: string, leads: Record<string, string>[], keyField: string): Promise<{ updated: number; added: number }> {
+    const res = await fetch(`${BASE}/groups/${groupId}/sync`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ leads, keyField }) });
+    const data = await parseJson<{ success: boolean; updated: number; added: number; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Sync failed');
+    return { updated: data.updated, added: data.added };
+  },
+
+  async bulkImportSheets(sheets: { name: string; leads: Record<string, string>[]; fields: string[] }[]): Promise<{ groupId: string; name: string; imported: number }[]> {
+    const res = await fetch(`${BASE}/bulk-import`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ sheets }) });
+    const data = await parseJson<{ success: boolean; results: { groupId: string; name: string; imported: number }[]; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Bulk import failed');
+    return data.results;
   },
 };

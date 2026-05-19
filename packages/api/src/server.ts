@@ -2259,11 +2259,16 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       group_id TEXT NOT NULL REFERENCES lead_groups(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       data JSONB NOT NULL DEFAULT '{}',
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      sync_key TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `).catch(() => undefined);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sync_key TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS leads_group_idx ON leads (group_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS leads_user_idx ON leads (user_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS leads_sync_key_idx ON leads (group_id, sync_key);`).catch(() => undefined);
   // ── End Leads Module ─────────────────────────────────────────────────────────
 
   // ── Analytics & Insights Engine Tables ──────────────────────────────────────
@@ -19023,7 +19028,7 @@ app.post('/api/leads/groups/:id/import', async (req: Request, res: Response) => 
     if (!grp) return res.status(404).json({ success: false, error: 'Not found' });
     const { leads } = req.body; // [{ field1: val, field2: val, ... }]
     if (!Array.isArray(leads) || !leads.length) return res.status(400).json({ success: false, error: 'leads array required' });
-    const allFields: string[] = Array.from(new Set([...(grp.fields || []), ...leads.flatMap(l => Object.keys(l))]));
+    const allFields: string[] = Array.from(new Set([...(grp.fields || []), ...leads.flatMap((l: Record<string,unknown>) => Object.keys(l))]));
     await pool!.query(`UPDATE lead_groups SET fields=$1 WHERE id=$2`, [allFields, req.params.id]);
     let imported = 0;
     for (const lead of leads.slice(0, 10000)) {
@@ -19032,6 +19037,58 @@ app.post('/api/leads/groups/:id/import', async (req: Request, res: Response) => 
     }
     return res.json({ success: true, imported });
   } catch { return res.status(500).json({ success: false, error: 'Import failed' }); }
+});
+
+// POST /api/leads/groups/:id/sync — re-upload sync: upsert by sync_key, add new rows
+app.post('/api/leads/groups/:id/sync', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: [grp] } = await pool!.query(`SELECT * FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    if (!grp) return res.status(404).json({ success: false, error: 'Not found' });
+    const { leads, keyField } = req.body; // keyField = which column to use as unique key (e.g. "email")
+    if (!Array.isArray(leads) || !leads.length) return res.status(400).json({ success: false, error: 'leads array required' });
+    const allFields: string[] = Array.from(new Set([...(grp.fields || []), ...leads.flatMap((l: Record<string,unknown>) => Object.keys(l))]));
+    await pool!.query(`UPDATE lead_groups SET fields=$1 WHERE id=$2`, [allFields, req.params.id]);
+    let updated = 0, added = 0;
+    for (const lead of leads.slice(0, 10000)) {
+      const syncKey = keyField && lead[keyField] ? String(lead[keyField]) : null;
+      if (syncKey) {
+        const { rows: existing } = await pool!.query(`SELECT id FROM leads WHERE group_id=$1 AND sync_key=$2`, [req.params.id, syncKey]);
+        if (existing.length) {
+          await pool!.query(`UPDATE leads SET data=$1, updated_at=NOW() WHERE id=$2`, [JSON.stringify(lead), existing[0].id]);
+          updated++; continue;
+        }
+      }
+      await pool!.query(`INSERT INTO leads (group_id, user_id, data, sync_key) VALUES ($1,$2,$3,$4)`, [req.params.id, auth.userId, JSON.stringify(lead), syncKey]);
+      added++;
+    }
+    return res.json({ success: true, updated, added });
+  } catch { return res.status(500).json({ success: false, error: 'Sync failed' }); }
+});
+
+// POST /api/leads/bulk-import — multi-sheet Excel import (creates groups)
+app.post('/api/leads/bulk-import', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    // sheets: [{ name: string, leads: Record<string,string>[], fields: string[] }]
+    const { sheets } = req.body;
+    if (!Array.isArray(sheets) || !sheets.length) return res.status(400).json({ success: false, error: 'sheets array required' });
+    const results: { groupId: string; name: string; imported: number }[] = [];
+    for (const sheet of sheets.slice(0, 50)) {
+      if (!sheet.name || !Array.isArray(sheet.leads)) continue;
+      const { rows: [grp] } = await pool!.query(
+        `INSERT INTO lead_groups (user_id, name, fields) VALUES ($1,$2,$3) RETURNING *`,
+        [auth.userId, sheet.name, sheet.fields || []]
+      );
+      let imported = 0;
+      for (const lead of (sheet.leads as Record<string,string>[]).slice(0, 10000)) {
+        await pool!.query(`INSERT INTO leads (group_id, user_id, data) VALUES ($1,$2,$3)`, [grp.id, auth.userId, JSON.stringify(lead)]);
+        imported++;
+      }
+      results.push({ groupId: grp.id, name: grp.name, imported });
+    }
+    return res.json({ success: true, results });
+  } catch { return res.status(500).json({ success: false, error: 'Bulk import failed' }); }
 });
 
 // DELETE /api/leads/:id

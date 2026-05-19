@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import * as XLSX from 'xlsx';
 import {
   ChevronLeft,
   FileSpreadsheet,
   Loader2,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Search,
   Tag,
   Trash2,
@@ -366,7 +368,9 @@ function LeadGroupsList({ onOpen }: { onOpen: (g: LeadGroup) => void }) {
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const xlsxRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     setLoading(true);
@@ -382,7 +386,7 @@ function LeadGroupsList({ onOpen }: { onOpen: (g: LeadGroup) => void }) {
       const g = await leadService.createGroup(newName.trim());
       setNewName(''); setShowNew(false);
       setGroups(prev => [g, ...prev]);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Failed'); }
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
     finally { setSaving(false); }
   };
 
@@ -392,18 +396,48 @@ function LeadGroupsList({ onOpen }: { onOpen: (g: LeadGroup) => void }) {
     setGroups(prev => prev.filter(g => g.id !== id));
   };
 
+  const handleBulkExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (xlsxRef.current) xlsxRef.current.value = '';
+    setBulkImporting(true);
+    try {
+      const ab = await file.arrayBuffer();
+      const wb = XLSX.read(ab, { type: 'array' });
+      const sheets = wb.SheetNames.map(name => {
+        const ws = wb.Sheets[name];
+        const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
+        const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
+        return { name, leads: rows, fields };
+      }).filter(s => s.leads.length > 0);
+      if (!sheets.length) { setMessage({ text: 'No data found in the Excel file.', ok: false }); return; }
+      const results = await leadService.bulkImportSheets(sheets);
+      const total = results.reduce((s, r) => s + r.imported, 0);
+      setMessage({ text: `Created ${results.length} lead group${results.length !== 1 ? 's' : ''} with ${total} leads total.`, ok: true });
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Import failed', ok: false }); }
+    finally { setBulkImporting(false); }
+  };
+
   return (
     <div className="space-y-4">
-      {error && (
-        <div className="flex items-center justify-between rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
-          <span>{error}</span><button onClick={() => setError(null)}><X size={14} /></button>
+      {message && (
+        <div className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm ${message.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
+          <span>{message.text}</span><button onClick={() => setMessage(null)}><X size={14} /></button>
         </div>
       )}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Organize prospects into lead groups. Import any CSV format.</p>
-        <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-          <Plus size={14} /> New Lead Group
-        </button>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-slate-500">Organize prospects into lead groups. Each Excel sheet becomes a group.</p>
+        <div className="flex gap-2">
+          <label className={`flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer ${bulkImporting ? 'opacity-60 pointer-events-none' : ''}`}>
+            {bulkImporting ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+            Import Excel
+            <input ref={xlsxRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => void handleBulkExcel(e)} />
+          </label>
+          <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            <Plus size={14} /> New Lead Group
+          </button>
+        </div>
       </div>
 
       {showNew && (
@@ -476,6 +510,10 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
   const [loading, setLoading] = useState(true);
   const [showAddLead, setShowAddLead] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showSync, setShowSync] = useState(false);
+  const [syncFile, setSyncFile] = useState<File | null>(null);
+  const [syncKeyField, setSyncKeyField] = useState('');
+  const [syncing, setSyncing] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [customFields, setCustomFields] = useState<string[]>(initialGroup.fields?.length ? initialGroup.fields : ['first_name', 'last_name', 'email']);
@@ -485,6 +523,7 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [search, setSearch] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const syncFileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -499,21 +538,34 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
   useEffect(() => { void load(); }, [load]);
 
   const closeImport = () => { setShowImport(false); setCsvFile(null); if (fileRef.current) fileRef.current.value = ''; };
+  const closeSync = () => { setShowSync(false); setSyncFile(null); setSyncKeyField(''); if (syncFileRef.current) syncFileRef.current.value = ''; };
+
+  const parseFileToRows = async (file: File): Promise<{ rows: Record<string, string>[]; fields: string[] }> => {
+    if (file.name.match(/\.xlsx?$/i)) {
+      const ab = await file.arrayBuffer();
+      const wb = XLSX.read(ab, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
+      return { rows, fields: rows.length > 0 ? Object.keys(rows[0]) : [] };
+    }
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return { rows: [], fields: [] };
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    const rows: Record<string, string>[] = lines.slice(1).map(l => {
+      const cols = l.split(',').map(c => c.trim().replace(/"/g, ''));
+      const obj: Record<string, string> = {};
+      headers.forEach((h, i) => { if (h) obj[h] = cols[i] || ''; });
+      return obj;
+    }).filter(r => Object.values(r).some(v => v));
+    return { rows, fields: headers.filter(Boolean) };
+  };
 
   const handleCsvImport = async () => {
     if (!csvFile) return;
     setImporting(true);
     try {
-      const text = await csvFile.text();
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
-      if (lines.length < 2) { setMessage({ text: 'CSV appears to be empty.', ok: false }); setImporting(false); return; }
-      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-      const rows: Record<string, string>[] = lines.slice(1).map(l => {
-        const cols = l.split(',').map(c => c.trim().replace(/"/g, ''));
-        const obj: Record<string, string> = {};
-        headers.forEach((h, i) => { if (h) obj[h] = cols[i] || ''; });
-        return obj;
-      }).filter(r => Object.values(r).some(v => v));
+      const { rows } = await parseFileToRows(csvFile);
       if (!rows.length) { setMessage({ text: 'No valid rows found.', ok: false }); setImporting(false); return; }
       const imported = await leadService.importLeads(group.id, rows);
       setMessage({ text: `Imported ${imported} leads.`, ok: true });
@@ -521,6 +573,20 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
       await load();
     } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Import failed', ok: false }); }
     finally { setImporting(false); }
+  };
+
+  const handleSync = async () => {
+    if (!syncFile || !syncKeyField) return;
+    setSyncing(true);
+    try {
+      const { rows } = await parseFileToRows(syncFile);
+      if (!rows.length) { setMessage({ text: 'No valid rows found.', ok: false }); setSyncing(false); return; }
+      const { updated, added } = await leadService.syncLeads(group.id, rows, syncKeyField);
+      setMessage({ text: `Sync complete — ${updated} updated, ${added} new leads added.`, ok: true });
+      closeSync();
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Sync failed', ok: false }); }
+    finally { setSyncing(false); }
   };
 
   const addField = () => {
@@ -575,15 +641,60 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search leads…" className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm outline-none focus:border-slate-400" />
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => setShowSync(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            <RefreshCw size={14} /> Re-sync
+          </button>
           <button onClick={() => setShowImport(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-            <Upload size={14} /> Import CSV
+            <Upload size={14} /> Import
           </button>
           <button onClick={() => setShowAddLead(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
             <Plus size={14} /> Add Lead
           </button>
         </div>
       </div>
+
+      {/* Sync modal */}
+      {showSync && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <span className="text-sm font-bold">Re-sync from File</span>
+              <button onClick={closeSync}><X size={18} className="text-slate-400" /></button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-xs text-slate-500">Upload the updated Excel or CSV file. Existing leads are updated by matching on a key field. New rows are added.</p>
+              <label className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-5 cursor-pointer hover:border-slate-400 hover:bg-slate-50 transition-colors">
+                <FileSpreadsheet size={20} className="text-slate-400" />
+                <span className="text-sm font-semibold text-slate-700">{syncFile ? syncFile.name : 'Choose Excel or CSV file'}</span>
+                <span className="text-xs text-slate-400">{syncFile ? `${(syncFile.size / 1024).toFixed(1)} KB` : 'Click to browse'}</span>
+                <input ref={syncFileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { setSyncFile(e.target.files?.[0] ?? null); }} />
+              </label>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-500">Key field (unique column to match on)</label>
+                <input
+                  value={syncKeyField}
+                  onChange={e => setSyncKeyField(e.target.value)}
+                  placeholder="e.g. email or id"
+                  list="sync-fields"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400"
+                />
+                <datalist id="sync-fields">
+                  {group.fields?.map(f => <option key={f} value={f} />)}
+                </datalist>
+                <p className="mt-1 text-xs text-slate-400">Rows matching this field value will be updated. Non-matching rows are added as new leads.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <button onClick={closeSync} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+              <button onClick={() => void handleSync()} disabled={!syncFile || !syncKeyField || syncing} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40">
+                {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Sync
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import modal */}
       {showImport && (
@@ -597,9 +708,9 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
               <p className="text-xs text-slate-500">Any CSV format works — all column headers become fields. Existing fields in this group will be preserved.</p>
               <label className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-6 cursor-pointer hover:border-slate-400 hover:bg-slate-50 transition-colors">
                 <FileSpreadsheet size={20} className="text-slate-400" />
-                <span className="text-sm font-semibold text-slate-700">{csvFile ? csvFile.name : 'Choose CSV file'}</span>
+                <span className="text-sm font-semibold text-slate-700">{csvFile ? csvFile.name : 'Choose Excel or CSV file'}</span>
                 <span className="text-xs text-slate-400">{csvFile ? `${(csvFile.size / 1024).toFixed(1)} KB` : 'Click to browse'}</span>
-                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e => setCsvFile(e.target.files?.[0] ?? null)} />
+                <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => setCsvFile(e.target.files?.[0] ?? null)} />
               </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
