@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import {
   ChevronLeft,
   FileSpreadsheet,
+  Link2,
+  Link2Off,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -19,7 +21,7 @@ import {
   type MailingContact,
   type MailingSegment,
 } from '../services/mailingService';
-import { leadService, type Lead, type LeadGroup } from '../services/leadService';
+import { googleSheetsService, leadService, type Lead, type LeadGroup } from '../services/leadService';
 
 type Tab = 'contacts' | 'segments' | 'leads';
 
@@ -514,6 +516,16 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
   const [syncFile, setSyncFile] = useState<File | null>(null);
   const [syncKeyField, setSyncKeyField] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [showLinkSheet, setShowLinkSheet] = useState(false);
+  const [gsConnected, setGsConnected] = useState<{ connected: boolean; email?: string } | null>(null);
+  const [gsFiles, setGsFiles] = useState<{ id: string; name: string }[]>([]);
+  const [gsSheets, setGsSheets] = useState<{ id: number; title: string }[]>([]);
+  const [selectedFile, setSelectedFile] = useState('');
+  const [selectedSheet, setSelectedSheet] = useState('');
+  const [selectedSheetName, setSelectedSheetName] = useState('');
+  const [linkKeyField, setLinkKeyField] = useState('');
+  const [loadingGs, setLoadingGs] = useState(false);
+  const [sheetSyncing, setSheetSyncing] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [customFields, setCustomFields] = useState<string[]>(initialGroup.fields?.length ? initialGroup.fields : ['first_name', 'last_name', 'email']);
@@ -596,6 +608,73 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
     setNewFieldName('');
   };
 
+  const openLinkSheet = async () => {
+    setShowLinkSheet(true);
+    setLoadingGs(true);
+    try {
+      const status = await googleSheetsService.getStatus();
+      setGsConnected(status);
+      if (status.connected) {
+        const files = await googleSheetsService.listFiles();
+        setGsFiles(files);
+      }
+    } catch { /* silent */ }
+    finally { setLoadingGs(false); }
+  };
+
+  const handleConnectGoogle = async () => {
+    try {
+      const url = await googleSheetsService.getConnectUrl();
+      window.open(url, '_blank', 'width=600,height=700');
+      // Poll for connection
+      const interval = setInterval(async () => {
+        const status = await googleSheetsService.getStatus();
+        if (status.connected) {
+          clearInterval(interval);
+          setGsConnected(status);
+          const files = await googleSheetsService.listFiles();
+          setGsFiles(files);
+        }
+      }, 2000);
+      setTimeout(() => clearInterval(interval), 120_000);
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed to connect', ok: false }); }
+  };
+
+  const handleSelectFile = async (fileId: string) => {
+    setSelectedFile(fileId);
+    setSelectedSheet('');
+    setGsSheets([]);
+    if (!fileId) return;
+    try {
+      const sheets = await googleSheetsService.listSheets(fileId);
+      setGsSheets(sheets);
+      if (sheets.length === 1) { setSelectedSheet(sheets[0].title); setSelectedSheetName(sheets[0].title); }
+    } catch { /* silent */ }
+  };
+
+  const handleLinkSheet = async () => {
+    if (!selectedFile || !selectedSheet) return;
+    setLoadingGs(true);
+    try {
+      const fname = gsFiles.find(f => f.id === selectedFile)?.name || selectedFile;
+      await googleSheetsService.linkSheet(group.id, selectedFile, selectedSheet, `${fname} › ${selectedSheetName || selectedSheet}`, linkKeyField);
+      setGroup(prev => ({ ...prev, linked_sheet_id: selectedFile, linked_sheet_tab: selectedSheet, linked_sheet_name: `${fname} › ${selectedSheetName || selectedSheet}`, sheet_key_field: linkKeyField || null }));
+      setShowLinkSheet(false);
+      setMessage({ text: 'Google Sheet linked. Click "Sync Sheet" to import data.', ok: true });
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed to link', ok: false }); }
+    finally { setLoadingGs(false); }
+  };
+
+  const handleSyncSheet = async () => {
+    setSheetSyncing(true);
+    try {
+      const { updated, added } = await googleSheetsService.syncSheet(group.id);
+      setMessage({ text: `Sync complete — ${updated} updated, ${added} new leads added.`, ok: true });
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Sync failed', ok: false }); }
+    finally { setSheetSyncing(false); }
+  };
+
   const handleAddLead = async () => {
     setSaving(true);
     try {
@@ -627,13 +706,26 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button onClick={onBack} className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800 transition-colors">
           <ChevronLeft size={16} /> Back
         </button>
         <span className="text-slate-300">/</span>
         <span className="text-sm font-bold text-slate-900">{group.name}</span>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{group.lead_count} leads</span>
+        {group.linked_sheet_id ? (
+          <div className="flex items-center gap-2 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1">
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none"><rect width="24" height="24" rx="4" fill="#34A853"/><path d="M7 8h10M7 12h10M7 16h6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+            <span className="text-xs font-semibold text-emerald-800 truncate max-w-[160px]">{group.linked_sheet_name || group.linked_sheet_tab}</span>
+            <button onClick={() => setShowLinkSheet(true)} className="text-emerald-500 hover:text-emerald-700"><Link2 size={12} /></button>
+            {group.last_synced_at && <span className="text-xs text-emerald-600">· {formatDate(group.last_synced_at)}</span>}
+          </div>
+        ) : (
+          <button onClick={() => void openLinkSheet()} className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-emerald-300 hover:text-emerald-700 transition-colors">
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none"><rect width="24" height="24" rx="4" fill="#34A853"/><path d="M7 8h10M7 12h10M7 16h6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+            Link Google Sheet
+          </button>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -642,8 +734,14 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search leads…" className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm outline-none focus:border-slate-400" />
         </div>
         <div className="flex gap-2 flex-wrap">
+          {group.linked_sheet_id && (
+            <button onClick={() => void handleSyncSheet()} disabled={sheetSyncing} className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60">
+              {sheetSyncing ? <Loader2 size={14} className="animate-spin" /> : <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"><rect width="24" height="24" rx="4" fill="#34A853"/><path d="M7 8h10M7 12h10M7 16h6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>}
+              Sync Sheet
+            </button>
+          )}
           <button onClick={() => setShowSync(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-            <RefreshCw size={14} /> Re-sync
+            <RefreshCw size={14} /> Re-sync File
           </button>
           <button onClick={() => setShowImport(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             <Upload size={14} /> Import
@@ -653,6 +751,73 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
           </button>
         </div>
       </div>
+
+      {/* Link Google Sheet modal */}
+      {showLinkSheet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none"><rect width="24" height="24" rx="4" fill="#34A853"/><path d="M7 8h10M7 12h10M7 16h6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                <span className="text-sm font-bold">Link Google Sheet</span>
+              </div>
+              <button onClick={() => setShowLinkSheet(false)}><X size={18} className="text-slate-400" /></button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              {loadingGs && !gsConnected ? (
+                <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-400" /></div>
+              ) : !gsConnected?.connected ? (
+                <div className="space-y-3 text-center py-2">
+                  <p className="text-sm text-slate-600">Connect your Google account to access your spreadsheets.</p>
+                  <button onClick={() => void handleConnectGoogle()} className="flex items-center gap-2 mx-auto rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 shadow-sm">
+                    <svg viewBox="0 0 24 24" className="h-4 w-4"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    Sign in with Google
+                  </button>
+                  {gsConnected?.connected === false && <p className="text-xs text-slate-400">Waiting for Google sign-in…</p>}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+                    <div className="text-xs text-emerald-700">Connected as <strong>{gsConnected.email}</strong></div>
+                    <button onClick={async () => { await googleSheetsService.disconnect(); setGsConnected({ connected: false }); }} className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1"><Link2Off size={11} /> Disconnect</button>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-500">Spreadsheet</label>
+                    <select value={selectedFile} onChange={e => void handleSelectFile(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400 bg-white">
+                      <option value="">Choose a spreadsheet…</option>
+                      {gsFiles.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </select>
+                  </div>
+                  {gsSheets.length > 0 && (
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-slate-500">Sheet / Tab</label>
+                      <select value={selectedSheet} onChange={e => { setSelectedSheet(e.target.value); setSelectedSheetName(gsSheets.find(s => s.title === e.target.value)?.title || ''); }} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400 bg-white">
+                        <option value="">Choose a tab…</option>
+                        {gsSheets.map(s => <option key={s.id} value={s.title}>{s.title}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-500">Key field for sync (unique column, e.g. email)</label>
+                    <input value={linkKeyField} onChange={e => setLinkKeyField(e.target.value)} placeholder="e.g. email" list="link-fields" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                    <datalist id="link-fields">{group.fields?.map(f => <option key={f} value={f} />)}</datalist>
+                    <p className="mt-1 text-xs text-slate-400">Used to update existing leads on each sync instead of creating duplicates. Leave blank to always append.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <button onClick={() => setShowLinkSheet(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+              {gsConnected?.connected && (
+                <button onClick={() => void handleLinkSheet()} disabled={!selectedFile || !selectedSheet || loadingGs} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40">
+                  {loadingGs ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                  Link Sheet
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sync modal */}
       {showSync && (

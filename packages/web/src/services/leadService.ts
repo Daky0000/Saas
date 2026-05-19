@@ -16,6 +16,11 @@ export type LeadGroup = {
   name: string;
   fields: string[];
   lead_count: number;
+  linked_sheet_id: string | null;
+  linked_sheet_tab: string | null;
+  linked_sheet_name: string | null;
+  sheet_key_field: string | null;
+  last_synced_at: string | null;
   created_at: string;
 };
 
@@ -83,5 +88,53 @@ export const leadService = {
     const data = await parseJson<{ success: boolean; results: { groupId: string; name: string; imported: number }[]; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Bulk import failed');
     return data.results;
+  },
+};
+
+const GS_BASE = `${API_BASE_URL}/api/google-sheets`;
+
+export const googleSheetsService = {
+  async getConnectUrl(): Promise<string> {
+    const res = await fetch(`${GS_BASE}/connect`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; url: string; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed');
+    return data.url;
+  },
+
+  async getStatus(): Promise<{ connected: boolean; email?: string; connectedAt?: string }> {
+    const res = await fetch(`${GS_BASE}/status`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; connected: boolean; email?: string; connectedAt?: string }>(res);
+    return data;
+  },
+
+  async disconnect(): Promise<void> {
+    await fetch(`${GS_BASE}/disconnect`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  async listFiles(): Promise<{ id: string; name: string; modifiedTime: string }[]> {
+    const res = await fetch(`${GS_BASE}/files`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; files: { id: string; name: string; modifiedTime: string }[]; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed');
+    return data.files;
+  },
+
+  async listSheets(fileId: string): Promise<{ id: number; title: string }[]> {
+    const res = await fetch(`${GS_BASE}/files/${fileId}/sheets`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; sheets: { id: number; title: string }[]; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed');
+    return data.sheets;
+  },
+
+  async linkSheet(groupId: string, sheetId: string, sheetTab: string, sheetName: string, keyField: string): Promise<void> {
+    const res = await fetch(`${API_BASE_URL}/api/leads/groups/${groupId}/link-sheet`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ sheetId, sheetTab, sheetName, keyField }) });
+    const data = await parseJson<{ success: boolean; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed');
+  },
+
+  async syncSheet(groupId: string): Promise<{ updated: number; added: number; total: number }> {
+    const res = await fetch(`${API_BASE_URL}/api/leads/groups/${groupId}/sync-sheet`, { method: 'POST', headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; updated: number; added: number; total: number; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Sync failed');
+    return data;
   },
 };

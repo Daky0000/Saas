@@ -2269,6 +2269,23 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   await pool.query(`CREATE INDEX IF NOT EXISTS leads_group_idx ON leads (group_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS leads_user_idx ON leads (user_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS leads_sync_key_idx ON leads (group_id, sync_key);`).catch(() => undefined);
+  // Google Sheets integration columns
+  await pool.query(`ALTER TABLE lead_groups ADD COLUMN IF NOT EXISTS linked_sheet_id TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE lead_groups ADD COLUMN IF NOT EXISTS linked_sheet_tab TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE lead_groups ADD COLUMN IF NOT EXISTS linked_sheet_name TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE lead_groups ADD COLUMN IF NOT EXISTS sheet_key_field TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE lead_groups ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS google_sheets_tokens (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      token_expiry TIMESTAMPTZ NOT NULL,
+      google_email TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
   // ── End Leads Module ─────────────────────────────────────────────────────────
 
   // ── Analytics & Insights Engine Tables ──────────────────────────────────────
@@ -19101,6 +19118,176 @@ app.delete('/api/leads/:id', async (req: Request, res: Response) => {
 });
 
 // ─── End Leads API Routes ─────────────────────────────────────────────────────
+
+// ─── Google Sheets Integration ────────────────────────────────────────────────
+
+const GS_CLIENT_ID = process.env.GOOGLE_SHEETS_CLIENT_ID || '';
+const GS_CLIENT_SECRET = process.env.GOOGLE_SHEETS_CLIENT_SECRET || '';
+const GS_REDIRECT = (process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com').replace(/\/$/, '') + '/api/google-sheets/callback';
+
+async function gsRefreshToken(userId: string): Promise<string> {
+  const { rows } = await pool!.query(`SELECT * FROM google_sheets_tokens WHERE user_id=$1`, [userId]);
+  if (!rows.length) throw new Error('Google Sheets not connected');
+  const tok = rows[0];
+  // If token still valid (>60s left), return it
+  if (new Date(tok.token_expiry).getTime() - Date.now() > 60_000) return tok.access_token;
+  // Refresh
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: GS_CLIENT_ID, client_secret: GS_CLIENT_SECRET, refresh_token: tok.refresh_token, grant_type: 'refresh_token' }).toString(),
+  });
+  const data = await r.json() as { access_token?: string; expires_in?: number; error?: string };
+  if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error || 'unknown'));
+  const expiry = new Date(Date.now() + (data.expires_in || 3600) * 1000);
+  await pool!.query(`UPDATE google_sheets_tokens SET access_token=$1, token_expiry=$2, updated_at=NOW() WHERE user_id=$3`, [data.access_token, expiry, userId]);
+  return data.access_token;
+}
+
+// GET /api/google-sheets/connect — kick off OAuth (authenticated user)
+app.get('/api/google-sheets/connect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!GS_CLIENT_ID || !GS_CLIENT_SECRET) return res.status(500).json({ success: false, error: 'Google Sheets OAuth not configured. Set GOOGLE_SHEETS_CLIENT_ID and GOOGLE_SHEETS_CLIENT_SECRET.' });
+    const state = randomBytes(20).toString('hex');
+    (app.locals as Record<string, unknown>)[`gs_state_${state}`] = { userId: auth.userId, expiry: Date.now() + 600_000 };
+    const params = new URLSearchParams({
+      client_id: GS_CLIENT_ID,
+      redirect_uri: GS_REDIRECT,
+      response_type: 'code',
+      scope: 'https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.metadata.readonly email profile',
+      access_type: 'offline',
+      prompt: 'consent',
+      state,
+    });
+    return res.json({ success: true, url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to initiate OAuth' }); }
+});
+
+// GET /api/google-sheets/callback — OAuth redirect handler
+app.get('/api/google-sheets/callback', async (req: Request, res: Response) => {
+  const FRONTEND = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  try {
+    const { code, state, error } = req.query as Record<string, string>;
+    if (error) return res.redirect(`${FRONTEND}?gs_error=${encodeURIComponent(error)}`);
+    const stored = (app.locals as Record<string, unknown>)[`gs_state_${state}`] as { userId: string; expiry: number } | undefined;
+    if (!stored || stored.expiry < Date.now()) return res.redirect(`${FRONTEND}?gs_error=invalid_state`);
+    delete (app.locals as Record<string, unknown>)[`gs_state_${state}`];
+    // Exchange code for tokens
+    const tokRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code, client_id: GS_CLIENT_ID, client_secret: GS_CLIENT_SECRET, redirect_uri: GS_REDIRECT, grant_type: 'authorization_code' }).toString(),
+    });
+    const tok = await tokRes.json() as { access_token?: string; refresh_token?: string; expires_in?: number; error?: string };
+    if (!tok.access_token || !tok.refresh_token) return res.redirect(`${FRONTEND}?gs_error=${encodeURIComponent(tok.error || 'no_tokens')}`);
+    // Get user email
+    const infoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tok.access_token}` } });
+    const info = await infoRes.json() as { email?: string };
+    const expiry = new Date(Date.now() + (tok.expires_in || 3600) * 1000);
+    await pool!.query(
+      `INSERT INTO google_sheets_tokens (user_id, access_token, refresh_token, token_expiry, google_email)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (user_id) DO UPDATE SET access_token=$2, refresh_token=$3, token_expiry=$4, google_email=$5, updated_at=NOW()`,
+      [stored.userId, tok.access_token, tok.refresh_token, expiry, info.email || null]
+    );
+    return res.redirect(`${FRONTEND}?gs_connected=1`);
+  } catch (err) { return res.redirect(`${FRONTEND}?gs_error=server_error`); }
+});
+
+// GET /api/google-sheets/status
+app.get('/api/google-sheets/status', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows } = await pool!.query(`SELECT google_email, updated_at FROM google_sheets_tokens WHERE user_id=$1`, [auth.userId]);
+    if (!rows.length) return res.json({ success: true, connected: false });
+    return res.json({ success: true, connected: true, email: rows[0].google_email, connectedAt: rows[0].updated_at });
+  } catch { return res.status(500).json({ success: false, error: 'Failed' }); }
+});
+
+// DELETE /api/google-sheets/disconnect
+app.delete('/api/google-sheets/disconnect', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    await pool!.query(`DELETE FROM google_sheets_tokens WHERE user_id=$1`, [auth.userId]);
+    return res.json({ success: true });
+  } catch { return res.status(500).json({ success: false, error: 'Failed' }); }
+});
+
+// GET /api/google-sheets/files — list user's spreadsheets
+app.get('/api/google-sheets/files', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const token = await gsRefreshToken(auth.userId);
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=50`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json() as { files?: { id: string; name: string; modifiedTime: string }[] };
+    return res.json({ success: true, files: data.files || [] });
+  } catch (e) { return res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Failed' }); }
+});
+
+// GET /api/google-sheets/files/:fileId/sheets — list tabs
+app.get('/api/google-sheets/files/:fileId/sheets', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const token = await gsRefreshToken(auth.userId);
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${req.params.fileId}?fields=sheets.properties(sheetId,title)`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json() as { sheets?: { properties: { sheetId: number; title: string } }[] };
+    return res.json({ success: true, sheets: (data.sheets || []).map(s => ({ id: s.properties.sheetId, title: s.properties.title })) });
+  } catch (e) { return res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Failed' }); }
+});
+
+// POST /api/leads/groups/:id/link-sheet
+app.post('/api/leads/groups/:id/link-sheet', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { sheetId, sheetTab, sheetName, keyField } = req.body;
+    if (!sheetId || !sheetTab) return res.status(400).json({ success: false, error: 'sheetId and sheetTab required' });
+    await pool!.query(
+      `UPDATE lead_groups SET linked_sheet_id=$1, linked_sheet_tab=$2, linked_sheet_name=$3, sheet_key_field=$4 WHERE id=$5 AND user_id=$6`,
+      [sheetId, sheetTab, sheetName || sheetTab, keyField || null, req.params.id, auth.userId]
+    );
+    return res.json({ success: true });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to link sheet' }); }
+});
+
+// POST /api/leads/groups/:id/sync-sheet — pull latest from linked Google Sheet
+app.post('/api/leads/groups/:id/sync-sheet', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: [grp] } = await pool!.query(`SELECT * FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    if (!grp) return res.status(404).json({ success: false, error: 'Group not found' });
+    if (!grp.linked_sheet_id || !grp.linked_sheet_tab) return res.status(400).json({ success: false, error: 'No Google Sheet linked to this group' });
+    const token = await gsRefreshToken(auth.userId);
+    // Fetch sheet data
+    const range = encodeURIComponent(grp.linked_sheet_tab);
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${grp.linked_sheet_id}/values/${range}`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json() as { values?: string[][]; error?: { message: string } };
+    if (data.error) return res.status(400).json({ success: false, error: data.error.message });
+    if (!data.values || data.values.length < 2) return res.json({ success: true, updated: 0, added: 0 });
+    const headers = data.values[0].map(h => String(h).trim());
+    const rows: Record<string, string>[] = data.values.slice(1).map(row =>
+      Object.fromEntries(headers.map((h, i) => [h, String(row[i] ?? '')]))
+    ).filter(r => Object.values(r).some(v => v));
+    // Upsert fields list
+    const allFields: string[] = Array.from(new Set([...(grp.fields || []), ...headers]));
+    await pool!.query(`UPDATE lead_groups SET fields=$1 WHERE id=$2`, [allFields, req.params.id]);
+    const keyField = grp.sheet_key_field || req.body.keyField || null;
+    let updated = 0, added = 0;
+    for (const row of rows.slice(0, 50000)) {
+      const syncKey = keyField && row[keyField] ? String(row[keyField]) : null;
+      if (syncKey) {
+        const { rows: ex } = await pool!.query(`SELECT id FROM leads WHERE group_id=$1 AND sync_key=$2`, [req.params.id, syncKey]);
+        if (ex.length) { await pool!.query(`UPDATE leads SET data=$1, updated_at=NOW() WHERE id=$2`, [JSON.stringify(row), ex[0].id]); updated++; continue; }
+      }
+      await pool!.query(`INSERT INTO leads (group_id, user_id, data, sync_key) VALUES ($1,$2,$3,$4)`, [req.params.id, auth.userId, JSON.stringify(row), syncKey]);
+      added++;
+    }
+    await pool!.query(`UPDATE lead_groups SET last_synced_at=NOW() WHERE id=$1`, [req.params.id]);
+    return res.json({ success: true, updated, added, total: rows.length });
+  } catch (e) { return res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Sync failed' }); }
+});
+
+// ─── End Google Sheets Integration ───────────────────────────────────────────
 
 // ─── Analytics & Insights Engine ─────────────────────────────────────────────
 
