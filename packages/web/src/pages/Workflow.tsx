@@ -585,6 +585,7 @@ function WorkflowBuilder({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showTriggerPicker, setShowTriggerPicker] = useState(nodes.length === 0);
   const [addAfter, setAddAfter] = useState<{ nodeId: string; branch?: 'yes' | 'no' } | null>(null);
+  const [changingNodeId, setChangingNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [runResult, setRunResult] = useState<{ status: string; logs: any[] } | null>(null);
   const [running, setRunning] = useState(false);
@@ -642,6 +643,14 @@ function WorkflowBuilder({
     setNodes((prev) => prev.filter((n) => n.id !== nodeId));
     setEdges((prev) => prev.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId));
     if (selectedId === nodeId) setSelectedId(null);
+  };
+
+  const changeNode = (type: NodeType, subType: string, label: string) => {
+    if (!changingNodeId) return;
+    setNodes((prev) => prev.map((n) =>
+      n.id === changingNodeId ? { ...n, type, subType: subType as any, label, config: {} } : n
+    ));
+    setChangingNodeId(null);
   };
 
   const updateNodeConfig = (cfg: Record<string, any>) => {
@@ -833,24 +842,55 @@ function WorkflowBuilder({
                 />
               </div>
             )}
+
             <NodeConfigForm node={selectedNode} onChange={updateNodeConfig} />
+
+            {/* AI Instructions — shown for every action and condition */}
+            {(selectedNode.type === 'action' || selectedNode.type === 'condition') && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-indigo-600 uppercase tracking-wide flex items-center gap-1">
+                  <Sparkles size={11} /> AI Instructions
+                </label>
+                <textarea
+                  value={selectedNode.config.ai_instructions ?? ''}
+                  onChange={(e) => updateNodeConfig({ ...selectedNode.config, ai_instructions: e.target.value })}
+                  rows={4}
+                  placeholder={
+                    selectedNode.type === 'action'
+                      ? 'Tell the AI exactly what to do at this step…\ne.g. "Generate a professional image matching the post theme"'
+                      : 'Describe the condition logic…\ne.g. "Check if the post has at least one image attached"'
+                  }
+                  className="w-full resize-none rounded-lg border border-indigo-200 bg-indigo-50/30 px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none placeholder:text-slate-400/80 leading-relaxed"
+                />
+                <p className="text-[10px] text-slate-400">The AI reads these instructions when executing this step.</p>
+              </div>
+            )}
+
+            {/* Change Trigger (keeps all other steps intact) */}
             {selectedNode.type === 'trigger' && (
               <button
-                onClick={() => {
-                  setNodes([]);
-                  setEdges([]);
-                  setSelectedId(null);
-                  setShowTriggerPicker(true);
-                }}
+                onClick={() => setShowTriggerPicker(true)}
                 className="w-full flex items-center justify-center gap-2 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 px-3 py-2 text-xs font-semibold transition"
               >
                 <Zap size={12} /> Change Trigger
               </button>
             )}
+
+            {/* Change step type */}
+            {(selectedNode.type === 'action' || selectedNode.type === 'condition') && (
+              <button
+                onClick={() => setChangingNodeId(selectedNode.id)}
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold transition"
+              >
+                <Settings size={12} /> Change Step Type
+              </button>
+            )}
+
+            {/* Remove step */}
             {selectedNode.type !== 'trigger' && selectedNode.type !== 'end' && (
               <button
                 onClick={() => { deleteNode(selectedNode.id); setSelectedId(null); }}
-                className="w-full flex items-center justify-center gap-2 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 px-3 py-2 text-xs font-semibold transition mt-2"
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 px-3 py-2 text-xs font-semibold transition"
               >
                 <Trash2 size={12} /> Remove this step
               </button>
@@ -864,11 +904,18 @@ function WorkflowBuilder({
         <TriggerPicker
           onClose={() => setShowTriggerPicker(false)}
           onSelect={(subType, label) => {
-            const trigNode: WFNode = { id: uid(), type: 'trigger', subType, label, config: {} };
-            const endNode: WFNode  = { id: uid(), type: 'end', subType: 'end', label: 'End Flow', config: {} };
-            setNodes([trigNode, endNode]);
-            setEdges([{ id: uid(), sourceId: trigNode.id, targetId: endNode.id }]);
-            setSelectedId(trigNode.id);
+            const existing = nodes.find((n) => n.type === 'trigger');
+            if (existing) {
+              // Swap trigger type/label only — all other steps stay intact
+              setNodes((prev) => prev.map((n) => n.id === existing.id ? { ...n, subType, label, config: {} } : n));
+            } else {
+              // First time — create fresh trigger + end
+              const trigNode: WFNode = { id: uid(), type: 'trigger', subType, label, config: {} };
+              const endNode: WFNode  = { id: uid(), type: 'end', subType: 'end', label: 'End Flow', config: {} };
+              setNodes([trigNode, endNode]);
+              setEdges([{ id: uid(), sourceId: trigNode.id, targetId: endNode.id }]);
+              setSelectedId(trigNode.id);
+            }
             setShowTriggerPicker(false);
           }}
         />
@@ -878,6 +925,13 @@ function WorkflowBuilder({
         <AddStepPicker
           onClose={() => setAddAfter(null)}
           onSelect={(type, subType, label) => addNode(type, subType, label)}
+        />
+      )}
+
+      {changingNodeId && (
+        <AddStepPicker
+          onClose={() => setChangingNodeId(null)}
+          onSelect={(type, subType, label) => changeNode(type, subType, label)}
         />
       )}
     </div>
