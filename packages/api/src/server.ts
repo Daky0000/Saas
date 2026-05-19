@@ -19184,22 +19184,33 @@ app.get('/api/google-sheets/connect', async (req: Request, res: Response) => {
 
 // GET /api/google-sheets/callback — OAuth redirect handler
 app.get('/api/google-sheets/callback', async (req: Request, res: Response) => {
-  const FRONTEND = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  const popupHtml = (type: 'success' | 'error', payload: string) => `<!DOCTYPE html><html><head><title>Google Sheets</title></head><body>
+<script>
+  try {
+    if (window.opener) {
+      window.opener.postMessage({ type: 'gs_${type}', payload: ${JSON.stringify(payload)} }, '*');
+      window.close();
+    } else {
+      window.location.href = '${process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com'}';
+    }
+  } catch(e) { window.close(); }
+</script>
+<p style="font-family:sans-serif;text-align:center;padding:40px;color:#666">${type === 'success' ? '✓ Connected! Closing…' : '✗ ' + payload}</p>
+</body></html>`;
+
   try {
     const { code, state, error } = req.query as Record<string, string>;
-    if (error) return res.redirect(`${FRONTEND}?gs_error=${encodeURIComponent(error)}`);
+    if (error) return res.send(popupHtml('error', error));
     const stored = (app.locals as Record<string, unknown>)[`gs_state_${state}`] as { userId: string; expiry: number } | undefined;
-    if (!stored || stored.expiry < Date.now()) return res.redirect(`${FRONTEND}?gs_error=invalid_state`);
+    if (!stored || stored.expiry < Date.now()) return res.send(popupHtml('error', 'Invalid or expired session. Please try again.'));
     delete (app.locals as Record<string, unknown>)[`gs_state_${state}`];
-    // Exchange code for tokens
     const tokRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ code, client_id: GS_CLIENT_ID, client_secret: GS_CLIENT_SECRET, redirect_uri: GS_REDIRECT, grant_type: 'authorization_code' }).toString(),
     });
     const tok = await tokRes.json() as { access_token?: string; refresh_token?: string; expires_in?: number; error?: string };
-    if (!tok.access_token || !tok.refresh_token) return res.redirect(`${FRONTEND}?gs_error=${encodeURIComponent(tok.error || 'no_tokens')}`);
-    // Get user email
+    if (!tok.access_token || !tok.refresh_token) return res.send(popupHtml('error', tok.error || 'Authorization failed'));
     const infoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tok.access_token}` } });
     const info = await infoRes.json() as { email?: string };
     const expiry = new Date(Date.now() + (tok.expires_in || 3600) * 1000);
@@ -19209,8 +19220,8 @@ app.get('/api/google-sheets/callback', async (req: Request, res: Response) => {
        ON CONFLICT (user_id) DO UPDATE SET access_token=$2, refresh_token=$3, token_expiry=$4, google_email=$5, updated_at=NOW()`,
       [stored.userId, tok.access_token, tok.refresh_token, expiry, info.email || null]
     );
-    return res.redirect(`${FRONTEND}?gs_connected=1`);
-  } catch (err) { return res.redirect(`${FRONTEND}?gs_error=server_error`); }
+    return res.send(popupHtml('success', info.email || 'connected'));
+  } catch { return res.send(popupHtml('error', 'Server error. Please try again.')); }
 });
 
 // GET /api/google-sheets/status
