@@ -36,6 +36,8 @@ function ContactsTab() {
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
   const [form, setForm] = useState({ email: '', first_name: '', last_name: '', tags: '' });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -74,27 +76,29 @@ function ContactsTab() {
     await load();
   };
 
-  const handleCsvImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    const lines = text.split('\n').filter(Boolean);
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
-    const emailIdx = headers.indexOf('email');
-    const firstIdx = headers.indexOf('first_name');
-    const lastIdx = headers.indexOf('last_name');
-    if (emailIdx === -1) { setMessage('CSV must have an "email" column'); return; }
-    const rows = lines.slice(1).map(l => {
-      const cols = l.split(',').map(c => c.trim().replace(/"/g, ''));
-      return { email: cols[emailIdx] || '', first_name: cols[firstIdx] || undefined, last_name: cols[lastIdx] || undefined };
-    }).filter(r => r.email);
+  const handleCsvImport = async () => {
+    if (!csvFile) return;
+    setImporting(true);
     try {
+      const text = await csvFile.text();
+      const lines = text.split('\n').filter(Boolean);
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+      const emailIdx = headers.indexOf('email');
+      const firstIdx = headers.indexOf('first_name');
+      const lastIdx = headers.indexOf('last_name');
+      if (emailIdx === -1) { setMessage('CSV must have an "email" column'); setImporting(false); return; }
+      const rows = lines.slice(1).map(l => {
+        const cols = l.split(',').map(c => c.trim().replace(/"/g, ''));
+        return { email: cols[emailIdx] || '', first_name: cols[firstIdx] || undefined, last_name: cols[lastIdx] || undefined };
+      }).filter(r => r.email);
       const result = await mailingService.importContacts(rows);
       setMessage(`Imported ${result.imported}, skipped ${result.skipped}.`);
       setShowImport(false);
+      setCsvFile(null);
+      if (fileRef.current) fileRef.current.value = '';
       await load();
     } catch (e) { setMessage(e instanceof Error ? e.message : 'Import failed'); }
-    if (fileRef.current) fileRef.current.value = '';
+    finally { setImporting(false); }
   };
 
   return (
@@ -150,14 +154,23 @@ function ContactsTab() {
           <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <span className="text-sm font-bold text-slate-900">Import Contacts (CSV)</span>
-              <button onClick={() => setShowImport(false)}><X size={18} className="text-slate-400" /></button>
+              <button onClick={() => { setShowImport(false); setCsvFile(null); if (fileRef.current) fileRef.current.value = ''; }}><X size={18} className="text-slate-400" /></button>
             </div>
             <div className="px-5 py-4 space-y-3">
               <p className="text-xs text-slate-500">CSV must have an <code className="bg-slate-100 px-1 rounded">email</code> column. Optional: <code className="bg-slate-100 px-1 rounded">first_name</code>, <code className="bg-slate-100 px-1 rounded">last_name</code>.</p>
-              <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={e => void handleCsvImport(e)} className="w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold hover:file:bg-slate-200" />
+              <label className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-6 cursor-pointer hover:border-slate-400 hover:bg-slate-50 transition-colors">
+                <Upload size={20} className="text-slate-400" />
+                <span className="text-sm font-semibold text-slate-700">{csvFile ? csvFile.name : 'Choose CSV file'}</span>
+                <span className="text-xs text-slate-400">{csvFile ? `${(csvFile.size / 1024).toFixed(1)} KB` : 'Click to browse'}</span>
+                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e => setCsvFile(e.target.files?.[0] ?? null)} />
+              </label>
             </div>
-            <div className="flex justify-end border-t border-slate-100 px-5 py-4">
-              <button onClick={() => setShowImport(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <button onClick={() => { setShowImport(false); setCsvFile(null); if (fileRef.current) fileRef.current.value = ''; }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+              <button onClick={() => void handleCsvImport()} disabled={!csvFile || importing} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40">
+                {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                Import
+              </button>
             </div>
           </div>
         </div>
