@@ -19141,7 +19141,7 @@ app.delete('/api/leads/:id', async (req: Request, res: Response) => {
 
 const GS_CLIENT_ID = process.env.GOOGLE_SHEETS_CLIENT_ID || '';
 const GS_CLIENT_SECRET = process.env.GOOGLE_SHEETS_CLIENT_SECRET || '';
-const GS_REDIRECT = (process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com').replace(/\/$/, '') + '/api/google-sheets/callback';
+const GS_REDIRECT = (process.env.API_URL || 'https://contentflow-api-production.up.railway.app').replace(/\/$/, '') + '/api/google-sheets/callback';
 
 async function gsRefreshToken(userId: string): Promise<string> {
   const { rows } = await pool!.query(`SELECT * FROM google_sheets_tokens WHERE user_id=$1`, [userId]);
