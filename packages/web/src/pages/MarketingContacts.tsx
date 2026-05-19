@@ -626,6 +626,7 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
             if (status.connected) {
               const files = await googleSheetsService.listFiles();
               setGsFiles(files);
+              setMessage({ text: 'Google Sheets connected! Select a spreadsheet below.', ok: true });
             }
           } catch { /* silent */ }
           finally { setLoadingGs(false); }

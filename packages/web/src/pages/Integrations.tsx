@@ -5,6 +5,7 @@ import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
 import { socialPostService } from '../services/socialPostService';
 import { PlatformLogo } from '../components/PlatformLogo';
+import { googleSheetsService } from '../services/leadService';
 
 type Props = {
   onNavigateSettings?: () => void;
@@ -147,6 +148,11 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [mcApiKey, setMcApiKey] = useState('');
   const [mcServerPrefix, setMcServerPrefix] = useState('');
 
+  // Google Sheets
+  const [gsStatus, setGsStatus] = useState<{ connected: boolean; email?: string; connectedAt?: string } | null>(null);
+  const [gsLoading, setGsLoading] = useState(false);
+  const [gsMsg, setGsMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -163,6 +169,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   useEffect(() => {
     void load();
+    void googleSheetsService.getStatus().then(setGsStatus).catch(() => { /* silent */ });
   }, [load]);
 
   useEffect(() => {
@@ -451,6 +458,49 @@ export default function Integrations({ onNavigateSettings }: Props) {
       alert(e instanceof Error ? e.message : 'Failed to disconnect WordPress');
     } finally {
       setBusy(null);
+    }
+  };
+
+  const handleConnectGoogleSheets = async () => {
+    setGsLoading(true);
+    setGsMsg(null);
+    try {
+      const url = await googleSheetsService.getConnectUrl();
+      window.open(url, 'gs_oauth', 'width=560,height=660,left=200,top=100');
+      const onMessage = async (evt: MessageEvent) => {
+        if (evt.data?.type === 'gs_success') {
+          window.removeEventListener('message', onMessage);
+          try {
+            const status = await googleSheetsService.getStatus();
+            setGsStatus(status);
+            if (status.connected) setGsMsg({ text: `Google Sheets connected as ${status.email ?? 'your account'}.`, ok: true });
+          } catch { /* silent */ }
+          finally { setGsLoading(false); }
+        } else if (evt.data?.type === 'gs_error') {
+          window.removeEventListener('message', onMessage);
+          setGsMsg({ text: `Google sign-in failed: ${String(evt.data.payload)}`, ok: false });
+          setGsLoading(false);
+        }
+      };
+      window.addEventListener('message', onMessage);
+      setTimeout(() => { window.removeEventListener('message', onMessage); setGsLoading(false); }, 300_000);
+    } catch (e) {
+      setGsMsg({ text: e instanceof Error ? e.message : 'Failed to connect', ok: false });
+      setGsLoading(false);
+    }
+  };
+
+  const handleDisconnectGoogleSheets = async () => {
+    if (!confirm('Disconnect Google Sheets?')) return;
+    setGsLoading(true);
+    try {
+      await googleSheetsService.disconnect();
+      setGsStatus({ connected: false });
+      setGsMsg(null);
+    } catch (e) {
+      setGsMsg({ text: e instanceof Error ? e.message : 'Failed to disconnect', ok: false });
+    } finally {
+      setGsLoading(false);
     }
   };
 
@@ -800,9 +850,59 @@ export default function Integrations({ onNavigateSettings }: Props) {
                   </div>
                 </div>
                 <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                  {activeItems.length
-                    ? activeItems.map(renderActions)
-                    : <div className="text-sm text-slate-400">{activeConfig.empty}</div>}
+                  {activeItems.map(renderActions)}
+                  {activeTab === 'marketing' && (
+                    <Card
+                      title="Google Sheets"
+                      description="Link lead groups to Google Sheets spreadsheets and sync contact data automatically."
+                      statusLabel={gsStatus?.connected ? 'Connected' : 'Disconnected'}
+                      statusTone={gsStatus?.connected ? 'connected' : 'disconnected'}
+                      icon={
+                        <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
+                          <rect width="48" height="48" rx="10" fill="#0f9d58" />
+                          <rect x="13" y="14" width="22" height="3" rx="1" fill="white" />
+                          <rect x="13" y="20" width="22" height="3" rx="1" fill="white" />
+                          <rect x="13" y="26" width="22" height="3" rx="1" fill="white" />
+                          <rect x="13" y="32" width="14" height="3" rx="1" fill="white" />
+                        </svg>
+                      }
+                      meta={gsStatus?.connected && gsStatus.email ? `Connected as ${gsStatus.email}` : null}
+                    >
+                      {gsMsg ? (
+                        <p className={`w-full text-xs font-medium ${gsMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{gsMsg.text}</p>
+                      ) : null}
+                      {!gsStatus?.connected ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleConnectGoogleSheets()}
+                          disabled={gsLoading}
+                          className={PRIMARY_ACTION}
+                        >
+                          {gsLoading ? <Loader2 size={14} className="animate-spin" /> : (
+                            <svg viewBox="0 0 18 18" width="14" height="14" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 0 0 2.38-5.88c0-.57-.05-.66-.15-1.18z" fill="currentColor"/>
+                              <path d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2a4.8 4.8 0 0 1-7.18-2.54H1.83v2.07A8 8 0 0 0 8.98 17z" fill="currentColor"/>
+                              <path d="M4.5 10.52a4.8 4.8 0 0 1 0-3.04V5.41H1.83a8 8 0 0 0 0 7.18l2.67-2.07z" fill="currentColor"/>
+                              <path d="M8.98 4.18c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 0 0 1.83 5.4L4.5 7.48a4.77 4.77 0 0 1 4.48-3.3z" fill="currentColor"/>
+                            </svg>
+                          )}
+                          Sign in with Google
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleDisconnectGoogleSheets()}
+                          disabled={gsLoading}
+                          className={SECONDARY_ACTION}
+                        >
+                          {gsLoading ? <Loader2 size={14} className="animate-spin" /> : <Unplug size={14} />} Disconnect
+                        </button>
+                      )}
+                    </Card>
+                  )}
+                  {!activeItems.length && activeTab !== 'marketing' && (
+                    <div className="text-sm text-slate-400">{activeConfig.empty}</div>
+                  )}
                 </div>
               </section>
             );
