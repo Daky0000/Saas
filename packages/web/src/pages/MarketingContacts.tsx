@@ -45,7 +45,8 @@ function ContactsTab() {
   const [showImport, setShowImport] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
-  const [form, setForm] = useState({ email: '', first_name: '', last_name: '', tags: '' });
+  const [form, setForm] = useState({ email: '', first_name: '', last_name: '', phone: '', tags: '' });
+  const [customFields, setCustomFields] = useState<{ key: string; value: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
@@ -63,13 +64,19 @@ function ContactsTab() {
     if (!form.email) return;
     setSaving(true);
     try {
+      const custom_data = customFields
+        .filter(f => f.key.trim())
+        .reduce<Record<string, string>>((acc, f) => { acc[f.key.trim()] = f.value; return acc; }, {});
       await mailingService.createContact({
         email: form.email,
         first_name: form.first_name || undefined,
         last_name: form.last_name || undefined,
+        phone: form.phone || undefined,
         tags: form.tags ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        custom_data: Object.keys(custom_data).length ? custom_data : undefined,
       });
-      setForm({ email: '', first_name: '', last_name: '', tags: '' });
+      setForm({ email: '', first_name: '', last_name: '', phone: '', tags: '' });
+      setCustomFields([]);
       setShowAdd(false);
       setMessage({ text: 'Contact added.', ok: true });
       await load();
@@ -156,16 +163,48 @@ function ContactsTab() {
               <span className="text-sm font-bold text-slate-900">Add Contact</span>
               <button onClick={() => setShowAdd(false)}><X size={18} className="text-slate-400" /></button>
             </div>
-            <div className="space-y-3 px-5 py-4">
+            <div className="space-y-3 px-5 py-4 max-h-[60vh] overflow-y-auto">
               <input value={form.email} onChange={e => setForm(f => ({...f, email: e.target.value}))} placeholder="Email *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
               <div className="grid grid-cols-2 gap-3">
                 <input value={form.first_name} onChange={e => setForm(f => ({...f, first_name: e.target.value}))} placeholder="First name" className="rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
                 <input value={form.last_name} onChange={e => setForm(f => ({...f, last_name: e.target.value}))} placeholder="Last name" className="rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
               </div>
+              <input value={form.phone} onChange={e => setForm(f => ({...f, phone: e.target.value}))} placeholder="Phone" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
               <input value={form.tags} onChange={e => setForm(f => ({...f, tags: e.target.value}))} placeholder="Tags (comma separated)" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
+              {customFields.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-500">Custom fields</p>
+                  {customFields.map((f, i) => (
+                    <div key={i} className="flex gap-2">
+                      <input
+                        value={f.key}
+                        onChange={e => setCustomFields(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                        placeholder="Field name"
+                        className="w-2/5 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                      />
+                      <input
+                        value={f.value}
+                        onChange={e => setCustomFields(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                        placeholder="Value"
+                        className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                      />
+                      <button type="button" onClick={() => setCustomFields(prev => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setCustomFields(prev => [...prev, { key: '', value: '' }])}
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800"
+              >
+                <Plus size={12} /> Add field
+              </button>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
-              <button onClick={() => setShowAdd(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+              <button onClick={() => { setShowAdd(false); setCustomFields([]); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
               <button onClick={() => void handleAdd()} disabled={saving || !form.email} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
               </button>
@@ -218,6 +257,7 @@ function ContactsTab() {
               <tr className="text-xs font-semibold text-slate-500">
                 <th className="px-4 py-3 text-left">Email</th>
                 <th className="px-4 py-3 text-left">Name</th>
+                <th className="px-4 py-3 text-left">Phone</th>
                 <th className="px-4 py-3 text-left">Tags</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-left">Added</th>
@@ -229,6 +269,7 @@ function ContactsTab() {
                 <tr key={c.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-800">{c.email}</td>
                   <td className="px-4 py-3 text-slate-600">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{c.phone || '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {c.tags?.map(t => <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>)}

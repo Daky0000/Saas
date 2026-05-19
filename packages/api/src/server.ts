@@ -2160,6 +2160,8 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
     );
   `).catch(() => undefined);
   await pool.query(`ALTER TABLE mailing_contacts ADD COLUMN IF NOT EXISTS unsubscribe_token TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE mailing_contacts ADD COLUMN IF NOT EXISTS phone TEXT;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE mailing_contacts ADD COLUMN IF NOT EXISTS custom_data JSONB DEFAULT '{}';`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contacts_user_idx ON mailing_contacts (user_id);`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contacts_email_idx ON mailing_contacts (email);`).catch(() => undefined);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS mailing_contacts_unsubscribe_token_unique_idx ON mailing_contacts (unsubscribe_token) WHERE unsubscribe_token IS NOT NULL;`).catch(() => undefined);
@@ -18606,15 +18608,16 @@ app.post('/api/mailing/contacts', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    const { email, first_name, last_name, source, tags, email_marketing_consent } = req.body;
+    const { email, first_name, last_name, phone, source, tags, email_marketing_consent, custom_data } = req.body;
     if (!email || !String(email).includes('@')) return res.status(400).json({ success: false, error: 'Valid email required' });
     const id = randomUUID();
+    const customDataJson = (custom_data && typeof custom_data === 'object') ? JSON.stringify(custom_data) : '{}';
     const { rows } = await pool!.query(
-      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, email_marketing_consent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (user_id, email) DO UPDATE SET first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, updated_at=NOW()
+      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, phone, source, email_marketing_consent, custom_data)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (user_id, email) DO UPDATE SET first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, phone=EXCLUDED.phone, custom_data=EXCLUDED.custom_data, updated_at=NOW()
        RETURNING *`,
-      [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, source || 'manual', !!email_marketing_consent]
+      [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, phone || null, source || 'manual', !!email_marketing_consent, customDataJson]
     );
     const contact = rows[0];
     if (Array.isArray(tags) && tags.length) {
@@ -18635,12 +18638,14 @@ app.patch('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    const { first_name, last_name, subscribed, email_marketing_consent } = req.body;
+    const { first_name, last_name, phone, subscribed, email_marketing_consent, custom_data } = req.body;
+    const customDataJson = (custom_data && typeof custom_data === 'object') ? JSON.stringify(custom_data) : undefined;
     const { rows } = await pool!.query(
-      `UPDATE mailing_contacts SET first_name=$1, last_name=$2, subscribed=$3, email_marketing_consent=$4,
-       unsubscribed_at = CASE WHEN $3=false THEN NOW() ELSE NULL END, updated_at=NOW()
-       WHERE id=$5 AND user_id=$6 RETURNING *`,
-      [first_name || null, last_name || null, subscribed !== false, !!email_marketing_consent, req.params.id, auth.userId]
+      `UPDATE mailing_contacts SET first_name=$1, last_name=$2, phone=$3, subscribed=$4, email_marketing_consent=$5,
+       custom_data=COALESCE($6::jsonb, custom_data),
+       unsubscribed_at = CASE WHEN $4=false THEN NOW() ELSE NULL END, updated_at=NOW()
+       WHERE id=$7 AND user_id=$8 RETURNING *`,
+      [first_name || null, last_name || null, phone || null, subscribed !== false, !!email_marketing_consent, customDataJson ?? null, req.params.id, auth.userId]
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
     return res.json({ success: true, contact: rows[0] });

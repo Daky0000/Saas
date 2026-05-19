@@ -16,6 +16,8 @@ export type MailingContact = {
   email: string;
   first_name: string | null;
   last_name: string | null;
+  phone: string | null;
+  custom_data: Record<string, string>;
   source: string;
   subscribed: boolean;
   email_marketing_consent: boolean;
@@ -79,7 +81,7 @@ export const mailingService = {
     return data.contacts ?? [];
   },
 
-  async createContact(payload: Partial<MailingContact> & { email: string; tags?: string[] }): Promise<MailingContact> {
+  async createContact(payload: Partial<MailingContact> & { email: string; tags?: string[]; phone?: string; custom_data?: Record<string, string> }): Promise<MailingContact> {
     const res = await fetch(`${BASE}/contacts`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
     const data = await parseJson<{ success: boolean; contact: MailingContact; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to create contact');
