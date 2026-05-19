@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const XLSX = require('xlsx') as typeof import('xlsx');
 import {
   ChevronLeft,
   FileSpreadsheet,
@@ -406,12 +407,12 @@ function LeadGroupsList({ onOpen }: { onOpen: (g: LeadGroup) => void }) {
     try {
       const ab = await file.arrayBuffer();
       const wb = XLSX.read(ab, { type: 'array' });
-      const sheets = wb.SheetNames.map(name => {
-        const ws = wb.Sheets[name];
+      const sheets = wb.SheetNames.map((sheetName: string) => {
+        const ws = wb.Sheets[sheetName];
         const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
         const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
-        return { name, leads: rows, fields };
-      }).filter(s => s.leads.length > 0);
+        return { name: sheetName, leads: rows, fields };
+      }).filter((s: { leads: unknown[] }) => s.leads.length > 0);
       if (!sheets.length) { setMessage({ text: 'No data found in the Excel file.', ok: false }); return; }
       const results = await leadService.bulkImportSheets(sheets);
       const total = results.reduce((s, r) => s + r.imported, 0);
