@@ -636,20 +636,34 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
       { emoji: '💾', illu: 'check', title: 'Export your design', description: 'Click "Export" to download your card as PNG or JPG at high resolution. Save designs to your library for re-use.', cta: 'Got it' },
     ],
   },
-  mailing: {
-    title: 'Mailing',
+  marketing: {
+    title: 'Marketing Overview',
     steps: [
-      { emoji: '📧', illu: 'mail', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write your content in the rich-text editor or use Daky to generate copy.', target: '[data-tour-id="btn-new-email-campaign"]', placement: 'bottom' },
-      { emoji: '👥', illu: 'nav', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.', target: '[data-tour-id="mailing-contacts"]', placement: 'top' },
-      { emoji: '📊', illu: 'chart', title: 'Campaign analytics', description: 'After sending, track open rates, click rates, and unsubscribes directly in the campaign detail view.', cta: 'Got it' },
+      { emoji: '📊', illu: 'chart', title: 'Your marketing hub', description: 'See email and campaign performance at a glance — open rates, active campaigns, total clicks, and conversions in one place.' },
+      { emoji: '🔗', illu: 'nav', title: 'Jump into any section', description: 'Use the sidebar to navigate to Contacts, Email, or Campaigns. Each section has its own focused workspace.', cta: 'Got it' },
     ],
   },
-  campaign: {
+  'marketing-contacts': {
+    title: 'Contacts',
+    steps: [
+      { emoji: '👥', illu: 'nav', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.', target: '[data-tour-id="mailing-contacts"]', placement: 'top' },
+      { emoji: '🏷️', illu: 'tap', title: 'Segments', description: 'Group contacts by shared properties to send targeted campaigns.', cta: 'Got it' },
+    ],
+  },
+  'marketing-email': {
+    title: 'Email Marketing',
+    steps: [
+      { emoji: '📧', illu: 'mail', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write content in the rich-text editor or use AI to generate copy.', target: '[data-tour-id="btn-new-email-campaign"]', placement: 'bottom' },
+      { emoji: '⚡', illu: 'pulse', title: 'Automations', description: 'Set up trigger-based email sequences — welcome emails on signup, re-engagement on inactivity, and more.' },
+      { emoji: '📊', illu: 'chart', title: 'Analytics', description: 'Track open rates, click rates, and unsubscribes directly in the analytics tab.', cta: 'Got it' },
+    ],
+  },
+  'marketing-campaigns': {
     title: 'Campaigns',
     steps: [
-      { emoji: '🎯', illu: 'rocket', title: 'What is a campaign?', description: 'A campaign groups related posts, emails, and tasks under a single goal (e.g. a product launch or seasonal promotion).', target: '[data-tour-id="campaigns-list"]', placement: 'top' },
-      { emoji: '➕', illu: 'tap', title: 'Create a campaign', description: 'Click "New Campaign", set a name, goal, start/end date, and add the content pieces you want to track together.', target: '[data-tour-id="btn-new-campaign"]', placement: 'bottom' },
-      { emoji: '📌', illu: 'pulse', title: 'Track progress', description: 'The campaign overview shows which content is drafted, scheduled, and live — giving you a full picture of your campaign status.', cta: 'Got it' },
+      { emoji: '🎯', illu: 'rocket', title: 'Multi-channel campaigns', description: 'Group posts, emails, and paid ads under one campaign goal.', target: '[data-tour-id="campaigns-list"]', placement: 'top' },
+      { emoji: '➕', illu: 'tap', title: 'Create a campaign', description: 'Click "New Campaign", set a goal, add channels, and generate UTM tracking links.', target: '[data-tour-id="btn-new-campaign"]', placement: 'bottom' },
+      { emoji: '📌', illu: 'pulse', title: 'Track performance', description: 'The Performance tab shows clicks by source, conversion rates, and funnel drop-off.', cta: 'Got it' },
     ],
   },
   'project-settings': {

@@ -1034,7 +1034,7 @@ function CampaignDetail({ campaign, onBack }: { campaign: Campaign; onBack: () =
 
 type Tab = 'campaigns' | 'funnels' | 'links' | 'metrics';
 
-export default function Campaign() {
+export default function MarketingCampaigns() {
   const [activeTab, setActiveTab] = useState<Tab>('campaigns');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
 
@@ -1050,7 +1050,7 @@ export default function Campaign() {
       <div className="space-y-0">
         <div className="mb-6">
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Campaigns</div>
-          <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-slate-950">Campaign Builder</h1>
+          <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-slate-950">Campaigns</h1>
         </div>
         <CampaignDetail campaign={selectedCampaign} onBack={() => setSelectedCampaign(null)} />
       </div>
@@ -1061,8 +1061,8 @@ export default function Campaign() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Campaign</div>
-          <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-slate-950">Campaign Builder</h1>
+          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Marketing</div>
+          <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-slate-950">Campaigns</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-500">
             Create multi-channel campaigns, build conversion funnels, generate UTM-tracked links, and measure performance in one place.
           </p>

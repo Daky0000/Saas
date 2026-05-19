@@ -10,7 +10,6 @@ import {
   FileText,
   HelpCircle,
   LogOut,
-  Mail,
   Megaphone,
   Menu,
   Plus,
@@ -45,8 +44,10 @@ import DataDeletion from './pages/DataDeletion';
 import OAuthCallback from './pages/OAuthCallback';
 import ChatWidget from './components/ChatWidget';
 import PostAutomation from './pages/PostAutomation';
-import Mailing from './pages/Mailing';
-import Campaign from './pages/Campaign';
+import MarketingOverview from './pages/MarketingOverview';
+import MarketingContacts from './pages/MarketingContacts';
+import MarketingEmail from './pages/MarketingEmail';
+import MarketingCampaigns from './pages/MarketingCampaigns';
 import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
 import Billing from './pages/Billing';
@@ -70,7 +71,7 @@ import {
   setStoredUser,
 } from './utils/userSession';
 
-type PageType =
+export type PageType =
   | 'dashboard'
   | 'notifications'
   | 'posts'
@@ -82,8 +83,10 @@ type PageType =
   | 'profile'
   | 'memory'
   | 'integrations'
-  | 'mailing'
-  | 'campaign'
+  | 'marketing'
+  | 'marketing-contacts'
+  | 'marketing-email'
+  | 'marketing-campaigns'
   | 'workspace'
   | 'billing'
   | 'pricing'
@@ -120,8 +123,10 @@ const PAGE_PATHS: Record<PageType, string> = {
   profile: '/profile',
   memory: '/memory',
   integrations: '/integrations',
-  mailing: '/mailing',
-  campaign: '/campaign',
+  marketing: '/marketing',
+  'marketing-contacts': '/marketing/contacts',
+  'marketing-email': '/marketing/email',
+  'marketing-campaigns': '/marketing/campaigns',
   workspace: '/workspace',
   billing: '/billing',
   tasks: '/tasks',
@@ -136,6 +141,8 @@ const PATH_TO_PAGE = new Map<string, PageType>(
   Object.entries(PAGE_PATHS).map(([page, path]) => [path, page as PageType])
 );
 PATH_TO_PAGE.set('/admin', 'admin');
+PATH_TO_PAGE.set('/mailing', 'marketing-email');
+PATH_TO_PAGE.set('/campaign', 'marketing-campaigns');
 
 async function fetchCurrentUser(token: string): Promise<AppUser | null> {
   try {
@@ -178,6 +185,8 @@ type AppSidebarProps = {
   authUser: AppUser | null;
   postsMenuOpen: boolean;
   setPostsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  marketingMenuOpen: boolean;
+  setMarketingMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   profileNeedsAttention: boolean;
   navigateToPage: (page: PageType, replace?: boolean) => void;
   handleLogout: () => void;
@@ -190,6 +199,8 @@ function AppSidebar({
   authUser,
   postsMenuOpen,
   setPostsMenuOpen,
+  marketingMenuOpen,
+  setMarketingMenuOpen,
   profileNeedsAttention,
   navigateToPage,
   handleLogout,
@@ -492,14 +503,35 @@ function AppSidebar({
 
         {/* ── Bottom nav items ── */}
         <div className="mt-2 border-t border-gray-100 pt-2">
-          <button type="button" data-tour-id="nav-mailing" onClick={() => go('mailing')} className={cls(currentPage === 'mailing')}>
-            <Mail size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Mailing</span>
-          </button>
-          <button type="button" data-tour-id="nav-campaign" onClick={() => go('campaign')} className={cls(currentPage === 'campaign')}>
+          <button
+            type="button"
+            data-tour-id="nav-marketing"
+            onClick={() => { setMarketingMenuOpen(p => !p); go('marketing'); }}
+            className={cls(
+              currentPage === 'marketing' ||
+              currentPage === 'marketing-contacts' ||
+              currentPage === 'marketing-email' ||
+              currentPage === 'marketing-campaigns'
+            )}
+          >
             <Megaphone size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Campaigns</span>
+            <span className="flex-1 text-left">Marketing</span>
+            <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
           </button>
+          {marketingMenuOpen && (
+            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+              {([
+                { id: 'marketing' as PageType, label: 'Overview' },
+                { id: 'marketing-contacts' as PageType, label: 'Contacts' },
+                { id: 'marketing-email' as PageType, label: 'Email' },
+                { id: 'marketing-campaigns' as PageType, label: 'Campaigns' },
+              ] as { id: PageType; label: string }[]).map((c) => (
+                <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
           <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
             <Waypoints size={15} className="shrink-0" />
             <span className="flex-1 text-left">Integrations</span>
@@ -598,6 +630,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
+  const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [pendingTour, setPendingTour] = useState(false);
@@ -650,6 +683,9 @@ function App() {
       setCurrentPage(page);
       if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'discover' || page === 'workflow') {
         setPostsMenuOpen(true);
+      }
+      if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns') {
+        setMarketingMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
       if (window.location.pathname !== path || window.location.search) {
@@ -757,6 +793,8 @@ function App() {
       setCurrentPage(pageFromPath);
       const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
       if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
+      const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns'];
+      if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
       return () => {
         canceled = true;
       };
@@ -790,6 +828,8 @@ function App() {
         setCurrentPage(pageFromPath);
         const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
         if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
+        const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns'];
+        if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
         return;
       }
 
@@ -871,8 +911,10 @@ function App() {
       case 'profile': return <Profile currentUser={authUser} onUserUpdated={handleUserUpdated} />;
       case 'media': return <Media />;
       case 'integrations': return <Integrations />;
-      case 'mailing': return <Mailing />;
-      case 'campaign': return <Campaign />;
+      case 'marketing': return <MarketingOverview navigateToPage={navigateToPage} />;
+      case 'marketing-contacts': return <MarketingContacts />;
+      case 'marketing-email': return <MarketingEmail />;
+      case 'marketing-campaigns': return <MarketingCampaigns />;
       case 'workspace': return <Workspace />;
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;
@@ -892,6 +934,8 @@ function App() {
     authUser,
     postsMenuOpen,
     setPostsMenuOpen,
+    marketingMenuOpen,
+    setMarketingMenuOpen,
     profileNeedsAttention,
     navigateToPage,
     handleLogout,
