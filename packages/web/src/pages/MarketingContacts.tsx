@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const XLSX = require('xlsx') as typeof import('xlsx');
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const XLSX = require('xlsx') as any;
 import {
   ChevronLeft,
   FileSpreadsheet,
@@ -409,7 +409,7 @@ function LeadGroupsList({ onOpen }: { onOpen: (g: LeadGroup) => void }) {
       const wb = XLSX.read(ab, { type: 'array' });
       const sheets = wb.SheetNames.map((sheetName: string) => {
         const ws = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, string>[];
         const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
         return { name: sheetName, leads: rows, fields };
       }).filter((s: { leads: unknown[] }) => s.leads.length > 0);
@@ -558,7 +558,7 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
       const ab = await file.arrayBuffer();
       const wb = XLSX.read(ab, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, string>[];
       return { rows, fields: rows.length > 0 ? Object.keys(rows[0]) : [] };
     }
     const text = await file.text();
