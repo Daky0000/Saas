@@ -2242,6 +2242,30 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   // ── End Mailing Module ──────────────────────────────────────────────────────
 
+  // ── Leads Module Tables ──────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lead_groups (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      fields TEXT[] DEFAULT '{}',
+      lead_count INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      group_id TEXT NOT NULL REFERENCES lead_groups(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS leads_group_idx ON leads (group_id);`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS leads_user_idx ON leads (user_id);`).catch(() => undefined);
+  // ── End Leads Module ─────────────────────────────────────────────────────────
+
   // ── Analytics & Insights Engine Tables ──────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS social_metrics (
@@ -18925,6 +18949,101 @@ app.get('/api/mailing/unsubscribe/:token', async (req: Request, res: Response) =
 });
 
 // ─── End Mailing API Routes ───────────────────────────────────────────────────
+
+// ─── Leads API Routes ─────────────────────────────────────────────────────────
+
+// GET /api/leads/groups
+app.get('/api/leads/groups', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows } = await pool!.query(
+      `SELECT lg.*, (SELECT COUNT(*) FROM leads l WHERE l.group_id = lg.id)::int AS lead_count
+       FROM lead_groups lg WHERE lg.user_id=$1 ORDER BY lg.created_at DESC`, [auth.userId]
+    );
+    return res.json({ success: true, groups: rows });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch lead groups' }); }
+});
+
+// POST /api/leads/groups
+app.post('/api/leads/groups', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'name required' });
+    const { rows } = await pool!.query(
+      `INSERT INTO lead_groups (user_id, name) VALUES ($1,$2) RETURNING *`, [auth.userId, name]
+    );
+    return res.json({ success: true, group: rows[0] });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to create group' }); }
+});
+
+// DELETE /api/leads/groups/:id
+app.delete('/api/leads/groups/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    await pool!.query(`DELETE FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to delete group' }); }
+});
+
+// GET /api/leads/groups/:id/leads
+app.get('/api/leads/groups/:id/leads', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: [grp] } = await pool!.query(`SELECT * FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    if (!grp) return res.status(404).json({ success: false, error: 'Not found' });
+    const { rows } = await pool!.query(`SELECT * FROM leads WHERE group_id=$1 ORDER BY created_at DESC`, [req.params.id]);
+    return res.json({ success: true, group: grp, leads: rows });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch leads' }); }
+});
+
+// POST /api/leads/groups/:id/leads — single lead
+app.post('/api/leads/groups/:id/leads', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: [grp] } = await pool!.query(`SELECT * FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    if (!grp) return res.status(404).json({ success: false, error: 'Not found' });
+    const { data } = req.body;
+    if (!data || typeof data !== 'object') return res.status(400).json({ success: false, error: 'data object required' });
+    const fields: string[] = Array.from(new Set([...(grp.fields || []), ...Object.keys(data)]));
+    await pool!.query(`UPDATE lead_groups SET fields=$1 WHERE id=$2`, [fields, req.params.id]);
+    const { rows } = await pool!.query(
+      `INSERT INTO leads (group_id, user_id, data) VALUES ($1,$2,$3) RETURNING *`,
+      [req.params.id, auth.userId, JSON.stringify(data)]
+    );
+    return res.json({ success: true, lead: rows[0] });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to add lead' }); }
+});
+
+// POST /api/leads/groups/:id/import — bulk CSV import (flexible fields)
+app.post('/api/leads/groups/:id/import', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: [grp] } = await pool!.query(`SELECT * FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    if (!grp) return res.status(404).json({ success: false, error: 'Not found' });
+    const { leads } = req.body; // [{ field1: val, field2: val, ... }]
+    if (!Array.isArray(leads) || !leads.length) return res.status(400).json({ success: false, error: 'leads array required' });
+    const allFields: string[] = Array.from(new Set([...(grp.fields || []), ...leads.flatMap(l => Object.keys(l))]));
+    await pool!.query(`UPDATE lead_groups SET fields=$1 WHERE id=$2`, [allFields, req.params.id]);
+    let imported = 0;
+    for (const lead of leads.slice(0, 10000)) {
+      await pool!.query(`INSERT INTO leads (group_id, user_id, data) VALUES ($1,$2,$3)`, [req.params.id, auth.userId, JSON.stringify(lead)]);
+      imported++;
+    }
+    return res.json({ success: true, imported });
+  } catch { return res.status(500).json({ success: false, error: 'Import failed' }); }
+});
+
+// DELETE /api/leads/:id
+app.delete('/api/leads/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    await pool!.query(`DELETE FROM leads WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to delete lead' }); }
+});
+
+// ─── End Leads API Routes ─────────────────────────────────────────────────────
 
 // ─── Analytics & Insights Engine ─────────────────────────────────────────────
 
