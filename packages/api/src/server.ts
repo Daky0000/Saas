@@ -18974,6 +18974,24 @@ app.get('/api/mailing/unsubscribe/:token', async (req: Request, res: Response) =
 
 // ─── Leads API Routes ─────────────────────────────────────────────────────────
 
+// POST /api/leads/parse-excel — parse uploaded Excel/CSV, return sheet structure
+app.post('/api/leads/parse-excel', express.raw({ type: ['application/octet-stream', 'text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '*/*'], limit: '20mb' }), async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const buf = req.body as Buffer;
+    if (!buf || !buf.length) return res.status(400).json({ success: false, error: 'No file data received' });
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    const sheets = wb.SheetNames.map((name: string) => {
+      const ws = wb.Sheets[name];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, string>[];
+      const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
+      return { name, fields, leads: rows };
+    }).filter((s: { leads: unknown[] }) => s.leads.length > 0);
+    return res.json({ success: true, sheets });
+  } catch (e) { return res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Parse failed' }); }
+});
+
 // GET /api/leads/groups
 app.get('/api/leads/groups', async (req: Request, res: Response) => {
   try {

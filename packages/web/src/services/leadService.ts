@@ -83,6 +83,18 @@ export const leadService = {
     return { updated: data.updated, added: data.added };
   },
 
+  async parseExcelFile(file: File): Promise<{ name: string; fields: string[]; leads: Record<string, string>[] }[]> {
+    const buf = await file.arrayBuffer();
+    const res = await fetch(`${API_BASE_URL}/api/leads/parse-excel`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream' },
+      body: buf,
+    });
+    const data = await parseJson<{ success: boolean; sheets: { name: string; fields: string[]; leads: Record<string, string>[] }[]; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Parse failed');
+    return data.sheets;
+  },
+
   async bulkImportSheets(sheets: { name: string; leads: Record<string, string>[]; fields: string[] }[]): Promise<{ groupId: string; name: string; imported: number }[]> {
     const res = await fetch(`${BASE}/bulk-import`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ sheets }) });
     const data = await parseJson<{ success: boolean; results: { groupId: string; name: string; imported: number }[]; error?: string }>(res);

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import {
   ChevronLeft,
   FileSpreadsheet,
@@ -404,20 +403,13 @@ function LeadGroupsList({ onOpen }: { onOpen: (g: LeadGroup) => void }) {
     if (xlsxRef.current) xlsxRef.current.value = '';
     setBulkImporting(true);
     try {
-      const ab = await file.arrayBuffer();
-      const wb = XLSX.read(ab, { type: 'array' });
-      const sheets = wb.SheetNames.map((sheetName: string) => {
-        const ws = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
-        return { name: sheetName, leads: rows, fields };
-      }).filter((s: { leads: unknown[] }) => s.leads.length > 0);
-      if (!sheets.length) { setMessage({ text: 'No data found in the Excel file.', ok: false }); return; }
+      const sheets = await leadService.parseExcelFile(file);
+      if (!sheets.length) { setMessage({ text: 'No data found in the file.', ok: false }); return; }
       const results = await leadService.bulkImportSheets(sheets);
       const total = results.reduce((s, r) => s + r.imported, 0);
       setMessage({ text: `Created ${results.length} lead group${results.length !== 1 ? 's' : ''} with ${total} leads total.`, ok: true });
       await load();
-    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Import failed', ok: false }); }
+    } catch (err) { setMessage({ text: err instanceof Error ? err.message : 'Import failed', ok: false }); }
     finally { setBulkImporting(false); }
   };
 
@@ -554,11 +546,9 @@ function LeadGroupDetail({ group: initialGroup, onBack }: { group: LeadGroup; on
 
   const parseFileToRows = async (file: File): Promise<{ rows: Record<string, string>[]; fields: string[] }> => {
     if (file.name.match(/\.xlsx?$/i)) {
-      const ab = await file.arrayBuffer();
-      const wb = XLSX.read(ab, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      return { rows, fields: rows.length > 0 ? Object.keys(rows[0]) : [] };
+      const sheets = await leadService.parseExcelFile(file);
+      if (!sheets.length) return { rows: [], fields: [] };
+      return { rows: sheets[0].leads, fields: sheets[0].fields };
     }
     const text = await file.text();
     const lines = text.split(/\r?\n/).filter(l => l.trim());
