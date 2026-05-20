@@ -18807,15 +18807,23 @@ app.get('/api/mailing/segments/:id/contacts', async (req: Request, res: Response
     const params: unknown[] = [auth.userId];
     const where = buildSegmentWhere(segs[0].rules as _SegRules, params);
     const { rows } = await pool!.query(
-      `SELECT mc.*, COALESCE(array_agg(mct.tag ORDER BY mct.tag) FILTER (WHERE mct.tag IS NOT NULL),'{}') as tags
+      `SELECT mc.id, mc.email, mc.first_name, mc.last_name, mc.phone, mc.source, mc.subscribed,
+              mc.email_marketing_consent, mc.unsubscribed_at, mc.created_at, mc.updated_at,
+              COALESCE(mc.custom_data, '{}'::jsonb) as custom_data,
+              COALESCE(array_agg(mct.tag ORDER BY mct.tag) FILTER (WHERE mct.tag IS NOT NULL), ARRAY[]::text[]) as tags
        FROM mailing_contacts mc
-       LEFT JOIN mailing_contact_tags mct ON mct.contact_id=mc.id
-       WHERE mc.user_id=$1 AND ${where}
-       GROUP BY mc.id ORDER BY mc.created_at DESC`,
+       LEFT JOIN mailing_contact_tags mct ON mct.contact_id = mc.id
+       WHERE mc.user_id = $1 AND ${where}
+       GROUP BY mc.id, mc.email, mc.first_name, mc.last_name, mc.phone, mc.source, mc.subscribed,
+                mc.email_marketing_consent, mc.unsubscribed_at, mc.created_at, mc.updated_at, mc.custom_data
+       ORDER BY mc.created_at DESC`,
       params
     );
     return res.json({ success: true, contacts: rows });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch contacts' }); }
+  } catch (err) {
+    console.error('[segment contacts]', err);
+    return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to fetch contacts' });
+  }
 });
 
 // POST /api/mailing/contacts/bulk — bulk tag / archive / delete

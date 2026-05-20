@@ -677,7 +677,8 @@ function SegmentDetailView({ segment, onBack }: { segment: MailingSegment; onBac
   const load = async () => {
     setLoading(true);
     try { setContacts(await mailingService.getSegmentContacts(segment.id)); }
-    catch { /* silent */ } finally { setLoading(false); }
+    catch (err) { setMessage({ text: err instanceof Error ? err.message : 'Failed to load contacts', ok: false }); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { void load(); }, [segment.id]);
