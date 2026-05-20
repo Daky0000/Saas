@@ -1161,62 +1161,61 @@ export default function ChatWidget() {
       {/* Chat panel */}
       {open && (
         <div
-          className="fixed bottom-24 right-6 z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
-          style={{ width: 380, height: 600, maxWidth: 'calc(100vw - 1.5rem)' }}
+          className="fixed bottom-[4.5rem] right-5 z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          style={{ width: 340, height: 500, maxWidth: 'calc(100vw - 1.25rem)' }}
         >
           {/* Header */}
-          <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 px-4 py-3">
-            <SparkleAvatar size={34} />
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-2">
+            <SparkleAvatar size={26} />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-slate-900">Daky</div>
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <div className="text-xs font-bold text-slate-900 leading-none">Daky</div>
+              <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ACTIVE
               </div>
             </div>
-            <button type="button" className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Settings">
-              <Settings size={15} />
+            <button type="button" className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Settings">
+              <Settings size={13} />
             </button>
-            <button type="button" onClick={() => setOpen(false)} className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
-              <X size={15} />
+            <button type="button" onClick={() => setOpen(false)} className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
+              <X size={13} />
             </button>
           </div>
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto">
             {!hasMessages ? (
-              <div className="flex flex-col items-center px-5 pt-7 pb-4">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl mb-4" style={{ background: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)' }}>
-                  <Sparkles size={28} className="text-indigo-500" />
+              <div className="flex flex-col items-center px-4 pt-5 pb-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl mb-3" style={{ background: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)' }}>
+                  <Sparkles size={20} className="text-indigo-500" />
                 </div>
-                <h2 className="text-xl font-bold text-slate-900 mb-1.5">How can I help you?</h2>
-                <p className="text-center text-sm text-slate-500 leading-relaxed mb-6">I'm Daky, your AI companion for writing, content, and brainstorming.</p>
-                <div className="w-full mb-1"><span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Suggested</span></div>
-                <div className="w-full space-y-2 mt-2">
+                <h2 className="text-base font-bold text-slate-900 mb-1">How can I help?</h2>
+                <p className="text-center text-xs text-slate-500 leading-relaxed mb-4">I'm Daky, your AI companion for writing, content, and brainstorming.</p>
+                <div className="w-full space-y-1.5">
                   {SUGGESTIONS.map((s) => (
                     <button key={s.title} type="button"
                       onClick={() => { setInput(s.prompt); inputRef.current?.focus(); }}
-                      className="flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-3 text-left hover:border-indigo-200 hover:bg-indigo-50 transition-colors">
-                      <span className="text-xl shrink-0">{s.icon}</span>
+                      className="flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:border-indigo-200 hover:bg-indigo-50 transition-colors">
+                      <span className="text-base shrink-0">{s.icon}</span>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-800">{s.title}</p>
-                        <p className="text-[11px] text-slate-400">{s.subtitle}</p>
+                        <p className="text-[11px] font-bold text-slate-800">{s.title}</p>
+                        <p className="text-[10px] text-slate-400">{s.subtitle}</p>
                       </div>
                     </button>
                   ))}
                 </div>
               </div>
             ) : (
-              <div className="px-4 py-3 space-y-3">
+              <div className="px-3 py-2.5 space-y-2">
                 {messages.map((msg) => (
                   <div key={msg.id}>
                     {msg.kind === 'tool' ? (
-                      <div className="pl-9"><ToolCard msg={msg} /></div>
+                      <div className="pl-8"><ToolCard msg={msg} /></div>
                     ) : msg.kind === 'form' ? (
-                      <div className="pl-9">
+                      <div className="pl-8">
                         <FormCard msg={msg} onSubmit={(f) => submitForm(msg.id, f)} />
                       </div>
                     ) : msg.kind === 'scheduler' ? (
-                      <div className="pl-9">
+                      <div className="pl-8">
                         <SchedulerCard
                           msg={msg}
                           onSchedule={(iso, label) => {
@@ -1228,7 +1227,7 @@ export default function ChatWidget() {
                         />
                       </div>
                     ) : msg.kind === 'plan' ? (
-                      <div className="pl-9">
+                      <div className="pl-8">
                         <PlanCard
                           msg={msg}
                           onExecute={(planId, agents) => void executePlan(planId, agents)}
@@ -1236,22 +1235,18 @@ export default function ChatWidget() {
                         />
                       </div>
                     ) : (
-                      <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} gap-2`}>
-                        {msg.role === 'assistant' && <SparkleAvatar size={28} />}
-                        <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
+                      <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} gap-1.5`}>
+                        {msg.role === 'assistant' && <SparkleAvatar size={22} />}
+                        <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
                           msg.role === 'user' ? 'rounded-br-sm bg-indigo-600 text-white' : 'rounded-bl-sm bg-slate-100 text-slate-800'
                         }`}>
-                          {/* Attached image thumbnails in user bubble */}
                           {msg.role === 'user' && msg.images && msg.images.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mb-2">
+                            <div className="flex flex-wrap gap-1 mb-1.5">
                               {msg.images.map((img) => (
                                 <div key={img.id} className="group/thumb relative">
-                                  <img src={img.dataUrl} alt={img.name}
-                                    className="h-14 w-14 rounded-lg object-cover border border-white/30" />
-                                  {/* Hover expand */}
+                                  <img src={img.dataUrl} alt={img.name} className="h-12 w-12 rounded-lg object-cover border border-white/30" />
                                   <div className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden group-hover/thumb:block">
-                                    <img src={img.dataUrl} alt={img.name}
-                                      className="max-h-44 max-w-56 rounded-xl border border-slate-200 shadow-2xl object-contain bg-white p-1" />
+                                    <img src={img.dataUrl} alt={img.name} className="max-h-40 max-w-48 rounded-xl border border-slate-200 shadow-2xl object-contain bg-white p-1" />
                                   </div>
                                 </div>
                               ))}
@@ -1259,7 +1254,7 @@ export default function ChatWidget() {
                           )}
                           {msg.content
                             ? renderText(msg.content)
-                            : <span className="inline-block h-4 w-8 animate-pulse rounded bg-slate-300" />}
+                            : <span className="inline-block h-3 w-7 animate-pulse rounded bg-slate-300" />}
                         </div>
                       </div>
                     )}
@@ -1269,11 +1264,11 @@ export default function ChatWidget() {
                 {loading && messages.length > 0 &&
                   messages[messages.length - 1]?.kind === 'text' &&
                   (messages[messages.length - 1] as TextMessage).content === '' && (
-                    <div className="flex items-start gap-2">
-                      <SparkleAvatar size={28} />
-                      <div className="rounded-2xl rounded-bl-sm bg-slate-100 px-3.5 py-2.5">
+                    <div className="flex items-start gap-1.5">
+                      <SparkleAvatar size={22} />
+                      <div className="rounded-2xl rounded-bl-sm bg-slate-100 px-3 py-2">
                         <span className="flex gap-1 items-center">
-                          {[0, 1, 2].map((i) => (<span key={i} className="h-2 w-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />))}
+                          {[0, 1, 2].map((i) => (<span key={i} className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />))}
                         </span>
                       </div>
                     </div>
@@ -1284,90 +1279,82 @@ export default function ChatWidget() {
           </div>
 
           {/* Input bar */}
-          <div className="shrink-0 border-t border-slate-100 px-3 py-3">
+          <div className="shrink-0 border-t border-slate-100 px-2.5 py-2">
             {recordingState === 'recording' ? (
-              <div className="flex items-center gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+              <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-2">
                 <WaveformBars />
-                <span className="flex-1 text-xs font-semibold text-indigo-600 tabular-nums">{fmtTime(recordingSeconds)}</span>
+                <span className="flex-1 text-[11px] font-semibold text-indigo-600 tabular-nums">{fmtTime(recordingSeconds)}</span>
                 <button type="button" onClick={stopRecording}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white" aria-label="Stop recording">
-                  <MicOff size={13} />
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-white" aria-label="Stop recording">
+                  <MicOff size={11} />
                 </button>
               </div>
             ) : recordingState === 'pending' ? (
-              <div className="space-y-2">
-                {/* Show attached images if any */}
+              <div className="space-y-1.5">
                 {attachedImages.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1">
                     {attachedImages.map((img) => (
                       <div key={img.id} className="group/att relative">
-                        <img src={img.dataUrl} alt={img.name} className="h-9 w-9 rounded-lg object-cover border border-indigo-200" />
+                        <img src={img.dataUrl} alt={img.name} className="h-8 w-8 rounded-lg object-cover border border-indigo-200" />
                         <button type="button" onClick={() => setAttachedImages((p) => p.filter((x) => x.id !== img.id))}
-                          className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 text-white text-[9px] opacity-0 group-hover/att:opacity-100 transition-opacity">×</button>
+                          className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-800 text-white text-[8px] opacity-0 group-hover/att:opacity-100 transition-opacity">×</button>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
-                  <Mic size={13} className="text-indigo-500 shrink-0" />
-                  <p className="flex-1 text-xs text-indigo-800 leading-snug line-clamp-2">{input || '(no transcript)'}</p>
+                <div className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5">
+                  <Mic size={11} className="text-indigo-500 shrink-0" />
+                  <p className="flex-1 text-[11px] text-indigo-800 leading-snug line-clamp-2">{input || '(no transcript)'}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-1.5">
                   <button type="button" onClick={cancelVoice}
-                    className="flex-1 rounded-xl border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                    className="flex-1 rounded-lg border border-slate-200 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
                     Cancel
                   </button>
                   <button type="button" onClick={sendVoice} disabled={!input.trim() && attachedImages.length === 0}
-                    className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-40">
-                    <Send size={12} /> Send Audio
+                    className="flex-1 flex items-center justify-center gap-1 rounded-lg bg-indigo-600 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-40">
+                    <Send size={10} /> Send
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="space-y-2">
-                {/* Attached image chips */}
+              <div className="space-y-1.5">
                 {attachedImages.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1">
                     {attachedImages.map((img) => (
                       <div key={img.id} className="group/chip relative">
                         <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                          <img src={img.dataUrl} alt={img.name} className="h-9 w-9 object-cover" />
+                          <img src={img.dataUrl} alt={img.name} className="h-8 w-8 object-cover" />
                           <button type="button"
                             onClick={() => setAttachedImages((p) => p.filter((x) => x.id !== img.id))}
-                            className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-white text-[9px] opacity-0 group-hover/chip:opacity-100 transition-opacity">×</button>
+                            className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-900 text-white text-[8px] opacity-0 group-hover/chip:opacity-100 transition-opacity">×</button>
                         </div>
-                        {/* Hover preview */}
                         <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 group-hover/chip:block">
-                          <img src={img.dataUrl} alt={img.name}
-                            className="max-h-40 max-w-52 rounded-xl border border-slate-200 shadow-xl object-contain bg-white p-1" />
+                          <img src={img.dataUrl} alt={img.name} className="max-h-36 max-w-48 rounded-xl border border-slate-200 shadow-xl object-contain bg-white p-1" />
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-
-                <div className="flex items-end gap-1.5">
+                <div className="flex items-end gap-1">
                   <button type="button" onClick={() => fileInputRef.current?.click()}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Attach file">
-                    <Paperclip size={16} />
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Attach file">
+                    <Paperclip size={13} />
                   </button>
                   <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,*" onChange={onFileAttach} />
-
                   <textarea ref={inputRef} rows={1} value={input}
                     onChange={(e) => setInput(e.target.value)} onKeyDown={onKeyDown}
                     disabled={loading} placeholder="Ask Daky anything..."
-                    className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300 disabled:opacity-50"
-                    style={{ maxHeight: 96, overflowY: 'auto' }} />
-
+                    className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300 disabled:opacity-50"
+                    style={{ maxHeight: 72, overflowY: 'auto' }} />
                   <button type="button" onClick={startRecording}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-indigo-500" aria-label="Voice input">
-                    <Mic size={16} />
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-indigo-500" aria-label="Voice input">
+                    <Mic size={13} />
                   </button>
-
                   <button type="button" onClick={() => void send()} disabled={(!input.trim() && attachedImages.length === 0) || loading}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40"
                     aria-label="Send message">
-                    <Send size={14} />
+                    <Send size={12} />
                   </button>
                 </div>
               </div>
