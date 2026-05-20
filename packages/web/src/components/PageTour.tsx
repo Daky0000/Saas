@@ -80,8 +80,8 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
         type="button"
         onClick={openPanel}
         title={`Quick guide${pageTitle ? ` — ${pageTitle}` : ''}`}
-        className="fixed bottom-5 right-5 z-40 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white shadow-md text-gray-400 hover:text-indigo-600 hover:border-indigo-300 transition-all"
-        style={{ position: 'fixed' }}
+        className="fixed bottom-6 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white shadow-md text-gray-400 hover:text-indigo-600 hover:border-indigo-300 transition-all"
+        style={{ position: 'fixed', right: 88 }}
       >
         <HelpCircle size={16} />
         {!seen && (

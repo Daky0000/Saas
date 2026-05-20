@@ -434,7 +434,9 @@ function Auth({ onLogin }: AuthProps) {
       if (rememberMe) localStorage.setItem('remember_login', loginIdentifier.trim());
       onLogin(normalizeUser({ id: d.user.id, email: d.user.email, name: d.user.name ?? null, username: d.user.username ?? null, phone: d.user.phone ?? null, country: d.user.country ?? null, role: d.user.role === 'admin' ? 'admin' : 'user' }));
     } catch (err) {
-      setErrorMessage(err instanceof TypeError ? `Backend unavailable (${API_BASE_URL})` : err instanceof Error ? err.message : 'Unable to authenticate');
+      const raw = err instanceof Error ? err.message : 'Unable to authenticate';
+      const friendly = raw === 'Invalid credentials' ? 'Email or password is incorrect. Please try again.' : raw;
+      setErrorMessage(err instanceof TypeError ? `Backend unavailable (${API_BASE_URL})` : friendly);
     } finally { setIsSubmitting(false); }
   };
 

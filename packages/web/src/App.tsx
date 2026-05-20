@@ -49,6 +49,7 @@ import MarketingContacts from './pages/MarketingContacts';
 import MarketingEmail from './pages/MarketingEmail';
 import MarketingCampaigns from './pages/MarketingCampaigns';
 import MarketingSurveys from './pages/MarketingSurveys';
+import MarketingAutomations from './pages/MarketingAutomations';
 import PublicSurvey from './pages/PublicSurvey';
 import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
@@ -90,6 +91,7 @@ export type PageType =
   | 'marketing-email'
   | 'marketing-campaigns'
   | 'marketing-surveys'
+  | 'marketing-automations'
   | 'workspace'
   | 'billing'
   | 'pricing'
@@ -131,6 +133,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'marketing-email': '/marketing/email',
   'marketing-campaigns': '/marketing/campaigns',
   'marketing-surveys': '/marketing/surveys',
+  'marketing-automations': '/marketing/automations',
   workspace: '/workspace',
   billing: '/billing',
   tasks: '/tasks',
@@ -516,7 +519,8 @@ function AppSidebar({
               currentPage === 'marketing-contacts' ||
               currentPage === 'marketing-email' ||
               currentPage === 'marketing-campaigns' ||
-              currentPage === 'marketing-surveys'
+              currentPage === 'marketing-surveys' ||
+              currentPage === 'marketing-automations'
             )}
           >
             <Megaphone size={15} className="shrink-0" />
@@ -531,6 +535,7 @@ function AppSidebar({
                 { id: 'marketing-email' as PageType, label: 'Email' },
                 { id: 'marketing-campaigns' as PageType, label: 'Campaigns' },
                 { id: 'marketing-surveys' as PageType, label: 'Surveys' },
+                { id: 'marketing-automations' as PageType, label: 'Automations' },
               ] as { id: PageType; label: string }[]).map((c) => (
                 <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                   {c.label}
@@ -690,7 +695,7 @@ function App() {
       if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'discover' || page === 'workflow') {
         setPostsMenuOpen(true);
       }
-      if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys') {
+      if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys' || page === 'marketing-automations') {
         setMarketingMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
@@ -799,7 +804,7 @@ function App() {
       setCurrentPage(pageFromPath);
       const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
       if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
-      const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys'];
+      const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
       if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
       return () => {
         canceled = true;
@@ -834,7 +839,7 @@ function App() {
         setCurrentPage(pageFromPath);
         const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
         if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
-        const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys'];
+        const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
         if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
         return;
       }
@@ -926,6 +931,7 @@ function App() {
       case 'marketing-email': return <MarketingEmail />;
       case 'marketing-campaigns': return <MarketingCampaigns />;
       case 'marketing-surveys': return <MarketingSurveys />;
+      case 'marketing-automations': return <MarketingAutomations />;
       case 'workspace': return <Workspace />;
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;
