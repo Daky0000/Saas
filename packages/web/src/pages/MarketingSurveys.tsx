@@ -566,7 +566,7 @@ function SurveyBuilder({ survey: init, onBack, onSaved }: { survey: Survey; onBa
           <option value="closed">Closed</option>
         </select>
         {error && <span className="text-red-500 text-xs max-w-xs truncate">{error}</span>}
-        <a href={`${window.location.origin}/survey/${survey.id}`} target="_blank" rel="noopener noreferrer"
+        <a href={`${window.location.origin}/survey/${survey.id}?preview=1`} target="_blank" rel="noopener noreferrer"
           className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
           <Eye size={14} /> Preview
         </a>
