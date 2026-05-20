@@ -65,3 +65,5 @@
 .dw-dot-pulse { animation: dw-pulse 1.6s ease-in-out infinite }
 .dw-bar     { animation: dw-bar     .8s ease-out    backwards; transform-origin: bottom }
 .dw-progress{ animation: dw-prog    1.2s ease-out   .3s both }
+
+[contenteditable][data-placeholder]:empty:before { content: attr(data-placeholder); color: #94a3b8; pointer-events: none; }

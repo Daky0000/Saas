@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  BarChart2,
+  Bold,
   ChevronLeft,
   Copy,
   Download,
   FileSpreadsheet,
   Filter,
+  Italic,
   Link2,
   Link2Off,
+  List,
+  ListOrdered,
   Loader2,
   Mail,
   MoreHorizontal,
@@ -14,26 +19,31 @@ import {
   RefreshCw,
   Rss,
   Search,
+  Send,
   Settings2,
   SlidersHorizontal,
   Tag,
   Trash2,
+  Underline,
   Upload,
   Users,
   X,
 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import {
   mailingService,
+  type ContactAnalytics,
   type MailingContact,
   type MailingSegment,
 } from '../services/mailingService';
 import { googleSheetsService, leadService, type Lead, type LeadGroup } from '../services/leadService';
 
-type Tab = 'contacts' | 'segments' | 'leads';
+type Tab = 'contacts' | 'segments' | 'analytics' | 'leads';
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'contacts', label: 'Contacts', icon: Users },
   { id: 'segments', label: 'Segments', icon: Tag },
+  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
   { id: 'leads', label: 'Leads', icon: FileSpreadsheet },
 ];
 
@@ -53,6 +63,7 @@ function ContactDetailView({
   onDelete: () => void;
 }) {
   const [contact, setContact] = useState(initial);
+  const [composing, setComposing] = useState(false);
   const [tab, setTab] = useState<'overview' | 'insights' | 'notes' | 'settings'>('overview');
   const [notes, setNotes] = useState(contact.custom_data?.__notes ?? '');
   const [tagInput, setTagInput] = useState('');
@@ -61,6 +72,8 @@ function ContactDetailView({
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ first_name: contact.first_name ?? '', last_name: contact.last_name ?? '', phone: contact.phone ?? '' });
+
+  if (composing) return <SendEmailView contact={contact} onBack={() => setComposing(false)} />;
 
   const push = (c: MailingContact) => { setContact(c); onUpdate(c); };
 
@@ -120,9 +133,15 @@ function ContactDetailView({
 
   return (
     <div className="space-y-4">
-      <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
-        <ChevronLeft size={16} /> All contacts
-      </button>
+      <div className="flex items-center justify-between">
+        <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
+          <ChevronLeft size={16} /> All contacts
+        </button>
+        <button type="button" onClick={() => setComposing(true)}
+          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+          <Mail size={14} /> Send email
+        </button>
+      </div>
 
       {message && (
         <div className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${message.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
@@ -1490,6 +1509,254 @@ function SegmentsTab() {
   );
 }
 
+// ─── Audience Analytics Tab ──────────────────────────────────────────────────
+
+function ContactsAnalyticsTab() {
+  const [data, setData] = useState<ContactAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    mailingService.getContactAnalytics()
+      .then(d => { setData(d); setError(null); })
+      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load analytics'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="flex items-center justify-center py-24 text-slate-400"><Loader2 size={22} className="animate-spin mr-2" /> Loading analytics…</div>;
+  if (error) return <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>;
+  if (!data) return null;
+
+  const { overview, over_time, by_source } = data;
+  const total = overview.total || 1;
+
+  return (
+    <div className="space-y-5">
+      {/* Overview */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-base font-black text-slate-900">Overview</h2>
+          <span className="text-xs text-slate-400">Last 30 days</span>
+        </div>
+        <p className="text-xs text-slate-400 mb-5">All time totals</p>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[
+            { label: 'Total contacts', value: overview.total, pct: null, color: 'text-slate-900' },
+            { label: 'Subscribed', value: overview.subscribed, pct: Math.round(overview.subscribed / total * 100), color: 'text-emerald-600' },
+            { label: 'Non-subscribed', value: overview.non_subscribed, pct: Math.round(overview.non_subscribed / total * 100), color: 'text-amber-600' },
+            { label: 'Unsubscribed', value: overview.unsubscribed, pct: Math.round(overview.unsubscribed / total * 100), color: 'text-red-500' },
+          ].map(({ label, value, pct, color }) => (
+            <div key={label}>
+              <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+              <p className={`text-3xl font-black ${color}`}>{value}</p>
+              {pct !== null && <p className="text-xs text-slate-400">{pct}%</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Contacts over time */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <h2 className="text-base font-black text-slate-900 mb-1">Contacts over time</h2>
+        <p className="text-xs text-slate-400 mb-5">New contacts added per day (last 30 days)</p>
+        {over_time.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+            <BarChart2 size={28} className="mb-2 opacity-30" />
+            <p className="text-sm">No contact data in the last 30 days</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={over_time} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} allowDecimals={false} width={30} />
+              <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
+              <Line type="monotone" dataKey="cumulative" stroke="#6366f1" strokeWidth={2} dot={false} name="Total contacts" />
+              <Line type="monotone" dataKey="new_contacts" stroke="#10b981" strokeWidth={2} dot={false} name="New contacts" />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Source performance */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <h2 className="text-base font-black text-slate-900 mb-1">Source performance</h2>
+        <p className="text-xs text-slate-400 mb-5">All time contacts by acquisition source</p>
+        {by_source.length === 0 ? (
+          <p className="text-sm text-slate-400 py-4 text-center">No data</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-100">
+                <tr className="text-xs font-semibold text-slate-500 text-left">
+                  <th className="pb-3 pr-4">Source</th>
+                  <th className="pb-3 pr-4">Total contacts</th>
+                  <th className="pb-3 pr-4">Subscribed</th>
+                  <th className="pb-3 pr-4">Unsubscribed</th>
+                  <th className="pb-3">Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {by_source.map(row => (
+                  <tr key={row.source} className="hover:bg-slate-50">
+                    <td className="py-3 pr-4 font-medium text-slate-800 capitalize">{row.source}</td>
+                    <td className="py-3 pr-4 text-slate-600">{row.total}</td>
+                    <td className="py-3 pr-4">
+                      <span className="text-emerald-600 font-medium">{row.subscribed}</span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span className="text-red-500">{row.unsubscribed}</span>
+                    </td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 max-w-[80px] rounded-full bg-slate-100 overflow-hidden">
+                          <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.round(row.total / overview.total * 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-slate-500 w-8 text-right">{Math.round(row.total / overview.total * 100)}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Send Email View ──────────────────────────────────────────────────────────
+
+function SendEmailView({ contact, onBack }: { contact: MailingContact; onBack: () => void }) {
+  const [subject, setSubject] = useState('');
+  const [includeFooter, setIncludeFooter] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  const exec = (cmd: string, value?: string) => { document.execCommand(cmd, false, value); editorRef.current?.focus(); };
+
+  const handleSend = async () => {
+    const html = editorRef.current?.innerHTML ?? '';
+    if (!subject.trim()) { setError('Subject is required'); return; }
+    if (!html.trim() || html === '<br>') { setError('Message body is required'); return; }
+    setSending(true); setError(null);
+    try {
+      await mailingService.sendEmailToContact(contact.id, { subject, html, include_unsubscribe_footer: includeFooter });
+      setSent(true);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Send failed'); }
+    finally { setSending(false); }
+  };
+
+  const initial = (contact.first_name || contact.email)[0].toUpperCase();
+
+  if (sent) {
+    return (
+      <div className="space-y-4">
+        <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
+          <ChevronLeft size={16} /> Back to contact
+        </button>
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 mb-4">
+            <Send size={22} className="text-emerald-600" />
+          </div>
+          <h2 className="text-lg font-black text-slate-900 mb-1">Email sent!</h2>
+          <p className="text-sm text-slate-500">Your message was delivered to {contact.email}</p>
+          <button type="button" onClick={onBack} className="mt-6 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+            Back to contact
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
+        <ChevronLeft size={16} /> Back to contact
+      </button>
+
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        {/* Contact header */}
+        <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-black text-indigo-700">
+            {initial}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-800">{contact.email}</p>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {(contact.tags ?? []).map(t => (
+                <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Subject */}
+        <div className="border-b border-slate-100 px-6 py-4">
+          <label className="block text-xs font-semibold text-slate-400 mb-1">Subject:</label>
+          <input value={subject} onChange={e => setSubject(e.target.value)}
+            placeholder="Add a subject line"
+            className="w-full text-xl font-semibold text-slate-800 outline-none placeholder:text-slate-300" />
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex items-center gap-0.5 border-b border-slate-100 px-4 py-2">
+          {[
+            { icon: Bold, cmd: 'bold', title: 'Bold' },
+            { icon: Italic, cmd: 'italic', title: 'Italic' },
+            { icon: Underline, cmd: 'underline', title: 'Underline' },
+            { icon: List, cmd: 'insertUnorderedList', title: 'Bullet list' },
+            { icon: ListOrdered, cmd: 'insertOrderedList', title: 'Numbered list' },
+          ].map(({ icon: Icon, cmd, title }) => (
+            <button key={cmd} type="button" title={title} onMouseDown={e => { e.preventDefault(); exec(cmd); }}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+              <Icon size={14} />
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div
+          ref={editorRef}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={() => setError(null)}
+          className="min-h-[280px] px-6 py-4 text-sm text-slate-700 outline-none focus:outline-none"
+          style={{ lineHeight: 1.7 }}
+          data-placeholder="Write your message…"
+        />
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+          <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+            <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${includeFooter ? 'bg-indigo-600' : 'bg-slate-200'}`}
+              onClick={() => setIncludeFooter(v => !v)}>
+              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${includeFooter ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </div>
+            Include Opt-Out Footer
+          </label>
+          <div className="flex items-center gap-2">
+            {error && <p className="text-xs text-red-600">{error}</p>}
+            <button type="button" onClick={onBack} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-red-500">
+              <Trash2 size={15} />
+            </button>
+            <button type="button" onClick={() => void handleSend()} disabled={sending}
+              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+              {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {sending ? 'Sending…' : 'Send Message'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Leads Tab ───────────────────────────────────────────────────────────────
 
 type LeadView = { type: 'groups' } | { type: 'detail'; group: LeadGroup };
@@ -2145,6 +2412,7 @@ export default function MarketingContacts() {
       <div>
         {tab === 'contacts' && <ContactsTab />}
         {tab === 'segments' && <SegmentsTab />}
+        {tab === 'analytics' && <ContactsAnalyticsTab />}
         {tab === 'leads' && <LeadsTab />}
       </div>
     </div>

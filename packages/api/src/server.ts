@@ -18705,6 +18705,72 @@ app.delete('/api/mailing/contacts/:id/tags/:tag', async (req: Request, res: Resp
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to remove tag' }); }
 });
 
+// GET /api/mailing/contacts/analytics — audience analytics
+app.get('/api/mailing/contacts/analytics', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const uid = auth.userId;
+    const [totals, overTime, bySource] = await Promise.all([
+      pool!.query(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN subscribed THEN 1 ELSE 0 END) AS subscribed,
+           SUM(CASE WHEN NOT subscribed AND unsubscribed_at IS NOT NULL THEN 1 ELSE 0 END) AS unsubscribed,
+           SUM(CASE WHEN NOT subscribed AND unsubscribed_at IS NULL THEN 1 ELSE 0 END) AS non_subscribed
+         FROM mailing_contacts WHERE user_id=$1`, [uid]),
+      pool!.query(
+        `SELECT TO_CHAR(DATE(created_at), 'Mon DD') AS label, DATE(created_at) AS d,
+                COUNT(*) AS new_contacts,
+                SUM(COUNT(*)) OVER (ORDER BY DATE(created_at)) AS cumulative
+         FROM mailing_contacts WHERE user_id=$1 AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY DATE(created_at) ORDER BY d`, [uid]),
+      pool!.query(
+        `SELECT COALESCE(source,'unknown') AS source,
+                COUNT(*) AS total,
+                SUM(CASE WHEN subscribed THEN 1 ELSE 0 END) AS subscribed,
+                SUM(CASE WHEN NOT subscribed THEN 1 ELSE 0 END) AS unsubscribed
+         FROM mailing_contacts WHERE user_id=$1
+         GROUP BY source ORDER BY total DESC`, [uid]),
+    ]);
+    const t = totals.rows[0];
+    return res.json({
+      success: true,
+      overview: { total: +t.total, subscribed: +t.subscribed, unsubscribed: +t.unsubscribed, non_subscribed: +t.non_subscribed },
+      over_time: overTime.rows.map(r => ({ label: r.label, new_contacts: +r.new_contacts, cumulative: +r.cumulative })),
+      by_source: bySource.rows.map(r => ({ source: r.source, total: +r.total, subscribed: +r.subscribed, unsubscribed: +r.unsubscribed })),
+    });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
+});
+
+// POST /api/mailing/contacts/:id/send-email — send a direct email to one contact
+app.post('/api/mailing/contacts/:id/send-email', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { subject, html, include_unsubscribe_footer } = req.body as { subject: string; html: string; include_unsubscribe_footer?: boolean };
+    if (!subject?.trim()) return res.status(400).json({ success: false, error: 'Subject is required' });
+    const { rows } = await pool!.query('SELECT * FROM mailing_contacts WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
+    const contact = rows[0];
+    const { apiKey: resendKey, fromEmail, fromName } = await getResendConfig();
+    if (!resendKey) return res.status(503).json({ success: false, error: 'Email sending is not configured — add your Resend API key in Admin → Platform Settings' });
+    const unsubFooter = include_unsubscribe_footer && contact.unsubscribe_token
+      ? `<br><br><hr style="border:none;border-top:1px solid #eee"><p style="font-size:12px;color:#999">You received this email because you are subscribed. <a href="${process.env.API_URL || ''}/api/mailing/unsubscribe/${contact.unsubscribe_token}">Unsubscribe</a></p>`
+      : '';
+    const resend = new (await import('resend').then(m => m.Resend))(resendKey);
+    await resend.emails.send({
+      from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
+      to: contact.email,
+      subject: subject.trim(),
+      html: `${html}${unsubFooter}`,
+    });
+    await pool!.query(
+      `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,NULL,$3,'delivered',NOW())`,
+      [randomUUID(), auth.userId, contact.id]
+    ).catch(() => undefined);
+    return res.json({ success: true });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Send failed' }); }
+});
+
 // GET /api/mailing/contacts/tags — list all unique tags for user
 app.get('/api/mailing/contacts/tags', async (req: Request, res: Response) => {
   try {

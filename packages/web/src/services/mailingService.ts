@@ -71,6 +71,12 @@ export type MailingAnalytics = {
 
 const BASE = `${API_BASE_URL}/api/mailing`;
 
+export type ContactAnalytics = {
+  overview: { total: number; subscribed: number; unsubscribed: number; non_subscribed: number };
+  over_time: { label: string; new_contacts: number; cumulative: number }[];
+  by_source: { source: string; total: number; subscribed: number; unsubscribed: number }[];
+};
+
 export const mailingService = {
   // Contacts
   async listContacts(params?: { search?: string; tag?: string }): Promise<MailingContact[]> {
@@ -117,6 +123,19 @@ export const mailingService = {
     const res = await fetch(`${BASE}/contacts/${contactId}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE', headers: authHeaders() });
     const data = await parseJson<{ success: boolean; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to remove tag');
+  },
+
+  async getContactAnalytics(): Promise<ContactAnalytics> {
+    const res = await fetch(`${BASE}/contacts/analytics`, { headers: authHeaders() });
+    const data = await parseJson<ContactAnalytics & { success: boolean; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed');
+    return data;
+  },
+
+  async sendEmailToContact(id: string, payload: { subject: string; html: string; include_unsubscribe_footer?: boolean }): Promise<void> {
+    const res = await fetch(`${BASE}/contacts/${id}/send-email`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+    const data = await parseJson<{ success: boolean; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to send email');
   },
 
   async listTags(): Promise<string[]> {
