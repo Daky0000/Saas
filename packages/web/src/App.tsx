@@ -37,6 +37,7 @@ import Integrations from './pages/Integrations';
 import Auth from './pages/Auth';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
+import RefundPolicy from './pages/RefundPolicy';
 import Landing from './pages/Landing';
 import Tools from './pages/Tools';
 import PublicPricing from './pages/PublicPricing';
@@ -790,7 +791,7 @@ function App() {
     }
 
     if (!loggedIn) {
-      const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
+      const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion'];
       if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
         navigatePath('/login', true);
       }
@@ -826,7 +827,7 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        const publicPaths = ['/', '/privacy', '/terms', '/login', '/tools', '/pricing', '/data-deletion'];
+        const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion'];
         if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
           navigatePath('/login', true);
           setCurrentPathname('/login');
@@ -878,6 +879,7 @@ function App() {
   // Public pages — always accessible regardless of auth state
   if (currentPathname === '/privacy') return <PrivacyPolicy />;
   if (currentPathname === '/terms') return <TermsOfService />;
+  if (currentPathname === '/refund') return <RefundPolicy />;
   if (currentPathname === '/tools') return <Tools onLoginClick={goToLogin} />;
   if (currentPathname === '/data-deletion') return <DataDeletion />;
   if (currentPathname.startsWith('/auth/')) return <OAuthCallback />;

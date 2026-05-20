@@ -82,6 +82,7 @@ export default function PublicFooter() {
               {[
                 { label: 'Privacy Policy', href: '/privacy' },
                 { label: 'Terms of Service', href: '/terms' },
+                { label: 'Refund Policy', href: '/refund' },
                 { label: 'Cookie Policy', href: '#' },
                 { label: 'Security', href: '#' },
               ].map((item) => (

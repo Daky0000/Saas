@@ -1025,29 +1025,24 @@ function CreateModal({
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Choose a starting point</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Pick a template or start from scratch. You can customise everything in the builder.</p>
+              <h2 className="text-lg font-bold text-slate-900">Choose a template</h2>
+              <p className="mt-0.5 text-sm text-slate-500">Pick a pre-built journey or start with a blank canvas.</p>
             </div>
-            <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
-              <X size={15} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => pickTemplate(null)}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm">
+                <Plus size={14} />
+                Start from scratch
+              </button>
+              <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
+                <X size={15} />
+              </button>
+            </div>
           </div>
 
           {/* Grid */}
           <div className="flex-1 overflow-y-auto p-6">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {/* Scratch card */}
-              <button type="button" onClick={() => pickTemplate(null)}
-                className="group flex flex-col items-start gap-3 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 transition-all">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-xl group-hover:bg-indigo-100">
-                  ✨
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900">Start from scratch</div>
-                  <div className="mt-0.5 text-xs text-slate-400">Build your own custom journey from a blank canvas.</div>
-                </div>
-              </button>
-
               {/* Template cards */}
               {AUTOMATION_TEMPLATES.map(tpl => (
                 <button key={tpl.id} type="button" onClick={() => pickTemplate(tpl)}
