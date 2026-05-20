@@ -792,10 +792,210 @@ function FlowCard({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Create modal
+// Automation templates
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CreateModal({ onCreate, onClose }: { onCreate: (name: string, desc: string) => void; onClose: () => void }) {
+type AutomationTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  emoji: string;
+  color: string;
+  bg: string;
+  tags: string[];
+  steps: FlowStep[];
+};
+
+function ts(type: StepType, config: Record<string, unknown> = {}, extra?: Partial<FlowStep>): FlowStep {
+  return { id: uid(), type, config, ...extra };
+}
+
+const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
+  {
+    id: 'welcome-contacts',
+    name: 'Welcome new contacts',
+    description: 'Send a warm welcome email as soon as someone joins your list.',
+    emoji: '👋',
+    color: '#6366f1',
+    bg: '#eef2ff',
+    tags: ['Email', 'Welcome'],
+    steps: [
+      ts('trigger', { trigger: 'email_signup' }),
+      ts('delay', { amount: 1, unit: 'hours' }),
+      ts('send_email', { subject: 'Welcome! We\'re glad you\'re here', from_name: 'Your Brand', preview: 'Here\'s what to expect from us…' }),
+    ],
+  },
+  {
+    id: 'exclusive-content-leads',
+    name: 'Share exclusive content with new leads',
+    description: 'Nurture new leads with a drip of valuable content over two weeks.',
+    emoji: '🎁',
+    color: '#8b5cf6',
+    bg: '#f5f3ff',
+    tags: ['Email', 'Leads', 'Nurture'],
+    steps: [
+      ts('trigger', { trigger: 'tag_added' }),
+      ts('send_email', { subject: 'Your exclusive content is ready', preview: 'We handpicked this just for you…' }),
+      ts('delay', { amount: 3, unit: 'days' }),
+      ts('send_email', { subject: 'More insights just for you', preview: 'Continuing your journey with us…' }),
+      ts('delay', { amount: 5, unit: 'days' }),
+      ts('send_email', { subject: 'One last thing before you go…', preview: 'We want to make sure you get the most out of this' }),
+      ts('tag', { tag: 'lead-nurtured' }),
+    ],
+  },
+  {
+    id: 'welcome-brand-subscribers',
+    name: 'Welcome new subscribers to your brand',
+    description: 'A three-part onboarding series introducing your brand, features, and tips.',
+    emoji: '🌟',
+    color: '#f59e0b',
+    bg: '#fffbeb',
+    tags: ['Email', 'Onboarding'],
+    steps: [
+      ts('trigger', { trigger: 'email_signup' }),
+      ts('send_email', { subject: 'Welcome to the family! 🎉', preview: 'You\'re officially in. Here\'s what\'s next…' }),
+      ts('delay', { amount: 2, unit: 'days' }),
+      ts('send_email', { subject: 'Here\'s what you can do with us', preview: 'A quick tour of everything available to you…' }),
+      ts('delay', { amount: 5, unit: 'days' }),
+      ts('send_email', { subject: 'Tips to get the most out of your subscription', preview: 'Our top users do these 3 things…' }),
+      ts('tag', { tag: 'onboarded' }),
+    ],
+  },
+  {
+    id: 'welcome-sms-email',
+    name: 'Welcome new contacts with SMS & Email',
+    description: 'Hit new contacts on two channels — a welcome email followed by a friendly SMS.',
+    emoji: '📱',
+    color: '#10b981',
+    bg: '#ecfdf5',
+    tags: ['Email', 'SMS', 'Welcome'],
+    steps: [
+      ts('trigger', { trigger: 'email_signup' }),
+      ts('send_email', { subject: 'Welcome! You\'re officially in 🙌', preview: 'Thanks for joining us. Here\'s what\'s next…' }),
+      ts('delay', { amount: 30, unit: 'minutes' }),
+      ts('send_sms', { message: 'Hey! Thanks for joining us 🎉 We\'re so glad you\'re here. Keep an eye on your inbox for something special.' }),
+    ],
+  },
+  {
+    id: 'appointment-reminder',
+    name: 'Remind users about appointments',
+    description: 'Automated reminders before an upcoming appointment or reservation to reduce no-shows.',
+    emoji: '📅',
+    color: '#06b6d4',
+    bg: '#ecfeff',
+    tags: ['Email', 'SMS', 'Reminder'],
+    steps: [
+      ts('trigger', { trigger: 'specific_date' }),
+      ts('send_email', { subject: 'Your appointment is 2 days away', preview: 'A quick reminder about your upcoming booking…' }),
+      ts('delay', { amount: 1, unit: 'days' }),
+      ts('send_email', { subject: 'See you tomorrow! Your booking details inside', preview: 'Everything you need for tomorrow…' }),
+      ts('send_sms', { message: 'Reminder: your appointment is tomorrow! Reply HELP for assistance or STOP to unsubscribe.' }),
+    ],
+  },
+  {
+    id: 'target-email-openers',
+    name: 'Target contacts based on emails they open',
+    description: 'Branch contacts based on whether they opened your last email — reward engaged contacts, re-engage the rest.',
+    emoji: '📬',
+    color: '#f97316',
+    bg: '#fff7ed',
+    tags: ['Email', 'Segmentation', 'If/Else'],
+    steps: [
+      ts('trigger', { trigger: 'email_opened' }),
+      ts('delay', { amount: 4, unit: 'hours' }),
+      ts('if_else',
+        { condition_type: 'email_opened', condition: 'last campaign' },
+        {
+          yes_steps: [
+            ts('send_email', { subject: 'You\'re one of our most engaged readers 🙏', preview: 'We saved something special for you…' }),
+            ts('tag', { tag: 'highly-engaged' }),
+          ],
+          no_steps: [
+            ts('send_email', { subject: 'We miss you — here\'s something special', preview: 'It\'s been a while. Come back and see what\'s new…' }),
+            ts('tag', { tag: 're-engagement' }),
+          ],
+        }
+      ),
+    ],
+  },
+  {
+    id: 'welcome-confirm-registration',
+    name: 'Welcome contacts & confirm registration',
+    description: 'Send a confirmation email and follow up based on whether they clicked the confirmation link.',
+    emoji: '✅',
+    color: '#16a34a',
+    bg: '#dcfce7',
+    tags: ['Email', 'Registration', 'If/Else'],
+    steps: [
+      ts('trigger', { trigger: 'email_signup' }),
+      ts('send_email', { subject: 'Please confirm your registration', preview: 'One click to verify your email address…' }),
+      ts('delay', { amount: 1, unit: 'days' }),
+      ts('if_else',
+        { condition_type: 'link_clicked', condition: 'confirmation link' },
+        {
+          yes_steps: [
+            ts('tag', { tag: 'confirmed' }),
+            ts('send_email', { subject: 'You\'re confirmed — welcome aboard! 🎉', preview: 'Your account is active and ready to go…' }),
+          ],
+          no_steps: [
+            ts('send_email', { subject: 'Reminder: please confirm your email address', preview: 'We still need you to verify your email…' }),
+          ],
+        }
+      ),
+    ],
+  },
+  {
+    id: 'thank-you-booking',
+    name: 'Thank you for the booking',
+    description: 'Confirm a booking immediately, share details the next day, and send a same-day SMS reminder.',
+    emoji: '🏷️',
+    color: '#ec4899',
+    bg: '#fdf2f8',
+    tags: ['Email', 'SMS', 'Booking'],
+    steps: [
+      ts('trigger', { trigger: 'purchase' }),
+      ts('send_email', { subject: 'Thank you for your booking! 🎉', preview: 'Your booking is confirmed. Here\'s what\'s next…' }),
+      ts('delay', { amount: 1, unit: 'hours' }),
+      ts('send_email', { subject: 'Your booking details and what to expect', preview: 'Everything you need to know before your visit…' }),
+      ts('tag', { tag: 'booked' }),
+      ts('delay', { amount: 1, unit: 'days' }),
+      ts('send_sms', { message: 'Your booking is confirmed! We look forward to seeing you. Reply HELP for assistance.' }),
+    ],
+  },
+  {
+    id: 'payment-confirmation',
+    name: 'Send payment confirmation',
+    description: 'Instantly confirm a payment, tag the contact as a customer, and follow up with their receipt.',
+    emoji: '💳',
+    color: '#0ea5e9',
+    bg: '#f0f9ff',
+    tags: ['Email', 'Payment', 'Customer'],
+    steps: [
+      ts('trigger', { trigger: 'purchase' }),
+      ts('send_email', { subject: 'Payment confirmed — thank you! 🙌', preview: 'Your payment was received successfully…' }),
+      ts('tag', { tag: 'customer' }),
+      ts('update_contact', { field: 'Status', value: 'Paid' }),
+      ts('delay', { amount: 3, unit: 'days' }),
+      ts('send_email', { subject: 'Your receipt and next steps', preview: 'Here\'s a summary of your purchase and what comes next…' }),
+    ],
+  },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Create modal (2-step: pick template → name it)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CreateStep = 'pick' | 'name';
+
+function CreateModal({
+  onCreate,
+  onClose,
+}: {
+  onCreate: (name: string, desc: string, steps: FlowStep[]) => void;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<CreateStep>('pick');
+  const [selected, setSelected] = useState<AutomationTemplate | null>(null);
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -806,28 +1006,130 @@ function CreateModal({ onCreate, onClose }: { onCreate: (name: string, desc: str
     return () => document.removeEventListener('mousedown', h);
   }, [onClose]);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
-      <div ref={ref} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-        <h2 className="text-lg font-bold text-slate-900">New automation</h2>
-        <p className="mt-1 text-sm text-slate-500">Give your customer journey a name to get started.</p>
-        <div className="mt-5 space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-600 uppercase tracking-wide">Name</label>
-            <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Welcome series, Re-engagement…"
-              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none" />
+  function pickTemplate(tpl: AutomationTemplate | null) {
+    setSelected(tpl);
+    setName(tpl?.name ?? '');
+    setDesc(tpl?.description ?? '');
+    setStep('name');
+  }
+
+  const initialSteps = selected
+    ? selected.steps.map(s => ({ ...s, id: uid() }))
+    : [defaultStep('trigger')];
+
+  // ── Step 1: template picker ──────────────────────────────────────────────
+  if (step === 'pick') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+        <div ref={ref} className="flex w-full max-w-4xl flex-col rounded-2xl bg-white shadow-2xl" style={{ maxHeight: '90vh' }}>
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Choose a starting point</h2>
+              <p className="mt-0.5 text-sm text-slate-500">Pick a template or start from scratch. You can customise everything in the builder.</p>
+            </div>
+            <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
+              <X size={15} />
+            </button>
           </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-600 uppercase tracking-wide">Description (optional)</label>
-            <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="What does this automation do?"
-              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none" />
+
+          {/* Grid */}
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {/* Scratch card */}
+              <button type="button" onClick={() => pickTemplate(null)}
+                className="group flex flex-col items-start gap-3 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 transition-all">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-xl group-hover:bg-indigo-100">
+                  ✨
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Start from scratch</div>
+                  <div className="mt-0.5 text-xs text-slate-400">Build your own custom journey from a blank canvas.</div>
+                </div>
+              </button>
+
+              {/* Template cards */}
+              {AUTOMATION_TEMPLATES.map(tpl => (
+                <button key={tpl.id} type="button" onClick={() => pickTemplate(tpl)}
+                  className="group flex flex-col items-start gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-left hover:border-slate-300 hover:shadow-md transition-all">
+                  <div className="flex w-full items-center justify-between">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xl" style={{ background: tpl.bg }}>
+                      {tpl.emoji}
+                    </div>
+                    <div className="flex flex-wrap gap-1 justify-end">
+                      {tpl.tags.map(t => (
+                        <span key={t} className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: tpl.bg, color: tpl.color }}>
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 leading-snug">{tpl.name}</div>
+                    <div className="mt-1 text-xs text-slate-400 leading-relaxed">{tpl.description}</div>
+                  </div>
+                  <div className="mt-auto text-[10px] font-semibold uppercase tracking-wide" style={{ color: tpl.color }}>
+                    {tpl.steps.length} steps pre-built
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        <div className="mt-6 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
-          <button type="button" disabled={!name.trim()} onClick={() => onCreate(name.trim(), desc.trim())}
+      </div>
+    );
+  }
+
+  // ── Step 2: name + confirm ───────────────────────────────────────────────
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div ref={ref} className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+          {selected && (
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl" style={{ background: selected.bg }}>
+              {selected.emoji}
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <h2 className="font-bold text-slate-900">{selected ? 'Name your automation' : 'Start from scratch'}</h2>
+            {selected && <p className="mt-0.5 text-xs text-slate-400 truncate">{selected.steps.length} steps pre-loaded from template</p>}
+          </div>
+          <button type="button" onClick={() => setStep('pick')} className="text-xs text-indigo-500 hover:underline shrink-0">
+            ← Back
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Automation name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. Welcome series"
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Description (optional)</label>
+            <input
+              value={desc}
+              onChange={e => setDesc(e.target.value)}
+              placeholder="What does this automation do?"
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+          <button type="button" onClick={onClose}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button type="button" disabled={!name.trim()} onClick={() => onCreate(name.trim(), desc.trim(), initialSteps)}
             className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            Create &amp; open builder
+            {selected ? 'Open builder →' : 'Create & open builder'}
           </button>
         </div>
       </div>
@@ -853,8 +1155,8 @@ export default function MarketingAutomations() {
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleCreate(name: string, description: string) {
-    const created = await apiPost<AutomationFlow>('/api/automations', { name, description, steps: [defaultStep('trigger')] });
+  async function handleCreate(name: string, description: string, steps: FlowStep[]) {
+    const created = await apiPost<AutomationFlow>('/api/automations', { name, description, steps });
     setFlows(prev => [created, ...prev]);
     setShowCreate(false);
     setEditingFlow(created);
