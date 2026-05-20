@@ -110,9 +110,25 @@ function AddDivider({ onAdd }: { onAdd: (type: BlockTypeId) => void }) {
 
 function RichTextEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const lastHtml = useRef(value);
+
+  useEffect(() => {
+    if (ref.current) { ref.current.innerHTML = value; lastHtml.current = value; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Sync from outside only if it changed externally (not from our own typing)
+    if (ref.current && value !== lastHtml.current) {
+      ref.current.innerHTML = value;
+      lastHtml.current = value;
+    }
+  }, [value]);
+
   function exec(cmd: string, val?: string) {
+    ref.current?.focus();
     document.execCommand(cmd, false, val);
-    if (ref.current) onChange(ref.current.innerHTML);
+    if (ref.current) { lastHtml.current = ref.current.innerHTML; onChange(ref.current.innerHTML); }
   }
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -129,13 +145,22 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (v: stri
         ref={ref}
         contentEditable
         suppressContentEditableWarning
-        onInput={() => { if (ref.current) onChange(ref.current.innerHTML); }}
-        dangerouslySetInnerHTML={{ __html: value }}
+        dir="ltr"
+        onInput={() => {
+          if (ref.current) { lastHtml.current = ref.current.innerHTML; onChange(ref.current.innerHTML); }
+        }}
         className="min-h-[80px] px-3 py-2 text-sm text-gray-700 focus:outline-none"
         data-placeholder="Your copy goes here..."
       />
     </div>
   );
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function getYouTubeEmbedUrl(url: string): string | null {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+  return m ? `https://www.youtube.com/embed/${m[1]}` : null;
 }
 
 // ── Block Editors ────────────────────────────────────────────────────────────
@@ -198,15 +223,21 @@ function IntroductionEditor({ block, onChange }: { block: SurveyQuestion; onChan
   }
 
   if (sub === 'video') {
+    const videoUrl = (block.settings.videoUrl as string) ?? '';
+    const embedUrl = getYouTubeEmbedUrl(videoUrl);
     return (
       <div>
-        <div className="bg-gray-100 rounded-xl aspect-video flex items-center justify-center mb-4 border border-gray-200">
-          <div className="w-16 h-16 border-2 border-gray-400 rounded-xl flex items-center justify-center">
-            <Play size={28} className="text-gray-400 ml-1" />
+        {embedUrl ? (
+          <iframe src={embedUrl} className="w-full rounded-xl aspect-video border border-gray-200 mb-4" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+        ) : (
+          <div className="bg-gray-100 rounded-xl aspect-video flex items-center justify-center mb-4 border border-gray-200">
+            <div className="w-16 h-16 border-2 border-gray-400 rounded-xl flex items-center justify-center">
+              <Play size={28} className="text-gray-400 ml-1" />
+            </div>
           </div>
-        </div>
+        )}
         <label className="block text-sm font-medium text-gray-700 mb-1">Video URL</label>
-        <input value={(block.settings.videoUrl as string) ?? ''} onChange={e => set({ videoUrl: e.target.value })}
+        <input value={videoUrl} onChange={e => set({ videoUrl: e.target.value })}
           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="https://youtube.com/watch?v=..." />
         <p className="text-xs text-gray-400 mt-1.5">We currently only support videos from <strong>YouTube</strong> and <strong>Vimeo</strong></p>
       </div>
@@ -250,7 +281,11 @@ function OptionsEditor({ block, onChange, multiple }: { block: SurveyQuestion; o
             {multiple
               ? <div className="w-4 h-4 rounded border-2 border-gray-300 shrink-0" />
               : <div className="w-4 h-4 rounded-full border-2 border-gray-300 shrink-0" />}
-            <span className="flex-1 text-sm text-gray-700">{opt}</span>
+            <input
+              value={opt}
+              onChange={e => { const o = [...block.options]; o[i] = e.target.value; onChange({ ...block, options: o }); }}
+              className="flex-1 text-sm text-gray-700 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none py-0.5"
+            />
             <button onClick={() => onChange({ ...block, options: block.options.filter((_, j) => j !== i) })} className="text-gray-300 hover:text-red-400 shrink-0"><X size={12} /></button>
           </div>
         ))}
@@ -531,6 +566,10 @@ function SurveyBuilder({ survey: init, onBack, onSaved }: { survey: Survey; onBa
           <option value="closed">Closed</option>
         </select>
         {error && <span className="text-red-500 text-xs max-w-xs truncate">{error}</span>}
+        <a href={`${window.location.origin}/survey/${survey.id}`} target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+          <Eye size={14} /> Preview
+        </a>
         <button onClick={save} disabled={saving}
           className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition-colors">
           {saving ? 'Saving…' : saved ? <><Check size={14} /> Saved</> : 'Save'}
