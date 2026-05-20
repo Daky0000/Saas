@@ -112,25 +112,63 @@ function ContactsTab() {
     if (!csvFile) return;
     setImporting(true);
     try {
-      const text = await csvFile.text();
+      const raw = await csvFile.text();
+      // Strip BOM (Excel adds ﻿ to CSV files)
+      const text = raw.replace(/^﻿/, '');
       const lines = text.split(/\r?\n/).filter(l => l.trim());
       if (lines.length < 2) { setMessage({ text: 'CSV appears to be empty.', ok: false }); setImporting(false); return; }
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
-      const emailIdx = headers.indexOf('email');
-      const firstIdx = headers.indexOf('first_name');
-      const lastIdx = headers.indexOf('last_name');
-      if (emailIdx === -1) { setMessage({ text: 'CSV must have an "email" column.', ok: false }); setImporting(false); return; }
-      if (firstIdx === -1) { setMessage({ text: 'CSV must have a "first_name" column.', ok: false }); setImporting(false); return; }
-      if (lastIdx === -1) { setMessage({ text: 'CSV must have a "last_name" column.', ok: false }); setImporting(false); return; }
+
+      // Auto-detect delimiter: semicolons beat tabs beat commas
+      const delim = lines[0].includes(';') ? ';' : lines[0].includes('\t') ? '\t' : ',';
+
+      // Parse a CSV line respecting quoted fields
+      const parseLine = (line: string): string[] => {
+        const result: string[] = [];
+        let cur = '';
+        let inQuote = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
+            else { inQuote = !inQuote; }
+          } else if (ch === delim && !inQuote) {
+            result.push(cur.trim());
+            cur = '';
+          } else { cur += ch; }
+        }
+        result.push(cur.trim());
+        return result;
+      };
+
+      const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, ''));
+
+      // Find email column — accept "email", "email_address", "e_mail", etc.
+      const emailIdx = headers.findIndex(h => h === 'email' || h === 'email_address' || h === 'e_mail' || h.startsWith('email'));
+      if (emailIdx === -1) {
+        setMessage({ text: `No email column found. Headers detected: ${headers.join(', ')}`, ok: false });
+        setImporting(false); return;
+      }
+
+      // Find name columns — optional, fall back to empty
+      const firstIdx = headers.findIndex(h => h === 'first_name' || h === 'firstname' || h === 'first');
+      const lastIdx = headers.findIndex(h => h === 'last_name' || h === 'lastname' || h === 'last' || h === 'surname');
+      const nameIdx = headers.findIndex(h => h === 'name' || h === 'full_name' || h === 'fullname');
+
       const rows = lines.slice(1).map(l => {
-        const cols = l.split(',').map(c => c.trim().replace(/"/g, ''));
-        return {
-          email: cols[emailIdx] || '',
-          first_name: cols[firstIdx] || undefined,
-          last_name: cols[lastIdx] || undefined,
-        };
+        const cols = parseLine(l);
+        const email = (cols[emailIdx] ?? '').trim();
+        let first = firstIdx !== -1 ? (cols[firstIdx] ?? '').trim() : '';
+        let last = lastIdx !== -1 ? (cols[lastIdx] ?? '').trim() : '';
+        // If no first/last but there's a full name column, split it
+        if (!first && !last && nameIdx !== -1) {
+          const parts = (cols[nameIdx] ?? '').trim().split(/\s+/);
+          first = parts[0] ?? '';
+          last = parts.slice(1).join(' ');
+        }
+        return { email, first_name: first || undefined, last_name: last || undefined };
       }).filter(r => r.email && r.email.includes('@'));
-      if (!rows.length) { setMessage({ text: 'No valid rows found in CSV.', ok: false }); setImporting(false); return; }
+
+      if (!rows.length) { setMessage({ text: 'No valid email addresses found in CSV.', ok: false }); setImporting(false); return; }
       const result = await mailingService.importContacts(rows);
       setMessage({ text: `Imported ${result.imported} contacts, skipped ${result.skipped}.`, ok: true });
       closeImport();
@@ -229,7 +267,7 @@ function ContactsTab() {
             </div>
             <div className="px-5 py-4 space-y-3">
               <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                CSV must have columns: <strong>email</strong>, <strong>first_name</strong>, <strong>last_name</strong>
+                Must include an <strong>email</strong> column. Columns <strong>first_name</strong>, <strong>last_name</strong> (or <strong>name</strong>) are optional. Comma, semicolon, and tab delimiters supported.
               </div>
               <label className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-6 cursor-pointer hover:border-slate-400 hover:bg-slate-50 transition-colors">
                 <Upload size={20} className="text-slate-400" />
