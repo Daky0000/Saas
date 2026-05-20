@@ -52,6 +52,10 @@ function ContactsTab() {
   const [showImport, setShowImport] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkTagInput, setBulkTagInput] = useState('');
+  const [showBulkTag, setShowBulkTag] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [form, setForm] = useState({ email: '', first_name: '', last_name: '', phone: '', tags: '' });
   const [customFields, setCustomFields] = useState<{ key: string; value: string }[]>([]);
   const [saving, setSaving] = useState(false);
@@ -100,6 +104,35 @@ function ContactsTab() {
   const handleUnsubscribe = async (c: MailingContact) => {
     await mailingService.updateContact(c.id, { subscribed: false });
     await load();
+  };
+
+  const allChecked = contacts.length > 0 && contacts.every(c => selectedIds.has(c.id));
+  const indeterminate = !allChecked && selectedIds.size > 0;
+  const toggleAll = () => allChecked ? setSelectedIds(new Set()) : setSelectedIds(new Set(contacts.map(c => c.id)));
+  const toggleOne = (id: string) => setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ${selectedIds.size} contact(s)?`)) return;
+    setBulkBusy(true);
+    try {
+      await mailingService.bulkAction('delete', [...selectedIds]);
+      setSelectedIds(new Set());
+      setMessage({ text: `Deleted ${selectedIds.size} contact(s).`, ok: true });
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
+    finally { setBulkBusy(false); }
+  };
+
+  const handleBulkTag = async () => {
+    if (!bulkTagInput.trim()) return;
+    setBulkBusy(true);
+    try {
+      await mailingService.bulkAction('tag', [...selectedIds], bulkTagInput.trim());
+      setMessage({ text: `Tag "${bulkTagInput.trim()}" added to ${selectedIds.size} contact(s).`, ok: true });
+      setBulkTagInput(''); setShowBulkTag(false); setSelectedIds(new Set());
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
+    finally { setBulkBusy(false); }
   };
 
   const closeImport = () => {
@@ -287,7 +320,38 @@ function ContactsTab() {
         </div>
       )}
 
-      <div data-tour-id="mailing-contacts" className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5">
+          <span className="text-sm font-semibold text-indigo-800">{selectedIds.size} selected</span>
+          <div className="flex flex-wrap gap-1.5 ml-2">
+            {!showBulkTag ? (
+              <button type="button" onClick={() => setShowBulkTag(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-indigo-50">
+                <Tag size={12} /> Add tag
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input value={bulkTagInput} onChange={e => setBulkTagInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && void handleBulkTag()}
+                  placeholder="Tag name…" autoFocus
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs outline-none focus:border-slate-400 w-28" />
+                <button type="button" onClick={() => void handleBulkTag()} disabled={bulkBusy || !bulkTagInput.trim()}
+                  className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">Apply</button>
+                <button type="button" onClick={() => { setShowBulkTag(false); setBulkTagInput(''); }}
+                  className="text-slate-400 hover:text-slate-700"><X size={13} /></button>
+              </div>
+            )}
+            <button type="button" onClick={() => void handleBulkDelete()} disabled={bulkBusy}
+              className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50">
+              <Trash2 size={12} /> Delete
+            </button>
+          </div>
+          <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-slate-400 hover:text-slate-700">Clear</button>
+        </div>
+      )}
+
+      <div data-tour-id="mailing-contacts" className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         {loading ? (
           <div className="flex items-center justify-center py-16 text-slate-400"><Loader2 size={20} className="animate-spin mr-2" /> Loading…</div>
         ) : contacts.length === 0 ? (
@@ -297,61 +361,75 @@ function ContactsTab() {
             <p className="text-xs mt-1">Add your first contact or import a CSV</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-100">
-              <tr className="text-xs font-semibold text-slate-500">
-                <th className="px-4 py-3 text-left">Email</th>
-                <th className="px-4 py-3 text-left">Name</th>
-                <th className="px-4 py-3 text-left">Phone</th>
-                <th className="px-4 py-3 text-left">Tags</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-left">Added</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {contacts.map(c => (
-                <tr key={c.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">{c.email}</td>
-                  <td className="px-4 py-3 text-slate-600">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{c.phone || '—'}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {c.tags?.map(t => <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.subscribed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                      {c.subscribed ? 'Subscribed' : 'Unsubscribed'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">{formatDate(c.created_at)}</td>
-                  <td className="px-4 py-3">
-                    <div className="relative">
-                      <button onClick={() => setMenuOpen(menuOpen === c.id ? null : c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
-                        <MoreHorizontal size={14} />
-                      </button>
-                      {menuOpen === c.id && (
-                        <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
-                          {c.subscribed && (
-                            <button onClick={() => { setMenuOpen(null); void handleUnsubscribe(c); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                              <X size={13} /> Unsubscribe
-                            </button>
-                          )}
-                          <button onClick={() => { setMenuOpen(null); void handleDelete(c.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
-                            <Trash2 size={13} /> Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[700px] text-sm">
+              <thead className="border-b border-slate-100 bg-slate-50">
+                <tr className="text-xs font-semibold text-slate-500">
+                  <th className="px-4 py-3 w-10">
+                    <input type="checkbox" checked={allChecked} onChange={toggleAll}
+                      ref={el => { if (el) el.indeterminate = indeterminate; }}
+                      className="accent-indigo-600 cursor-pointer" />
+                  </th>
+                  <th className="px-4 py-3 text-left">Email</th>
+                  <th className="px-4 py-3 text-left">Name</th>
+                  <th className="px-4 py-3 text-left">Phone</th>
+                  <th className="px-4 py-3 text-left">Tags</th>
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-left">Added</th>
+                  <th className="px-4 py-3 w-10" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {contacts.map(c => (
+                  <tr key={c.id} className={`hover:bg-slate-50 ${selectedIds.has(c.id) ? 'bg-indigo-50/40' : ''}`}>
+                    <td className="px-4 py-3">
+                      <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleOne(c.id)}
+                        className="accent-indigo-600 cursor-pointer" />
+                    </td>
+                    <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">{c.email}</td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{c.phone || '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1 min-w-[80px]">
+                        {c.tags?.length ? c.tags.map(t => <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>) : <span className="text-slate-400">—</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.subscribed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                        {c.subscribed ? 'Subscribed' : 'Unsubscribed'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDate(c.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <div className="relative">
+                        <button onClick={() => setMenuOpen(menuOpen === c.id ? null : c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
+                          <MoreHorizontal size={14} />
+                        </button>
+                        {menuOpen === c.id && (
+                          <>
+                            <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(null)} />
+                            <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                              {c.subscribed && (
+                                <button onClick={() => { setMenuOpen(null); void handleUnsubscribe(c); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                                  <X size={13} /> Unsubscribe
+                                </button>
+                              )}
+                              <button onClick={() => { setMenuOpen(null); void handleDelete(c.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+                                <Trash2 size={13} /> Delete
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
-      <p className="text-xs text-slate-400">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}</p>
+      <p className="text-xs text-slate-400">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}{selectedIds.size > 0 ? ` · ${selectedIds.size} selected` : ''}</p>
     </div>
   );
 }
