@@ -135,6 +135,27 @@ function ContactsTab() {
     finally { setBulkBusy(false); }
   };
 
+  const handleExport = () => {
+    const rows = selectedIds.size > 0 ? contacts.filter(c => selectedIds.has(c.id)) : contacts;
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const csv = [
+      ['Email', 'First Name', 'Last Name', 'Phone', 'Tags', 'Status', 'Date Added'].join(','),
+      ...rows.map(c => [
+        esc(c.email),
+        esc(c.first_name ?? ''),
+        esc(c.last_name ?? ''),
+        esc(c.phone ?? ''),
+        esc((c.tags ?? []).join('; ')),
+        esc(c.subscribed ? 'Subscribed' : 'Unsubscribed'),
+        esc(formatDate(c.created_at)),
+      ].join(',')),
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'contacts.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const closeImport = () => {
     setShowImport(false);
     setCsvFile(null);
@@ -225,6 +246,10 @@ function ContactsTab() {
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search contacts…" className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm outline-none focus:border-slate-400" />
         </div>
         <div className="flex gap-2">
+          <button onClick={handleExport} disabled={contacts.length === 0}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40">
+            <Download size={14} /> {selectedIds.size > 0 ? `Export (${selectedIds.size})` : 'Export CSV'}
+          </button>
           <button onClick={() => setShowImport(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             <Upload size={14} /> Import CSV
           </button>
