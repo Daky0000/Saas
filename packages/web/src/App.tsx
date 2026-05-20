@@ -48,6 +48,8 @@ import MarketingOverview from './pages/MarketingOverview';
 import MarketingContacts from './pages/MarketingContacts';
 import MarketingEmail from './pages/MarketingEmail';
 import MarketingCampaigns from './pages/MarketingCampaigns';
+import MarketingSurveys from './pages/MarketingSurveys';
+import PublicSurvey from './pages/PublicSurvey';
 import Workspace from './pages/Workspace';
 import AcceptInvite from './pages/AcceptInvite';
 import Billing from './pages/Billing';
@@ -87,6 +89,7 @@ export type PageType =
   | 'marketing-contacts'
   | 'marketing-email'
   | 'marketing-campaigns'
+  | 'marketing-surveys'
   | 'workspace'
   | 'billing'
   | 'pricing'
@@ -127,6 +130,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'marketing-contacts': '/marketing/contacts',
   'marketing-email': '/marketing/email',
   'marketing-campaigns': '/marketing/campaigns',
+  'marketing-surveys': '/marketing/surveys',
   workspace: '/workspace',
   billing: '/billing',
   tasks: '/tasks',
@@ -511,7 +515,8 @@ function AppSidebar({
               currentPage === 'marketing' ||
               currentPage === 'marketing-contacts' ||
               currentPage === 'marketing-email' ||
-              currentPage === 'marketing-campaigns'
+              currentPage === 'marketing-campaigns' ||
+              currentPage === 'marketing-surveys'
             )}
           >
             <Megaphone size={15} className="shrink-0" />
@@ -525,6 +530,7 @@ function AppSidebar({
                 { id: 'marketing-contacts' as PageType, label: 'Contacts' },
                 { id: 'marketing-email' as PageType, label: 'Email' },
                 { id: 'marketing-campaigns' as PageType, label: 'Campaigns' },
+                { id: 'marketing-surveys' as PageType, label: 'Surveys' },
               ] as { id: PageType; label: string }[]).map((c) => (
                 <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                   {c.label}
@@ -684,7 +690,7 @@ function App() {
       if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'discover' || page === 'workflow') {
         setPostsMenuOpen(true);
       }
-      if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns') {
+      if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys') {
         setMarketingMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
@@ -793,7 +799,7 @@ function App() {
       setCurrentPage(pageFromPath);
       const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
       if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
-      const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns'];
+      const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys'];
       if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
       return () => {
         canceled = true;
@@ -828,7 +834,7 @@ function App() {
         setCurrentPage(pageFromPath);
         const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
         if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
-        const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns'];
+        const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys'];
         if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
         return;
       }
@@ -875,6 +881,10 @@ function App() {
     return <AcceptInvite token={token} onLoginClick={goToLogin} />;
   }
   if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={goToLogin} />;
+  if (currentPathname.startsWith('/survey/')) {
+    const surveyId = currentPathname.replace('/survey/', '');
+    return <PublicSurvey surveyId={surveyId} />;
+  }
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Landing onLoginClick={goToLogin} />;
   }
@@ -915,6 +925,7 @@ function App() {
       case 'marketing-contacts': return <MarketingContacts />;
       case 'marketing-email': return <MarketingEmail />;
       case 'marketing-campaigns': return <MarketingCampaigns />;
+      case 'marketing-surveys': return <MarketingSurveys />;
       case 'workspace': return <Workspace />;
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;

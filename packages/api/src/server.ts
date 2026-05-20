@@ -2244,6 +2244,48 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   // ── End Mailing Module ──────────────────────────────────────────────────────
 
+  // ── Surveys Module Tables ────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS surveys (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      thank_you_message TEXT DEFAULT 'Thank you for your response!',
+      settings JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS surveys_user_idx ON surveys (user_id);`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS survey_questions (
+      id TEXT PRIMARY KEY,
+      survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      question TEXT NOT NULL,
+      options JSONB DEFAULT '[]',
+      required BOOLEAN DEFAULT FALSE,
+      order_idx INTEGER DEFAULT 0,
+      settings JSONB DEFAULT '{}'
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS survey_questions_survey_idx ON survey_questions (survey_id);`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS survey_responses (
+      id TEXT PRIMARY KEY,
+      survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+      contact_id TEXT REFERENCES mailing_contacts(id) ON DELETE SET NULL,
+      respondent_email TEXT,
+      answers JSONB NOT NULL DEFAULT '[]',
+      ip_address TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS survey_responses_survey_idx ON survey_responses (survey_id);`).catch(() => undefined);
+  // ── End Surveys Module ───────────────────────────────────────────────────────
+
   // ── Leads Module Tables ──────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS lead_groups (
@@ -19186,6 +19228,216 @@ app.get('/api/mailing/unsubscribe/:token', async (req: Request, res: Response) =
 });
 
 // ─── End Mailing API Routes ───────────────────────────────────────────────────
+
+// ─── Surveys API Routes ───────────────────────────────────────────────────────
+
+// GET /api/surveys
+app.get('/api/surveys', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows } = await pool!.query(
+      `SELECT s.*, (SELECT COUNT(*) FROM survey_responses r WHERE r.survey_id=s.id) AS response_count,
+              (SELECT COUNT(*) FROM survey_questions q WHERE q.survey_id=s.id) AS question_count
+       FROM surveys s WHERE s.user_id=$1 ORDER BY s.created_at DESC`, [auth.userId]);
+    return res.json({ success: true, surveys: rows });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch surveys' }); }
+});
+
+// POST /api/surveys
+app.post('/api/surveys', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { title, description } = req.body;
+    if (!title?.trim()) return res.status(400).json({ success: false, error: 'Title required' });
+    const id = randomUUID();
+    const { rows } = await pool!.query(
+      `INSERT INTO surveys (id, user_id, title, description) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [id, auth.userId, title.trim(), description || null]);
+    return res.json({ success: true, survey: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create survey' }); }
+});
+
+// GET /api/surveys/:id
+app.get('/api/surveys/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const { rows: qr } = await pool!.query('SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx ASC', [req.params.id]);
+    return res.json({ success: true, survey: { ...sr[0], questions: qr } });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch survey' }); }
+});
+
+// PATCH /api/surveys/:id
+app.patch('/api/surveys/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { title, description, status, thank_you_message } = req.body;
+    const { rows } = await pool!.query(
+      `UPDATE surveys SET title=COALESCE($1,title), description=COALESCE($2,description),
+       status=COALESCE($3,status), thank_you_message=COALESCE($4,thank_you_message), updated_at=NOW()
+       WHERE id=$5 AND user_id=$6 RETURNING *`,
+      [title || null, description !== undefined ? (description || null) : null, status || null, thank_you_message || null, req.params.id, auth.userId]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    return res.json({ success: true, survey: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update survey' }); }
+});
+
+// DELETE /api/surveys/:id
+app.delete('/api/surveys/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    await pool!.query('DELETE FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete survey' }); }
+});
+
+// POST /api/surveys/:id/questions
+app.post('/api/surveys/:id/questions', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { type, question, options, required, settings } = req.body;
+    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const { rows: last } = await pool!.query('SELECT COALESCE(MAX(order_idx),0)+1 AS next FROM survey_questions WHERE survey_id=$1', [req.params.id]);
+    const id = randomUUID();
+    const { rows } = await pool!.query(
+      `INSERT INTO survey_questions (id, survey_id, type, question, options, required, order_idx, settings)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [id, req.params.id, type || 'radio', question || 'New question', JSON.stringify(options ?? []), !!required, last[0].next, JSON.stringify(settings ?? {})]);
+    return res.json({ success: true, question: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to add question' }); }
+});
+
+// PATCH /api/surveys/:id/questions/:qid
+app.patch('/api/surveys/:id/questions/:qid', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { question, options, required, settings, order_idx } = req.body;
+    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const { rows } = await pool!.query(
+      `UPDATE survey_questions SET
+         question=COALESCE($1,question),
+         options=COALESCE($2::jsonb,options),
+         required=COALESCE($3,required),
+         settings=COALESCE($4::jsonb,settings),
+         order_idx=COALESCE($5,order_idx)
+       WHERE id=$6 AND survey_id=$7 RETURNING *`,
+      [question || null, options ? JSON.stringify(options) : null, required !== undefined ? !!required : null, settings ? JSON.stringify(settings) : null, order_idx ?? null, req.params.qid, req.params.id]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Question not found' });
+    return res.json({ success: true, question: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update question' }); }
+});
+
+// DELETE /api/surveys/:id/questions/:qid
+app.delete('/api/surveys/:id/questions/:qid', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    await pool!.query('DELETE FROM survey_questions WHERE id=$1 AND survey_id=$2', [req.params.qid, req.params.id]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete question' }); }
+});
+
+// GET /api/surveys/:id/responses
+app.get('/api/surveys/:id/responses', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const { rows } = await pool!.query('SELECT * FROM survey_responses WHERE survey_id=$1 ORDER BY created_at DESC', [req.params.id]);
+    return res.json({ success: true, responses: rows });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch responses' }); }
+});
+
+// GET /api/surveys/:id/analytics
+app.get('/api/surveys/:id/analytics', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const { rows: questions } = await pool!.query('SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx', [req.params.id]);
+    const { rows: responses } = await pool!.query('SELECT answers FROM survey_responses WHERE survey_id=$1', [req.params.id]);
+    const totalResponses = responses.length;
+    const analytics = questions.map(q => {
+      const allAnswers = responses.map(r => {
+        const a = (r.answers as { question_id: string; value: unknown }[]).find(x => x.question_id === q.id);
+        return a?.value;
+      }).filter(v => v !== undefined && v !== null && v !== '');
+      if (q.type === 'radio') {
+        const counts: Record<string, number> = {};
+        (q.options as { id: string; text: string }[]).forEach(o => { counts[o.id] = 0; });
+        allAnswers.forEach(v => { if (typeof v === 'string' && counts[v] !== undefined) counts[v]++; });
+        return { question_id: q.id, type: q.type, question: q.question, options: q.options, counts, total: allAnswers.length };
+      }
+      if (q.type === 'checkbox') {
+        const counts: Record<string, number> = {};
+        (q.options as { id: string; text: string }[]).forEach(o => { counts[o.id] = 0; });
+        allAnswers.forEach(v => { if (Array.isArray(v)) v.forEach((id: string) => { if (counts[id] !== undefined) counts[id]++; }); });
+        return { question_id: q.id, type: q.type, question: q.question, options: q.options, counts, total: allAnswers.length };
+      }
+      if (q.type === 'rating') {
+        const dist: Record<number, number> = { 1:0,2:0,3:0,4:0,5:0 };
+        allAnswers.forEach(v => { const n = Number(v); if (n >= 1 && n <= 5) dist[n]++; });
+        const avg = allAnswers.length ? allAnswers.reduce((s, v) => s + Number(v), 0) / allAnswers.length : 0;
+        return { question_id: q.id, type: q.type, question: q.question, distribution: dist, average: Math.round(avg * 10) / 10, total: allAnswers.length };
+      }
+      if (q.type === 'nps') {
+        const nums = allAnswers.map(v => Number(v)).filter(n => n >= 0 && n <= 10);
+        const promoters = nums.filter(n => n >= 9).length;
+        const passives = nums.filter(n => n >= 7 && n <= 8).length;
+        const detractors = nums.filter(n => n <= 6).length;
+        const score = nums.length ? Math.round(((promoters - detractors) / nums.length) * 100) : 0;
+        const dist: Record<number, number> = {};
+        for (let i = 0; i <= 10; i++) dist[i] = nums.filter(n => n === i).length;
+        return { question_id: q.id, type: q.type, question: q.question, score, promoters, passives, detractors, distribution: dist, total: nums.length };
+      }
+      if (q.type === 'text') {
+        return { question_id: q.id, type: q.type, question: q.question, responses: allAnswers.slice(0, 100), total: allAnswers.length };
+      }
+      return { question_id: q.id, type: q.type, question: q.question, total: allAnswers.length };
+    });
+    return res.json({ success: true, total_responses: totalResponses, analytics });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
+});
+
+// ── Public Survey Routes (no auth) ──────────────────────────────────────────
+
+// GET /api/public/surveys/:id — fetch published survey for display
+app.get('/api/public/surveys/:id', async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'published']);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Survey not found or not published' });
+    const { rows: questions } = await pool!.query('SELECT id, type, question, options, required, order_idx, settings FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx ASC', [req.params.id]);
+    return res.json({ success: true, survey: { ...rows[0], questions } });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch survey' }); }
+});
+
+// POST /api/public/surveys/:id/respond — submit a response
+app.post('/api/public/surveys/:id/respond', async (req: Request, res: Response) => {
+  try {
+    const { answers, email } = req.body as { answers: { question_id: string; value: unknown }[]; email?: string };
+    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'published']);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const survey = sr[0];
+    // Find contact by email if provided
+    let contactId: string | null = null;
+    if (email) {
+      const { rows: cr } = await pool!.query('SELECT id FROM mailing_contacts WHERE user_id=$1 AND email=$2', [survey.user_id, email.toLowerCase().trim()]);
+      if (cr.length) contactId = cr[0].id;
+    }
+    const id = randomUUID();
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || null;
+    await pool!.query(
+      `INSERT INTO survey_responses (id, survey_id, contact_id, respondent_email, answers, ip_address) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, req.params.id, contactId, email?.toLowerCase().trim() || null, JSON.stringify(answers), ip]);
+    return res.json({ success: true, thank_you_message: survey.thank_you_message });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to submit response' }); }
+});
+
+// ─── End Surveys API Routes ───────────────────────────────────────────────────
 
 // ─── Leads API Routes ─────────────────────────────────────────────────────────
 
