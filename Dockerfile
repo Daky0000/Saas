@@ -12,4 +12,4 @@ RUN npm --workspace @contentflow/api run build
 
 EXPOSE 5000
 
-CMD ["npm", "--workspace", "@contentflow/api", "run", "start"]
+CMD ["node", "packages/api/.railway-build/server.mjs"]
