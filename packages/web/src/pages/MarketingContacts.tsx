@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
+  Copy,
+  Download,
   FileSpreadsheet,
   Filter,
   Link2,
   Link2Off,
   Loader2,
+  Mail,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Rss,
   Search,
   Settings2,
+  SlidersHorizontal,
   Tag,
   Trash2,
   Upload,
@@ -550,46 +555,334 @@ function SegmentBuilderModal({ initial, onSave, onClose }: {
   );
 }
 
+// ─── Column config & CSV helpers ─────────────────────────────────────────────
+
+const SEG_COLS = [
+  { id: 'email',      label: 'Email',      locked: true },
+  { id: 'name',       label: 'Name',       locked: false },
+  { id: 'phone',      label: 'Phone',      locked: false },
+  { id: 'tags',       label: 'Tags',       locked: false },
+  { id: 'status',     label: 'Status',     locked: false },
+  { id: 'created_at', label: 'Date Added', locked: false },
+] as const;
+
+type ColId = typeof SEG_COLS[number]['id'];
+
+function buildCsv(contacts: MailingContact[], cols: ColId[]): string {
+  const headers = cols.map(c => SEG_COLS.find(x => x.id === c)?.label ?? c);
+  const rows = contacts.map(c => cols.map(col => {
+    if (col === 'email') return c.email;
+    if (col === 'name') return [c.first_name, c.last_name].filter(Boolean).join(' ');
+    if (col === 'phone') return c.phone ?? '';
+    if (col === 'tags') return (c.tags ?? []).join('; ');
+    if (col === 'status') return c.subscribed ? 'Subscribed' : 'Unsubscribed';
+    if (col === 'created_at') return formatDate(c.created_at);
+    return '';
+  }).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+  return [headers.join(','), ...rows].join('\n');
+}
+
+function triggerCsvDownload(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Segment Card ─────────────────────────────────────────────────────────────
 
-function SegmentCard({ segment, onEdit, onDelete }: {
+function SegmentCard({ segment, onClick, onEdit, onDuplicate, onDelete, onExportCsv }: {
   segment: MailingSegment;
+  onClick: () => void;
   onEdit: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
+  onExportCsv: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const rules = parseRules(segment.rules);
   const condCount = rules.conditions.length;
+
+  const menuItem = (icon: React.ReactNode, label: string, action: () => void, danger = false) => (
+    <button type="button"
+      onClick={() => { setMenuOpen(false); action(); }}
+      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-slate-50 ${danger ? 'text-red-600' : 'text-slate-700'}`}>
+      {icon}{label}
+    </button>
+  );
+
   return (
-    <div className="group rounded-2xl border border-slate-200 bg-white p-5 transition-all hover:border-slate-300 hover:shadow-md">
+    <div className="relative rounded-2xl border border-slate-200 bg-white p-5 transition-all hover:border-slate-300 hover:shadow-md">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-start gap-2.5">
+        <button type="button" onClick={onClick} className="flex min-w-0 flex-1 items-start gap-2.5 text-left">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50">
             <Filter size={15} className="text-indigo-600" />
           </div>
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-slate-900">{segment.name}</div>
             <div className="mt-0.5 text-xs text-slate-400">
-              {condCount === 0
-                ? 'No conditions (matches all)'
-                : `${condCount} condition${condCount > 1 ? 's' : ''} · match ${rules.match}`}
+              {condCount === 0 ? 'Matches all contacts' : `${condCount} condition${condCount > 1 ? 's' : ''} · ${rules.match}`}
             </div>
           </div>
-        </div>
-        <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button type="button" onClick={onEdit}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-            <Settings2 size={13} />
-          </button>
-          <button type="button" onClick={onDelete}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500">
-            <Trash2 size={13} />
-          </button>
-        </div>
+        </button>
+        <button type="button" onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+          <MoreHorizontal size={15} />
+        </button>
       </div>
       <div className="mt-3 flex items-center gap-1 text-xs">
         <Users size={11} className="text-slate-400" />
         <span className="font-semibold text-slate-700">{(segment.contact_count ?? 0).toLocaleString()}</span>
         <span className="text-slate-400">contact{(segment.contact_count ?? 0) !== 1 ? 's' : ''}</span>
+      </div>
+
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+          <div className="absolute right-3 top-12 z-30 w-52 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+            <div className="border-b border-slate-100 pb-1">
+              {menuItem(<Mail size={13} />, 'Send email', () => alert('Go to Email → Campaigns and select this segment.'))}
+              {menuItem(<Mail size={13} />, 'Send plain text email', () => alert('Go to Email → Campaigns and select this segment.'))}
+              {menuItem(<Rss size={13} />, 'Send RSS email', () => alert('Go to Email → Campaigns and select this segment.'))}
+            </div>
+            <div className="border-b border-slate-100 py-1">
+              {menuItem(<Copy size={13} />, 'Duplicate segment', onDuplicate)}
+              {menuItem(<Download size={13} />, 'Export as CSV', onExportCsv)}
+            </div>
+            <div className="pt-1">
+              {menuItem(<Settings2 size={13} />, 'Edit segment', onEdit)}
+              {menuItem(<Trash2 size={13} />, 'Delete', onDelete, true)}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Segment Detail View ──────────────────────────────────────────────────────
+
+function SegmentDetailView({ segment, onBack }: { segment: MailingSegment; onBack: () => void }) {
+  const [contacts, setContacts] = useState<MailingContact[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [visibleCols, setVisibleCols] = useState<Set<ColId>>(new Set(['email', 'name', 'phone', 'tags', 'status', 'created_at']));
+  const [showColPicker, setShowColPicker] = useState(false);
+  const [bulkTag, setBulkTag] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try { setContacts(await mailingService.getSegmentContacts(segment.id)); }
+    catch { /* silent */ } finally { setLoading(false); }
+  };
+
+  useEffect(() => { void load(); }, [segment.id]);
+
+  const allChecked = contacts.length > 0 && contacts.every(c => selectedIds.has(c.id));
+  const indeterminate = !allChecked && selectedIds.size > 0;
+
+  const toggleAll = () => allChecked ? setSelectedIds(new Set()) : setSelectedIds(new Set(contacts.map(c => c.id)));
+  const toggleOne = (id: string) => setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const doBulk = async (action: 'archive' | 'delete') => {
+    const label = action === 'delete' ? 'Delete' : 'Archive';
+    if (!confirm(`${label} ${selectedIds.size} contact(s)?`)) return;
+    setBusy(true);
+    try {
+      await mailingService.bulkAction(action, [...selectedIds]);
+      setMessage({ text: `${selectedIds.size} contact(s) ${action === 'delete' ? 'deleted' : 'archived'}.`, ok: true });
+      setSelectedIds(new Set());
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
+    finally { setBusy(false); }
+  };
+
+  const doTag = async () => {
+    if (!tagInput.trim()) return;
+    setBusy(true);
+    try {
+      await mailingService.bulkAction('tag', [...selectedIds], tagInput.trim());
+      setMessage({ text: `Tag "${tagInput.trim()}" added to ${selectedIds.size} contact(s).`, ok: true });
+      setTagInput(''); setBulkTag(null);
+      setSelectedIds(new Set());
+      await load();
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
+    finally { setBusy(false); }
+  };
+
+  const exportCsv = (ids?: Set<string>) => {
+    const rows = ids ? contacts.filter(c => ids.has(c.id)) : contacts;
+    const cols = SEG_COLS.filter(c => visibleCols.has(c.id)).map(c => c.id);
+    triggerCsvDownload(buildCsv(rows, cols), `${segment.name.replace(/\s+/g, '_')}.csv`);
+  };
+
+  const activeCols = SEG_COLS.filter(c => visibleCols.has(c.id));
+
+  return (
+    <div className="space-y-4">
+      {/* Back nav */}
+      <button type="button" onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
+        <ChevronLeft size={16} /> All segments
+      </button>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50">
+            <Filter size={15} className="text-indigo-600" />
+          </div>
+          <div>
+            <h2 className="text-base font-black text-slate-900">{segment.name}</h2>
+            <p className="text-xs text-slate-400">{contacts.length} contacts</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <div className="relative">
+            <button type="button" onClick={() => setShowColPicker(v => !v)}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+              <SlidersHorizontal size={13} /> Columns
+            </button>
+            {showColPicker && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setShowColPicker(false)} />
+                <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1.5 shadow-xl">
+                  {SEG_COLS.map(col => (
+                    <label key={col.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50">
+                      <input type="checkbox" checked={visibleCols.has(col.id)} disabled={col.locked}
+                        onChange={() => {
+                          if (col.locked) return;
+                          setVisibleCols(prev => { const n = new Set(prev); n.has(col.id) ? n.delete(col.id) : n.add(col.id); return n; });
+                        }}
+                        className="accent-indigo-600" />
+                      {col.label}
+                      {col.locked && <span className="ml-auto text-slate-300">required</span>}
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <button type="button" onClick={() => exportCsv()}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            <Download size={13} /> Export CSV
+          </button>
+        </div>
+      </div>
+
+      {/* Message */}
+      {message && (
+        <div className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${message.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+          <span>{message.text}</span>
+          <button type="button" onClick={() => setMessage(null)}><X size={14} /></button>
+        </div>
+      )}
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5">
+          <span className="text-sm font-semibold text-indigo-800">{selectedIds.size} selected</span>
+          <div className="flex flex-wrap gap-1.5 ml-2">
+            {bulkTag === null ? (
+              <button type="button" onClick={() => setBulkTag('')}
+                className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-indigo-50">
+                <Tag size={12} /> Tag
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input value={tagInput} onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && void doTag()}
+                  placeholder="Tag name…" autoFocus
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs outline-none focus:border-slate-400 w-28" />
+                <button type="button" onClick={() => void doTag()} disabled={busy || !tagInput.trim()}
+                  className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                  Apply
+                </button>
+                <button type="button" onClick={() => { setBulkTag(null); setTagInput(''); }}
+                  className="text-slate-400 hover:text-slate-700"><X size={13} /></button>
+              </div>
+            )}
+            <button type="button" onClick={() => void doBulk('archive')} disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-indigo-50 disabled:opacity-50">
+              Archive
+            </button>
+            <button type="button" onClick={() => void doBulk('delete')} disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50">
+              Delete
+            </button>
+            <button type="button" onClick={() => exportCsv(selectedIds)}
+              className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-indigo-50">
+              <Download size={12} /> Export selected
+            </button>
+          </div>
+          <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-slate-400 hover:text-slate-700">
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-slate-400">
+            <Loader2 size={20} className="animate-spin mr-2" /> Loading…
+          </div>
+        ) : contacts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+            <Users size={28} className="mb-2 opacity-30" />
+            <p className="text-sm">No contacts match this segment</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-100 bg-slate-50">
+                <tr className="text-xs font-semibold text-slate-500">
+                  <th className="px-4 py-3 w-10">
+                    <input type="checkbox" checked={allChecked} ref={el => { if (el) el.indeterminate = indeterminate; }}
+                      onChange={toggleAll} className="accent-indigo-600 cursor-pointer" />
+                  </th>
+                  {activeCols.map(c => <th key={c.id} className="px-4 py-3 text-left">{c.label}</th>)}
+                  <th className="px-4 py-3 w-10" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {contacts.map(c => (
+                  <tr key={c.id} className={`hover:bg-slate-50 ${selectedIds.has(c.id) ? 'bg-indigo-50/40' : ''}`}>
+                    <td className="px-4 py-3">
+                      <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleOne(c.id)}
+                        className="accent-indigo-600 cursor-pointer" />
+                    </td>
+                    {activeCols.map(col => (
+                      <td key={col.id} className="px-4 py-3">
+                        {col.id === 'email' && <span className="font-medium text-slate-800">{c.email}</span>}
+                        {col.id === 'name' && <span className="text-slate-600">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</span>}
+                        {col.id === 'phone' && <span className="text-slate-500">{c.phone || '—'}</span>}
+                        {col.id === 'tags' && (
+                          <div className="flex flex-wrap gap-1">
+                            {c.tags?.length ? c.tags.map(t => (
+                              <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>
+                            )) : <span className="text-slate-400">—</span>}
+                          </div>
+                        )}
+                        {col.id === 'status' && (
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.subscribed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                            {c.subscribed ? 'Subscribed' : 'Unsubscribed'}
+                          </span>
+                        )}
+                        {col.id === 'created_at' && <span className="text-slate-500">{formatDate(c.created_at)}</span>}
+                      </td>
+                    ))}
+                    <td className="px-4 py-3" />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -597,7 +890,10 @@ function SegmentCard({ segment, onEdit, onDelete }: {
 
 // ─── Segments Tab ─────────────────────────────────────────────────────────────
 
+type SegView = { type: 'list' } | { type: 'detail'; segment: MailingSegment };
+
 function SegmentsTab() {
+  const [view, setView] = useState<SegView>({ type: 'list' });
   const [segments, setSegments] = useState<MailingSegment[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ mode: 'create' } | { mode: 'edit'; segment: MailingSegment } | null>(null);
@@ -611,10 +907,28 @@ function SegmentsTab() {
 
   useEffect(() => { void load(); }, []);
 
+  if (view.type === 'detail') {
+    return <SegmentDetailView segment={view.segment} onBack={() => setView({ type: 'list' })} />;
+  }
+
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this segment?')) return;
     await mailingService.deleteSegment(id);
     await load();
+  };
+
+  const handleDuplicate = async (s: MailingSegment) => {
+    await mailingService.createSegment({ name: `Copy of ${s.name}`, rules: s.rules });
+    setMessage({ text: `"${s.name}" duplicated.`, ok: true });
+    await load();
+  };
+
+  const handleExportCsv = async (s: MailingSegment) => {
+    try {
+      const contacts = await mailingService.getSegmentContacts(s.id);
+      const cols = SEG_COLS.map(c => c.id);
+      triggerCsvDownload(buildCsv(contacts, cols), `${s.name.replace(/\s+/g, '_')}.csv`);
+    } catch { setMessage({ text: 'Export failed.', ok: false }); }
   };
 
   const handleSave = async (name: string, rules: SegRules) => {
@@ -667,8 +981,11 @@ function SegmentsTab() {
           <SegmentCard
             key={s.id}
             segment={s}
+            onClick={() => setView({ type: 'detail', segment: s })}
             onEdit={() => setModal({ mode: 'edit', segment: s })}
+            onDuplicate={() => void handleDuplicate(s)}
             onDelete={() => void handleDelete(s.id)}
+            onExportCsv={() => void handleExportCsv(s)}
           />
         ))}
       </div>

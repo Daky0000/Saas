@@ -138,6 +138,19 @@ export const mailingService = {
     await fetch(`${BASE}/segments/${id}`, { method: 'DELETE', headers: authHeaders() });
   },
 
+  async getSegmentContacts(id: string): Promise<MailingContact[]> {
+    const res = await fetch(`${BASE}/segments/${id}/contacts`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; contacts: MailingContact[]; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed');
+    return data.contacts ?? [];
+  },
+
+  async bulkAction(action: 'tag' | 'archive' | 'delete', ids: string[], tag?: string): Promise<void> {
+    const res = await fetch(`${BASE}/contacts/bulk`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ action, ids, tag }) });
+    const data = await parseJson<{ success: boolean; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Bulk action failed');
+  },
+
   async previewSegment(rules: unknown): Promise<{ count: number; sample: { email: string; first_name: string | null; last_name: string | null }[] }> {
     const res = await fetch(`${BASE}/segments/preview`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ rules }) });
     const data = await parseJson<{ success: boolean; count: number; sample: { email: string; first_name: string | null; last_name: string | null }[]; error?: string }>(res);

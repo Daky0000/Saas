@@ -18798,6 +18798,47 @@ app.delete('/api/mailing/segments/:id', async (req: Request, res: Response) => {
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete segment' }); }
 });
 
+// GET /api/mailing/segments/:id/contacts
+app.get('/api/mailing/segments/:id/contacts', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows: segs } = await pool!.query('SELECT * FROM mailing_segments WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
+    if (!segs.length) return res.status(404).json({ success: false, error: 'Segment not found' });
+    const params: unknown[] = [auth.userId];
+    const where = buildSegmentWhere(segs[0].rules as _SegRules, params);
+    const { rows } = await pool!.query(
+      `SELECT mc.*, COALESCE(array_agg(mct.tag ORDER BY mct.tag) FILTER (WHERE mct.tag IS NOT NULL),'{}') as tags
+       FROM mailing_contacts mc
+       LEFT JOIN mailing_contact_tags mct ON mct.contact_id=mc.id
+       WHERE mc.user_id=$1 AND ${where}
+       GROUP BY mc.id ORDER BY mc.created_at DESC`,
+      params
+    );
+    return res.json({ success: true, contacts: rows });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch contacts' }); }
+});
+
+// POST /api/mailing/contacts/bulk — bulk tag / archive / delete
+app.post('/api/mailing/contacts/bulk', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { action, ids, tag } = req.body as { action: string; ids: string[]; tag?: string };
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ success: false, error: 'No contacts selected' });
+    const ph = ids.map((_, i) => `$${i + 2}`).join(',');
+    if (action === 'delete') {
+      await pool!.query(`DELETE FROM mailing_contacts WHERE user_id=$1 AND id IN (${ph})`, [auth.userId, ...ids]);
+    } else if (action === 'archive') {
+      await pool!.query(`UPDATE mailing_contacts SET subscribed=false,unsubscribed_at=NOW(),updated_at=NOW() WHERE user_id=$1 AND id IN (${ph})`, [auth.userId, ...ids]);
+    } else if (action === 'tag' && tag) {
+      for (const id of ids) {
+        await pool!.query('INSERT INTO mailing_contact_tags (id,contact_id,user_id,tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+          [randomUUID(), id, auth.userId, String(tag).trim()]).catch(() => undefined);
+      }
+    } else { return res.status(400).json({ success: false, error: 'Invalid action' }); }
+    return res.json({ success: true });
+  } catch { return res.status(500).json({ success: false, error: 'Bulk action failed' }); }
+});
+
 // GET /api/mailing/campaigns
 app.get('/api/mailing/campaigns', async (req: Request, res: Response) => {
   try {
