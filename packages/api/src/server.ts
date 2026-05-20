@@ -18662,6 +18662,49 @@ app.delete('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete contact' }); }
 });
 
+// GET /api/mailing/contacts/:id — single contact with tags
+app.get('/api/mailing/contacts/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows } = await pool!.query(
+      `SELECT mc.*, COALESCE(array_agg(t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL), ARRAY[]::text[]) AS tags
+       FROM mailing_contacts mc
+       LEFT JOIN mailing_contact_tags t ON t.contact_id = mc.id
+       WHERE mc.id = $1 AND mc.user_id = $2
+       GROUP BY mc.id`,
+      [req.params.id, auth.userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
+    return res.json({ success: true, contact: rows[0] });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch contact' }); }
+});
+
+// POST /api/mailing/contacts/:id/tags — add a single tag
+app.post('/api/mailing/contacts/:id/tags', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const tag = String(req.body?.tag || '').trim();
+    if (!tag) return res.status(400).json({ success: false, error: 'Tag required' });
+    await pool!.query(
+      'INSERT INTO mailing_contact_tags (id, contact_id, user_id, tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+      [randomUUID(), req.params.id, auth.userId, tag]
+    );
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to add tag' }); }
+});
+
+// DELETE /api/mailing/contacts/:id/tags/:tag — remove a single tag
+app.delete('/api/mailing/contacts/:id/tags/:tag', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    await pool!.query(
+      'DELETE FROM mailing_contact_tags WHERE contact_id=$1 AND user_id=$2 AND tag=$3',
+      [req.params.id, auth.userId, req.params.tag]
+    );
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to remove tag' }); }
+});
+
 // GET /api/mailing/contacts/tags — list all unique tags for user
 app.get('/api/mailing/contacts/tags', async (req: Request, res: Response) => {
   try {

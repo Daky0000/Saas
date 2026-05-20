@@ -42,9 +42,347 @@ function formatDate(s?: string | null) {
   return new Date(s).toLocaleDateString();
 }
 
+// ─── Contact Detail View ─────────────────────────────────────────────────────
+
+function ContactDetailView({
+  contact: initial, onBack, onUpdate, onDelete,
+}: {
+  contact: MailingContact;
+  onBack: () => void;
+  onUpdate: (c: MailingContact) => void;
+  onDelete: () => void;
+}) {
+  const [contact, setContact] = useState(initial);
+  const [tab, setTab] = useState<'overview' | 'insights' | 'notes' | 'settings'>('overview');
+  const [notes, setNotes] = useState(contact.custom_data?.__notes ?? '');
+  const [tagInput, setTagInput] = useState('');
+  const [showTagInput, setShowTagInput] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({ first_name: contact.first_name ?? '', last_name: contact.last_name ?? '', phone: contact.phone ?? '' });
+
+  const push = (c: MailingContact) => { setContact(c); onUpdate(c); };
+
+  const handleSaveEdit = async () => {
+    setSaving(true);
+    try {
+      const updated = await mailingService.updateContact(contact.id, { first_name: editForm.first_name || undefined, last_name: editForm.last_name || undefined, phone: editForm.phone || undefined });
+      push({ ...updated, tags: contact.tags });
+      setEditing(false);
+      setMessage({ text: 'Contact updated.', ok: true });
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
+    finally { setSaving(false); }
+  };
+
+  const handleSaveNotes = async () => {
+    setSaving(true);
+    try {
+      await mailingService.updateContact(contact.id, { custom_data: { ...contact.custom_data, __notes: notes } });
+      setMessage({ text: 'Notes saved.', ok: true });
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : 'Failed', ok: false }); }
+    finally { setSaving(false); }
+  };
+
+  const handleAddTag = async () => {
+    const t = tagInput.trim();
+    if (!t) return;
+    try {
+      await mailingService.addTag(contact.id, t);
+      const updated = { ...contact, tags: [...(contact.tags ?? []).filter(x => x !== t), t] };
+      push(updated);
+      setTagInput(''); setShowTagInput(false);
+    } catch (e) { setMessage({ text: 'Failed to add tag', ok: false }); }
+  };
+
+  const handleRemoveTag = async (tag: string) => {
+    try {
+      await mailingService.removeTag(contact.id, tag);
+      push({ ...contact, tags: (contact.tags ?? []).filter(t => t !== tag) });
+    } catch (e) { setMessage({ text: 'Failed to remove tag', ok: false }); }
+  };
+
+  const handleToggleSubscription = async () => {
+    try {
+      const updated = await mailingService.updateContact(contact.id, { subscribed: !contact.subscribed });
+      push({ ...contact, ...updated, tags: contact.tags });
+    } catch (e) { setMessage({ text: 'Failed', ok: false }); }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm('Permanently delete this contact?')) return;
+    await mailingService.deleteContact(contact.id);
+    onDelete();
+  };
+
+  const fd = (s?: string | null) => s ? new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const customFields = Object.entries(contact.custom_data ?? {}).filter(([k]) => !k.startsWith('__'));
+
+  return (
+    <div className="space-y-4">
+      <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
+        <ChevronLeft size={16} /> All contacts
+      </button>
+
+      {message && (
+        <div className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${message.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+          <span>{message.text}</span>
+          <button type="button" onClick={() => setMessage(null)}><X size={14} /></button>
+        </div>
+      )}
+
+      <div className="flex gap-5 items-start">
+        {/* ── Left sidebar ── */}
+        <div className="w-64 shrink-0 space-y-3">
+
+          {/* Email header */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-base font-black text-slate-900 break-all leading-snug">{contact.email}</p>
+            <p className="mt-1 text-xs text-slate-400">Created on {fd(contact.created_at)}</p>
+          </div>
+
+          {/* Marketing status */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <h3 className="text-sm font-bold text-slate-900">Marketing status</h3>
+            <div className="space-y-1.5 text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-500 shrink-0">Email</span>
+                <span className="text-slate-700 break-all text-right">{contact.email}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-500 shrink-0">SMS phone</span>
+                <span className="text-slate-700">{contact.phone || '—'}</span>
+              </div>
+            </div>
+            <div className="border-t border-slate-100 pt-3 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-800">Email</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${contact.subscribed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                  {contact.subscribed ? 'Subscribed' : 'Unsubscribed'}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500">Opt in</span>
+                <span className="text-slate-700">{fd(contact.created_at)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500">Source</span>
+                <span className="text-slate-700 capitalize">{contact.source || '—'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Contact details */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">Contact details</h3>
+              <button type="button" onClick={() => { setEditing(e => !e); setEditForm({ first_name: contact.first_name ?? '', last_name: contact.last_name ?? '', phone: contact.phone ?? '' }); }}
+                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800">{editing ? 'Cancel' : 'Edit'}</button>
+            </div>
+            {editing ? (
+              <div className="space-y-2">
+                {(['first_name', 'last_name', 'phone'] as const).map(f => (
+                  <input key={f} value={editForm[f]} onChange={e => setEditForm(p => ({ ...p, [f]: e.target.value }))}
+                    placeholder={f === 'first_name' ? 'First name' : f === 'last_name' ? 'Last name' : 'Phone number'}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400" />
+                ))}
+                <button type="button" onClick={() => void handleSaveEdit()} disabled={saving}
+                  className="w-full rounded-lg bg-slate-950 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5 text-xs">
+                {[['First Name', contact.first_name], ['Last Name', contact.last_name], ['Phone Number', contact.phone]].map(([label, val]) => (
+                  <div key={String(label)} className="flex justify-between gap-2">
+                    <span className="text-slate-500 shrink-0">{label}</span>
+                    <span className="text-slate-700">{val || '—'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Custom fields */}
+          {customFields.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
+              <h3 className="text-sm font-bold text-slate-900">Custom fields</h3>
+              {customFields.map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-2 text-xs">
+                  <span className="text-slate-500 shrink-0">{k}</span>
+                  <span className="text-slate-700">{v || '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tags */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <h3 className="text-sm font-bold text-slate-900">Tags</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {(contact.tags ?? []).map(t => (
+                <span key={t} className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
+                  {t}
+                  <button type="button" onClick={() => void handleRemoveTag(t)} className="text-slate-400 hover:text-red-500 leading-none"><X size={10} /></button>
+                </span>
+              ))}
+              {showTagInput ? (
+                <div className="flex items-center gap-1">
+                  <input value={tagInput} onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && void handleAddTag()}
+                    placeholder="Tag name" autoFocus
+                    className="w-24 rounded-lg border border-slate-200 px-2 py-0.5 text-xs outline-none focus:border-slate-400" />
+                  <button type="button" onClick={() => void handleAddTag()} className="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Add</button>
+                  <button type="button" onClick={() => { setShowTagInput(false); setTagInput(''); }} className="text-slate-400 hover:text-slate-600"><X size={11} /></button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setShowTagInput(true)}
+                  className="flex items-center gap-1 rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700">
+                  <Plus size={10} /> Add a tag
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Right content ── */}
+        <div className="flex-1 min-w-0">
+          <div className="flex border-b border-slate-200 mb-4">
+            {(['overview', 'insights', 'notes', 'settings'] as const).map(t => (
+              <button key={t} type="button" onClick={() => setTab(t)}
+                className={`px-4 py-3 text-sm font-semibold capitalize border-b-2 -mb-px transition-colors ${tab === t ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'overview' && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <h3 className="text-base font-bold text-slate-900 mb-5">Activity</h3>
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50">
+                    <Users size={13} className="text-indigo-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-700 font-medium">Contact added</p>
+                    <p className="text-xs text-slate-400">{fd(contact.created_at)} · Source: {contact.source || 'manual'}</p>
+                  </div>
+                </div>
+                {contact.subscribed && (
+                  <div className="flex gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50">
+                      <Mail size={13} className="text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-slate-700 font-medium">Subscribed to email marketing</p>
+                      <p className="text-xs text-slate-400">{fd(contact.created_at)}</p>
+                    </div>
+                  </div>
+                )}
+                {!contact.subscribed && contact.unsubscribed_at && (
+                  <div className="flex gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-50">
+                      <X size={13} className="text-red-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-slate-700 font-medium">Unsubscribed</p>
+                      <p className="text-xs text-slate-400">{fd(contact.unsubscribed_at)}</p>
+                    </div>
+                  </div>
+                )}
+                {(contact.tags ?? []).length > 0 && (
+                  <div className="flex gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-50">
+                      <Tag size={13} className="text-slate-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-slate-700 font-medium">Tags: {(contact.tags ?? []).join(', ')}</p>
+                      <p className="text-xs text-slate-400">Current tags on this contact</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'insights' && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <h3 className="text-base font-bold text-slate-900 mb-4">Insights</h3>
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                {[
+                  { label: 'Subscription', value: contact.subscribed ? 'Subscribed' : 'Unsubscribed', color: contact.subscribed ? 'text-emerald-600' : 'text-slate-500' },
+                  { label: 'Source', value: contact.source || '—', color: 'text-slate-800' },
+                  { label: 'Email consent', value: contact.email_marketing_consent ? 'Given' : 'Not given', color: 'text-slate-800' },
+                  { label: 'Tags', value: String((contact.tags ?? []).length), color: 'text-slate-800' },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="rounded-xl bg-slate-50 p-4">
+                    <p className="text-xs text-slate-500 mb-1">{label}</p>
+                    <p className={`text-sm font-bold capitalize ${color}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-center text-xs text-slate-400">Email open and click tracking is available at the campaign level.</p>
+            </div>
+          )}
+
+          {tab === 'notes' && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
+              <h3 className="text-base font-bold text-slate-900">Notes</h3>
+              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={8}
+                placeholder="Add notes about this contact…"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400 resize-none" />
+              <div className="flex justify-end">
+                <button type="button" onClick={() => void handleSaveNotes()} disabled={saving}
+                  className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
+                  {saving ? 'Saving…' : 'Save notes'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'settings' && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
+                <h3 className="text-base font-bold text-slate-900">Subscription</h3>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Email marketing</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {contact.subscribed ? 'This contact will receive email campaigns.' : 'This contact is unsubscribed and will not receive campaigns.'}
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => void handleToggleSubscription()}
+                    className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold ${contact.subscribed ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
+                    {contact.subscribed ? 'Unsubscribe' : 'Resubscribe'}
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-red-100 bg-white p-6">
+                <h3 className="mb-4 text-base font-bold text-red-700">Danger zone</h3>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Delete contact</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Permanently removes this contact and all their data.</p>
+                  </div>
+                  <button type="button" onClick={() => void handleDelete()}
+                    className="shrink-0 rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Contacts Tab ────────────────────────────────────────────────────────────
 
 function ContactsTab() {
+  const [detailContact, setDetailContact] = useState<MailingContact | null>(null);
   const [contacts, setContacts] = useState<MailingContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -232,6 +570,18 @@ function ContactsTab() {
     } finally { setImporting(false); }
   };
 
+  if (detailContact) {
+    return <ContactDetailView
+      contact={detailContact}
+      onBack={() => setDetailContact(null)}
+      onUpdate={updated => {
+        setDetailContact(updated);
+        setContacts(prev => prev.map(c => c.id === updated.id ? updated : c));
+      }}
+      onDelete={() => { setDetailContact(null); void load(); }}
+    />;
+  }
+
   return (
     <div className="space-y-4">
       {message && (
@@ -411,7 +761,12 @@ function ContactsTab() {
                       <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleOne(c.id)}
                         className="accent-indigo-600 cursor-pointer" />
                     </td>
-                    <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">{c.email}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <button type="button" onClick={() => setDetailContact(c)}
+                        className="font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
+                        {c.email}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{c.phone || '—'}</td>
                     <td className="px-4 py-3">

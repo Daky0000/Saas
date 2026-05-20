@@ -96,8 +96,27 @@ export const mailingService = {
     return data.contact;
   },
 
+  async getContact(id: string): Promise<MailingContact> {
+    const res = await fetch(`${BASE}/contacts/${id}`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; contact: MailingContact; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Contact not found');
+    return data.contact;
+  },
+
   async deleteContact(id: string): Promise<void> {
     await fetch(`${BASE}/contacts/${id}`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  async addTag(contactId: string, tag: string): Promise<void> {
+    const res = await fetch(`${BASE}/contacts/${contactId}/tags`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ tag }) });
+    const data = await parseJson<{ success: boolean; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to add tag');
+  },
+
+  async removeTag(contactId: string, tag: string): Promise<void> {
+    const res = await fetch(`${BASE}/contacts/${contactId}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE', headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to remove tag');
   },
 
   async listTags(): Promise<string[]> {
