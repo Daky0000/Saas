@@ -29,7 +29,8 @@ export type MailingContact = {
 export type MailingSegment = {
   id: string;
   name: string;
-  rules: unknown[];
+  rules: unknown;
+  contact_count?: number;
   created_at: string;
   updated_at: string;
 };
@@ -119,14 +120,14 @@ export const mailingService = {
     return data.segments ?? [];
   },
 
-  async createSegment(payload: { name: string; rules?: unknown[] }): Promise<MailingSegment> {
+  async createSegment(payload: { name: string; rules?: unknown }): Promise<MailingSegment> {
     const res = await fetch(`${BASE}/segments`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
     const data = await parseJson<{ success: boolean; segment: MailingSegment; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to create segment');
     return data.segment;
   },
 
-  async updateSegment(id: string, payload: Partial<MailingSegment>): Promise<MailingSegment> {
+  async updateSegment(id: string, payload: { name?: string; rules?: unknown }): Promise<MailingSegment> {
     const res = await fetch(`${BASE}/segments/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
     const data = await parseJson<{ success: boolean; segment: MailingSegment; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to update segment');
@@ -135,6 +136,13 @@ export const mailingService = {
 
   async deleteSegment(id: string): Promise<void> {
     await fetch(`${BASE}/segments/${id}`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  async previewSegment(rules: unknown): Promise<{ count: number; sample: { email: string; first_name: string | null; last_name: string | null }[] }> {
+    const res = await fetch(`${BASE}/segments/preview`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ rules }) });
+    const data = await parseJson<{ success: boolean; count: number; sample: { email: string; first_name: string | null; last_name: string | null }[]; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Preview failed');
+    return { count: data.count, sample: data.sample };
   },
 
   // Campaigns

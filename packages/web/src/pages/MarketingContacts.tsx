@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   FileSpreadsheet,
+  Filter,
   Link2,
   Link2Off,
   Loader2,
@@ -9,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   Tag,
   Trash2,
   Upload,
@@ -311,81 +313,363 @@ function ContactsTab() {
   );
 }
 
-// ─── Segments Tab ────────────────────────────────────────────────────────────
+// ─── Segment Types & Config ───────────────────────────────────────────────────
+
+type CondField = 'email' | 'first_name' | 'last_name' | 'phone' | 'tags' | 'subscribed';
+type SegCond = { field: CondField; op: string; value: string };
+type SegRules = { match: 'all' | 'any'; conditions: SegCond[] };
+
+const SEG_FIELDS: { value: CondField; label: string }[] = [
+  { value: 'email', label: 'Email address' },
+  { value: 'first_name', label: 'First name' },
+  { value: 'last_name', label: 'Last name' },
+  { value: 'phone', label: 'Phone' },
+  { value: 'tags', label: 'Tags' },
+  { value: 'subscribed', label: 'Subscription status' },
+];
+
+const SEG_OPS: Record<CondField, { value: string; label: string; noValue?: boolean }[]> = {
+  email: [
+    { value: 'contains', label: 'contains' },
+    { value: 'not_contains', label: 'does not contain' },
+    { value: 'is', label: 'is exactly' },
+    { value: 'is_not', label: 'is not' },
+    { value: 'starts_with', label: 'starts with' },
+    { value: 'ends_with', label: 'ends with' },
+    { value: 'is_set', label: 'is set', noValue: true },
+    { value: 'is_not_set', label: 'is not set', noValue: true },
+  ],
+  first_name: [
+    { value: 'contains', label: 'contains' },
+    { value: 'not_contains', label: 'does not contain' },
+    { value: 'is', label: 'is exactly' },
+    { value: 'is_not', label: 'is not' },
+    { value: 'is_set', label: 'is set', noValue: true },
+    { value: 'is_not_set', label: 'is not set', noValue: true },
+  ],
+  last_name: [
+    { value: 'contains', label: 'contains' },
+    { value: 'not_contains', label: 'does not contain' },
+    { value: 'is', label: 'is exactly' },
+    { value: 'is_not', label: 'is not' },
+    { value: 'is_set', label: 'is set', noValue: true },
+    { value: 'is_not_set', label: 'is not set', noValue: true },
+  ],
+  phone: [
+    { value: 'is_set', label: 'is set', noValue: true },
+    { value: 'is_not_set', label: 'is not set', noValue: true },
+    { value: 'contains', label: 'contains' },
+  ],
+  tags: [
+    { value: 'has_tag', label: 'has tag' },
+    { value: 'not_has_tag', label: "doesn't have tag" },
+  ],
+  subscribed: [
+    { value: 'is_true', label: 'is subscribed', noValue: true },
+    { value: 'is_false', label: 'is unsubscribed', noValue: true },
+  ],
+};
+
+const DEFAULT_COND: SegCond = { field: 'email', op: 'contains', value: '' };
+const DEFAULT_RULES: SegRules = { match: 'all', conditions: [] };
+
+function parseRules(raw: unknown): SegRules {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const r = raw as Record<string, unknown>;
+    return {
+      match: r.match === 'any' ? 'any' : 'all',
+      conditions: Array.isArray(r.conditions) ? (r.conditions as SegCond[]) : [],
+    };
+  }
+  return DEFAULT_RULES;
+}
+
+// ─── Condition Row ────────────────────────────────────────────────────────────
+
+function ConditionRow({ cond, onChange, onRemove }: {
+  cond: SegCond;
+  onChange: (u: Partial<SegCond>) => void;
+  onRemove: () => void;
+}) {
+  const ops = SEG_OPS[cond.field] ?? SEG_OPS.email;
+  const currentOp = ops.find(o => o.value === cond.op) ?? ops[0];
+  const sel = 'rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-slate-400 cursor-pointer';
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <select value={cond.field} onChange={e => {
+        const f = e.target.value as CondField;
+        onChange({ field: f, op: SEG_OPS[f][0].value, value: '' });
+      }} className={sel}>
+        {SEG_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+      </select>
+      <select value={cond.op} onChange={e => onChange({ op: e.target.value, value: '' })} className={sel}>
+        {ops.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      {!currentOp.noValue && (
+        <input
+          value={cond.value}
+          onChange={e => onChange({ value: e.target.value })}
+          placeholder="value…"
+          className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+        />
+      )}
+      <button type="button" onClick={onRemove} className="p-1 text-slate-400 hover:text-red-500">
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+// ─── Segment Builder Modal ────────────────────────────────────────────────────
+
+function SegmentBuilderModal({ initial, onSave, onClose }: {
+  initial?: MailingSegment;
+  onSave: (name: string, rules: SegRules) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? '');
+  const [rules, setRules] = useState<SegRules>(parseRules(initial?.rules));
+  const [preview, setPreview] = useState<{ count: number; sample: { email: string; first_name: string | null; last_name: string | null }[] } | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!rules.conditions.length) { setPreview(null); return; }
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      setPreviewing(true);
+      try { setPreview(await mailingService.previewSegment(rules)); }
+      catch { setPreview(null); }
+      finally { setPreviewing(false); }
+    }, 600);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [rules]);
+
+  const addCond = () => setRules(r => ({ ...r, conditions: [...r.conditions, { ...DEFAULT_COND }] }));
+  const removeCond = (i: number) => setRules(r => ({ ...r, conditions: r.conditions.filter((_, j) => j !== i) }));
+  const updateCond = (i: number, u: Partial<SegCond>) => setRules(r => ({
+    ...r, conditions: r.conditions.map((c, j) => j === i ? { ...c, ...u } : c),
+  }));
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setSaving(true); setSaveErr(null);
+    try { await onSave(name.trim(), rules); }
+    catch (e) { setSaveErr(e instanceof Error ? e.message : 'Failed to save'); }
+    finally { setSaving(false); }
+  };
+
+  const inp = 'w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div className="flex max-h-[90vh] w-full max-w-xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4">
+          <span className="text-sm font-bold text-slate-900">{initial ? 'Edit segment' : 'Create segment'}</span>
+          <button type="button" onClick={onClose}><X size={18} className="text-slate-400" /></button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-600">Segment name</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Active newsletter subscribers" className={inp} autoFocus />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+            <span>Contacts match</span>
+            <select
+              value={rules.match}
+              onChange={e => setRules(r => ({ ...r, match: e.target.value as 'all' | 'any' }))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 outline-none focus:border-slate-400"
+            >
+              <option value="all">ALL</option>
+              <option value="any">ANY</option>
+            </select>
+            <span>of the following conditions</span>
+          </div>
+
+          <div className="space-y-2.5">
+            {rules.conditions.length === 0 && (
+              <p className="text-xs italic text-slate-400">No conditions yet — this segment will match all contacts.</p>
+            )}
+            {rules.conditions.map((cond, i) => (
+              <ConditionRow key={i} cond={cond} onChange={u => updateCond(i, u)} onRemove={() => removeCond(i)} />
+            ))}
+            <button type="button" onClick={addCond}
+              className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800">
+              <Plus size={12} /> Add condition
+            </button>
+          </div>
+
+          {rules.conditions.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              {previewing ? (
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <Loader2 size={12} className="animate-spin" /> Calculating…
+                </div>
+              ) : preview ? (
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    <span className="text-indigo-600">{preview.count.toLocaleString()}</span>{' '}
+                    contact{preview.count !== 1 ? 's' : ''} match{preview.count === 1 ? 'es' : ''} this segment
+                  </p>
+                  {preview.sample.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {preview.sample.map(c => (
+                        <span key={c.email} className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600">
+                          {[c.first_name, c.last_name].filter(Boolean).join(' ') || c.email}
+                        </span>
+                      ))}
+                      {preview.count > preview.sample.length && (
+                        <span className="py-0.5 text-xs text-slate-400">+{preview.count - preview.sample.length} more</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {saveErr && <p className="text-xs text-red-600">{saveErr}</p>}
+        </div>
+
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 px-5 py-4">
+          <button type="button" onClick={onClose}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button type="button" onClick={() => void handleSave()} disabled={saving || !name.trim()}
+            className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-40">
+            {saving && <Loader2 size={14} className="animate-spin" />}
+            {initial ? 'Save changes' : 'Create segment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Segment Card ─────────────────────────────────────────────────────────────
+
+function SegmentCard({ segment, onEdit, onDelete }: {
+  segment: MailingSegment;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const rules = parseRules(segment.rules);
+  const condCount = rules.conditions.length;
+  return (
+    <div className="group rounded-2xl border border-slate-200 bg-white p-5 transition-all hover:border-slate-300 hover:shadow-md">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50">
+            <Filter size={15} className="text-indigo-600" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold text-slate-900">{segment.name}</div>
+            <div className="mt-0.5 text-xs text-slate-400">
+              {condCount === 0
+                ? 'No conditions (matches all)'
+                : `${condCount} condition${condCount > 1 ? 's' : ''} · match ${rules.match}`}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button type="button" onClick={onEdit}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            <Settings2 size={13} />
+          </button>
+          <button type="button" onClick={onDelete}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 flex items-center gap-1 text-xs">
+        <Users size={11} className="text-slate-400" />
+        <span className="font-semibold text-slate-700">{(segment.contact_count ?? 0).toLocaleString()}</span>
+        <span className="text-slate-400">contact{(segment.contact_count ?? 0) !== 1 ? 's' : ''}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Segments Tab ─────────────────────────────────────────────────────────────
 
 function SegmentsTab() {
   const [segments, setSegments] = useState<MailingSegment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(false);
-  const [name, setName] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [modal, setModal] = useState<{ mode: 'create' } | { mode: 'edit'; segment: MailingSegment } | null>(null);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   const load = async () => {
     setLoading(true);
-    try { setSegments(await mailingService.listSegments()); } catch { /* silent */ } finally { setLoading(false); }
+    try { setSegments(await mailingService.listSegments()); }
+    catch { /* silent */ } finally { setLoading(false); }
   };
 
   useEffect(() => { void load(); }, []);
 
-  const handleAdd = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    try { await mailingService.createSegment({ name: name.trim() }); setName(''); setShowAdd(false); await load(); }
-    catch { /* silent */ } finally { setSaving(false); }
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this segment?')) return;
-    await mailingService.deleteSegment(id); await load();
+    await mailingService.deleteSegment(id);
+    await load();
+  };
+
+  const handleSave = async (name: string, rules: SegRules) => {
+    if (modal?.mode === 'edit') {
+      await mailingService.updateSegment(modal.segment.id, { name, rules });
+    } else {
+      await mailingService.createSegment({ name, rules });
+    }
+    setModal(null);
+    setMessage({ text: modal?.mode === 'edit' ? 'Segment updated.' : 'Segment created.', ok: true });
+    await load();
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Group your contacts by shared properties.</p>
-        <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+      {message && (
+        <div className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${message.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+          <span>{message.text}</span>
+          <button type="button" onClick={() => setMessage(null)}><X size={14} /></button>
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">Target contacts dynamically by email, tags, activity, and more.</p>
+        <button type="button" onClick={() => setModal({ mode: 'create' })}
+          className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           <Plus size={14} /> New Segment
         </button>
       </div>
 
-      {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <span className="text-sm font-bold">New Segment</span>
-              <button onClick={() => setShowAdd(false)}><X size={18} className="text-slate-400" /></button>
-            </div>
-            <div className="px-5 py-4">
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="Segment name" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
-            </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
-              <button onClick={() => setShowAdd(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
-              <button onClick={() => void handleAdd()} disabled={saving || !name.trim()} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : 'Create'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {modal && (
+        <SegmentBuilderModal
+          initial={modal.mode === 'edit' ? modal.segment : undefined}
+          onSave={handleSave}
+          onClose={() => setModal(null)}
+        />
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {loading ? (
-          <div className="col-span-full flex justify-center py-12 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
+          <div className="col-span-full flex justify-center py-12 text-slate-400">
+            <Loader2 size={20} className="animate-spin" />
+          </div>
         ) : segments.length === 0 ? (
           <div className="col-span-full flex flex-col items-center py-16 text-slate-400">
-            <Tag size={32} className="mb-3 opacity-30" />
+            <Filter size={32} className="mb-3 opacity-30" />
             <p className="text-sm font-semibold">No segments yet</p>
+            <p className="mt-1 text-xs">Create a segment to target specific contacts</p>
           </div>
         ) : segments.map(s => (
-          <div key={s.id} className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="text-sm font-bold text-slate-900">{s.name}</div>
-                <div className="text-xs text-slate-400 mt-1">{formatDate(s.created_at)}</div>
-              </div>
-              <button onClick={() => void handleDelete(s.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
-            </div>
-          </div>
+          <SegmentCard
+            key={s.id}
+            segment={s}
+            onEdit={() => setModal({ mode: 'edit', segment: s })}
+            onDelete={() => void handleDelete(s.id)}
+          />
         ))}
       </div>
     </div>

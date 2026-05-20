@@ -18694,46 +18694,98 @@ app.post('/api/mailing/contacts/import', async (req: Request, res: Response) => 
   } catch (err) { return res.status(500).json({ success: false, error: 'Import failed' }); }
 });
 
+// ─── Segment condition SQL helper ─────────────────────────────────────────────
+interface _SegCond { field: string; op: string; value: string }
+interface _SegRules { match?: 'all' | 'any'; conditions?: _SegCond[] }
+function buildSegmentWhere(rules: _SegRules, params: unknown[]): string {
+  const conds = rules?.conditions;
+  if (!conds?.length) return 'TRUE';
+  const clauses = conds.map(({ field, op, value }) => {
+    if (field === 'subscribed') return op === 'is_true' ? 'mc.subscribed=TRUE' : op === 'is_false' ? 'mc.subscribed=FALSE' : 'TRUE';
+    if (field === 'tags') {
+      params.push(String(value ?? '').trim().toLowerCase());
+      const ex = `EXISTS(SELECT 1 FROM mailing_contact_tags mct WHERE mct.contact_id=mc.id AND LOWER(mct.tag)=$${params.length})`;
+      return op === 'not_has_tag' ? `NOT ${ex}` : ex;
+    }
+    const cols: Record<string,string> = { email:'mc.email', first_name:'mc.first_name', last_name:'mc.last_name', phone:'mc.phone' };
+    const col = cols[field]; if (!col) return 'TRUE';
+    if (op === 'is_set') return `(${col} IS NOT NULL AND ${col}<>'')`;
+    if (op === 'is_not_set') return `(${col} IS NULL OR ${col}='')`;
+    const v = String(value ?? '');
+    const p = (s: string) => { params.push(s); return params.length; };
+    if (op === 'contains') return `${col} ILIKE $${p('%'+v+'%')}`;
+    if (op === 'not_contains') return `${col} NOT ILIKE $${p('%'+v+'%')}`;
+    if (op === 'is') return `LOWER(${col})=$${p(v.toLowerCase())}`;
+    if (op === 'is_not') return `LOWER(${col})<>$${p(v.toLowerCase())}`;
+    if (op === 'starts_with') return `${col} ILIKE $${p(v+'%')}`;
+    if (op === 'ends_with') return `${col} ILIKE $${p('%'+v)}`;
+    return 'TRUE';
+  });
+  return '('+clauses.join(rules.match === 'any' ? ' OR ' : ' AND ')+')';
+}
+
 // GET /api/mailing/segments
 app.get('/api/mailing/segments', async (req: Request, res: Response) => {
   try {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
+    const auth = requireAuth(req, res); if (!auth) return;
     const { rows } = await pool!.query('SELECT * FROM mailing_segments WHERE user_id=$1 ORDER BY created_at DESC', [auth.userId]);
-    return res.json({ success: true, segments: rows });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch segments' }); }
+    const segments = await Promise.all(rows.map(async seg => {
+      try {
+        const params: unknown[] = [auth.userId];
+        const where = buildSegmentWhere(seg.rules as _SegRules, params);
+        const { rows: cr } = await pool!.query(`SELECT COUNT(*) c FROM mailing_contacts mc WHERE mc.user_id=$1 AND ${where}`, params);
+        return { ...seg, contact_count: parseInt(String(cr[0].c), 10) };
+      } catch { return { ...seg, contact_count: 0 }; }
+    }));
+    return res.json({ success: true, segments });
+  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch segments' }); }
+});
+
+// POST /api/mailing/segments/preview
+app.post('/api/mailing/segments/preview', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const rules = (req.body?.rules ?? {}) as _SegRules;
+    const params: unknown[] = [auth.userId];
+    const where = buildSegmentWhere(rules, params);
+    const [{ rows: cr }, { rows: sr }] = await Promise.all([
+      pool!.query(`SELECT COUNT(*) c FROM mailing_contacts mc WHERE mc.user_id=$1 AND ${where}`, params),
+      pool!.query(`SELECT email,first_name,last_name FROM mailing_contacts mc WHERE mc.user_id=$1 AND ${where} LIMIT 5`, params),
+    ]);
+    return res.json({ success: true, count: parseInt(String(cr[0].c), 10), sample: sr });
+  } catch { return res.status(500).json({ success: false, error: 'Preview failed' }); }
 });
 
 // POST /api/mailing/segments
 app.post('/api/mailing/segments', async (req: Request, res: Response) => {
   try {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
+    const auth = requireAuth(req, res); if (!auth) return;
     const { name, rules } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'Name required' });
     const id = randomUUID();
+    const rulesJson = JSON.stringify(rules && typeof rules === 'object' && !Array.isArray(rules) ? rules : { match: 'all', conditions: [] });
     const { rows } = await pool!.query(
       `INSERT INTO mailing_segments (id, user_id, name, rules) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [id, auth.userId, name, JSON.stringify(rules || [])]
+      [id, auth.userId, name, rulesJson]
     );
     return res.json({ success: true, segment: rows[0] });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create segment' }); }
+  } catch { return res.status(500).json({ success: false, error: 'Failed to create segment' }); }
 });
 
 // PATCH /api/mailing/segments/:id
 app.patch('/api/mailing/segments/:id', async (req: Request, res: Response) => {
   try {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
+    const auth = requireAuth(req, res); if (!auth) return;
     const { name, rules } = req.body;
+    const rulesJson = (rules && typeof rules === 'object') ? JSON.stringify(rules) : null;
     const { rows } = await pool!.query(
       `UPDATE mailing_segments SET name=COALESCE($1,name), rules=COALESCE($2::jsonb,rules), updated_at=NOW()
        WHERE id=$3 AND user_id=$4 RETURNING *`,
-      [name || null, rules ? JSON.stringify(rules) : null, req.params.id, auth.userId]
+      [name || null, rulesJson, req.params.id, auth.userId]
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Segment not found' });
     return res.json({ success: true, segment: rows[0] });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update segment' }); }
+  } catch { return res.status(500).json({ success: false, error: 'Failed to update segment' }); }
 });
 
 // DELETE /api/mailing/segments/:id
