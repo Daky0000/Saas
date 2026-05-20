@@ -19361,45 +19361,42 @@ app.get('/api/surveys/:id/analytics', async (req: Request, res: Response) => {
     const { rows: questions } = await pool!.query('SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx', [req.params.id]);
     const { rows: responses } = await pool!.query('SELECT answers FROM survey_responses WHERE survey_id=$1', [req.params.id]);
     const totalResponses = responses.length;
-    const analytics = questions.map(q => {
+    const questionsRecord: Record<string, unknown> = {};
+    for (const q of questions) {
       const allAnswers = responses.map(r => {
         const a = (r.answers as { question_id: string; value: unknown }[]).find(x => x.question_id === q.id);
         return a?.value;
       }).filter(v => v !== undefined && v !== null && v !== '');
+      const opts = (q.options || []) as string[];
       if (q.type === 'radio') {
         const counts: Record<string, number> = {};
-        (q.options as { id: string; text: string }[]).forEach(o => { counts[o.id] = 0; });
+        opts.forEach(o => { counts[o] = 0; });
         allAnswers.forEach(v => { if (typeof v === 'string' && counts[v] !== undefined) counts[v]++; });
-        return { question_id: q.id, type: q.type, question: q.question, options: q.options, counts, total: allAnswers.length };
-      }
-      if (q.type === 'checkbox') {
+        questionsRecord[q.id] = { type: q.type, counts, total: allAnswers.length };
+      } else if (q.type === 'checkbox') {
         const counts: Record<string, number> = {};
-        (q.options as { id: string; text: string }[]).forEach(o => { counts[o.id] = 0; });
-        allAnswers.forEach(v => { if (Array.isArray(v)) v.forEach((id: string) => { if (counts[id] !== undefined) counts[id]++; }); });
-        return { question_id: q.id, type: q.type, question: q.question, options: q.options, counts, total: allAnswers.length };
-      }
-      if (q.type === 'rating') {
-        const dist: Record<number, number> = { 1:0,2:0,3:0,4:0,5:0 };
-        allAnswers.forEach(v => { const n = Number(v); if (n >= 1 && n <= 5) dist[n]++; });
+        opts.forEach(o => { counts[o] = 0; });
+        allAnswers.forEach(v => { if (Array.isArray(v)) v.forEach((item: string) => { if (counts[item] !== undefined) counts[item]++; }); });
+        questionsRecord[q.id] = { type: q.type, counts, total: allAnswers.length };
+      } else if (q.type === 'rating') {
+        const dist: Record<string, number> = { '1':0,'2':0,'3':0,'4':0,'5':0 };
+        allAnswers.forEach(v => { const n = Number(v); if (n >= 1 && n <= 5) dist[String(n)]++; });
         const avg = allAnswers.length ? allAnswers.reduce((s, v) => s + Number(v), 0) / allAnswers.length : 0;
-        return { question_id: q.id, type: q.type, question: q.question, distribution: dist, average: Math.round(avg * 10) / 10, total: allAnswers.length };
-      }
-      if (q.type === 'nps') {
-        const nums = allAnswers.map(v => Number(v)).filter(n => n >= 0 && n <= 10);
+        questionsRecord[q.id] = { type: q.type, distribution: dist, average: Math.round(avg * 10) / 10, total: allAnswers.length };
+      } else if (q.type === 'nps' || q.type === 'range') {
+        const nums = allAnswers.map(v => Number(v)).filter(n => !isNaN(n) && n >= 0 && n <= 10);
         const promoters = nums.filter(n => n >= 9).length;
         const passives = nums.filter(n => n >= 7 && n <= 8).length;
         const detractors = nums.filter(n => n <= 6).length;
         const score = nums.length ? Math.round(((promoters - detractors) / nums.length) * 100) : 0;
-        const dist: Record<number, number> = {};
-        for (let i = 0; i <= 10; i++) dist[i] = nums.filter(n => n === i).length;
-        return { question_id: q.id, type: q.type, question: q.question, score, promoters, passives, detractors, distribution: dist, total: nums.length };
+        questionsRecord[q.id] = { type: 'nps', score, promoters, passives, detractors, total: nums.length };
+      } else if (q.type === 'text') {
+        questionsRecord[q.id] = { type: q.type, responses: allAnswers.slice(0, 100).map(String), total: allAnswers.length };
+      } else {
+        questionsRecord[q.id] = { type: q.type, total: allAnswers.length };
       }
-      if (q.type === 'text') {
-        return { question_id: q.id, type: q.type, question: q.question, responses: allAnswers.slice(0, 100), total: allAnswers.length };
-      }
-      return { question_id: q.id, type: q.type, question: q.question, total: allAnswers.length };
-    });
-    return res.json({ success: true, total_responses: totalResponses, analytics });
+    }
+    return res.json({ success: true, total_responses: totalResponses, completion_rate: 100, questions: questionsRecord });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
 });
 
@@ -19408,8 +19405,8 @@ app.get('/api/surveys/:id/analytics', async (req: Request, res: Response) => {
 // GET /api/public/surveys/:id — fetch published survey for display
 app.get('/api/public/surveys/:id', async (req: Request, res: Response) => {
   try {
-    const { rows } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'published']);
-    if (!rows.length) return res.status(404).json({ success: false, error: 'Survey not found or not published' });
+    const { rows } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'active']);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Survey not found or not active' });
     const { rows: questions } = await pool!.query('SELECT id, type, question, options, required, order_idx, settings FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx ASC', [req.params.id]);
     return res.json({ success: true, survey: { ...rows[0], questions } });
   } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch survey' }); }
@@ -19419,8 +19416,8 @@ app.get('/api/public/surveys/:id', async (req: Request, res: Response) => {
 app.post('/api/public/surveys/:id/respond', async (req: Request, res: Response) => {
   try {
     const { answers, email } = req.body as { answers: { question_id: string; value: unknown }[]; email?: string };
-    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'published']);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
+    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'active']);
+    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found or not active' });
     const survey = sr[0];
     // Find contact by email if provided
     let contactId: string | null = null;

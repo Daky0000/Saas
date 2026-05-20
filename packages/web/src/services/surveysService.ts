@@ -14,7 +14,7 @@ async function parseJson<T>(res: Response): Promise<T> {
 export type SurveyQuestion = {
   id: string;
   survey_id: string;
-  type: 'radio' | 'checkbox' | 'rating' | 'nps' | 'text';
+  type: 'radio' | 'checkbox' | 'rating' | 'nps' | 'text' | 'introduction' | 'range' | 'email' | 'contact' | 'content';
   question: string;
   options: string[];
   required: boolean;
