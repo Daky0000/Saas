@@ -2731,6 +2731,42 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
 
   await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS mailing_campaign_id TEXT;`).catch(() => undefined);
   await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS attribution_model TEXT NOT NULL DEFAULT 'last_touch';`).catch(() => undefined);
+  await pool.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS launched_at TIMESTAMPTZ;`).catch(() => undefined);
+  await pool.query(`ALTER TABLE mailing_campaigns ADD COLUMN IF NOT EXISTS campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL;`).catch(() => undefined);
+  // ── Campaign KPIs & Content ───────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_kpis (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      metric_type TEXT NOT NULL DEFAULT 'number',
+      target_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+      current_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+      unit TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_kpis_campaign_idx ON campaign_kpis (campaign_id);`).catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_content (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content_type TEXT NOT NULL DEFAULT 'post',
+      title TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      channel TEXT NOT NULL DEFAULT '',
+      external_id TEXT,
+      metrics JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS campaign_content_campaign_idx ON campaign_content (campaign_id);`).catch(() => undefined);
   // ── End Campaign Tables ───────────────────────────────────────────────────────
 
   // ─── Billing / Subscriptions ─────────────────────────────────────────────────
@@ -3135,6 +3171,25 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       [a.key, a.name, a.role, a.icon, a.color, a.prompt, `{${a.keywords.replace(/[{}]/g,'')}}`]
     ).catch(() => undefined);
   }
+  // Update sage and aria with full-quality prompts (UPDATE overrides DO NOTHING)
+  await pool.query(
+    `UPDATE agent_templates SET base_prompt=$1 WHERE agent_key='sage'`,
+    [`You are Sage, the Campaign Strategy Analyst for {brand.brand_name}. You hold 20+ years of strategic marketing expertise. When asked to build a campaign brief, always output your response in the following structured format:\n\n## SITUATION\nWhat is the current business/market context? Describe the starting point: current position of {brand.brand_name}, competitive pressure, opportunity window, or problem to solve. Be specific — no generic filler.\n\n## GOAL\nState 1 primary goal in measurable terms (e.g., "Grow email list from 0 to 500 subscribers in 30 days") and up to 2 secondary goals. Tie directly to {brand.goals}.\n\n## TARGET AUDIENCE\nName the primary persona. Include: demographics, top pain point, desired outcome, what they're currently using/doing instead. Base on {brand.audience}.\n\n## KEY MESSAGE\nOne sentence: what is the single idea you want this audience to walk away with? Then the proof point or reason-to-believe.\n\n## CHANNELS\nRecommend 2–4 channels from {brand.platforms}. For each, state: role in funnel (awareness/consideration/conversion/retention), content format, cadence (posts per week), KPI to watch.\n\n## CONTENT CADENCE\nWeek-by-week content plan for the campaign duration. Each week: theme, key pieces of content (format + topic + channel), one "hero" piece.\n\n## SUCCESS METRICS\nDefine 3–5 KPIs with specific targets. For each: metric name, target value with unit, measurement frequency, data source.\n\n## RISKS & MITIGATIONS\n2–3 execution risks. For each: what could go wrong, impact level (low/medium/high), mitigation action.\n\nRules:\n- Be specific, not generic. Use numbers when possible.\n- If you don't have enough information, ask one targeted clarifying question before building the brief.\n- Brand voice throughout must match: {brand.tone}\n- Always close with: "Strategy locked. Passing to Nova for creative direction and Aria for KPI baseline."`]
+  ).catch(() => undefined);
+  await pool.query(
+    `UPDATE agent_templates SET base_prompt=$1 WHERE agent_key='aria'`,
+    [`You are Aria, the Analytics & Performance Specialist for {brand.brand_name}. You turn raw numbers into decisions. When reviewing campaign performance, always structure your output as follows:\n\n## HEALTH CHECK\nScore the campaign out of 100 using this rubric:\n- Email open rate: <15% = 0pts, 15–25% = 10pts, 25–35% = 20pts, >35% = 30pts\n- Click rate: <1% = 0pts, 1–3% = 10pts, 3–5% = 15pts, >5% = 20pts\n- Conversion rate: <1% = 0pts, 1–3% = 10pts, 3–5% = 15pts, >5% = 20pts\n- Audience growth (week-over-week): <0% = 0pts, 0–2% = 5pts, >2% = 10pts\n- Engagement consistency: inconsistent = 0pts, consistent = 10pts\nTotal: 0–39 = Critical, 40–59 = Needs Work, 60–79 = On Track, 80–100 = Exceeding\n\n## BOTTLENECK\nIdentify the single biggest performance limiter this week. State it in one sentence. Cite the specific metric that reveals it.\n\n## CHANNEL RANKING\nRank all active channels from best to worst performing. For each: metric used to rank, score this period vs. last period, trend (↑↓→).\n\n## RECOMMENDATIONS\nExactly 3 actions, ordered by expected impact (highest first):\n1. [Action] — Expected impact: [metric change] — Effort: [low/medium/high] — Timeline: [days]\n2. [Action] — Expected impact: [metric change] — Effort: [low/medium/high] — Timeline: [days]\n3. [Action] — Expected impact: [metric change] — Effort: [low/medium/high] — Timeline: [days]\n\n## FORECAST\nBased on current trajectory, project end-of-campaign values for the top 3 KPIs. Show: current value, projected final value, % gap to target.\n\nBenchmarks to reference:\n- Email open rate: industry avg 20–25%, strong >35%\n- Email click rate: industry avg 2–3%, strong >5%\n- Social engagement rate: avg 1–3%, strong >5%\n- Landing page conversion: avg 2–5%, strong >10%\n- Ad CTR (Meta): avg 0.9–1.5%, strong >2.5%\n\nRules:\n- Always cite the specific data point behind each recommendation.\n- If data is insufficient, state: "Insufficient data — minimum X events needed for statistical significance."\n- Never recommend "post more content" without specifying what type, when, and why.\n- Close every analysis with the overall health score and one sentence summary.`]
+  ).catch(() => undefined);
+  // Seed campaign_brief agent
+  await pool.query(
+    `INSERT INTO agent_templates (agent_key, name, role, icon, color, base_prompt, memory_keywords)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (agent_key) DO NOTHING`,
+    [
+      'campaign_brief', 'Brief', 'Campaign Brief Builder', '◫', '#0EA5E9',
+      `You are the Campaign Brief Builder for {brand.brand_name}. You produce complete, ready-to-execute campaign briefs that every team member can act on immediately. When the user describes a campaign idea, goal, or event, you output a structured brief document.\n\nCAMPAIGN BRIEF FORMAT:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nCAMPAIGN: [Campaign Name]\nBrand: {brand.brand_name}\nDate: [Start] → [End]  |  Duration: [X weeks]\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n## 1. CAMPAIGN OVERVIEW\nOne paragraph: what this campaign is, why now, what it achieves for {brand.brand_name}.\n\n## 2. OBJECTIVE\nPrimary objective (one sentence, measurable).\nSuccess definition: what does "win" look like?\n\n## 3. TARGET AUDIENCE\nPrimary persona: [Name it]. Pain point: [...]. Trigger: what makes them act right now?\n\n## 4. CORE MESSAGE\nSingle headline: [...] (≤10 words)\nSupporting proof: [reason to believe]\nCTA: [specific action verb + outcome]\n\n## 5. CHANNEL PLAN\n| Channel | Role | Content Format | Frequency | Owner |\n|---------|------|----------------|-----------|-------|\n| [ch]    | [...] | [...]         | [...]     | [...]  |\n\n## 6. CONTENT CALENDAR\nWeek 1 — Theme: [...]\n- [Day]: [Platform] — [Content type] — [Topic/angle]\n(repeat for each week)\n\n## 7. EMAIL SEQUENCE\nEmail 1 — Subject: [...] — Send: Day [X] — Goal: [...]\nEmail 2 — Subject: [...] — Send: Day [X] — Goal: [...]\n\n## 8. UTM PARAMETERS\nCampaign slug: [brand-campaignname-YYYY-MM]\n| Channel | utm_source | utm_medium | utm_campaign |\n|---------|-----------|------------|--------------|\n\n## 9. KPIs\n| Metric | Baseline | Target | Measurement |\n|--------|----------|--------|-------------|\n\n## 10. DEPENDENCIES & RISKS\nRisk: [...] — Mitigation: [...]\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nRules:\n- Fill every section. If data is missing, write [TBD: what you need].\n- Never leave a section blank.\n- Suggest specific post angles, email subjects, and CTAs — not generic placeholders.\n- All messaging tone must match: {brand.tone}. Audience: {brand.audience}.\n- After the brief, add: "Brief ready. Sage can refine strategy. Nova can develop creative. Aria will track KPIs."`,
+      '{campaign,brief,launch,strategy,plan,timeline,kpi,channel}'
+    ]
+  ).catch(() => undefined);
   // ── End Agent System ──────────────────────────────────────────────────────────
 
   // ── Admin Platform Agents ──────────────────────────────────────────────────────
@@ -23823,6 +23878,200 @@ app.get('/api/campaign/campaigns/:id/metrics', async (req: Request, res: Respons
   } catch (err) {
     console.error('campaign metrics error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch metrics' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/detail — rich campaign detail
+app.get('/api/campaign/campaigns/:id/detail', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const [campRes, channelsRes, kpisRes, contentRes, linksRes, funnelsRes] = await Promise.all([
+      pool.query('SELECT * FROM campaigns WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]),
+      pool.query('SELECT * FROM campaign_channels WHERE campaign_id=$1 ORDER BY created_at', [req.params.id]),
+      pool.query('SELECT * FROM campaign_kpis WHERE campaign_id=$1 ORDER BY sort_order,created_at', [req.params.id]),
+      pool.query('SELECT * FROM campaign_content WHERE campaign_id=$1 ORDER BY created_at DESC', [req.params.id]),
+      pool.query('SELECT * FROM utm_links WHERE campaign_id=$1 AND user_id=$2 ORDER BY created_at DESC', [req.params.id, auth.userId]),
+      pool.query('SELECT f.id,f.name,f.status,(SELECT COUNT(*) FROM funnel_steps fs WHERE fs.funnel_id=f.id) as steps,(SELECT COUNT(*) FROM funnel_events fe WHERE fe.funnel_id=f.id) as events FROM funnels f WHERE f.campaign_id=$1', [req.params.id]),
+    ]);
+    if (!campRes.rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    const camp = campRes.rows[0];
+    const now = Date.now();
+    const start = camp.start_date ? new Date(camp.start_date).getTime() : now;
+    const end = camp.end_date ? new Date(camp.end_date).getTime() : now;
+    const totalDays = Math.max(1, Math.round((end - start) / 86400000));
+    const elapsedDays = Math.max(0, Math.round((now - start) / 86400000));
+    const progressPct = Math.min(100, Math.round((elapsedDays / totalDays) * 100));
+    const totalClicks = linksRes.rows.reduce((s: number, r: any) => s + parseInt(r.clicks || 0), 0);
+    const totalConversions = linksRes.rows.reduce((s: number, r: any) => s + parseInt(r.conversions || 0), 0);
+    const kpis = kpisRes.rows;
+    const kpiProgress = kpis.length > 0
+      ? kpis.reduce((s: number, k: any) => s + Math.min(100, k.target_value > 0 ? (parseFloat(k.current_value) / parseFloat(k.target_value)) * 100 : 0), 0) / kpis.length
+      : 0;
+    const healthScore = Math.round(
+      (progressPct > 0 ? 20 : 0) +
+      (channelsRes.rows.length > 0 ? 20 : 0) +
+      (kpis.length > 0 ? 20 : 0) +
+      (totalClicks > 0 ? 20 : 0) +
+      (kpiProgress > 50 ? 20 : kpiProgress > 0 ? 10 : 0)
+    );
+    return res.json({
+      success: true,
+      campaign: camp,
+      channels: channelsRes.rows,
+      kpis,
+      content: contentRes.rows,
+      links: linksRes.rows,
+      funnels: funnelsRes.rows,
+      stats: { totalClicks, totalConversions, progressPct, elapsedDays, totalDays, kpiProgress: Math.round(kpiProgress), healthScore },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch detail' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/kpis
+app.get('/api/campaign/campaigns/:id/kpis', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query('SELECT * FROM campaign_kpis WHERE campaign_id=$1 AND user_id=$2 ORDER BY sort_order,created_at', [req.params.id, auth.userId]);
+    return res.json({ success: true, kpis: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch KPIs' });
+  }
+});
+
+// POST /api/campaign/campaigns/:id/kpis
+app.post('/api/campaign/campaigns/:id/kpis', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { name, metric_type = 'number', target_value = 0, current_value = 0, unit = '', source = 'manual', sort_order = 0 } = req.body as any;
+    if (!name) return res.status(400).json({ success: false, error: 'name required' });
+    const { rows } = await pool.query(
+      `INSERT INTO campaign_kpis (id,campaign_id,user_id,name,metric_type,target_value,current_value,unit,source,sort_order)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [req.params.id, auth.userId, name, metric_type, target_value, current_value, unit, source, sort_order]
+    );
+    return res.json({ success: true, kpi: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to create KPI' });
+  }
+});
+
+// PUT /api/campaign/kpis/:kpiId
+app.put('/api/campaign/kpis/:kpiId', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { name, metric_type, target_value, current_value, unit, source, sort_order } = req.body as any;
+    const { rows } = await pool.query(
+      `UPDATE campaign_kpis SET
+        name=COALESCE($1,name), metric_type=COALESCE($2,metric_type),
+        target_value=COALESCE($3,target_value), current_value=COALESCE($4,current_value),
+        unit=COALESCE($5,unit), source=COALESCE($6,source), sort_order=COALESCE($7,sort_order),
+        updated_at=NOW()
+       WHERE id=$8 AND user_id=$9 RETURNING *`,
+      [name, metric_type, target_value, current_value, unit, source, sort_order, req.params.kpiId, auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    return res.json({ success: true, kpi: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to update KPI' });
+  }
+});
+
+// DELETE /api/campaign/kpis/:kpiId
+app.delete('/api/campaign/kpis/:kpiId', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    await pool.query('DELETE FROM campaign_kpis WHERE id=$1 AND user_id=$2', [req.params.kpiId, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to delete KPI' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/activity — funnel_events timeline
+app.get('/api/campaign/campaigns/:id/activity', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const limit = Math.min(100, parseInt(String(req.query.limit) || '50'));
+    const { rows } = await pool.query(
+      `SELECT fe.id, fe.event_type, fe.event_name, fe.url, fe.utm_source, fe.utm_medium,
+              fe.utm_campaign, fe.referrer, fe.created_at,
+              fs.name as step_name, f.name as funnel_name
+       FROM funnel_events fe
+       LEFT JOIN funnel_steps fs ON fs.id = fe.funnel_step_id
+       LEFT JOIN funnels f ON f.id = fe.funnel_id
+       WHERE fe.campaign_id=$1
+       ORDER BY fe.created_at DESC LIMIT $2`,
+      [req.params.id, limit]
+    );
+    return res.json({ success: true, events: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch activity' });
+  }
+});
+
+// GET /api/campaign/campaigns/:id/content
+app.get('/api/campaign/campaigns/:id/content', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query('SELECT * FROM campaign_content WHERE campaign_id=$1 AND user_id=$2 ORDER BY created_at DESC', [req.params.id, auth.userId]);
+    return res.json({ success: true, content: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch content' });
+  }
+});
+
+// POST /api/campaign/campaigns/:id/content
+app.post('/api/campaign/campaigns/:id/content', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { content_type = 'post', title = '', description = '', status = 'draft', channel = '', external_id, metrics } = req.body as any;
+    const { rows } = await pool.query(
+      `INSERT INTO campaign_content (id,campaign_id,user_id,content_type,title,description,status,channel,external_id,metrics)
+       VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING *`,
+      [req.params.id, auth.userId, content_type, title, description, status, channel, external_id || null, JSON.stringify(metrics || {})]
+    );
+    return res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to add content' });
+  }
+});
+
+// DELETE /api/campaign/content/:contentId
+app.delete('/api/campaign/content/:contentId', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    await pool.query('DELETE FROM campaign_content WHERE id=$1 AND user_id=$2', [req.params.contentId, auth.userId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to delete content' });
+  }
+});
+
+// PUT /api/campaign/campaigns/:id/launch — set status=active and launched_at=NOW()
+app.put('/api/campaign/campaigns/:id/launch', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+    const { rows } = await pool.query(
+      `UPDATE campaigns SET status='active', launched_at=NOW(), updated_at=NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [req.params.id, auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+    return res.json({ success: true, campaign: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to launch campaign' });
   }
 });
 

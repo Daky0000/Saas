@@ -97,6 +97,59 @@ export type UtmLink = {
   created_at: string;
 };
 
+export type CampaignKpi = {
+  id: string;
+  campaign_id: string;
+  user_id: string;
+  name: string;
+  metric_type: 'number' | 'percentage' | 'currency' | 'ratio';
+  target_value: number;
+  current_value: number;
+  unit: string;
+  source: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CampaignContentItem = {
+  id: string;
+  campaign_id: string;
+  user_id: string;
+  content_type: 'post' | 'email' | 'automation' | 'card' | 'survey' | 'custom';
+  title: string;
+  description: string;
+  status: string;
+  channel: string;
+  external_id: string | null;
+  metrics: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ActivityEvent = {
+  id: string;
+  event_type: string;
+  event_name: string | null;
+  url: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  referrer: string | null;
+  created_at: string;
+  step_name: string | null;
+  funnel_name: string | null;
+};
+
+export type CampaignDetail = {
+  campaign: Campaign;
+  channels: CampaignChannel[];
+  kpis: CampaignKpi[];
+  content: CampaignContentItem[];
+  links: UtmLink[];
+  funnels: Array<{ id: string; name: string; status: string; steps: number; events: number }>;
+  stats: { totalClicks: number; totalConversions: number; progressPct: number; elapsedDays: number; totalDays: number; kpiProgress: number; healthScore: number };
+};
+
 export type CampaignMetrics = {
   totalClicks: number;
   totalConversions: number;
@@ -209,6 +262,67 @@ export const campaignService = {
   async getCampaignMetrics(campaignId: string): Promise<{ campaign: Campaign; metrics: CampaignMetrics }> {
     const res = await fetch(`${BASE}/campaigns/${campaignId}/metrics`, { headers: authHeaders() });
     return parseJson(res);
+  },
+
+  // Detail (all-in-one)
+  async getCampaignDetail(campaignId: string): Promise<CampaignDetail> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/detail`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; error?: string } & CampaignDetail>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to fetch detail');
+    return data;
+  },
+
+  // KPIs
+  async listKpis(campaignId: string): Promise<CampaignKpi[]> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/kpis`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; kpis: CampaignKpi[] }>(res);
+    return data.kpis ?? [];
+  },
+  async createKpi(campaignId: string, payload: Partial<CampaignKpi>): Promise<CampaignKpi> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/kpis`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+    const data = await parseJson<{ success: boolean; kpi: CampaignKpi; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to create KPI');
+    return data.kpi;
+  },
+  async updateKpi(kpiId: string, payload: Partial<CampaignKpi>): Promise<CampaignKpi> {
+    const res = await fetch(`${BASE}/kpis/${kpiId}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload) });
+    const data = await parseJson<{ success: boolean; kpi: CampaignKpi; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to update KPI');
+    return data.kpi;
+  },
+  async deleteKpi(kpiId: string): Promise<void> {
+    await fetch(`${BASE}/kpis/${kpiId}`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  // Activity
+  async getActivity(campaignId: string, limit = 50): Promise<ActivityEvent[]> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/activity?limit=${limit}`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; events: ActivityEvent[] }>(res);
+    return data.events ?? [];
+  },
+
+  // Content
+  async listContent(campaignId: string): Promise<CampaignContentItem[]> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/content`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; content: CampaignContentItem[] }>(res);
+    return data.content ?? [];
+  },
+  async addContent(campaignId: string, payload: Partial<CampaignContentItem>): Promise<CampaignContentItem> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/content`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+    const data = await parseJson<{ success: boolean; item: CampaignContentItem; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to add content');
+    return data.item;
+  },
+  async removeContent(contentId: string): Promise<void> {
+    await fetch(`${BASE}/content/${contentId}`, { method: 'DELETE', headers: authHeaders() });
+  },
+
+  // Launch
+  async launchCampaign(campaignId: string): Promise<Campaign> {
+    const res = await fetch(`${BASE}/campaigns/${campaignId}/launch`, { method: 'PUT', headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; campaign: Campaign; error?: string }>(res);
+    if (!data.success) throw new Error(data.error || 'Failed to launch campaign');
+    return data.campaign;
   },
 
   // Atomic creation (transaction-backed)

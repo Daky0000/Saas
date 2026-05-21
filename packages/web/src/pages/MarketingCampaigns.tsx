@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { PlatformLogo } from '../components/PlatformLogo';
 import {
-  BarChart2, ChevronRight, Copy, ExternalLink, Flag, Filter,
-  Link2, Loader2, Megaphone, Play, Pause, Plus,
-  Target, Trash2, TrendingUp, X, Check, ArrowRight,
+  Activity, BarChart2, ChevronRight, Copy, ExternalLink, FileText, Flag, Filter,
+  Link2, Loader2, Megaphone, Pencil, Play, Pause, Plus,
+  Target, Trash2, TrendingUp, X, Check, ArrowRight, Zap,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -11,7 +11,10 @@ import {
 import {
   campaignService,
   type Campaign,
-  type CampaignChannel,
+  type CampaignKpi,
+  type CampaignContentItem,
+  type ActivityEvent,
+  type CampaignDetail as CampaignDetailType,
   type Funnel,
   type FunnelStep,
   type UtmLink,
@@ -51,6 +54,15 @@ const STATUS_STYLES: Record<CampaignStatus, string> = {
 const MEDIUM_OPTIONS = ['social', 'cpc', 'email', 'banner', 'affiliate', 'referral', 'organic'];
 
 const COLORS = ['#5b6cf9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+
+const CAMPAIGN_TEMPLATES: Array<{ id: string; name: string; emoji: string; goal: CampaignGoal; hint: string; channels: string[]; color: string }> = [
+  { id: 'product_launch', name: 'Product Launch', emoji: '🚀', goal: 'sales', hint: 'Drive pre-orders, waitlist signups, and launch-day sales.', channels: ['email', 'instagram', 'facebook'], color: '#5b6cf9' },
+  { id: 'seasonal_sale', name: 'Seasonal Sale', emoji: '🛍️', goal: 'sales', hint: 'Time-limited promotions with urgency messaging across social.', channels: ['email', 'instagram', 'facebook'], color: '#ef4444' },
+  { id: 'lead_gen', name: 'Lead Generation', emoji: '🎯', goal: 'leads', hint: 'Capture emails with a lead magnet or gated offer.', channels: ['linkedin', 'landing_page', 'email'], color: '#10b981' },
+  { id: 'brand_awareness', name: 'Brand Awareness', emoji: '📣', goal: 'awareness', hint: 'Maximize reach and impressions across social channels.', channels: ['instagram', 'twitter', 'facebook'], color: '#f59e0b' },
+  { id: 'event_promo', name: 'Event Promo', emoji: '🎪', goal: 'traffic', hint: 'Drive registrations for a webinar, live event, or workshop.', channels: ['email', 'linkedin', 'landing_page'], color: '#8b5cf6' },
+  { id: 're_engagement', name: 'Re-engagement', emoji: '🔄', goal: 'engagement', hint: 'Win back inactive subscribers and followers.', channels: ['email', 'facebook'], color: '#06b6d4' },
+];
 
 function fmtNum(n: number | string | null | undefined): string {
   if (n == null) return '—';
@@ -124,7 +136,7 @@ function EmptyState({ icon, title, description, action }: { icon: React.ReactNod
 
 // ─── Builder Wizard ───────────────────────────────────────────────────────────
 
-type WizardStep = 'goal' | 'channels' | 'links' | 'review';
+type WizardStep = 'template' | 'goal' | 'channels' | 'links' | 'review';
 
 type CreationProgressStep = { label: string; status: 'pending' | 'running' | 'done' | 'error' };
 
@@ -133,6 +145,9 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [progressSteps, setProgressSteps] = useState<CreationProgressStep[]>([]);
+
+  // Template step (tracks which template was selected for review display)
+  const [_selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
 
   // Goal step
   const [name, setName] = useState('');
@@ -151,7 +166,7 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
     { label: 'Primary Link', utm_source: '', utm_medium: 'social' },
   ]);
 
-  const STEPS: WizardStep[] = ['goal', 'channels', 'links', 'review'];
+  const STEPS: WizardStep[] = ['template', 'goal', 'channels', 'links', 'review'];
   const stepIdx = STEPS.indexOf(step);
 
   const toggleChannel = (ch: string) =>
@@ -234,6 +249,18 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
     }
   }
 
+  function applyTemplate(tpl: typeof CAMPAIGN_TEMPLATES[0] | null) {
+    if (tpl) {
+      setSelectedTemplateId(tpl.id);
+      setGoal(tpl.goal);
+      setSelectedChannels(tpl.channels);
+      if (!name) setDescription(tpl.hint);
+    } else {
+      setSelectedTemplateId(null);
+    }
+    setStep('goal');
+  }
+
   const canNext = step === 'goal' ? name.trim().length > 0 : true;
 
   return (
@@ -259,6 +286,30 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
 
         {/* Body */}
         <div className="px-8 py-6 min-h-[320px]">
+          {step === 'template' && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-500">Choose a template to get started faster, or build from scratch.</p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {CAMPAIGN_TEMPLATES.map(tpl => (
+                  <button key={tpl.id} onClick={() => applyTemplate(tpl)} className="group flex flex-col items-start rounded-2xl border border-slate-200 bg-white p-4 text-left hover:border-slate-400 transition-all">
+                    <span className="mb-2 text-2xl">{tpl.emoji}</span>
+                    <span className="text-sm font-bold text-slate-900">{tpl.name}</span>
+                    <span className="mt-0.5 text-xs text-slate-500 leading-relaxed">{tpl.hint}</span>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {tpl.channels.map(ch => {
+                        const opt = CHANNEL_OPTIONS.find(c => c.value === ch);
+                        return <span key={ch} className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: opt?.color ?? '#888' }}>{opt?.label ?? ch}</span>;
+                      })}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => applyTemplate(null)} className="flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900">
+                <Plus size={14} /> Start from scratch
+              </button>
+            </div>
+          )}
+
           {step === 'goal' && (
             <div className="space-y-5">
               <div>
@@ -411,7 +462,7 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
           <button disabled={saving} onClick={() => stepIdx > 0 ? setStep(STEPS[stepIdx - 1]) : onClose()} className="rounded-2xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40">
             {stepIdx === 0 ? 'Cancel' : 'Back'}
           </button>
-          {step !== 'review' ? (
+          {step === 'template' ? null : step !== 'review' ? (
             <button disabled={!canNext} onClick={() => setStep(STEPS[stepIdx + 1])} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-40">
               Next <ChevronRight size={14} />
             </button>
@@ -945,33 +996,170 @@ function MetricsTab({ campaignId }: { campaignId?: string }) {
 
 // ─── Campaign Detail View ─────────────────────────────────────────────────────
 
-function CampaignDetail({ campaign, onBack }: { campaign: Campaign; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'funnels' | 'links' | 'metrics'>('overview');
-  const [channels, setChannels] = useState<CampaignChannel[]>([]);
+type DetailTab = 'overview' | 'content' | 'links' | 'kpis' | 'activity';
 
-  useEffect(() => {
-    campaignService.listChannels(campaign.id).then(setChannels).catch(() => undefined);
+function HealthRing({ score }: { score: number }) {
+  const color = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : score >= 40 ? '#ef4444' : '#94a3b8';
+  const label = score >= 80 ? 'Exceeding' : score >= 60 ? 'On Track' : score >= 40 ? 'Needs Work' : 'Critical';
+  const deg = score * 3.6;
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative flex h-20 w-20 items-center justify-center rounded-full" style={{ background: `conic-gradient(${color} ${deg}deg, #f1f5f9 0deg)` }}>
+        <div className="flex h-14 w-14 flex-col items-center justify-center rounded-full bg-white">
+          <span className="text-xl font-black text-slate-950">{score}</span>
+        </div>
+      </div>
+      <span className="text-xs font-bold" style={{ color }}>{label}</span>
+    </div>
+  );
+}
+
+function KpiProgressBar({ kpi, onEdit, onDelete }: { kpi: CampaignKpi; onEdit: (k: CampaignKpi) => void; onDelete: (id: string) => void }) {
+  const pct = Number(kpi.target_value) > 0 ? Math.min(100, Math.round((Number(kpi.current_value) / Number(kpi.target_value)) * 100)) : 0;
+  const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#5b6cf9' : pct >= 30 ? '#f59e0b' : '#ef4444';
+  return (
+    <div className="group rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-semibold text-slate-900 text-sm">{kpi.name}</span>
+        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => onEdit(kpi)} className="rounded-lg p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100"><Pencil size={12} /></button>
+          <button onClick={() => onDelete(kpi.id)} className="rounded-lg p-1 text-slate-400 hover:text-red-500 hover:bg-red-50"><Trash2 size={12} /></button>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 mb-1.5">
+        <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
+        </div>
+        <span className="text-xs font-bold w-9 text-right" style={{ color }}>{pct}%</span>
+      </div>
+      <div className="flex items-center justify-between text-xs text-slate-400">
+        <span>{kpi.metric_type === 'currency' ? '$' : ''}{fmtNum(Number(kpi.current_value))}{kpi.unit ? ` ${kpi.unit}` : ''}</span>
+        <span>Target: {kpi.metric_type === 'currency' ? '$' : ''}{fmtNum(Number(kpi.target_value))}{kpi.unit ? ` ${kpi.unit}` : ''}</span>
+      </div>
+    </div>
+  );
+}
+
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  post: 'Social Post', email: 'Email', automation: 'Automation',
+  card: 'Card', survey: 'Survey', custom: 'Custom',
+};
+
+function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campaign; onBack: () => void }) {
+  const [campaign, setCampaign] = useState(initialCampaign);
+  const [activeTab, setActiveTab] = useState<DetailTab>('overview');
+  const [detail, setDetail] = useState<CampaignDetailType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [launching, setLaunching] = useState(false);
+
+  const [kpis, setKpis] = useState<CampaignKpi[]>([]);
+  const [showKpiForm, setShowKpiForm] = useState(false);
+  const [editingKpi, setEditingKpi] = useState<CampaignKpi | null>(null);
+  const [kpiForm, setKpiForm] = useState({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' });
+  const [savingKpi, setSavingKpi] = useState(false);
+
+  const [content, setContent] = useState<CampaignContentItem[]>([]);
+  const [showContentForm, setShowContentForm] = useState(false);
+  const [contentForm, setContentForm] = useState({ content_type: 'post', title: '', description: '', status: 'draft', channel: '' });
+  const [savingContent, setSavingContent] = useState(false);
+
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+
+  const loadDetail = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await campaignService.getCampaignDetail(campaign.id);
+      setDetail(d);
+      setKpis(d.kpis);
+      setContent(d.content);
+    } catch { /* */ } finally { setLoading(false); }
   }, [campaign.id]);
 
-  const TABS = [
-    { id: 'overview' as const, label: 'Overview' },
-    { id: 'funnels' as const, label: 'Funnels' },
-    { id: 'links' as const, label: 'UTM Links' },
-    { id: 'metrics' as const, label: 'Performance' },
+  useEffect(() => { void loadDetail(); }, [loadDetail]);
+
+  useEffect(() => {
+    if (activeTab === 'activity' && activity.length === 0) {
+      setActivityLoading(true);
+      campaignService.getActivity(campaign.id).then(setActivity).catch(() => {}).finally(() => setActivityLoading(false));
+    }
+  }, [activeTab, campaign.id, activity.length]);
+
+  async function handleLaunch() {
+    if (!confirm('Launch this campaign? Status will be set to active.')) return;
+    setLaunching(true);
+    try {
+      const updated = await campaignService.launchCampaign(campaign.id);
+      setCampaign(updated);
+    } catch { /* */ } finally { setLaunching(false); }
+  }
+
+  async function saveKpi() {
+    setSavingKpi(true);
+    try {
+      if (editingKpi) {
+        const updated = await campaignService.updateKpi(editingKpi.id, { name: kpiForm.name, metric_type: kpiForm.metric_type as any, target_value: parseFloat(kpiForm.target_value) || 0, current_value: parseFloat(kpiForm.current_value) || 0, unit: kpiForm.unit });
+        setKpis(prev => prev.map(k => k.id === updated.id ? updated : k));
+      } else {
+        const created = await campaignService.createKpi(campaign.id, { name: kpiForm.name, metric_type: kpiForm.metric_type as any, target_value: parseFloat(kpiForm.target_value) || 0, current_value: parseFloat(kpiForm.current_value) || 0, unit: kpiForm.unit });
+        setKpis(prev => [...prev, created]);
+      }
+      setShowKpiForm(false); setEditingKpi(null);
+      setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' });
+    } catch { /* */ } finally { setSavingKpi(false); }
+  }
+
+  async function deleteKpi(id: string) {
+    if (!confirm('Delete this KPI?')) return;
+    await campaignService.deleteKpi(id);
+    setKpis(prev => prev.filter(k => k.id !== id));
+  }
+
+  function startEditKpi(kpi: CampaignKpi) {
+    setEditingKpi(kpi);
+    setKpiForm({ name: kpi.name, metric_type: kpi.metric_type, target_value: String(kpi.target_value), current_value: String(kpi.current_value), unit: kpi.unit });
+    setShowKpiForm(true);
+  }
+
+  async function saveContent() {
+    setSavingContent(true);
+    try {
+      const item = await campaignService.addContent(campaign.id, contentForm as any);
+      setContent(prev => [item, ...prev]);
+      setShowContentForm(false);
+      setContentForm({ content_type: 'post', title: '', description: '', status: 'draft', channel: '' });
+    } catch { /* */ } finally { setSavingContent(false); }
+  }
+
+  const stats = detail?.stats;
+  const TABS: { id: DetailTab; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'content', label: content.length > 0 ? `Content (${content.length})` : 'Content' },
+    { id: 'links', label: 'UTM Links' },
+    { id: 'kpis', label: kpis.length > 0 ? `KPIs (${kpis.length})` : 'KPIs' },
+    { id: 'activity', label: 'Activity' },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <button onClick={onBack} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">← Back</button>
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-black text-slate-950">{campaign.name}</h2>
-            <StatusBadge status={campaign.status as CampaignStatus} />
-            <GoalBadge goal={campaign.goal} />
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <button onClick={onBack} className="mt-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 shrink-0">← Back</button>
+          <div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-xl font-black text-slate-950">{campaign.name}</h2>
+              <StatusBadge status={campaign.status as CampaignStatus} />
+              <GoalBadge goal={campaign.goal} />
+            </div>
+            {campaign.description && <p className="text-sm text-slate-500 mt-0.5">{campaign.description}</p>}
           </div>
-          {campaign.description && <p className="text-sm text-slate-500">{campaign.description}</p>}
         </div>
+        {campaign.status !== 'active' && campaign.status !== 'completed' && (
+          <button disabled={launching} onClick={handleLaunch} className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50 shrink-0">
+            {launching ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+            {launching ? 'Launching…' : 'Launch Campaign'}
+          </button>
+        )}
       </div>
 
       <div className="flex gap-1 border-b border-slate-200">
@@ -982,50 +1170,272 @@ function CampaignDetail({ campaign, onBack }: { campaign: Campaign; onBack: () =
         ))}
       </div>
 
-      {activeTab === 'overview' && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Campaign Details</h3>
-            <dl className="space-y-2 text-sm">
-              {[
-                ['Goal', goalLabel(campaign.goal)],
-                ['Status', campaign.status],
-                ['Budget', campaign.budget ? `$${campaign.budget} ${campaign.currency}` : '—'],
-                ['Start', campaign.start_date ?? '—'],
-                ['End', campaign.end_date ?? '—'],
-                ['Target URL', campaign.target_url || '—'],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between">
-                  <dt className="font-semibold text-slate-500">{k}</dt>
-                  <dd className="text-slate-900 text-right truncate max-w-[200px]">{v}</dd>
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
+      ) : (
+        <>
+          {/* OVERVIEW */}
+          {activeTab === 'overview' && stats && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 flex items-center gap-5">
+                  <HealthRing score={stats.healthScore} />
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Campaign Health</div>
+                    <div className="text-sm text-slate-500">Based on setup, links, and KPI progress</div>
+                  </div>
                 </div>
-              ))}
-            </dl>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Channels ({channels.length})</h3>
-            {channels.length === 0 ? (
-              <p className="text-sm text-slate-400">No channels connected. Use the builder wizard to add channels.</p>
-            ) : (
-              <div className="space-y-2">
-                {channels.map(ch => {
-                  const opt = CHANNEL_OPTIONS.find(c => c.value === ch.channel_type);
-                  return (
-                    <div key={ch.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-2.5">
-                      <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: opt?.color ?? '#888' }} />
-                      <span className="text-sm font-semibold text-slate-700">{opt?.label ?? ch.channel_type}</span>
-                      {ch.account_name && <span className="text-xs text-slate-400">@{ch.handle ?? ch.account_name}</span>}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Timeline</div>
+                  <div className="mb-2 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${stats.progressPct}%` }} />
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span>Day {stats.elapsedDays}</span>
+                    <span className="font-bold">{stats.progressPct}%</span>
+                    <span>{stats.totalDays} days total</span>
+                  </div>
+                  {campaign.start_date && <div className="mt-2 text-xs text-slate-400">{campaign.start_date}{campaign.end_date ? ` → ${campaign.end_date}` : ''}</div>}
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 grid grid-cols-2 gap-3">
+                  {[
+                    { label: 'Clicks', value: fmtNum(stats.totalClicks), color: 'text-slate-950' },
+                    { label: 'Conversions', value: fmtNum(stats.totalConversions), color: 'text-green-600' },
+                    { label: 'KPI Progress', value: `${stats.kpiProgress}%`, color: 'text-indigo-600' },
+                    { label: 'Channels', value: String(detail?.channels.length ?? 0), color: 'text-slate-950' },
+                  ].map(s => (
+                    <div key={s.label}>
+                      <div className="text-xs text-slate-400">{s.label}</div>
+                      <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-            )}
-          </div>
-        </div>
+
+              {detail?.channels && detail.channels.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Channels</h3>
+                  <div className="flex flex-wrap gap-3">
+                    {detail.channels.map(ch => {
+                      const opt = CHANNEL_OPTIONS.find(c => c.value === ch.channel_type);
+                      return (
+                        <div key={ch.id} className="flex items-center gap-2 rounded-xl border border-slate-100 px-3 py-2">
+                          <ChannelIcon value={ch.channel_type} size={22} />
+                          <span className="text-sm font-semibold text-slate-700">{opt?.label ?? ch.channel_type}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {kpis.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">KPI Overview</h3>
+                    <button onClick={() => setActiveTab('kpis')} className="text-xs font-semibold text-indigo-600 hover:underline">Manage →</button>
+                  </div>
+                  <div className="space-y-3">
+                    {kpis.slice(0, 3).map(k => {
+                      const pct = Number(k.target_value) > 0 ? Math.min(100, Math.round((Number(k.current_value) / Number(k.target_value)) * 100)) : 0;
+                      const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#5b6cf9' : pct >= 30 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <div key={k.id} className="flex items-center gap-3">
+                          <span className="w-32 shrink-0 text-xs font-semibold text-slate-600 truncate">{k.name}</span>
+                          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
+                          </div>
+                          <span className="text-xs font-bold w-10 text-right" style={{ color }}>{pct}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {detail?.funnels && detail.funnels.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Funnels</h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {detail.funnels.map((f: any) => (
+                      <div key={f.id} className="rounded-xl border border-slate-100 p-3">
+                        <div className="font-semibold text-slate-900 text-sm truncate">{f.name}</div>
+                        <div className="mt-1 text-xs text-slate-400">{f.steps} steps · {fmtNum(f.events)} events</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CONTENT */}
+          {activeTab === 'content' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">Link posts, emails, automations, and other assets to this campaign.</p>
+                <button onClick={() => setShowContentForm(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+                  <Plus size={14} /> Add Content
+                </button>
+              </div>
+              {showContentForm && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                  <h3 className="font-bold text-slate-950">Add Content Item</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Type</label>
+                      <select value={contentForm.content_type} onChange={e => setContentForm(p => ({ ...p, content_type: e.target.value }))} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none">
+                        {Object.entries(CONTENT_TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Channel</label>
+                      <select value={contentForm.channel} onChange={e => setContentForm(p => ({ ...p, channel: e.target.value }))} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none">
+                        <option value="">— Any —</option>
+                        {CHANNEL_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Title *</label>
+                      <input value={contentForm.title} onChange={e => setContentForm(p => ({ ...p, title: e.target.value }))} placeholder="Content title" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Status</label>
+                      <select value={contentForm.status} onChange={e => setContentForm(p => ({ ...p, status: e.target.value }))} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none">
+                        {['draft', 'scheduled', 'live', 'published', 'archived'].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button disabled={savingContent || !contentForm.title} onClick={saveContent} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+                      {savingContent ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
+                    </button>
+                    <button onClick={() => setShowContentForm(false)} className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {content.length === 0 && !showContentForm ? (
+                <EmptyState icon={<FileText size={24} />} title="No content linked" description="Link posts, emails, and other assets to track what's part of this campaign." action={<button onClick={() => setShowContentForm(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> Add Content</button>} />
+              ) : (
+                <div className="space-y-2">
+                  {content.map(item => {
+                    const chOpt = CHANNEL_OPTIONS.find(c => c.value === item.channel);
+                    return (
+                      <div key={item.id} className="group flex items-center gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+                          <span className="text-xs font-bold text-slate-500">{item.content_type.slice(0, 2).toUpperCase()}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-900 text-sm">{item.title}</div>
+                          <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400">
+                            <span>{CONTENT_TYPE_LABELS[item.content_type] ?? item.content_type}</span>
+                            {chOpt && <><span className="text-slate-300">·</span><span>{chOpt.label}</span></>}
+                            <span className="rounded-full px-1.5 py-0.5 bg-slate-100 text-slate-500 font-semibold">{item.status}</span>
+                          </div>
+                        </div>
+                        <button onClick={() => { campaignService.removeContent(item.id); setContent(prev => prev.filter(c => c.id !== item.id)); }} className="opacity-0 group-hover:opacity-100 rounded-xl p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-opacity"><Trash2 size={14} /></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* LINKS */}
+          {activeTab === 'links' && <LinksTab campaignId={campaign.id} />}
+
+          {/* KPIs */}
+          {activeTab === 'kpis' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">Define measurable targets and track progress against each goal.</p>
+                <button onClick={() => { setEditingKpi(null); setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' }); setShowKpiForm(true); }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+                  <Plus size={14} /> Add KPI
+                </button>
+              </div>
+              {showKpiForm && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                  <h3 className="font-bold text-slate-950">{editingKpi ? 'Edit KPI' : 'Add KPI'}</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Name *</label>
+                      <input value={kpiForm.name} onChange={e => setKpiForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Email Open Rate, Website Traffic, Signups" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Type</label>
+                      <select value={kpiForm.metric_type} onChange={e => setKpiForm(p => ({ ...p, metric_type: e.target.value }))} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none">
+                        <option value="number">Number</option>
+                        <option value="percentage">Percentage (%)</option>
+                        <option value="currency">Currency ($)</option>
+                        <option value="ratio">Ratio</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Unit (optional)</label>
+                      <input value={kpiForm.unit} onChange={e => setKpiForm(p => ({ ...p, unit: e.target.value }))} placeholder="e.g. subscribers, clicks" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Target *</label>
+                      <input type="number" value={kpiForm.target_value} onChange={e => setKpiForm(p => ({ ...p, target_value: e.target.value }))} placeholder="e.g. 1000" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Current</label>
+                      <input type="number" value={kpiForm.current_value} onChange={e => setKpiForm(p => ({ ...p, current_value: e.target.value }))} placeholder="0" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button disabled={savingKpi || !kpiForm.name || !kpiForm.target_value} onClick={saveKpi} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+                      {savingKpi ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {editingKpi ? 'Update' : 'Add KPI'}
+                    </button>
+                    <button onClick={() => { setShowKpiForm(false); setEditingKpi(null); }} className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {kpis.length === 0 && !showKpiForm ? (
+                <EmptyState icon={<Target size={24} />} title="No KPIs set" description="Add measurable goals and targets to track this campaign's success." action={<button onClick={() => { setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' }); setShowKpiForm(true); }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> Add KPI</button>} />
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {kpis.map(k => <KpiProgressBar key={k.id} kpi={k} onEdit={startEditKpi} onDelete={deleteKpi} />)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ACTIVITY */}
+          {activeTab === 'activity' && (
+            <div className="space-y-3">
+              {activityLoading ? (
+                <div className="flex justify-center py-16"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
+              ) : activity.length === 0 ? (
+                <EmptyState icon={<Activity size={24} />} title="No activity yet" description="Events will appear here as visitors interact with your funnels and UTM links." />
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
+                  {activity.map(ev => (
+                    <div key={ev.id} className="flex items-start gap-4 px-5 py-3.5">
+                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+                        <span className="text-[10px] font-bold text-slate-400">{(ev.event_type ?? 'EV').slice(0, 2).toUpperCase()}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-900">{ev.event_name ?? ev.event_type}</span>
+                          {ev.utm_source && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">{ev.utm_source}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400">
+                          {ev.funnel_name && <span>{ev.funnel_name}</span>}
+                          {ev.step_name && <><span>·</span><span>{ev.step_name}</span></>}
+                          {ev.url && <span className="truncate max-w-[200px]">{ev.url}</span>}
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-xs text-slate-400">{new Date(ev.created_at).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
-      {activeTab === 'funnels' && <FunnelsTab campaignId={campaign.id} />}
-      {activeTab === 'links' && <LinksTab campaignId={campaign.id} />}
-      {activeTab === 'metrics' && <MetricsTab campaignId={campaign.id} />}
     </div>
   );
 }

@@ -138,6 +138,11 @@ const AGENT_DEFS = [
     key: 'flux', name: 'Flux', role: 'Automation & Workflows', icon: '⟳', color: '#8B5CF6',
     description: 'Automates post scheduling, platform integrations, and end-to-end workflow orchestration.',
   },
+  // Campaign Planning
+  {
+    key: 'campaign_brief', name: 'Brief', role: 'Campaign Brief Builder', icon: '◫', color: '#0EA5E9',
+    description: 'Produces complete, ready-to-execute campaign briefs — channel plan, content calendar, email sequence, UTM parameters, and KPIs in one document.',
+  },
 ];
 
 const NICHES = [
