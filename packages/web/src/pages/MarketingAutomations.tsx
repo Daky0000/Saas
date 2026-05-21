@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Bell,
   Clock,
   GitBranch,
   GitMerge,
@@ -12,8 +13,11 @@ import {
   Plus,
   Settings,
   Shuffle,
+  Star,
   Tag,
+  Target,
   Trash2,
+  TrendingUp,
   UserMinus,
   UserX,
   Users,
@@ -56,7 +60,10 @@ type StepType =
   | 'update_contact'
   | 'unsubscribe'
   | 'archive'
-  | 'webhook';
+  | 'webhook'
+  | 'score_lead'
+  | 'notify_team'
+  | 'add_to_campaign';
 
 type FlowStep = {
   id: string;
@@ -88,6 +95,11 @@ const TRIGGER_OPTIONS = [
   { value: 'email_opened', label: 'Opens an email' },
   { value: 'email_unopened', label: 'Doesn\'t open email (30 days)' },
   { value: 'survey_response', label: 'Responds to survey' },
+  { value: 'survey_score_high', label: 'Survey score 8–10 (Promoter)' },
+  { value: 'survey_score_low', label: 'Survey score 0–6 (Detractor)' },
+  { value: 'utm_link_clicked', label: 'Clicks a UTM-tracked link' },
+  { value: 'campaign_started', label: 'Campaign goes live' },
+  { value: 'lead_score_threshold', label: 'Lead score reaches threshold' },
   { value: 'api', label: 'API / Webhook trigger' },
 ];
 
@@ -100,27 +112,31 @@ type NodeMeta = {
 };
 
 const NODE_META: Record<StepType, NodeMeta> = {
-  trigger:        { label: 'Starting Point',   color: '#6366f1', bg: '#eef2ff', icon: <Zap size={14} />,            category: 'trigger' },
-  delay:          { label: 'Time Delay',        color: '#f59e0b', bg: '#fffbeb', icon: <Clock size={14} />,          category: 'rule'    },
-  wait_trigger:   { label: 'Wait for Trigger',  color: '#8b5cf6', bg: '#f5f3ff', icon: <Play size={14} />,           category: 'rule'    },
-  if_else:        { label: 'If / Else',          color: '#06b6d4', bg: '#ecfeff', icon: <GitBranch size={14} />,     category: 'rule'    },
-  split:          { label: 'Percentage Split',   color: '#10b981', bg: '#ecfdf5', icon: <Percent size={14} />,       category: 'rule'    },
-  send_email:     { label: 'Send Email',         color: '#6366f1', bg: '#eef2ff', icon: <Mail size={14} />,          category: 'action'  },
-  send_sms:       { label: 'Send SMS',           color: '#f59e0b', bg: '#fffbeb', icon: <MessageSquare size={14} />, category: 'action'  },
-  send_survey:    { label: 'Send Survey',        color: '#8b5cf6', bg: '#f5f3ff', icon: <Settings size={14} />,      category: 'action'  },
-  tag:            { label: 'Add Tag',            color: '#10b981', bg: '#ecfdf5', icon: <Tag size={14} />,           category: 'action'  },
-  untag:          { label: 'Remove Tag',         color: '#ef4444', bg: '#fef2f2', icon: <Tag size={14} />,           category: 'action'  },
-  group:          { label: 'Add to Group',       color: '#06b6d4', bg: '#ecfeff', icon: <Users size={14} />,         category: 'action'  },
-  ungroup:        { label: 'Remove from Group',  color: '#f97316', bg: '#fff7ed', icon: <Users size={14} />,         category: 'action'  },
-  update_contact: { label: 'Update Contact',     color: '#6366f1', bg: '#eef2ff', icon: <Settings size={14} />,      category: 'action'  },
-  unsubscribe:    { label: 'Unsubscribe',        color: '#ef4444', bg: '#fef2f2', icon: <UserMinus size={14} />,     category: 'action'  },
-  archive:        { label: 'Archive Contact',    color: '#6b7280', bg: '#f9fafb', icon: <UserX size={14} />,         category: 'action'  },
-  webhook:        { label: 'Webhook',            color: '#f97316', bg: '#fff7ed', icon: <Webhook size={14} />,       category: 'action'  },
+  trigger:          { label: 'Starting Point',    color: '#6366f1', bg: '#eef2ff', icon: <Zap size={14} />,            category: 'trigger' },
+  delay:            { label: 'Time Delay',         color: '#f59e0b', bg: '#fffbeb', icon: <Clock size={14} />,          category: 'rule'    },
+  wait_trigger:     { label: 'Wait for Trigger',   color: '#8b5cf6', bg: '#f5f3ff', icon: <Play size={14} />,           category: 'rule'    },
+  if_else:          { label: 'If / Else',           color: '#06b6d4', bg: '#ecfeff', icon: <GitBranch size={14} />,     category: 'rule'    },
+  split:            { label: 'Percentage Split',    color: '#10b981', bg: '#ecfdf5', icon: <Percent size={14} />,       category: 'rule'    },
+  send_email:       { label: 'Send Email',          color: '#6366f1', bg: '#eef2ff', icon: <Mail size={14} />,          category: 'action'  },
+  send_sms:         { label: 'Send SMS',            color: '#f59e0b', bg: '#fffbeb', icon: <MessageSquare size={14} />, category: 'action'  },
+  send_survey:      { label: 'Send Survey',         color: '#8b5cf6', bg: '#f5f3ff', icon: <Settings size={14} />,      category: 'action'  },
+  tag:              { label: 'Add Tag',             color: '#10b981', bg: '#ecfdf5', icon: <Tag size={14} />,           category: 'action'  },
+  untag:            { label: 'Remove Tag',          color: '#ef4444', bg: '#fef2f2', icon: <Tag size={14} />,           category: 'action'  },
+  group:            { label: 'Add to Group',        color: '#06b6d4', bg: '#ecfeff', icon: <Users size={14} />,         category: 'action'  },
+  ungroup:          { label: 'Remove from Group',   color: '#f97316', bg: '#fff7ed', icon: <Users size={14} />,         category: 'action'  },
+  update_contact:   { label: 'Update Contact',      color: '#6366f1', bg: '#eef2ff', icon: <Settings size={14} />,      category: 'action'  },
+  unsubscribe:      { label: 'Unsubscribe',         color: '#ef4444', bg: '#fef2f2', icon: <UserMinus size={14} />,     category: 'action'  },
+  archive:          { label: 'Archive Contact',     color: '#6b7280', bg: '#f9fafb', icon: <UserX size={14} />,         category: 'action'  },
+  webhook:          { label: 'Webhook',             color: '#f97316', bg: '#fff7ed', icon: <Webhook size={14} />,       category: 'action'  },
+  score_lead:       { label: 'Score Lead',          color: '#f59e0b', bg: '#fffbeb', icon: <Star size={14} />,          category: 'action'  },
+  notify_team:      { label: 'Notify Team',         color: '#6366f1', bg: '#eef2ff', icon: <Bell size={14} />,          category: 'action'  },
+  add_to_campaign:  { label: 'Add to Campaign',     color: '#8b5cf6', bg: '#f5f3ff', icon: <Target size={14} />,        category: 'action'  },
 };
 
 const RULE_TYPES: StepType[] = ['delay', 'wait_trigger', 'if_else', 'split'];
 const ACTION_TYPES: StepType[] = [
   'send_email', 'send_sms', 'send_survey',
+  'score_lead', 'notify_team', 'add_to_campaign',
   'tag', 'untag', 'group', 'ungroup',
   'update_contact', 'unsubscribe', 'archive', 'webhook',
 ];
@@ -280,10 +296,14 @@ function StepConfigPanel({
                 <option value="purchase">Made a purchase</option>
                 <option value="field">Contact field value</option>
                 <option value="group">In a group</option>
+                <option value="lead_score">Lead score is above</option>
+                <option value="survey_score">Survey score is above</option>
+                <option value="survey_completed">Completed a survey</option>
+                <option value="in_campaign">Added to a campaign</option>
               </select>
             </Field>
-            <Field label="Value">
-              <input type="text" value={String(step.config.condition ?? '')} onChange={e => set('condition', e.target.value)} placeholder="e.g. vip" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            <Field label={step.config.condition_type === 'lead_score' || step.config.condition_type === 'survey_score' ? 'Threshold value' : 'Value'}>
+              <input type={step.config.condition_type === 'lead_score' || step.config.condition_type === 'survey_score' ? 'number' : 'text'} value={String(step.config.condition ?? '')} onChange={e => set('condition', e.target.value)} placeholder={step.config.condition_type === 'lead_score' ? 'e.g. 50' : step.config.condition_type === 'survey_score' ? 'e.g. 7' : 'e.g. vip'} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
             </Field>
           </>
         )}
@@ -329,12 +349,13 @@ function StepConfigPanel({
 
         {step.type === 'send_survey' && (
           <>
-            <Field label="Survey subject">
-              <input type="text" value={String(step.config.subject ?? '')} onChange={e => set('subject', e.target.value)} placeholder="What do you think of us?" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            <Field label="Survey subject line">
+              <input type="text" value={String(step.config.subject ?? '')} onChange={e => set('subject', e.target.value)} placeholder="We'd love your feedback!" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
             </Field>
-            <Field label="Survey ID">
-              <input type="text" value={String(step.config.survey_id ?? '')} onChange={e => set('survey_id', e.target.value)} placeholder="Select or paste survey ID" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            <Field label="Survey">
+              <SurveySelect value={String(step.config.survey_id ?? '')} onChange={v => set('survey_id', v)} />
             </Field>
+            <p className="text-xs text-slate-400 leading-relaxed">The contact will receive an email with a link to fill in this survey.</p>
           </>
         )}
 
@@ -370,6 +391,48 @@ function StepConfigPanel({
           </>
         )}
 
+        {step.type === 'score_lead' && (
+          <>
+            <Field label="Points to add / subtract">
+              <div className="flex items-center gap-2">
+                <input type="number" value={String(step.config.points ?? 10)} onChange={e => set('points', parseInt(e.target.value, 10) || 0)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+                <span className="text-xs text-slate-400 shrink-0">Use negative to subtract</span>
+              </div>
+            </Field>
+            <Field label="Reason (internal note)">
+              <input type="text" value={String(step.config.reason ?? '')} onChange={e => set('reason', e.target.value)} placeholder="e.g. Clicked pricing page, Opened 3 emails" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            </Field>
+            <p className="text-xs text-slate-400 leading-relaxed">Lead scores help you prioritize which contacts to act on. Use <TrendingUp size={11} className="inline" /> If/Else with "Lead score is above" to branch based on score.</p>
+          </>
+        )}
+
+        {step.type === 'notify_team' && (
+          <>
+            <Field label="Recipient email">
+              <input type="email" value={String(step.config.to_email ?? '')} onChange={e => set('to_email', e.target.value)} placeholder="e.g. sales@yourcompany.com" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            </Field>
+            <Field label="Subject">
+              <input type="text" value={String(step.config.subject ?? '')} onChange={e => set('subject', e.target.value)} placeholder="e.g. Hot lead ready for follow-up" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            </Field>
+            <Field label="Message">
+              <textarea rows={3} value={String(step.config.message ?? '')} onChange={e => set('message', e.target.value)} placeholder="Contact {{first_name}} {{last_name}} ({{email}}) just reached a lead score threshold and is ready for outreach." className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none resize-none" />
+            </Field>
+            <p className="text-xs text-slate-400 leading-relaxed">Use {"{{first_name}}"}, {"{{last_name}}"}, {"{{email}}"} as placeholders for the contact's data.</p>
+          </>
+        )}
+
+        {step.type === 'add_to_campaign' && (
+          <>
+            <Field label="Campaign">
+              <CampaignSelect value={String(step.config.campaign_id ?? '')} onChange={v => set('campaign_id', v)} />
+            </Field>
+            <Field label="Role / Label (optional)">
+              <input type="text" value={String(step.config.label ?? '')} onChange={e => set('label', e.target.value)} placeholder="e.g. Lead, Prospect, Advocate" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            </Field>
+            <p className="text-xs text-slate-400 leading-relaxed">The contact will appear in this campaign's activity feed and can be targeted with campaign-specific content.</p>
+          </>
+        )}
+
         {(step.type === 'unsubscribe' || step.type === 'archive') && (
           <p className="text-sm text-slate-500 leading-relaxed">
             {step.type === 'unsubscribe'
@@ -379,6 +442,40 @@ function StepConfigPanel({
         )}
       </div>
     </div>
+  );
+}
+
+function SurveySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [surveys, setSurveys] = useState<{ id: string; title: string }[]>([]);
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token') || '';
+    fetch(`${API_BASE_URL}/api/surveys`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => setSurveys(d.surveys ?? []))
+      .catch(() => {});
+  }, []);
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none bg-white">
+      <option value="">— Select a survey —</option>
+      {surveys.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+    </select>
+  );
+}
+
+function CampaignSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token') || '';
+    fetch(`${API_BASE_URL}/api/campaign/campaigns`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => setCampaigns(d.campaigns ?? []))
+      .catch(() => {});
+  }, []);
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none bg-white">
+      <option value="">— Select a campaign —</option>
+      {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select>
   );
 }
 
@@ -993,6 +1090,88 @@ const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
       ts('update_contact', { field: 'Status', value: 'Paid' }),
       ts('delay', { amount: 3, unit: 'days' }),
       ts('send_email', { subject: 'Your receipt and next steps', preview: 'Here\'s a summary of your purchase and what comes next…' }),
+    ],
+  },
+  {
+    id: 'nps-detractor-recovery',
+    name: 'NPS Detractor Recovery',
+    description: 'When a contact gives a low survey score (0–6), send a personal apology, tag them as a detractor, and alert your team for immediate follow-up.',
+    emoji: '🔄',
+    color: '#ef4444',
+    bg: '#fef2f2',
+    tags: ['Survey', 'Retention', 'Team Alert'],
+    steps: [
+      ts('trigger', { trigger: 'survey_score_low' }),
+      ts('tag', { tag: 'detractor' }),
+      ts('delay', { amount: 2, unit: 'hours' }),
+      ts('send_email', { subject: 'We\'re sorry — let\'s make it right', preview: 'Your feedback matters. A member of our team will reach out personally…' }),
+      ts('notify_team', { subject: 'Action needed: Detractor response received', message: 'Contact {{first_name}} {{last_name}} ({{email}}) gave a low survey score and needs personal follow-up.' }),
+    ],
+  },
+  {
+    id: 'promoter-referral-ask',
+    name: 'NPS Promoter Referral Ask',
+    description: 'When a contact gives a high survey score (8–10), tag them as a promoter, add them to an advocacy campaign, and ask for a referral or review.',
+    emoji: '⭐',
+    color: '#f59e0b',
+    bg: '#fffbeb',
+    tags: ['Survey', 'Referral', 'Campaign'],
+    steps: [
+      ts('trigger', { trigger: 'survey_score_high' }),
+      ts('tag', { tag: 'promoter' }),
+      ts('score_lead', { points: 25, reason: 'NPS Promoter — high intent to refer' }),
+      ts('delay', { amount: 1, unit: 'days' }),
+      ts('send_email', { subject: 'You love us — would you share the word? 💛', preview: 'Since you\'re a fan, we\'d love a quick referral or review from you…' }),
+      ts('add_to_campaign', { label: 'Advocate' }),
+    ],
+  },
+  {
+    id: 'utm-click-lead-score',
+    name: 'UTM Click Lead Scoring',
+    description: 'When a contact clicks a UTM-tracked link, score them as a hot lead. If they reach the threshold, notify your sales team for immediate outreach.',
+    emoji: '🎯',
+    color: '#8b5cf6',
+    bg: '#f5f3ff',
+    tags: ['Lead Score', 'Campaign', 'Sales Alert'],
+    steps: [
+      ts('trigger', { trigger: 'utm_link_clicked' }),
+      ts('score_lead', { points: 15, reason: 'Clicked UTM-tracked campaign link — shows purchase intent' }),
+      {
+        ...ts('if_else', { condition_type: 'lead_score', condition: '50' }),
+        yes_steps: [
+          ts('notify_team', { subject: 'Hot lead alert 🔥', message: '{{first_name}} {{last_name}} ({{email}}) just crossed the 50-point lead score threshold and clicked a campaign link.' }),
+          ts('tag', { tag: 'hot-lead' }),
+        ],
+        no_steps: [
+          ts('delay', { amount: 2, unit: 'days' }),
+          ts('send_email', { subject: 'Still thinking it over?', preview: 'We noticed you checked us out — here\'s what makes us different…' }),
+        ],
+      },
+    ],
+  },
+  {
+    id: 'survey-to-campaign-nurture',
+    name: 'Survey → Campaign Nurture',
+    description: 'After a survey response, score the lead, add them to a nurture campaign, and send a personalised follow-up email based on their interest level.',
+    emoji: '📋',
+    color: '#10b981',
+    bg: '#ecfdf5',
+    tags: ['Survey', 'Lead Score', 'Nurture'],
+    steps: [
+      ts('trigger', { trigger: 'survey_response' }),
+      ts('score_lead', { points: 10, reason: 'Completed a survey — demonstrated engagement' }),
+      ts('add_to_campaign', { label: 'Survey Responder' }),
+      ts('delay', { amount: 30, unit: 'minutes' }),
+      {
+        ...ts('if_else', { condition_type: 'lead_score', condition: '30' }),
+        yes_steps: [
+          ts('send_email', { subject: 'Thanks for your feedback — here\'s something special', preview: 'Based on your answers, we thought you\'d love this…' }),
+          ts('tag', { tag: 'warm-lead' }),
+        ],
+        no_steps: [
+          ts('send_email', { subject: 'Thanks for taking the time!', preview: 'We really appreciate your feedback and will use it to improve…' }),
+        ],
+      },
     ],
   },
 ];
