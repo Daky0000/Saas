@@ -511,13 +511,13 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 size={24} className="animate-spin text-slate-400" /></div>;
 
-  if (campaigns.length === 0) return (
-    <EmptyState icon={<Megaphone size={24} />} title="No campaigns yet" description="Create your first campaign to start tracking performance across channels." action={<button onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> New Campaign</button>} />
-  );
-
   return (
     <>
       {showBuilder && <BuilderWizard onClose={() => setShowBuilder(false)} onDone={c => { setCampaigns(prev => [c, ...prev]); setShowBuilder(false); }} />}
+      {campaigns.length === 0 ? (
+        <EmptyState icon={<Megaphone size={24} />} title="No campaigns yet" description="Create your first campaign to start tracking performance across channels." action={<button onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> New Campaign</button>} />
+      ) : (
+      <>
       <div className="mb-6 flex items-center justify-between">
         <div className="text-sm text-slate-500">{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</div>
         <button data-tour-id="btn-new-campaign" onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
@@ -552,6 +552,8 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
           </div>
         ))}
       </div>
+      </>
+      )}
     </>
   );
 }
