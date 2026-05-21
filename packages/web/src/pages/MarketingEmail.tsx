@@ -19,6 +19,33 @@ import {
 
 type Tab = 'campaigns' | 'automations' | 'analytics';
 
+const EMAIL_GOAL_OPTIONS = [
+  { value: 'awareness', label: 'Brand Awareness' },
+  { value: 'leads', label: 'Generate Leads' },
+  { value: 'sales', label: 'Drive Sales' },
+  { value: 'traffic', label: 'Drive Traffic' },
+  { value: 'engagement', label: 'Boost Engagement' },
+  { value: 'retention', label: 'Retain Customers' },
+  { value: 'announcement', label: 'Announcement' },
+];
+
+const EMAIL_TONE_OPTIONS = [
+  { value: 'professional', label: 'Professional', emoji: '👔' },
+  { value: 'friendly', label: 'Friendly', emoji: '😊' },
+  { value: 'urgent', label: 'Urgent', emoji: '⚡' },
+  { value: 'playful', label: 'Playful', emoji: '🎉' },
+  { value: 'inspirational', label: 'Inspirational', emoji: '✨' },
+];
+
+function parseCampaignMeta(content: string): { goal?: string; tone?: string; cleanContent: string } {
+  const match = content.match(/^<!--campaign-meta:(\{[^}]+\})-->\n?/);
+  if (!match) return { cleanContent: content };
+  try {
+    const meta = JSON.parse(match[1]);
+    return { goal: meta.goal, tone: meta.tone, cleanContent: content.slice(match[0].length) };
+  } catch { return { cleanContent: content }; }
+}
+
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'campaigns', label: 'Campaigns', icon: Mail },
   { id: 'automations', label: 'Automations', icon: Zap },
@@ -54,7 +81,7 @@ function CampaignsTab() {
   const [segments, setSegments] = useState<MailingSegment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', subject: '', preview_text: '', segment_id: '', content: '' });
+  const [form, setForm] = useState({ name: '', subject: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '' });
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<string | null>(null);
@@ -73,8 +100,11 @@ function CampaignsTab() {
     if (!form.name || !form.subject) return;
     setSaving(true);
     try {
-      await mailingService.createCampaign({ ...form, segment_id: form.segment_id || undefined });
-      setForm({ name: '', subject: '', preview_text: '', segment_id: '', content: '' });
+      const metaPrefix = (form.goal || form.tone)
+        ? `<!--campaign-meta:${JSON.stringify({ goal: form.goal || undefined, tone: form.tone || undefined })}-->\n`
+        : '';
+      await mailingService.createCampaign({ name: form.name, subject: form.subject, preview_text: form.preview_text || undefined, segment_id: form.segment_id || undefined, content: metaPrefix + form.content });
+      setForm({ name: '', subject: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '' });
       setShowAdd(false); await load();
     } catch { /* silent */ } finally { setSaving(false); }
   };
@@ -115,7 +145,7 @@ function CampaignsTab() {
               <span className="text-sm font-bold">New Campaign</span>
               <button onClick={() => setShowAdd(false)}><X size={18} className="text-slate-400" /></button>
             </div>
-            <div className="space-y-3 px-5 py-4">
+            <div className="space-y-3 px-5 py-4 max-h-[70vh] overflow-y-auto">
               <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="Campaign name *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
               <input value={form.subject} onChange={e => setForm(f => ({...f, subject: e.target.value}))} placeholder="Email subject *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
               <input value={form.preview_text} onChange={e => setForm(f => ({...f, preview_text: e.target.value}))} placeholder="Preview text (optional)" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
@@ -123,6 +153,21 @@ function CampaignsTab() {
                 <option value="">All contacts (no segment)</option>
                 {segments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
+              {/* Strategy section */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2.5">
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Strategy (optional)</p>
+                <select value={form.goal} onChange={e => setForm(f => ({...f, goal: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
+                  <option value="">Goal — what should this campaign achieve?</option>
+                  {EMAIL_GOAL_OPTIONS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+                </select>
+                <div className="flex flex-wrap gap-1.5">
+                  {EMAIL_TONE_OPTIONS.map(t => (
+                    <button key={t.value} type="button" onClick={() => setForm(f => ({...f, tone: f.tone === t.value ? '' : t.value}))} className={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-all ${form.tone === t.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                      {t.emoji} {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <textarea value={form.content} onChange={e => setForm(f => ({...f, content: e.target.value}))} placeholder="Email content…" rows={4} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 resize-none" />
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
@@ -165,7 +210,18 @@ function CampaignsTab() {
             <tbody className="divide-y divide-slate-50">
               {campaigns.map(c => (
                 <tr key={c.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">{c.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    <div>{c.name}</div>
+                    {(() => {
+                      const { goal, tone } = parseCampaignMeta(c.content ?? '');
+                      return (goal || tone) ? (
+                        <div className="flex gap-1 mt-0.5">
+                          {goal && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">{EMAIL_GOAL_OPTIONS.find(g => g.value === goal)?.label ?? goal}</span>}
+                          {tone && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{EMAIL_TONE_OPTIONS.find(t => t.value === tone)?.emoji} {tone}</span>}
+                        </div>
+                      ) : null;
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{c.subject}</td>
                   <td className="px-4 py-3 text-slate-500">{c.segment_name || 'All contacts'}</td>
                   <td className="px-4 py-3">

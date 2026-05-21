@@ -753,7 +753,23 @@ function FlowCard({
               {flow.status}
             </span>
           </div>
-          {flow.description && <p className="mt-0.5 text-xs text-slate-400 truncate">{flow.description}</p>}
+          {flow.description && (() => {
+            const raw = flow.description;
+            const goalMatch = raw.match(/\[Goal:([^\]]+)\]/);
+            const audienceMatch = raw.match(/\[Audience:([^\]]+)\]/);
+            const plainDesc = raw.replace(/\[Goal:[^\]]+\]\s?/g, '').replace(/\[Audience:[^\]]+\]\s?/g, '').trim();
+            return (
+              <div className="mt-0.5 space-y-1">
+                {(goalMatch || audienceMatch) && (
+                  <div className="flex flex-wrap gap-1">
+                    {goalMatch && <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">Goal: {goalMatch[1].trim()}</span>}
+                    {audienceMatch && <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Audience: {audienceMatch[1].trim()}</span>}
+                  </div>
+                )}
+                {plainDesc && <p className="text-xs text-slate-400 truncate">{plainDesc}</p>}
+              </div>
+            );
+          })()}
           <div className="mt-2 flex items-center gap-4 text-xs text-slate-400">
             <span className="flex items-center gap-1"><Zap size={10} /> {triggerLabel}</span>
             <span>{stepCount} step{stepCount !== 1 ? 's' : ''}</span>
@@ -987,6 +1003,16 @@ const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
 
 type CreateStep = 'pick' | 'name';
 
+const AUTOMATION_GOAL_OPTIONS = [
+  { value: 'awareness', label: 'Brand Awareness' },
+  { value: 'leads', label: 'Generate Leads' },
+  { value: 'sales', label: 'Drive Sales' },
+  { value: 'traffic', label: 'Drive Traffic' },
+  { value: 'engagement', label: 'Boost Engagement' },
+  { value: 'retention', label: 'Retain Customers' },
+  { value: 'onboarding', label: 'Onboard Users' },
+];
+
 function CreateModal({
   onCreate,
   onClose,
@@ -998,6 +1024,8 @@ function CreateModal({
   const [selected, setSelected] = useState<AutomationTemplate | null>(null);
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
+  const [goal, setGoal] = useState('');
+  const [audience, setAudience] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1107,6 +1135,22 @@ function CreateModal({
             />
           </div>
           <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Goal (optional)</label>
+            <select value={goal} onChange={e => setGoal(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none bg-white">
+              <option value="">Select a goal...</option>
+              {AUTOMATION_GOAL_OPTIONS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Target Audience (optional)</label>
+            <input
+              value={audience}
+              onChange={e => setAudience(e.target.value)}
+              placeholder='e.g. "New subscribers aged 25–40 interested in productivity"'
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none"
+            />
+          </div>
+          <div>
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Description (optional)</label>
             <input
               value={desc}
@@ -1122,7 +1166,11 @@ function CreateModal({
             className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
             Cancel
           </button>
-          <button type="button" disabled={!name.trim()} onClick={() => onCreate(name.trim(), desc.trim(), initialSteps)}
+          <button type="button" disabled={!name.trim()} onClick={() => {
+            const prefix = [goal ? `[Goal:${goal}]` : '', audience.trim() ? `[Audience:${audience.trim()}]` : ''].filter(Boolean).join(' ');
+            const fullDesc = prefix ? `${prefix} ${desc.trim()}`.trim() : desc.trim();
+            onCreate(name.trim(), fullDesc, initialSteps);
+          }}
             className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
             {selected ? 'Open builder →' : 'Create & open builder'}
           </button>

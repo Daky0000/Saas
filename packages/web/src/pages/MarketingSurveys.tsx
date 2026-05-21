@@ -9,6 +9,17 @@ import {
 import {
   surveysService, Survey, SurveyQuestion, SurveyAnalytics, QuestionAnalytics,
 } from '../services/surveysService';
+import { campaignService, type Campaign } from '../services/campaignService';
+
+const SURVEY_PURPOSES = [
+  { value: 'nps', label: 'Net Promoter Score (NPS)', description: 'Measure customer loyalty' },
+  { value: 'csat', label: 'Customer Satisfaction (CSAT)', description: 'Rate a recent interaction' },
+  { value: 'ces', label: 'Customer Effort Score (CES)', description: 'How easy was it to get help?' },
+  { value: 'lead_qualification', label: 'Lead Qualification', description: 'Qualify leads before follow-up' },
+  { value: 'product_feedback', label: 'Product Feedback', description: 'Understand user needs' },
+  { value: 'market_research', label: 'Market Research', description: 'Gather audience insights' },
+  { value: 'event_feedback', label: 'Event Feedback', description: 'Post-event satisfaction' },
+];
 
 // ── Block type definitions ──────────────────────────────────────────────────
 
@@ -623,32 +634,76 @@ function SurveyBuilder({ survey: init, onBack, onSaved }: { survey: Survey; onBa
 function NewSurveyModal({ onClose, onCreate }: { onClose: () => void; onCreate: (s: Survey) => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [campaignId, setCampaignId] = useState('');
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    campaignService.listCampaigns().then(setCampaigns).catch(() => {});
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault(); if (!title.trim()) return;
     setSaving(true); setError('');
-    try { onCreate(await surveysService.createSurvey({ title: title.trim(), description: description.trim() || undefined })); }
+    try {
+      const survey = await surveysService.createSurvey({
+        title: title.trim(),
+        description: description.trim() || undefined,
+        ...(purpose ? { settings: { purpose, campaign_id: campaignId || undefined } } as any : {}),
+      });
+      if (campaignId) {
+        await campaignService.addContent(campaignId, {
+          content_type: 'survey',
+          title: survey.title,
+          description: purpose ? `${SURVEY_PURPOSES.find(p => p.value === purpose)?.label ?? purpose} survey` : undefined,
+          external_id: survey.id,
+          status: 'draft',
+          channel: 'survey',
+        }).catch(() => {});
+      }
+      onCreate(survey);
+    }
     catch (e) { setError(String(e)); setSaving(false); }
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Create survey</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Survey name <span className="text-red-400">*</span></label>
-            <input value={title} onChange={e => setTitle(e.target.value)} autoFocus className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. Customer satisfaction survey" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description <span className="text-gray-400 font-normal">(optional)</span></label>
-            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" placeholder="What is this survey about?" />
+      <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h2 className="text-lg font-semibold text-gray-900">Create survey</h2>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Survey name <span className="text-red-400">*</span></label>
+          <input value={title} onChange={e => setTitle(e.target.value)} autoFocus className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="e.g. Customer satisfaction survey" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Purpose <span className="text-gray-400 font-normal">(optional)</span></label>
+          <div className="grid grid-cols-2 gap-2">
+            {SURVEY_PURPOSES.map(p => (
+              <button key={p.value} type="button" onClick={() => setPurpose(prev => prev === p.value ? '' : p.value)}
+                className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition-all ${purpose === p.value ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                <span className={`text-xs font-semibold ${purpose === p.value ? 'text-indigo-700' : 'text-gray-800'}`}>{p.label}</span>
+                <span className="mt-0.5 text-[10px] text-gray-400 leading-tight">{p.description}</span>
+              </button>
+            ))}
           </div>
         </div>
-        {error && <p className="text-red-500 text-xs mt-3">{error}</p>}
-        <div className="flex justify-end gap-2 mt-6">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Description <span className="text-gray-400 font-normal">(optional)</span></label>
+          <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none" placeholder="What is this survey about?" />
+        </div>
+        {campaigns.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Link to Campaign <span className="text-gray-400 font-normal">(optional)</span></label>
+            <select value={campaignId} onChange={e => setCampaignId(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
+              <option value="">No campaign</option>
+              {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
+        {error && <p className="text-red-500 text-xs">{error}</p>}
+        <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
-          <button type="submit" disabled={!title.trim() || saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" disabled={!title.trim() || saving} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
             {saving ? 'Creating…' : 'Create survey'}
           </button>
         </div>
@@ -719,6 +774,10 @@ function SurveyList({ onSelect, onNew, onAnalytics }: {
                   <div className="flex items-center gap-2 mb-1">
                     <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[s.status]}`}>{s.status}</span>
                     <span className="text-xs text-gray-400">{s.response_count ?? 0} responses</span>
+                    {typeof s.settings?.purpose === 'string' && (() => {
+                      const p = SURVEY_PURPOSES.find(x => x.value === s.settings.purpose);
+                      return p ? <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700">{p.label}</span> : null;
+                    })()}
                   </div>
                   <h3 className="font-semibold text-gray-900 truncate">{s.title}</h3>
                   {s.description && <p className="text-sm text-gray-500 mt-0.5 truncate">{s.description}</p>}

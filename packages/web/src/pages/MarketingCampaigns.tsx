@@ -1229,6 +1229,30 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
+  // KPI suggestions for existing campaigns
+  const [showKpiSuggestions, setShowKpiSuggestions] = useState(false);
+  const [suggestSelected, setSuggestSelected] = useState<Set<string>>(new Set(
+    (GOAL_KPI_SUGGESTIONS[initialCampaign.goal as CampaignGoal] ?? []).map(k => k.name)
+  ));
+
+  function toggleSuggest(name: string) {
+    setSuggestSelected(prev => { const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n; });
+  }
+
+  async function createSuggestedKpis() {
+    setSavingKpi(true);
+    const toCreate = (GOAL_KPI_SUGGESTIONS[campaign.goal as CampaignGoal] ?? []).filter(k => suggestSelected.has(k.name));
+    try {
+      const created: CampaignKpi[] = [];
+      for (const kpi of toCreate) {
+        const k = await campaignService.createKpi(campaign.id, { name: kpi.name, metric_type: kpi.metric_type, target_value: 0, current_value: 0, unit: kpi.unit });
+        created.push(k);
+      }
+      setKpis(prev => [...prev, ...created]);
+      setShowKpiSuggestions(false);
+    } catch { /* */ } finally { setSavingKpi(false); }
+  }
+
   // Brief tab state
   const s = (campaign.settings ?? {}) as Record<string, string>;
   const [briefObjective, setBriefObjective] = useState(s.objective ?? '');
@@ -1643,10 +1667,42 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-slate-500">Define measurable targets and track progress against each goal.</p>
-                <button onClick={() => { setEditingKpi(null); setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' }); setShowKpiForm(true); }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
-                  <Plus size={14} /> Add KPI
-                </button>
+                <div className="flex items-center gap-2">
+                  {kpis.length > 0 && (GOAL_KPI_SUGGESTIONS[campaign.goal as CampaignGoal] ?? []).some(k => !kpis.find(x => x.name === k.name)) && (
+                    <button onClick={() => setShowKpiSuggestions(v => !v)} className="inline-flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
+                      <TrendingUp size={14} /> Suggest KPIs
+                    </button>
+                  )}
+                  <button onClick={() => { setEditingKpi(null); setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' }); setShowKpiForm(true); }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+                    <Plus size={14} /> Add KPI
+                  </button>
+                </div>
               </div>
+
+              {showKpiSuggestions && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-500">Suggested for {goalLabel(campaign.goal)}</span>
+                    <button onClick={() => setShowKpiSuggestions(false)} className="text-xs text-slate-400 hover:text-slate-600">✕</button>
+                  </div>
+                  <div className="space-y-2 mb-4">
+                    {(GOAL_KPI_SUGGESTIONS[campaign.goal as CampaignGoal] ?? [])
+                      .filter(k => !kpis.find(x => x.name === k.name))
+                      .map(k => (
+                        <label key={k.name} className="flex items-center gap-3 cursor-pointer">
+                          <input type="checkbox" checked={suggestSelected.has(k.name)} onChange={() => toggleSuggest(k.name)} className="rounded accent-indigo-600" />
+                          <span className="text-sm font-semibold text-slate-800">{k.name}</span>
+                          <span className="text-xs text-slate-400 capitalize">{k.metric_type}{k.unit ? ` · ${k.unit}` : ''}</span>
+                        </label>
+                      ))
+                    }
+                  </div>
+                  <button disabled={savingKpi || suggestSelected.size === 0} onClick={createSuggestedKpis} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                    {savingKpi ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                    Create {suggestSelected.size} KPI{suggestSelected.size !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              )}
               {showKpiForm && (
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
                   <h3 className="font-bold text-slate-950">{editingKpi ? 'Edit KPI' : 'Add KPI'}</h3>
@@ -1685,8 +1741,19 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
                   </div>
                 </div>
               )}
-              {kpis.length === 0 && !showKpiForm ? (
-                <EmptyState icon={<Target size={24} />} title="No KPIs set" description="Add measurable goals and targets to track this campaign's success." action={<button onClick={() => { setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' }); setShowKpiForm(true); }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> Add KPI</button>} />
+              {kpis.length === 0 && !showKpiForm && !showKpiSuggestions ? (
+                <EmptyState icon={<Target size={24} />} title="No KPIs set" description="Add measurable goals and targets to track this campaign's success."
+                  action={
+                    <div className="flex flex-col items-center gap-3">
+                      {(GOAL_KPI_SUGGESTIONS[campaign.goal as CampaignGoal] ?? []).length > 0 && (
+                        <button onClick={() => setShowKpiSuggestions(true)} className="inline-flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
+                          <TrendingUp size={14} /> Suggest KPIs for {goalLabel(campaign.goal)}
+                        </button>
+                      )}
+                      <button onClick={() => { setKpiForm({ name: '', metric_type: 'number', target_value: '', current_value: '', unit: '' }); setShowKpiForm(true); }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> Add KPI manually</button>
+                    </div>
+                  }
+                />
               ) : (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {kpis.map(k => <KpiProgressBar key={k.id} kpi={k} onEdit={startEditKpi} onDelete={deleteKpi} />)}
