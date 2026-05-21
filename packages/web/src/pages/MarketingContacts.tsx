@@ -418,7 +418,12 @@ function ContactsTab() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [scoreTier, setScoreTier] = useState<'all' | 'hot' | 'warm' | 'cold'>('all');
+  const [sortByScore, setSortByScore] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const getScore = (c: MailingContact) => parseInt(c.custom_data?.lead_score || '0', 10);
+  const getTierLabel = (s: number) => s >= 80 ? 'hot' : s >= 50 ? 'warm' : s > 0 ? 'cold' : 'none';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -589,6 +594,23 @@ function ContactsTab() {
     } finally { setImporting(false); }
   };
 
+  const filteredContacts = (() => {
+    let list = contacts;
+    if (scoreTier !== 'all') {
+      list = list.filter(c => {
+        const tier = getTierLabel(getScore(c));
+        if (scoreTier === 'hot') return tier === 'hot';
+        if (scoreTier === 'warm') return tier === 'warm';
+        if (scoreTier === 'cold') return tier === 'cold' || tier === 'none';
+        return true;
+      });
+    }
+    if (sortByScore) {
+      list = [...list].sort((a, b) => getScore(b) - getScore(a));
+    }
+    return list;
+  })();
+
   if (detailContact) {
     return <ContactDetailView
       contact={detailContact}
@@ -613,6 +635,20 @@ function ContactsTab() {
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search contacts…" className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm outline-none focus:border-slate-400" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          {(['all', 'hot', 'warm', 'cold'] as const).map(tier => (
+            <button key={tier} type="button" onClick={() => setScoreTier(tier)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition-all ${scoreTier === tier
+                ? tier === 'hot' ? 'bg-red-500 text-white' : tier === 'warm' ? 'bg-amber-500 text-white' : tier === 'cold' ? 'bg-blue-400 text-white' : 'bg-slate-900 text-white'
+                : 'border border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+              {tier === 'all' ? 'All' : tier === 'hot' ? '🔥 Hot' : tier === 'warm' ? '☀ Warm' : '❄ Cold'}
+            </button>
+          ))}
+          <button type="button" onClick={() => setSortByScore(v => !v)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold transition-all ${sortByScore ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+            Sort by score
+          </button>
         </div>
         <div className="flex gap-2">
           <button onClick={handleExport} disabled={contacts.length === 0}
@@ -766,15 +802,20 @@ function ContactsTab() {
                   </th>
                   <th className="px-4 py-3 text-left">Email</th>
                   <th className="px-4 py-3 text-left">Name</th>
-                  <th className="px-4 py-3 text-left">Phone</th>
                   <th className="px-4 py-3 text-left">Tags</th>
                   <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-left cursor-pointer select-none hover:text-slate-800" onClick={() => setSortByScore(v => !v)}>
+                    Score {sortByScore ? '↓' : ''}
+                  </th>
                   <th className="px-4 py-3 text-left">Added</th>
                   <th className="px-4 py-3 w-10" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {contacts.map(c => (
+                {filteredContacts.map(c => {
+                  const score = getScore(c);
+                  const tier = getTierLabel(score);
+                  return (
                   <tr key={c.id} className={`hover:bg-slate-50 ${selectedIds.has(c.id) ? 'bg-indigo-50/40' : ''}`}>
                     <td className="px-4 py-3">
                       <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleOne(c.id)}
@@ -787,7 +828,6 @@ function ContactsTab() {
                       </button>
                     </td>
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{c.phone || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1 min-w-[80px]">
                         {c.tags?.length ? c.tags.map(t => <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>) : <span className="text-slate-400">—</span>}
@@ -797,6 +837,16 @@ function ContactsTab() {
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.subscribed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                         {c.subscribed ? 'Subscribed' : 'Unsubscribed'}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {score > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                            <div className={`h-full rounded-full ${tier === 'hot' ? 'bg-red-400' : tier === 'warm' ? 'bg-amber-400' : 'bg-blue-300'}`} style={{ width: `${Math.min(100, score)}%` }} />
+                          </div>
+                          <span className="text-xs font-bold text-slate-700">{score}</span>
+                        </div>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
                     </td>
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDate(c.created_at)}</td>
                     <td className="px-4 py-3">
@@ -822,13 +872,14 @@ function ContactsTab() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
-      <p className="text-xs text-slate-400">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}{selectedIds.size > 0 ? ` · ${selectedIds.size} selected` : ''}</p>
+      <p className="text-xs text-slate-400">{filteredContacts.length} contact{filteredContacts.length !== 1 ? 's' : ''}{contacts.length !== filteredContacts.length ? ` (of ${contacts.length})` : ''}{selectedIds.size > 0 ? ` · ${selectedIds.size} selected` : ''}</p>
     </div>
   );
 }

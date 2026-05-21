@@ -26006,6 +26006,20 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 
+// POST /api/notifications — create an in-app notification (used by automations notify_team action)
+app.post('/api/notifications', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+  const { type = 'marketing_alert', title, message, data } = req.body as { type?: string; title: string; message?: string; data?: Record<string, unknown> };
+  if (!title) return res.status(400).json({ success: false, error: 'title required' });
+  try {
+    await createNotification(auth.userId, type, title, message || '', data || {});
+    return res.json({ success: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // GET /api/notifications — list recent notifications with unread count
 app.get('/api/notifications', async (req: Request, res: Response) => {
   const auth = await requireAuth(req, res);
