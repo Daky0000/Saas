@@ -55,14 +55,67 @@ const MEDIUM_OPTIONS = ['social', 'cpc', 'email', 'banner', 'affiliate', 'referr
 
 const COLORS = ['#5b6cf9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
-const CAMPAIGN_TEMPLATES: Array<{ id: string; name: string; emoji: string; goal: CampaignGoal; hint: string; channels: string[]; color: string }> = [
-  { id: 'product_launch', name: 'Product Launch', emoji: '🚀', goal: 'sales', hint: 'Drive pre-orders, waitlist signups, and launch-day sales.', channels: ['email', 'instagram', 'facebook'], color: '#5b6cf9' },
-  { id: 'seasonal_sale', name: 'Seasonal Sale', emoji: '🛍️', goal: 'sales', hint: 'Time-limited promotions with urgency messaging across social.', channels: ['email', 'instagram', 'facebook'], color: '#ef4444' },
-  { id: 'lead_gen', name: 'Lead Generation', emoji: '🎯', goal: 'leads', hint: 'Capture emails with a lead magnet or gated offer.', channels: ['linkedin', 'landing_page', 'email'], color: '#10b981' },
-  { id: 'brand_awareness', name: 'Brand Awareness', emoji: '📣', goal: 'awareness', hint: 'Maximize reach and impressions across social channels.', channels: ['instagram', 'twitter', 'facebook'], color: '#f59e0b' },
-  { id: 'event_promo', name: 'Event Promo', emoji: '🎪', goal: 'traffic', hint: 'Drive registrations for a webinar, live event, or workshop.', channels: ['email', 'linkedin', 'landing_page'], color: '#8b5cf6' },
-  { id: 're_engagement', name: 'Re-engagement', emoji: '🔄', goal: 'engagement', hint: 'Win back inactive subscribers and followers.', channels: ['email', 'facebook'], color: '#06b6d4' },
+const CAMPAIGN_TEMPLATES: Array<{ id: string; name: string; emoji: string; goal: CampaignGoal; hint: string; channels: string[]; color: string; type: string; tone: string; cta: string }> = [
+  { id: 'product_launch', name: 'Product Launch', emoji: '🚀', goal: 'sales', hint: 'Drive pre-orders, waitlist signups, and launch-day sales.', channels: ['email', 'instagram', 'facebook'], color: '#5b6cf9', type: 'product_marketing', tone: 'urgent', cta: 'Pre-Order Now' },
+  { id: 'seasonal_sale', name: 'Seasonal Sale', emoji: '🛍️', goal: 'sales', hint: 'Time-limited promotions with urgency messaging across social.', channels: ['email', 'instagram', 'facebook'], color: '#ef4444', type: 'paid_media', tone: 'urgent', cta: 'Shop Now' },
+  { id: 'lead_gen', name: 'Lead Generation', emoji: '🎯', goal: 'leads', hint: 'Capture emails with a lead magnet or gated offer.', channels: ['linkedin', 'landing_page', 'email'], color: '#10b981', type: 'acquisition', tone: 'professional', cta: 'Get Free Access' },
+  { id: 'brand_awareness', name: 'Brand Awareness', emoji: '📣', goal: 'awareness', hint: 'Maximize reach and impressions across social channels.', channels: ['instagram', 'twitter', 'facebook'], color: '#f59e0b', type: 'brand_development', tone: 'inspirational', cta: 'Learn More' },
+  { id: 'event_promo', name: 'Event Promo', emoji: '🎪', goal: 'traffic', hint: 'Drive registrations for a webinar, live event, or workshop.', channels: ['email', 'linkedin', 'landing_page'], color: '#8b5cf6', type: 'pr_awareness', tone: 'friendly', cta: 'Register Free' },
+  { id: 're_engagement', name: 'Re-engagement', emoji: '🔄', goal: 'engagement', hint: 'Win back inactive subscribers and followers.', channels: ['email', 'facebook'], color: '#06b6d4', type: 'email_marketing', tone: 'friendly', cta: 'Come Back' },
+  { id: 'ugc', name: 'UGC Campaign', emoji: '📸', goal: 'engagement', hint: 'Invite users to share content with a branded hashtag.', channels: ['instagram', 'twitter', 'facebook'], color: '#ec4899', type: 'ugc', tone: 'playful', cta: 'Share Your Story' },
+  { id: 'affiliate', name: 'Affiliate Launch', emoji: '🤝', goal: 'sales', hint: 'Activate creator referrals with tracked affiliate links.', channels: ['instagram', 'twitter', 'landing_page'], color: '#14b8a6', type: 'affiliate', tone: 'professional', cta: 'Join as Affiliate' },
+  { id: 'content_marketing', name: 'Content Marketing', emoji: '✍️', goal: 'traffic', hint: 'Build authority through blogs, videos, and SEO content.', channels: ['landing_page', 'email', 'twitter'], color: '#a855f7', type: 'content_marketing', tone: 'inspirational', cta: 'Read More' },
 ];
+
+const CAMPAIGN_TYPES = [
+  { value: 'product_marketing', label: 'Product Marketing', description: 'Bring a product to market with targeted positioning' },
+  { value: 'brand_development', label: 'Brand Development', description: 'Build positive lasting impressions and awareness' },
+  { value: 'email_marketing', label: 'Email Marketing', description: 'Nurture leads through email sequences with a clear CTA' },
+  { value: 'content_marketing', label: 'Content Marketing', description: 'Build authority via blogs, videos, and podcasts' },
+  { value: 'ugc', label: 'User-Generated Content', description: 'Invite users to create authentic campaign content' },
+  { value: 'pr_awareness', label: 'PR / Awareness', description: 'Educate the public about a brand, cause, or message' },
+  { value: 'social_media', label: 'Social Media', description: 'Influence followers to feel or act about your brand' },
+  { value: 'paid_media', label: 'Paid Media', description: 'Reach audiences through sponsored ads and placements' },
+  { value: 'acquisition', label: 'Acquisition Marketing', description: 'Convert new audiences into paying customers via SEO, email, ads' },
+  { value: 'affiliate', label: 'Affiliate Marketing', description: 'Drive sales through trusted creator referrals' },
+  { value: 'direct_mail', label: 'Direct Mail', description: 'Reach customers through physical letters, postcards, or flyers' },
+];
+
+const TONE_OPTIONS = [
+  { value: 'professional', label: 'Professional', emoji: '👔' },
+  { value: 'friendly', label: 'Friendly', emoji: '😊' },
+  { value: 'urgent', label: 'Urgent', emoji: '⚡' },
+  { value: 'playful', label: 'Playful', emoji: '🎉' },
+  { value: 'inspirational', label: 'Inspirational', emoji: '✨' },
+];
+
+const GOAL_KPI_SUGGESTIONS: Record<CampaignGoal, Array<{ name: string; metric_type: 'number' | 'percentage' | 'currency' | 'ratio'; unit: string }>> = {
+  awareness: [
+    { name: 'Total Impressions', metric_type: 'number', unit: 'impressions' },
+    { name: 'Reach', metric_type: 'number', unit: 'people' },
+    { name: 'Brand Mentions', metric_type: 'number', unit: 'mentions' },
+  ],
+  traffic: [
+    { name: 'Website Visits', metric_type: 'number', unit: 'visits' },
+    { name: 'Click-Through Rate', metric_type: 'percentage', unit: '%' },
+    { name: 'Bounce Rate', metric_type: 'percentage', unit: '%' },
+  ],
+  leads: [
+    { name: 'Leads Generated', metric_type: 'number', unit: 'leads' },
+    { name: 'Conversion Rate', metric_type: 'percentage', unit: '%' },
+    { name: 'Cost Per Lead', metric_type: 'currency', unit: '' },
+  ],
+  engagement: [
+    { name: 'Engagement Rate', metric_type: 'percentage', unit: '%' },
+    { name: 'Likes & Reactions', metric_type: 'number', unit: 'interactions' },
+    { name: 'Shares & Reposts', metric_type: 'number', unit: 'shares' },
+  ],
+  sales: [
+    { name: 'Total Revenue', metric_type: 'currency', unit: '' },
+    { name: 'Conversions', metric_type: 'number', unit: 'sales' },
+    { name: 'Return on Investment', metric_type: 'percentage', unit: '%' },
+  ],
+};
 
 function fmtNum(n: number | string | null | undefined): string {
   if (n == null) return '—';
@@ -136,7 +189,7 @@ function EmptyState({ icon, title, description, action }: { icon: React.ReactNod
 
 // ─── Builder Wizard ───────────────────────────────────────────────────────────
 
-type WizardStep = 'template' | 'goal' | 'channels' | 'links' | 'review';
+type WizardStep = 'template' | 'goal' | 'channels' | 'messaging' | 'links' | 'review';
 
 type CreationProgressStep = { label: string; status: 'pending' | 'running' | 'done' | 'error' };
 
@@ -146,7 +199,7 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
   const [error, setError] = useState('');
   const [progressSteps, setProgressSteps] = useState<CreationProgressStep[]>([]);
 
-  // Template step (tracks which template was selected for review display)
+  // Template step
   const [_selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
 
   // Goal step
@@ -157,16 +210,28 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [budget, setBudget] = useState('');
+  const [objective, setObjective] = useState('');
+  const [targetAudience, setTargetAudience] = useState('');
 
   // Channels step
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+
+  // Messaging step
+  const [campaignType, setCampaignType] = useState('');
+  const [valueProp, setValueProp] = useState('');
+  const [ctaText, setCtaText] = useState('');
+  const [tone, setTone] = useState('friendly');
 
   // UTM step
   const [utmLinks, setUtmLinks] = useState<Array<{ label: string; utm_source: string; utm_medium: string }>>([
     { label: 'Primary Link', utm_source: '', utm_medium: 'social' },
   ]);
 
-  const STEPS: WizardStep[] = ['template', 'goal', 'channels', 'links', 'review'];
+  // KPI suggestions on review
+  const [selectedKpis, setSelectedKpis] = useState<Set<string>>(new Set());
+  const kpiSuggestions = GOAL_KPI_SUGGESTIONS[goal] ?? [];
+
+  const STEPS: WizardStep[] = ['template', 'goal', 'channels', 'messaging', 'links', 'review'];
   const stepIdx = STEPS.indexOf(step);
 
   const toggleChannel = (ch: string) =>
@@ -208,10 +273,8 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
     setProgressSteps(steps);
 
     try {
-      // Small delay so the first "running" state renders before the blocking fetch
       await new Promise(r => setTimeout(r, 80));
-
-      advanceProgress(0, 'done'); // validating → done, creating → running
+      advanceProgress(0, 'done');
       await new Promise(r => setTimeout(r, 60));
 
       const result = await campaignService.createCampaignAtomic({
@@ -227,21 +290,38 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
         attribution_model: 'last_touch',
       });
 
-      // The backend did everything atomically; animate the remaining steps
-      advanceProgress(1, 'done'); // creating → done, channels → running
+      advanceProgress(1, 'done');
       await new Promise(r => setTimeout(r, 120));
-      advanceProgress(2, 'done'); // channels → done, funnel → running
+      advanceProgress(2, 'done');
       await new Promise(r => setTimeout(r, 100));
-      advanceProgress(3, 'done'); // funnel → done, utm → running
-      await new Promise(r => setTimeout(r, 100));
-      advanceProgress(4, 'done'); // utm → done, jobs → running
-      await new Promise(r => setTimeout(r, 100));
-      advanceProgress(5, 'done'); // jobs → done
 
+      // Save strategy/messaging fields into campaign settings
+      const settings: Record<string, string> = {};
+      if (objective) settings.objective = objective;
+      if (targetAudience) settings.target_audience = targetAudience;
+      if (campaignType) settings.campaign_type = campaignType;
+      if (valueProp) settings.value_prop = valueProp;
+      if (ctaText) settings.cta = ctaText;
+      if (tone) settings.tone = tone;
+      if (Object.keys(settings).length > 0) {
+        await campaignService.updateCampaign(result.campaign.id, { settings } as any);
+      }
+
+      advanceProgress(3, 'done');
+      await new Promise(r => setTimeout(r, 100));
+
+      // Create selected KPIs
+      const kpisToCreate = kpiSuggestions.filter(k => selectedKpis.has(k.name));
+      for (const kpi of kpisToCreate) {
+        await campaignService.createKpi(result.campaign.id, { name: kpi.name, metric_type: kpi.metric_type, target_value: 0, current_value: 0, unit: kpi.unit });
+      }
+
+      advanceProgress(4, 'done');
+      await new Promise(r => setTimeout(r, 100));
+      advanceProgress(5, 'done');
       await new Promise(r => setTimeout(r, 300));
       onDone(result.campaign);
     } catch (e: any) {
-      // Mark current running step as error
       setProgressSteps(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'error' } : s));
       setError(e.message || 'Failed to create campaign');
     } finally {
@@ -254,6 +334,9 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
       setSelectedTemplateId(tpl.id);
       setGoal(tpl.goal);
       setSelectedChannels(tpl.channels);
+      setCampaignType(tpl.type);
+      setTone(tpl.tone);
+      setCtaText(tpl.cta);
       if (!name) setDescription(tpl.hint);
     } else {
       setSelectedTemplateId(null);
@@ -262,6 +345,14 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
   }
 
   const canNext = step === 'goal' ? name.trim().length > 0 : true;
+
+  function toggleKpi(name: string) {
+    setSelectedKpis(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -311,13 +402,13 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
           )}
 
           {step === 'goal' && (
-            <div className="space-y-5">
+            <div className="space-y-4 overflow-y-auto max-h-[420px] pr-1">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Campaign Name *</label>
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Q2 Product Launch" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400" />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Goal</label>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Campaign Goal</label>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {GOAL_OPTIONS.map(g => (
                     <button key={g.value} onClick={() => setGoal(g.value)} className={`rounded-2xl border p-3 text-left transition-all ${goal === g.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
@@ -327,10 +418,18 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
                   ))}
                 </div>
               </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Specific Objective</label>
+                <input value={objective} onChange={e => setObjective(e.target.value)} placeholder='e.g. "Increase newsletter signups by 500 in 30 days"' className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Target Audience</label>
+                <textarea value={targetAudience} onChange={e => setTargetAudience(e.target.value)} rows={2} placeholder='e.g. "Tech-savvy millennials aged 25–35 who value convenience and premium UX"' className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400 resize-none" />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Target URL</label>
-                  <input value={targetUrl} onChange={e => setTargetUrl(e.target.value)} placeholder="https://yoursite.com/page" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400" />
+                  <input value={targetUrl} onChange={e => setTargetUrl(e.target.value)} placeholder="https://yoursite.com" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Budget (USD)</label>
@@ -349,7 +448,7 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
               </div>
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Description</label>
-                <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} placeholder="Optional campaign notes..." className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400 resize-none" />
+                <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} placeholder="Optional notes..." className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400 resize-none" />
               </div>
             </div>
           )}
@@ -369,6 +468,42 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
                 })}
               </div>
               {selectedChannels.length === 0 && <p className="mt-4 text-xs text-slate-400">You can add channels later. Skip to continue.</p>}
+            </div>
+          )}
+
+          {step === 'messaging' && (
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Campaign Type</label>
+                <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1">
+                  {CAMPAIGN_TYPES.map(ct => (
+                    <button key={ct.value} onClick={() => setCampaignType(ct.value)} className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${campaignType === ct.value ? 'border-slate-950 bg-slate-950' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                      <div>
+                        <div className={`text-sm font-bold ${campaignType === ct.value ? 'text-white' : 'text-slate-900'}`}>{ct.label}</div>
+                        <div className={`text-xs mt-0.5 ${campaignType === ct.value ? 'text-slate-300' : 'text-slate-500'}`}>{ct.description}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Tone of Voice</label>
+                <div className="flex flex-wrap gap-2">
+                  {TONE_OPTIONS.map(t => (
+                    <button key={t.value} onClick={() => setTone(t.value)} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition-all ${tone === t.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'}`}>
+                      {t.emoji} {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Value Proposition</label>
+                <textarea value={valueProp} onChange={e => setValueProp(e.target.value)} rows={2} placeholder='e.g. "The only tool that lets you build a campaign in under 5 minutes — no agency needed."' className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">Call-to-Action Text</label>
+                <input value={ctaText} onChange={e => setCtaText(e.target.value)} placeholder='e.g. "Start Free Trial", "Shop Now", "Get the Guide"' className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400" />
+              </div>
             </div>
           )}
 
@@ -405,13 +540,15 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
           )}
 
           {step === 'review' && (
-            <div className="space-y-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-3">
+            <div className="space-y-4 overflow-y-auto max-h-[420px] pr-1">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Campaign</span>
                   <GoalBadge goal={goal} />
                 </div>
                 <div className="text-xl font-black text-slate-950">{name}</div>
+                {objective && <p className="text-sm font-semibold text-indigo-700">🎯 {objective}</p>}
+                {targetAudience && <p className="text-sm text-slate-500">👤 {targetAudience}</p>}
                 {description && <p className="text-sm text-slate-500">{description}</p>}
                 <div className="flex flex-wrap gap-3 text-xs text-slate-500">
                   {targetUrl && <span>🔗 {targetUrl}</span>}
@@ -419,6 +556,15 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
                   {startDate && <span>📅 {startDate}{endDate ? ` → ${endDate}` : ''}</span>}
                 </div>
               </div>
+              {(campaignType || ctaText || valueProp || tone) && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
+                  <span className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Strategy</span>
+                  {campaignType && <div className="text-xs text-slate-600">Type: <span className="font-semibold">{CAMPAIGN_TYPES.find(t => t.value === campaignType)?.label ?? campaignType}</span></div>}
+                  {tone && <div className="text-xs text-slate-600">Tone: <span className="font-semibold capitalize">{TONE_OPTIONS.find(t => t.value === tone)?.emoji} {tone}</span></div>}
+                  {ctaText && <div className="text-xs text-slate-600">CTA: <span className="font-semibold">"{ctaText}"</span></div>}
+                  {valueProp && <div className="text-xs text-slate-500 italic mt-1">"{valueProp}"</div>}
+                </div>
+              )}
               {selectedChannels.length > 0 && (
                 <div>
                   <span className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Channels</span>
@@ -432,10 +578,25 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
               )}
               {utmLinks.filter(l => l.label && l.utm_source).length > 0 && (
                 <div>
-                  <span className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">UTM Links ({utmLinks.filter(l => l.label && l.utm_source).length})</span>
+                  <span className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5">UTM Links ({utmLinks.filter(l => l.label && l.utm_source).length})</span>
                   {utmLinks.filter(l => l.label && l.utm_source).map((l, i) => (
                     <div key={i} className="text-xs text-slate-600">• {l.label} — {l.utm_source} / {l.utm_medium}</div>
                   ))}
+                </div>
+              )}
+              {kpiSuggestions.length > 0 && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+                  <span className="block text-xs font-bold uppercase tracking-widest text-indigo-400 mb-2">Suggested KPIs for {goalLabel(goal)}</span>
+                  <p className="text-xs text-indigo-500 mb-3">Select which KPIs to track — you can add targets after creation.</p>
+                  <div className="space-y-2">
+                    {kpiSuggestions.map(k => (
+                      <label key={k.name} className="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" checked={selectedKpis.has(k.name)} onChange={() => toggleKpi(k.name)} className="rounded accent-indigo-600" />
+                        <span className="text-sm font-semibold text-slate-800">{k.name}</span>
+                        <span className="text-xs text-slate-400 capitalize">{k.metric_type}{k.unit ? ` (${k.unit})` : ''}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -998,7 +1159,7 @@ function MetricsTab({ campaignId }: { campaignId?: string }) {
 
 // ─── Campaign Detail View ─────────────────────────────────────────────────────
 
-type DetailTab = 'overview' | 'content' | 'links' | 'kpis' | 'activity';
+type DetailTab = 'overview' | 'brief' | 'content' | 'links' | 'kpis' | 'activity';
 
 function HealthRing({ score }: { score: number }) {
   const color = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : score >= 40 ? '#ef4444' : '#94a3b8';
@@ -1068,6 +1229,50 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
+  // Brief tab state
+  const s = (campaign.settings ?? {}) as Record<string, string>;
+  const [briefObjective, setBriefObjective] = useState(s.objective ?? '');
+  const [briefAudience, setBriefAudience] = useState(s.target_audience ?? '');
+  const [briefType, setBriefType] = useState(s.campaign_type ?? '');
+  const [briefValueProp, setBriefValueProp] = useState(s.value_prop ?? '');
+  const [briefCta, setBriefCta] = useState(s.cta ?? '');
+  const [briefTone, setBriefTone] = useState(s.tone ?? '');
+  const [briefNotes, setBriefNotes] = useState(s.notes ?? '');
+  const [savingBrief, setSavingBrief] = useState(false);
+  const [briefSaved, setBriefSaved] = useState(false);
+
+  async function saveBrief() {
+    setSavingBrief(true);
+    try {
+      const updated = await campaignService.updateCampaign(campaign.id, {
+        settings: { objective: briefObjective, target_audience: briefAudience, campaign_type: briefType, value_prop: briefValueProp, cta: briefCta, tone: briefTone, notes: briefNotes },
+      } as any);
+      setCampaign(updated);
+      setBriefSaved(true);
+      setTimeout(() => setBriefSaved(false), 2000);
+    } catch { /* */ } finally { setSavingBrief(false); }
+  }
+
+  function copyBrief() {
+    const lines = [
+      `CAMPAIGN BRIEF — ${campaign.name}`,
+      `Goal: ${goalLabel(campaign.goal)}`,
+      briefObjective ? `Objective: ${briefObjective}` : '',
+      briefAudience ? `Target Audience: ${briefAudience}` : '',
+      '',
+      briefType ? `Campaign Type: ${CAMPAIGN_TYPES.find(t => t.value === briefType)?.label ?? briefType}` : '',
+      briefTone ? `Tone of Voice: ${briefTone}` : '',
+      briefValueProp ? `Value Proposition: ${briefValueProp}` : '',
+      briefCta ? `Call-to-Action: "${briefCta}"` : '',
+      '',
+      campaign.start_date ? `Timeline: ${campaign.start_date}${campaign.end_date ? ` → ${campaign.end_date}` : ''}` : '',
+      campaign.budget ? `Budget: $${campaign.budget}` : '',
+      campaign.target_url ? `Target URL: ${campaign.target_url}` : '',
+      briefNotes ? `\nNotes:\n${briefNotes}` : '',
+    ].filter(Boolean).join('\n');
+    navigator.clipboard.writeText(lines).catch(() => {});
+  }
+
   const loadDetail = useCallback(async () => {
     setLoading(true);
     try {
@@ -1136,6 +1341,7 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
   const stats = detail?.stats;
   const TABS: { id: DetailTab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
+    { id: 'brief', label: 'Brief' },
     { id: 'content', label: content.length > 0 ? `Content (${content.length})` : 'Content' },
     { id: 'links', label: 'UTM Links' },
     { id: 'kpis', label: kpis.length > 0 ? `KPIs (${kpis.length})` : 'KPIs' },
@@ -1268,6 +1474,91 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* BRIEF */}
+          {activeTab === 'brief' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-slate-950">Campaign Brief</h3>
+                  <p className="text-sm text-slate-500 mt-0.5">Document your strategy so your whole team stays aligned.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={copyBrief} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                    <Copy size={13} /> Copy Brief
+                  </button>
+                  <button disabled={savingBrief} onClick={saveBrief} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
+                    {savingBrief ? <Loader2 size={13} className="animate-spin" /> : briefSaved ? <Check size={13} /> : null}
+                    {briefSaved ? 'Saved!' : 'Save Brief'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Overview */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Campaign Overview</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Specific Objective</label>
+                    <input value={briefObjective} onChange={e => setBriefObjective(e.target.value)} placeholder='"Increase newsletter signups by 500 in 30 days"' className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Target Audience / Buyer Persona</label>
+                    <textarea value={briefAudience} onChange={e => setBriefAudience(e.target.value)} rows={2} placeholder='"Tech-savvy millennials aged 25–35 who value convenience..."' className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 resize-none" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Strategy */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Campaign Strategy</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Campaign Type</label>
+                    <select value={briefType} onChange={e => setBriefType(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none">
+                      <option value="">— Select type —</option>
+                      {CAMPAIGN_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Tone of Voice</label>
+                    <select value={briefTone} onChange={e => setBriefTone(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none">
+                      <option value="">— Select tone —</option>
+                      {TONE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.emoji} {t.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Value Proposition</label>
+                    <textarea value={briefValueProp} onChange={e => setBriefValueProp(e.target.value)} rows={2} placeholder='"The only tool that lets you build campaigns in under 5 minutes..."' className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 resize-none" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Call-to-Action</label>
+                    <input value={briefCta} onChange={e => setBriefCta(e.target.value)} placeholder='"Start Free Trial", "Shop Now", "Get the Guide"' className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Metrics to Monitor */}
+              <div className="rounded-2xl border border-indigo-50 bg-indigo-50/60 p-5">
+                <h4 className="text-xs font-bold uppercase tracking-widest text-indigo-400 mb-3">Metrics to Monitor</h4>
+                <div className="grid grid-cols-3 gap-3">
+                  {(GOAL_KPI_SUGGESTIONS[campaign.goal as CampaignGoal] ?? []).map(k => (
+                    <div key={k.name} className="rounded-xl border border-indigo-100 bg-white px-3 py-2.5">
+                      <div className="text-sm font-semibold text-slate-800">{k.name}</div>
+                      <div className="text-xs text-slate-400 capitalize mt-0.5">{k.metric_type}{k.unit ? ` · ${k.unit}` : ''}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-indigo-400">These are recommended for <strong>{goalLabel(campaign.goal)}</strong> campaigns. Add them in the KPIs tab to start tracking.</p>
+              </div>
+
+              {/* Notes */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Additional Notes</h4>
+                <textarea value={briefNotes} onChange={e => setBriefNotes(e.target.value)} rows={4} placeholder="Competitive notes, key differentiators, messaging guidelines, influencer strategy, contingency plans..." className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 resize-none" />
+              </div>
             </div>
           )}
 
