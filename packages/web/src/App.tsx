@@ -4,6 +4,7 @@ import {
   BarChart4,
   Bell,
   Bot,
+  Building2,
   CheckCircle2,
   ChevronDown,
   CreditCard,
@@ -63,6 +64,7 @@ import TasksPage from './components/tasks/TasksPage';
 import ProjectSettings from './pages/ProjectSettings';
 import SettingsPage from './pages/Settings';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
+import HelpModal from './components/HelpModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
 import { API_BASE_URL } from './utils/apiBase';
@@ -217,6 +219,7 @@ function AppSidebar({
 }: AppSidebarProps) {
   const { currentOrg, currentProject, projects, refresh } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -361,7 +364,7 @@ function AppSidebar({
           type="button"
           data-tour-id="nav-content"
           onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
-          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow' || currentPage === 'discover')}
+          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
         >
           <FileText size={15} className="shrink-0" />
           <span className="flex-1 text-left">Content</span>
@@ -373,7 +376,6 @@ function AppSidebar({
               { id: 'post-automation' as PageType, label: 'Automation' },
               { id: 'media' as PageType, label: 'Media' },
               { id: 'cards' as PageType, label: 'AI Studio' },
-              { id: 'discover' as PageType, label: 'Discover' },
               { id: 'workflow' as PageType, label: 'Workflow' },
             ] as { id: PageType; label: string }[]).map((c) => (
               <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
@@ -580,6 +582,8 @@ function AppSidebar({
         </button>
       </div>
 
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+
       {/* ── User card + dropdown ── */}
       <div ref={userMenuRef} className="relative px-3 pb-3 pt-1">
         {userMenuOpen && (
@@ -604,11 +608,14 @@ function AppSidebar({
             <button type="button" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <User size={14} className="shrink-0 text-gray-400" /> Profile
             </button>
+            <button type="button" onClick={() => { go('workspace'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <Building2 size={14} className="shrink-0 text-gray-400" /> Workspace
+            </button>
             <button type="button" onClick={() => { go('settings'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <Settings size={14} className="shrink-0 text-gray-400" /> Settings
             </button>
             <div className="mx-3 my-1 h-px bg-gray-100" />
-            <button type="button" className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            <button type="button" onClick={() => { setHelpOpen(true); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <HelpCircle size={14} className="shrink-0 text-gray-400" /> Help
             </button>
             <button type="button" onClick={() => { handleLogout(); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors">
@@ -693,7 +700,7 @@ function App() {
   const navigateToPage = useCallback(
     (page: PageType, replace = false) => {
       setCurrentPage(page);
-      if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'discover' || page === 'workflow') {
+      if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'workflow') {
         setPostsMenuOpen(true);
       }
       if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys' || page === 'marketing-automations') {
@@ -803,7 +810,7 @@ function App() {
     const pageFromPath = getPageFromPath(pathname);
     if (pageFromPath) {
       setCurrentPage(pageFromPath);
-      const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
+      const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'workflow'];
       if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
       const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
       if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
@@ -838,7 +845,7 @@ function App() {
       const pageFromPath = getPageFromPath(pathname);
       if (pageFromPath) {
         setCurrentPage(pageFromPath);
-        const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'discover', 'workflow'];
+        const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'workflow'];
         if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
         const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
         if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);

@@ -1746,23 +1746,47 @@ function PostEditor({
 
 // ─── Post Calendar ─────────────────────────────────────────────────────────
 
-function PostCalendar({ onEdit }: { onEdit: (id: string) => void }) {
-  const [posts, setPosts] = useState<BlogPost[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [cur, setCur] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+const STATUS_CAL: Record<string, { bg: string; text: string; dot: string }> = {
+  scheduled: { bg: 'bg-blue-100', text: 'text-blue-800', dot: 'bg-blue-500' },
+  draft:     { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-400' },
+  published: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  archived:  { bg: 'bg-slate-100', text: 'text-slate-500', dot: 'bg-slate-400' },
+};
 
-  useEffect(() => {
-    blogService.listPosts({ status: 'scheduled' })
-      .then(setPosts).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function PostCalendar({ onEdit }: { onEdit: (id: string) => void }) {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [cur, setCur] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [allPosts, setAllPosts] = useState<BlogPost[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const year = cur.getFullYear();
   const month = cur.getMonth();
+
+  // Re-fetch whenever the visible month changes
+  useEffect(() => {
+    setLoading(true);
+    blogService.listPosts()
+      .then(setAllPosts)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [year, month]);
+
+  // Posts that have a scheduled_at in the visible month
+  const monthPosts = allPosts.filter(p => {
+    if (!p.scheduled_at) return false;
+    const d = new Date(p.scheduled_at);
+    return d.getFullYear() === year && d.getMonth() === month;
+  });
+
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const startDow = new Date(year, month, 1).getDay();
-  const today = new Date().toISOString().split('T')[0];
-  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
@@ -1770,54 +1794,128 @@ function PostCalendar({ onEdit }: { onEdit: (id: string) => void }) {
 
   const postsForDay = (day: number) => {
     const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return posts.filter(p => p.scheduled_at && p.scheduled_at.split('T')[0] === dayStr);
+    return monthPosts.filter(p => p.scheduled_at && p.scheduled_at.split('T')[0] === dayStr);
   };
 
-  if (loading) return <div className="flex justify-center py-20"><Loader2 size={20} className="animate-spin text-slate-400" /></div>;
+  const isCurrentMonth = () => {
+    const now = new Date();
+    return now.getFullYear() === year && now.getMonth() === month;
+  };
+
+  // Status legend counts for this month
+  const counts = { scheduled: 0, draft: 0, published: 0 };
+  monthPosts.forEach(p => {
+    if (p.status === 'scheduled') counts.scheduled++;
+    else if (p.status === 'draft') counts.draft++;
+    else if (p.status === 'published') counts.published++;
+  });
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button type="button" onClick={() => setCur(new Date(year, month - 1, 1))} className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCur(new Date(year, month - 1, 1))}
+            className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+          >
             <ChevronLeft size={15} />
           </button>
-          <h2 className="text-base font-bold text-slate-900">{MONTHS[month]} {year}</h2>
-          <button type="button" onClick={() => setCur(new Date(year, month + 1, 1))} className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50">
+          <h2 className="min-w-[160px] text-center text-base font-bold text-slate-900">
+            {MONTHS[month]} {year}
+          </h2>
+          <button
+            type="button"
+            onClick={() => setCur(new Date(year, month + 1, 1))}
+            className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+          >
             <ChevronRight size={15} />
           </button>
+          {!isCurrentMonth() && (
+            <button
+              type="button"
+              onClick={() => { const n = new Date(); setCur(new Date(n.getFullYear(), n.getMonth(), 1)); }}
+              className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              Today
+            </button>
+          )}
         </div>
+
+        {/* Month stats */}
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">{posts.length} scheduled post{posts.length !== 1 ? 's' : ''}</span>
+          {counts.scheduled > 0 && (
+            <span className="flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+              {counts.scheduled} scheduled
+            </span>
+          )}
+          {counts.draft > 0 && (
+            <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              {counts.draft} draft
+            </span>
+          )}
+          {counts.published > 0 && (
+            <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {counts.published} published
+            </span>
+          )}
+          {loading && <Loader2 size={14} className="animate-spin text-slate-400" />}
         </div>
       </div>
 
+      {/* Grid */}
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        {/* Day-of-week headers */}
         <div className="grid grid-cols-7 border-b border-slate-100">
           {DAYS.map(d => (
-            <div key={d} className="px-2 py-2.5 text-center text-xs font-semibold text-slate-500">{d}</div>
+            <div key={d} className="px-2 py-2.5 text-center text-xs font-semibold text-slate-400">{d}</div>
           ))}
         </div>
+
+        {/* Calendar cells */}
         <div className="grid grid-cols-7">
           {cells.map((day, i) => {
-            if (!day) return <div key={`empty-${i}`} className="min-h-[80px] border-b border-r border-slate-50 bg-slate-50/50" />;
+            if (!day) {
+              return <div key={`empty-${i}`} className="min-h-[90px] border-b border-r border-slate-50 bg-slate-50/40" />;
+            }
             const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const isToday = dayStr === today;
+            const isToday = dayStr === todayStr;
             const dayPosts = postsForDay(day);
+            const isPast = dayStr < todayStr;
             return (
-              <div key={day} className={`min-h-[80px] border-b border-r border-slate-50 p-1.5 ${isToday ? 'bg-indigo-50/40' : 'hover:bg-slate-50/80'}`}>
-                <div className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
+              <div
+                key={day}
+                className={`min-h-[90px] border-b border-r border-slate-50 p-1.5 transition-colors ${
+                  isToday ? 'bg-indigo-50/50' : isPast ? 'bg-slate-50/30' : 'hover:bg-slate-50/70'
+                }`}
+              >
+                <div className={`mb-1 flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                  isToday ? 'bg-indigo-600 text-white' : isPast ? 'text-slate-300' : 'text-slate-600'
+                }`}>
                   {day}
                 </div>
                 <div className="space-y-0.5">
-                  {dayPosts.slice(0, 3).map(p => (
-                    <button key={p.id} type="button" onClick={() => onEdit(p.id)}
-                      className="w-full text-left rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800 hover:bg-blue-200 truncate">
-                      {p.title || 'Untitled'}
-                    </button>
-                  ))}
+                  {dayPosts.slice(0, 3).map(p => {
+                    const st = STATUS_CAL[p.status] ?? STATUS_CAL.draft;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => onEdit(p.id)}
+                        title={p.title || 'Untitled'}
+                        className={`flex w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-left text-[10px] font-semibold truncate transition-opacity hover:opacity-80 ${st.bg} ${st.text}`}
+                      >
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} />
+                        <span className="truncate">{p.title || 'Untitled'}</span>
+                      </button>
+                    );
+                  })}
                   {dayPosts.length > 3 && (
-                    <div className="text-[10px] text-slate-400 pl-1">+{dayPosts.length - 3} more</div>
+                    <div className="pl-1 text-[10px] font-medium text-slate-400">+{dayPosts.length - 3} more</div>
                   )}
                 </div>
               </div>
@@ -1826,11 +1924,12 @@ function PostCalendar({ onEdit }: { onEdit: (id: string) => void }) {
         </div>
       </div>
 
-      {posts.length === 0 && (
+      {/* Empty state */}
+      {!loading && monthPosts.length === 0 && (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white py-16 text-center">
           <Calendar size={32} className="mx-auto mb-3 text-slate-300" />
-          <p className="text-sm font-semibold text-slate-500">No scheduled posts</p>
-          <p className="mt-1 text-xs text-slate-400">Schedule a post from the editor to see it here</p>
+          <p className="text-sm font-semibold text-slate-500">No posts scheduled this month</p>
+          <p className="mt-1 text-xs text-slate-400">Posts with a scheduled date will appear here</p>
         </div>
       )}
     </div>
