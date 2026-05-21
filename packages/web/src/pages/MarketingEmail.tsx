@@ -1,23 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
-  BarChart2,
-  Loader2,
-  Mail,
-  Plus,
-  Send,
-  Trash2,
-  X,
-  Zap,
+  BarChart2, Calendar, Clock, Loader2, Mail, Plus, Send, Star, Trash2,
+  TrendingUp, Users, X, Zap,
 } from 'lucide-react';
 import {
   mailingService,
   type MailingAutomation,
   type MailingCampaign,
+  type MailingContact,
   type MailingSegment,
   type MailingAnalytics,
 } from '../services/mailingService';
 
-type Tab = 'campaigns' | 'automations' | 'analytics';
+type Tab = 'campaigns' | 'automations' | 'analytics' | 'leads';
 
 const EMAIL_GOAL_OPTIONS = [
   { value: 'awareness', label: 'Brand Awareness' },
@@ -50,6 +45,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'campaigns', label: 'Campaigns', icon: Mail },
   { id: 'automations', label: 'Automations', icon: Zap },
   { id: 'analytics', label: 'Analytics', icon: BarChart2 },
+  { id: 'leads', label: 'Lead Scores', icon: Star },
 ];
 
 const STATUS_BADGE: Record<string, string> = {
@@ -81,10 +77,12 @@ function CampaignsTab() {
   const [segments, setSegments] = useState<MailingSegment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', subject: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '' });
+  const [form, setForm] = useState({ name: '', subject: '', subjectB: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '', abMode: false, scheduleDate: '' });
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const [schedulingId, setSchedulingId] = useState<string | null>(null);
+  const [scheduleDateTime, setScheduleDateTime] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -103,8 +101,16 @@ function CampaignsTab() {
       const metaPrefix = (form.goal || form.tone)
         ? `<!--campaign-meta:${JSON.stringify({ goal: form.goal || undefined, tone: form.tone || undefined })}-->\n`
         : '';
-      await mailingService.createCampaign({ name: form.name, subject: form.subject, preview_text: form.preview_text || undefined, segment_id: form.segment_id || undefined, content: metaPrefix + form.content });
-      setForm({ name: '', subject: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '' });
+      const base = { preview_text: form.preview_text || undefined, segment_id: form.segment_id || undefined, content: metaPrefix + form.content, scheduled_at: form.scheduleDate || undefined };
+      if (form.abMode && form.subjectB.trim()) {
+        await Promise.all([
+          mailingService.createCampaign({ name: `${form.name} [A]`, subject: form.subject, ...base }),
+          mailingService.createCampaign({ name: `${form.name} [B]`, subject: form.subjectB, ...base }),
+        ]);
+      } else {
+        await mailingService.createCampaign({ name: form.name, subject: form.subject, ...base });
+      }
+      setForm({ name: '', subject: '', subjectB: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '', abMode: false, scheduleDate: '' });
       setShowAdd(false); await load();
     } catch { /* silent */ } finally { setSaving(false); }
   };
@@ -116,18 +122,25 @@ function CampaignsTab() {
 
   const handleSend = async (id: string, name: string) => {
     if (!confirm(`Send "${name}" to all subscribed contacts now?`)) return;
-    setSending(id);
-    setSendResult(null);
+    setSending(id); setSendResult(null);
     try {
       const result = await mailingService.sendCampaign(id);
       setSendResult(`Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
       await load();
     } catch (err) {
       setSendResult(err instanceof Error ? err.message : 'Send failed');
-    } finally {
-      setSending(null);
-    }
+    } finally { setSending(null); }
   };
+
+  const handleSchedule = async () => {
+    if (!schedulingId || !scheduleDateTime) return;
+    try {
+      await mailingService.updateCampaign(schedulingId, { scheduled_at: new Date(scheduleDateTime).toISOString() });
+      setSchedulingId(null); setScheduleDateTime(''); await load();
+    } catch { /* */ }
+  };
+
+  const isAB = (c: MailingCampaign) => /\s\[A\]$/.test(c.name) || /\s\[B\]$/.test(c.name);
 
   return (
     <div className="space-y-4">
@@ -138,6 +151,24 @@ function CampaignsTab() {
         </button>
       </div>
 
+      {/* Schedule modal */}
+      {schedulingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-slate-900">Schedule Send</h3>
+              <button onClick={() => setSchedulingId(null)}><X size={16} className="text-slate-400" /></button>
+            </div>
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1.5">Send Date & Time</label>
+            <input type="datetime-local" value={scheduleDateTime} onChange={e => setScheduleDateTime(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-4" />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setSchedulingId(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+              <button disabled={!scheduleDateTime} onClick={() => void handleSchedule()} className="rounded-xl bg-amber-500 text-white px-4 py-2 text-sm font-semibold disabled:opacity-50 hover:bg-amber-600">Schedule</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl">
@@ -147,7 +178,27 @@ function CampaignsTab() {
             </div>
             <div className="space-y-3 px-5 py-4 max-h-[70vh] overflow-y-auto">
               <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="Campaign name *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
-              <input value={form.subject} onChange={e => setForm(f => ({...f, subject: e.target.value}))} placeholder="Email subject *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
+              {/* A/B toggle */}
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => setForm(f => ({...f, abMode: !f.abMode}))} className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all ${form.abMode ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                  A/B Test {form.abMode ? '✓' : ''}
+                </button>
+                <span className="text-xs text-slate-400">Test two subject lines to find the winner</span>
+              </div>
+              {form.abMode ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject A *</label>
+                    <input value={form.subject} onChange={e => setForm(f => ({...f, subject: e.target.value}))} placeholder="Variant A subject" className="w-full rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject B *</label>
+                    <input value={form.subjectB} onChange={e => setForm(f => ({...f, subjectB: e.target.value}))} placeholder="Variant B subject" className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-sm outline-none focus:border-purple-400" />
+                  </div>
+                </div>
+              ) : (
+                <input value={form.subject} onChange={e => setForm(f => ({...f, subject: e.target.value}))} placeholder="Email subject *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
+              )}
               <input value={form.preview_text} onChange={e => setForm(f => ({...f, preview_text: e.target.value}))} placeholder="Preview text (optional)" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
               <select value={form.segment_id} onChange={e => setForm(f => ({...f, segment_id: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
                 <option value="">All contacts (no segment)</option>
@@ -169,11 +220,20 @@ function CampaignsTab() {
                 </div>
               </div>
               <textarea value={form.content} onChange={e => setForm(f => ({...f, content: e.target.value}))} placeholder="Email content…" rows={4} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 resize-none" />
+              {/* Schedule */}
+              <div className="rounded-xl border border-amber-100 bg-amber-50 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Clock size={13} className="text-amber-500" />
+                  <span className="text-xs font-bold text-amber-700">Schedule (optional)</span>
+                </div>
+                <input type="datetime-local" value={form.scheduleDate} onChange={e => setForm(f => ({...f, scheduleDate: e.target.value}))} className="w-full rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm outline-none focus:border-amber-400" />
+                {form.scheduleDate && <p className="text-xs text-amber-600">Will send at {new Date(form.scheduleDate).toLocaleString()}</p>}
+              </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
               <button onClick={() => setShowAdd(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
-              <button onClick={() => void handleAdd()} disabled={saving || !form.name || !form.subject} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : 'Create'}
+              <button onClick={() => void handleAdd()} disabled={saving || !form.name || !form.subject || (form.abMode && !form.subjectB)} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : form.abMode ? 'Create A/B Test' : form.scheduleDate ? 'Schedule' : 'Create'}
               </button>
             </div>
           </div>
@@ -211,7 +271,10 @@ function CampaignsTab() {
               {campaigns.map(c => (
                 <tr key={c.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-800">
-                    <div>{c.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      {c.name}
+                      {isAB(c) && <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-700">A/B</span>}
+                    </div>
                     {(() => {
                       const { goal, tone } = parseCampaignMeta(c.content ?? '');
                       return (goal || tone) ? (
@@ -225,20 +288,23 @@ function CampaignsTab() {
                   <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{c.subject}</td>
                   <td className="px-4 py-3 text-slate-500">{c.segment_name || 'All contacts'}</td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[c.status] || 'bg-slate-100 text-slate-600'}`}>{c.status}</span>
+                    <div className="space-y-1">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[c.status] || 'bg-slate-100 text-slate-600'}`}>{c.status}</span>
+                      {c.scheduled_at && c.status !== 'sent' && <div className="flex items-center gap-1 text-[10px] text-amber-600"><Calendar size={9} /> {new Date(c.scheduled_at).toLocaleString()}</div>}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{formatDate(c.created_at)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
                       {c.status !== 'sent' && (
-                        <button
-                          onClick={() => void handleSend(c.id, c.name)}
-                          disabled={sending === c.id}
-                          title="Send campaign"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40"
-                        >
-                          {sending === c.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                        </button>
+                        <>
+                          <button onClick={() => { setSchedulingId(c.id); setScheduleDateTime(''); }} title="Schedule send" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600">
+                            <Clock size={13} />
+                          </button>
+                          <button onClick={() => void handleSend(c.id, c.name)} disabled={sending === c.id} title="Send now" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40">
+                            {sending === c.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                          </button>
+                        </>
                       )}
                       <button onClick={() => void handleDelete(c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
                     </div>
@@ -424,6 +490,127 @@ function AnalyticsTab() {
   );
 }
 
+// ─── Lead Scores Tab ─────────────────────────────────────────────────────────
+
+function LeadsTab() {
+  const [contacts, setContacts] = useState<MailingContact[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    mailingService.listContacts()
+      .then(all => {
+        const sorted = [...all].sort((a, b) => {
+          const sa = parseInt((a.custom_data as Record<string, string>)?.lead_score || '0', 10);
+          const sb = parseInt((b.custom_data as Record<string, string>)?.lead_score || '0', 10);
+          return sb - sa;
+        });
+        setContacts(sorted);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const withScore = contacts.filter(c => parseInt(c.custom_data?.lead_score || '0', 10) > 0);
+  const maxScore = withScore.length > 0 ? parseInt((withScore[0].custom_data as Record<string, string>)?.lead_score || '1', 10) : 1;
+
+  const getTier = (score: number) => {
+    if (score >= 80) return { label: 'Hot', color: 'text-red-600 bg-red-50', bar: 'bg-red-400' };
+    if (score >= 50) return { label: 'Warm', color: 'text-amber-600 bg-amber-50', bar: 'bg-amber-400' };
+    if (score >= 20) return { label: 'Cool', color: 'text-blue-600 bg-blue-50', bar: 'bg-blue-400' };
+    return { label: 'Cold', color: 'text-slate-500 bg-slate-100', bar: 'bg-slate-300' };
+  };
+
+  const avgScore = withScore.length > 0
+    ? Math.round(withScore.reduce((sum, c) => sum + parseInt(c.custom_data?.lead_score || '0', 10), 0) / withScore.length)
+    : 0;
+
+  return (
+    <div className="space-y-5">
+      {/* Summary KPIs */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        {[
+          { label: 'Scored Leads', value: withScore.length, sub: `of ${contacts.length} total contacts`, icon: <TrendingUp size={16} /> },
+          { label: 'Hot Leads (80+)', value: withScore.filter(c => parseInt(c.custom_data?.lead_score || '0', 10) >= 80).length, sub: 'ready to convert', icon: <Star size={16} className="text-red-500" /> },
+          { label: 'Avg Lead Score', value: avgScore, sub: 'across scored contacts', icon: <Users size={16} /> },
+        ].map(k => (
+          <div key={k.label} className="rounded-2xl border border-slate-200 bg-white p-5 flex items-start gap-3">
+            <div className="mt-0.5 text-slate-400">{k.icon}</div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{k.label}</div>
+              <div className="mt-1 text-3xl font-black text-slate-950">{k.value}</div>
+              <div className="mt-0.5 text-xs text-slate-400">{k.sub}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Leaderboard */}
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <h3 className="text-sm font-bold text-slate-900">Lead Score Leaderboard</h3>
+          <p className="text-xs text-slate-500 mt-0.5">Contacts ranked by engagement score. Scores increase via automations (UTM clicks, survey responses, email opens).</p>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-12 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
+        ) : withScore.length === 0 ? (
+          <div className="flex flex-col items-center py-16 text-slate-400">
+            <Star size={32} className="mb-3 opacity-30" />
+            <p className="text-sm font-semibold">No lead scores yet</p>
+            <p className="mt-1 text-xs text-center max-w-xs">Use the "Score Lead" action in Automations to assign points when contacts engage — e.g. click a UTM link or complete a survey.</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="border-b border-slate-100">
+              <tr className="text-xs font-semibold text-slate-500">
+                <th className="px-4 py-3 text-left w-10">#</th>
+                <th className="px-4 py-3 text-left">Contact</th>
+                <th className="px-4 py-3 text-left">Tags</th>
+                <th className="px-4 py-3 text-left">Tier</th>
+                <th className="px-4 py-3 text-left w-48">Score</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {withScore.map((c, i) => {
+                const score = parseInt(c.custom_data?.lead_score || '0', 10);
+                const pct = Math.round((score / maxScore) * 100);
+                const tier = getTier(score);
+                return (
+                  <tr key={c.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 text-slate-400 font-mono text-xs">{i + 1}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">{c.first_name || c.last_name ? `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() : c.email}</div>
+                      {(c.first_name || c.last_name) && <div className="text-xs text-slate-400">{c.email}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(c.tags ?? []).slice(0, 3).map(t => (
+                          <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">{t}</span>
+                        ))}
+                        {(c.tags ?? []).length > 3 && <span className="text-[10px] text-slate-400">+{(c.tags ?? []).length - 3}</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${tier.color}`}>{tier.label}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${tier.bar} transition-all`} style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="text-xs font-bold text-slate-700 w-8 text-right">{score}</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function MarketingEmail() {
@@ -456,6 +643,7 @@ export default function MarketingEmail() {
         {tab === 'campaigns' && <CampaignsTab />}
         {tab === 'automations' && <AutomationsTab />}
         {tab === 'analytics' && <AnalyticsTab />}
+        {tab === 'leads' && <LeadsTab />}
       </div>
     </div>
   );

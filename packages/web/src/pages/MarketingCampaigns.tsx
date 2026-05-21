@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { PlatformLogo } from '../components/PlatformLogo';
 import {
-  Activity, BarChart2, ChevronRight, Copy, ExternalLink, FileText, Flag, Filter,
-  Link2, Loader2, Megaphone, Pencil, Play, Pause, Plus,
+  Activity, BarChart2, Calendar, ChevronLeft, ChevronRight, Copy, ExternalLink,
+  FileText, Flag, Filter, Link2, Loader2, Megaphone, Pencil, Play, Pause, Plus,
   Target, Trash2, TrendingUp, X, Check, ArrowRight, Zap,
 } from 'lucide-react';
 import {
@@ -639,6 +639,81 @@ function BuilderWizard({ onDone, onClose }: { onDone: (campaign: Campaign) => vo
   );
 }
 
+// ─── Campaign Calendar ────────────────────────────────────────────────────────
+
+function CampaignCalendar({ campaigns, onSelect }: { campaigns: Campaign[]; onSelect: (c: Campaign) => void }) {
+  const [cur, setCur] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const year = cur.getFullYear();
+  const month = cur.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startDow = new Date(year, month, 1).getDay();
+  const today = new Date().toISOString().split('T')[0];
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  function getCampsForDay(day: number): Campaign[] {
+    const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return campaigns.filter(c => {
+      const s = c.start_date ? c.start_date.split('T')[0] : null;
+      const e = c.end_date ? c.end_date.split('T')[0] : null;
+      if (s && e) return dayStr >= s && dayStr <= e;
+      if (s) return dayStr === s;
+      if (e) return dayStr === e;
+      return false;
+    });
+  }
+
+  const unscheduled = campaigns.filter(c => !c.start_date && !c.end_date);
+  const monthLabel = cur.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <button onClick={() => setCur(new Date(year, month - 1, 1))} className="rounded-xl p-2 hover:bg-slate-100"><ChevronLeft size={16} /></button>
+        <span className="text-sm font-bold text-slate-800">{monthLabel}</span>
+        <button onClick={() => setCur(new Date(year, month + 1, 1))} className="rounded-xl p-2 hover:bg-slate-100"><ChevronRight size={16} /></button>
+      </div>
+      <div className="grid grid-cols-7 mb-1">
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+          <div key={d} className="text-center text-xs font-semibold text-slate-400 py-1">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-2xl overflow-hidden border border-slate-200">
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e${i}`} className="bg-slate-50 min-h-[72px]" />;
+          const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const dayCamps = getCampsForDay(day);
+          const isToday = dayStr === today;
+          return (
+            <div key={day} className="bg-white min-h-[72px] p-1.5">
+              <div className={`text-[11px] font-bold mb-1 w-5 h-5 flex items-center justify-center rounded-full ${isToday ? 'bg-slate-950 text-white' : 'text-slate-400'}`}>{day}</div>
+              {dayCamps.slice(0, 2).map(c => (
+                <button key={c.id} onClick={() => onSelect(c)} title={c.name} className="w-full text-left mb-0.5 rounded px-1 py-0.5 text-[9px] font-bold truncate text-white hover:opacity-80"
+                  style={{ backgroundColor: COLORS[GOAL_OPTIONS.findIndex(g => g.value === c.goal) % COLORS.length] }}>
+                  {c.name}
+                </button>
+              ))}
+              {dayCamps.length > 2 && <div className="text-[9px] text-slate-400">+{dayCamps.length - 2}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {unscheduled.length > 0 && (
+        <div className="rounded-2xl border border-dashed border-slate-200 p-4">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">No dates set ({unscheduled.length})</p>
+          <div className="flex flex-wrap gap-2">
+            {unscheduled.map(c => (
+              <button key={c.id} onClick={() => onSelect(c)} className="rounded-xl border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">{c.name}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Campaigns Tab ────────────────────────────────────────────────────────────
 
 function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
@@ -646,6 +721,8 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
   const [loading, setLoading] = useState(true);
   const [showBuilder, setShowBuilder] = useState(false);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [cloning, setCloning] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'grid' | 'calendar'>('grid');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -670,6 +747,20 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
     setCampaigns(prev => prev.filter(c => c.id !== id));
   }
 
+  async function cloneCampaign(c: Campaign) {
+    setCloning(c.id);
+    try {
+      const clone = await campaignService.createCampaign({
+        name: `${c.name} (copy)`, description: c.description, goal: c.goal,
+        target_url: c.target_url, budget: c.budget ?? undefined, currency: c.currency, tags: c.tags,
+      } as any);
+      if (c.settings && Object.keys(c.settings).length > 0) {
+        await campaignService.updateCampaign(clone.id, { settings: c.settings } as any);
+      }
+      setCampaigns(prev => [{ ...clone, settings: c.settings }, ...prev]);
+    } catch { /* */ } finally { setCloning(null); }
+  }
+
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 size={24} className="animate-spin text-slate-400" /></div>;
 
   return (
@@ -679,12 +770,25 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
         <EmptyState icon={<Megaphone size={24} />} title="No campaigns yet" description="Create your first campaign to start tracking performance across channels." action={<button onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Plus size={14} /> New Campaign</button>} />
       ) : (
       <>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between gap-3">
         <div className="text-sm text-slate-500">{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</div>
-        <button data-tour-id="btn-new-campaign" onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
-          <Plus size={14} /> New Campaign
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-xl border border-slate-200 overflow-hidden">
+            <button onClick={() => setViewMode('grid')} title="Grid view" className={`px-3 py-2 text-xs font-semibold transition-colors ${viewMode === 'grid' ? 'bg-slate-950 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              ▦ Grid
+            </button>
+            <button onClick={() => setViewMode('calendar')} title="Calendar view" className={`px-3 py-2 text-xs font-semibold transition-colors flex items-center gap-1 ${viewMode === 'calendar' ? 'bg-slate-950 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              <Calendar size={12} /> Calendar
+            </button>
+          </div>
+          <button data-tour-id="btn-new-campaign" onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+            <Plus size={14} /> New Campaign
+          </button>
+        </div>
       </div>
+      {viewMode === 'calendar' ? (
+        <CampaignCalendar campaigns={campaigns} onSelect={onSelect} />
+      ) : (
       <div data-tour-id="campaigns-list" className="space-y-3">
         {campaigns.map(c => (
           <div key={c.id} className="group flex items-center gap-5 rounded-2xl border border-slate-200 bg-white px-6 py-5 hover:border-slate-300 transition-all">
@@ -700,11 +804,14 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
                 <span>{Number(c.funnel_count || 0)} funnel{Number(c.funnel_count) !== 1 ? 's' : ''}</span>
                 <span>{fmtNum(Number(c.total_clicks || 0))} clicks</span>
                 {Number(c.total_conversions || 0) > 0 && <span className="font-semibold text-green-600">{fmtNum(Number(c.total_conversions))} conversions</span>}
-                {c.start_date && <span>📅 {c.start_date}</span>}
+                {c.start_date && <span>📅 {c.start_date.split('T')[0]}</span>}
               </div>
             </div>
-            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button onClick={() => onSelect(c)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">View</button>
+              <button disabled={cloning === c.id} onClick={() => cloneCampaign(c)} title="Duplicate" className="rounded-xl p-2 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 disabled:opacity-40">
+                {cloning === c.id ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
+              </button>
               <button disabled={updating === c.id} onClick={() => toggleStatus(c)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                 {updating === c.id ? <Loader2 size={12} className="animate-spin" /> : c.status === 'active' ? <><Pause size={12} className="inline mr-1" />Pause</> : <><Play size={12} className="inline mr-1" />Activate</>}
               </button>
@@ -713,6 +820,7 @@ function CampaignsTab({ onSelect }: { onSelect: (c: Campaign) => void }) {
           </div>
         ))}
       </div>
+      )}
       </>
       )}
     </>
@@ -1229,6 +1337,8 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
+  const [aov, setAov] = useState('');
+
   // KPI suggestions for existing campaigns
   const [showKpiSuggestions, setShowKpiSuggestions] = useState(false);
   const [suggestSelected, setSuggestSelected] = useState<Set<string>>(new Set(
@@ -1665,6 +1775,51 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
           {/* KPIs */}
           {activeTab === 'kpis' && (
             <div className="space-y-4">
+              {/* ROI Calculator */}
+              {campaign.budget != null && campaign.budget > 0 && (
+                <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-sm font-bold text-indigo-900">ROI Calculator</span>
+                    <span className="text-xs text-indigo-400">Based on your campaign budget</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Avg. Order Value ($)</label>
+                      <input type="number" value={aov} onChange={e => setAov(e.target.value)} placeholder="e.g. 49" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Conversions</label>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900">{fmtNum(Number(campaign.total_conversions || detail?.stats.totalConversions || 0))}</div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Budget</label>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900">${fmtNum(campaign.budget)}</div>
+                    </div>
+                  </div>
+                  {Number(aov) > 0 && (() => {
+                    const convs = Number(campaign.total_conversions || detail?.stats.totalConversions || 0);
+                    const revenue = Number(aov) * convs;
+                    const profit = revenue - campaign.budget!;
+                    const roi = (profit / campaign.budget!) * 100;
+                    return (
+                      <div className="mt-4 grid grid-cols-3 gap-3">
+                        <div className="rounded-xl bg-white border border-slate-200 px-4 py-3 text-center">
+                          <div className="text-lg font-black text-slate-900">${fmtNum(revenue)}</div>
+                          <div className="text-xs text-slate-400 mt-0.5">Revenue</div>
+                        </div>
+                        <div className="rounded-xl bg-white border border-slate-200 px-4 py-3 text-center">
+                          <div className={`text-lg font-black ${profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>{profit >= 0 ? '+' : ''}${fmtNum(Math.abs(profit))}</div>
+                          <div className="text-xs text-slate-400 mt-0.5">Profit / Loss</div>
+                        </div>
+                        <div className={`rounded-xl border px-4 py-3 text-center ${roi >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                          <div className={`text-lg font-black ${roi >= 0 ? 'text-green-600' : 'text-red-500'}`}>{roi >= 0 ? '+' : ''}{roi.toFixed(1)}%</div>
+                          <div className="text-xs text-slate-400 mt-0.5">ROI</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <p className="text-sm text-slate-500">Define measurable targets and track progress against each goal.</p>
                 <div className="flex items-center gap-2">
