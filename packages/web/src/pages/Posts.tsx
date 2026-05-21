@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PlatformLogo } from '../components/PlatformLogo';
 import {
   Plus,
@@ -1012,6 +1012,55 @@ function PostEditor({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Local copies so inline-created items appear immediately
+  const [localCategories, setLocalCategories] = useState<BlogCategory[]>(categories);
+  const [localTags, setLocalTags] = useState<BlogTag[]>(tags);
+  const [addingCat, setAddingCat] = useState(false);
+  const [newCatInput, setNewCatInput] = useState('');
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [newTagInput, setNewTagInput] = useState('');
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleInput, setScheduleInput] = useState('');
+  const scheduleRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setLocalCategories(categories); }, [categories]);
+  useEffect(() => { setLocalTags(tags); }, [tags]);
+
+  useEffect(() => {
+    if (!scheduleOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (scheduleRef.current && !scheduleRef.current.contains(e.target as Node)) setScheduleOpen(false);
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [scheduleOpen]);
+
+  const createCategoryInline = async () => {
+    const name = newCatInput.trim();
+    if (!name) return;
+    setCreatingCat(true);
+    try {
+      const cat = await blogService.createCategory(name);
+      setLocalCategories(prev => [...prev, cat]);
+      setCategoryId(cat.id);
+      setNewCatInput('');
+      setAddingCat(false);
+    } catch { /* ignore */ } finally { setCreatingCat(false); }
+  };
+
+  const createTagInline = async () => {
+    const name = newTagInput.trim();
+    if (!name) return;
+    setCreatingTag(true);
+    try {
+      const tag = await blogService.createTag(name);
+      setLocalTags(prev => [...prev, tag]);
+      setSelectedTagIds(prev => [...prev, tag.id]);
+      setNewTagInput('');
+    } catch { /* ignore */ } finally { setCreatingTag(false); }
+  };
+
   useEffect(() => {
     if (!postId) return;
     setLoading(true);
@@ -1176,15 +1225,13 @@ function PostEditor({
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, []);
 
-  const primaryActionStatus: 'published' | 'scheduled' = status === 'scheduled' ? 'scheduled' : 'published';
-  const primaryActionLabel = primaryActionStatus === 'scheduled' ? 'Schedule' : 'Publish';
-
-  const save = async (nextStatus?: 'draft' | 'published' | 'scheduled') => {
+  const save = async (nextStatus?: 'draft' | 'published' | 'scheduled', overrideScheduledAt?: string) => {
     setSaving(true);
     setError(null);
     try {
       const finalStatus = nextStatus ?? status;
-      if (finalStatus === 'scheduled' && !scheduledAt) {
+      const finalScheduledAt = overrideScheduledAt ?? scheduledAt;
+      if (finalStatus === 'scheduled' && !finalScheduledAt) {
         throw new Error('Choose a schedule date/time before scheduling this post.');
       }
       const payload: BlogPostPayload = {
@@ -1194,7 +1241,7 @@ function PostEditor({
         excerpt,
         featured_image: featuredImage,
         status: finalStatus,
-        scheduled_at: finalStatus === 'scheduled' ? scheduledAt : null,
+        scheduled_at: finalStatus === 'scheduled' ? finalScheduledAt : null,
         category_id: categoryId || null,
         tag_ids: selectedTagIds,
         meta_title: seoTitle,
@@ -1239,14 +1286,80 @@ function PostEditor({
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
             Save draft
           </button>
+
+          {/* ── Schedule button + popover ── */}
+          <div ref={scheduleRef} className="relative">
+            <button
+              type="button"
+              onClick={() => { setScheduleInput(scheduledAt || ''); setScheduleOpen(v => !v); }}
+              disabled={saving}
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-60 ${
+                status === 'scheduled'
+                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                  : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              <Calendar size={16} />
+              {status === 'scheduled' && scheduledAt
+                ? new Date(scheduledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : 'Schedule'}
+            </button>
+            {scheduleOpen && (
+              <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                <p className="mb-2.5 text-xs font-bold text-slate-700">Publish date &amp; time</p>
+                <input
+                  type="datetime-local"
+                  value={scheduleInput}
+                  min={new Date().toISOString().slice(0, 16)}
+                  onChange={e => setScheduleInput(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                />
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  {status === 'scheduled' && (
+                    <button
+                      type="button"
+                      onClick={() => { setStatus('draft'); setScheduledAt(''); setScheduleOpen(false); }}
+                      className="text-xs font-semibold text-red-500 hover:text-red-700"
+                    >
+                      Unschedule
+                    </button>
+                  )}
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setScheduleOpen(false)}
+                      className="rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!scheduleInput || saving}
+                      onClick={() => {
+                        if (!scheduleInput) return;
+                        setScheduledAt(scheduleInput);
+                        setStatus('scheduled');
+                        setScheduleOpen(false);
+                        void save('scheduled', scheduleInput);
+                      }}
+                      className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {saving ? '…' : 'Confirm'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
-            onClick={() => void save(primaryActionStatus)}
+            onClick={() => void save('published')}
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            {primaryActionLabel}
+            Publish
           </button>
         </div>
       </div>
@@ -1522,72 +1635,121 @@ function PostEditor({
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5">Status</label>
-                    <select
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value as any)}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="published">Published</option>
-                      <option value="scheduled">Scheduled</option>
-                      <option value="archived">Archived</option>
-                    </select>
+                    {status === 'scheduled' ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                        <Calendar size={14} className="text-indigo-500 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-indigo-700">Scheduled</p>
+                          {scheduledAt && (
+                            <p className="text-[11px] text-indigo-500 truncate">
+                              {new Date(scheduledAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setStatus('draft'); setScheduledAt(''); }}
+                          className="text-[11px] font-semibold text-red-400 hover:text-red-600 shrink-0"
+                        >
+                          Unschedule
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value as any)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                        <option value="archived">Archived</option>
+                      </select>
+                    )}
                   </div>
 
-                  {status === 'scheduled' && (
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Schedule date/time</label>
-                      <div className="relative">
-                        <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input
-                          type="datetime-local"
-                          value={scheduledAt}
-                          onChange={(e) => setScheduledAt(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                        />
-                      </div>
-                    </div>
-                  )}
-
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Category</label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-slate-500">Category</label>
+                      <button
+                        type="button"
+                        onClick={() => setAddingCat(v => !v)}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+                      >
+                        <Plus size={12} /> New
+                      </button>
+                    </div>
+                    {addingCat && (
+                      <div className="mb-2 flex items-center gap-2">
+                        <input
+                          autoFocus
+                          value={newCatInput}
+                          onChange={e => setNewCatInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') void createCategoryInline(); if (e.key === 'Escape') { setAddingCat(false); setNewCatInput(''); } }}
+                          placeholder="Category name…"
+                          className="flex-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-3 py-1.5 text-xs outline-none focus:border-indigo-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void createCategoryInline()}
+                          disabled={!newCatInput.trim() || creatingCat}
+                          className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          {creatingCat ? '…' : 'Add'}
+                        </button>
+                      </div>
+                    )}
                     <select
                       value={categoryId || ''}
                       onChange={(e) => setCategoryId(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                     >
-                      <option value="">-</option>
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
+                      <option value="">— No category —</option>
+                      {localCategories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
                     </select>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5">Tags</label>
-                    <div className="flex flex-wrap gap-2">
-                      {tags.length === 0 ? (
-                        <div className="text-xs text-slate-400">No tags yet.</div>
-                      ) : (
-                        tags.map((t) => {
-                          const active = selectedTagIds.includes(t.id);
-                          return (
-                            <button
-                              key={t.id}
-                              type="button"
-                              onClick={() => toggleTag(t.id)}
-                              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
-                                active ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                            >
-                              {active && <Check size={12} />}
-                              {t.name}
-                            </button>
-                          );
-                        })
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {localTags.length === 0 && !newTagInput && (
+                        <div className="text-xs text-slate-400">No tags yet — type below to create one.</div>
                       )}
+                      {localTags.map((t) => {
+                        const active = selectedTagIds.includes(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => toggleTag(t.id)}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                              active ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {active && <Check size={12} />}
+                            {t.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Inline tag creation */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={newTagInput}
+                        onChange={e => setNewTagInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void createTagInline(); } }}
+                        placeholder="New tag name…"
+                        className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-indigo-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void createTagInline()}
+                        disabled={!newTagInput.trim() || creatingTag}
+                        className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-slate-700 disabled:opacity-50"
+                      >
+                        {creatingTag ? '…' : <Plus size={13} />}
+                      </button>
                     </div>
                   </div>
 
