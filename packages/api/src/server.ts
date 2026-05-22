@@ -341,7 +341,13 @@ const allowedOrigins = new Set([
 
 let pool: Pool | null = null;
 try {
-  pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+  pool = DATABASE_URL ? new Pool({
+    connectionString: DATABASE_URL,
+    max: 20,
+    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 30000,
+    statement_timeout: 30000,
+  }) : null;
 } catch (err) {
   console.error('Failed to create database pool, running in in-memory mode:', err);
   pool = null;
@@ -4593,8 +4599,10 @@ function userToManagedUser(user: DbUserRow) {
   };
 }
 
+const JWT_EXPIRES_IN = '7d';
+
 function signToken(userId: string, email: string) {
-  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
 function getAuthUser(req: Request) {
@@ -11077,7 +11085,7 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
       userId = randomUUID();
     }
 
-    const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     return res.redirect(`${FRONTEND_URL}/?auth_token=${token}&auth_provider=${provider}`);
   } catch (error) {
     console.error('Social auth callback error:', error);
@@ -11152,7 +11160,7 @@ app.post('/api/auth/facebook/token', async (req: Request, res: Response) => {
       userId = randomUUID();
     }
 
-    const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     return res.json({ success: true, token, user: { id: userId, email, name, role: userRole } });
   } catch (error) {
     console.error('Facebook token auth error:', error);
