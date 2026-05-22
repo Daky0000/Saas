@@ -260,7 +260,7 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
   useEffect(() => {
     if (tab !== 'billing') return;
     setLoadingBilling(true);
-    fetch(`${API_BASE_URL}/api/billing/subscription`, { headers: authHdr() })
+    fetch(`${API_BASE_URL}/api/v1/billing/subscription`, { headers: authHdr() })
       .then((r) => r.json())
       .then((d: { plan?: { name?: string }; subscription?: { status?: string; current_period_end?: string }; usage?: { posts_this_period?: number; posts_limit?: number } }) => {
         setBilling({

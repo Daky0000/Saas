@@ -183,7 +183,7 @@ export const blogAnalyticsService = {
     if (query.start) params.set('start', query.start);
     if (query.end) params.set('end', query.end);
 
-    const res = await fetchAnalyticsResponse(`/api/blog/analytics/dashboard?${params.toString()}`, 'json');
+    const res = await fetchAnalyticsResponse(`/api/v1/blog/analytics/dashboard?${params.toString()}`, 'json');
     const payload = await parseApiResponse<{ success?: boolean; data?: BlogAnalyticsDashboard }>(res);
     if (!payload.data) {
       throw new Error('Analytics dashboard was empty');
@@ -204,7 +204,7 @@ export const blogAnalyticsService = {
     let lastErr: Error | null = null;
     for (const base of bases) {
       try {
-        const res = await fetch(`${base}/api/blog/analytics/refresh`, {
+        const res = await fetch(`${base}/api/v1/blog/analytics/refresh`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         });
@@ -227,7 +227,7 @@ export const blogAnalyticsService = {
     if (query.start) params.set('start', query.start);
     if (query.end) params.set('end', query.end);
 
-    const res = await fetchAnalyticsResponse(`/api/blog/analytics/export?${params.toString()}`, 'file');
+    const res = await fetchAnalyticsResponse(`/api/v1/blog/analytics/export?${params.toString()}`, 'file');
     if (!res.ok) {
       const text = await res.text();
       throw new Error(text || 'Export failed');

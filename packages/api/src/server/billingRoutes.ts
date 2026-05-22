@@ -1,12 +1,12 @@
+import express from 'express';
 import type Stripe from 'stripe';
-import type { Express, Request, Response } from 'express';
+import type { Router, Request, Response } from 'express';
 
 type AuthResult = { userId: string; email?: string } | null;
 type RequireAuthFn = (req: Request, res: Response) => AuthResult;
 type DbQueryFn = <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
 
 type BillingDeps = {
-  app: Express;
   requireAuth: RequireAuthFn;
   hasDatabase: () => boolean;
   dbQuery: DbQueryFn;
@@ -14,16 +14,23 @@ type BillingDeps = {
   getOrCreateStripeCustomer: (userId: string, email: string, name: string | null) => Promise<string>;
 };
 
+/**
+ * Registers all billing routes and returns the Express Router.
+ * Mount at canonical + compat paths:
+ *   app.use('/api/v1/billing', billingRouter);
+ *   app.use('/api/billing', deprecate(), billingRouter);
+ */
 export function registerBillingRoutes({
-  app,
   requireAuth,
   hasDatabase,
   dbQuery,
   stripe,
   getOrCreateStripeCustomer,
-}: BillingDeps) {
-  // GET /api/billing/subscription — current plan + usage + subscription status
-  app.get('/api/billing/subscription', async (req: Request, res: Response) => {
+}: BillingDeps): Router {
+  const router = express.Router();
+
+  // GET /subscription — current plan + usage + subscription status
+  router.get('/subscription', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!hasDatabase()) return res.json({ success: true, subscription: null, plan: null, usage: null });
@@ -68,8 +75,8 @@ export function registerBillingRoutes({
     }
   });
 
-  // GET /api/billing/invoices
-  app.get('/api/billing/invoices', async (req: Request, res: Response) => {
+  // GET /invoices
+  router.get('/invoices', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!hasDatabase()) return res.json({ success: true, invoices: [] });
@@ -85,8 +92,8 @@ export function registerBillingRoutes({
     }
   });
 
-  // POST /api/billing/checkout — create Stripe Checkout session for a plan
-  app.post('/api/billing/checkout', async (req: Request, res: Response) => {
+  // POST /checkout — create Stripe Checkout session for a plan
+  router.post('/checkout', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured on this server.' });
@@ -128,8 +135,8 @@ export function registerBillingRoutes({
     }
   });
 
-  // POST /api/billing/portal — open Stripe Customer Portal for self-service
-  app.post('/api/billing/portal', async (req: Request, res: Response) => {
+  // POST /portal — open Stripe Customer Portal
+  router.post('/portal', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured.' });
@@ -154,8 +161,8 @@ export function registerBillingRoutes({
     }
   });
 
-  // POST /api/billing/cancel — cancel subscription at period end
-  app.post('/api/billing/cancel', async (req: Request, res: Response) => {
+  // POST /cancel — cancel subscription at period end
+  router.post('/cancel', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!stripe || !hasDatabase()) return res.status(503).json({ success: false, error: 'Stripe not configured' });
@@ -175,8 +182,8 @@ export function registerBillingRoutes({
     }
   });
 
-  // POST /api/billing/reactivate — undo cancel
-  app.post('/api/billing/reactivate', async (req: Request, res: Response) => {
+  // POST /reactivate — undo cancel
+  router.post('/reactivate', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!stripe || !hasDatabase()) return res.status(503).json({ success: false, error: 'Stripe not configured' });
@@ -195,4 +202,6 @@ export function registerBillingRoutes({
       res.status(500).json({ success: false, error: e.message || 'Failed to reactivate subscription' });
     }
   });
+
+  return router;
 }

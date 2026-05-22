@@ -14620,7 +14620,25 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-registerBlogRoutes({
+// ── API Versioning ─────────────────────────────────────────────────────────────
+// All new routes live under /api/v1/. Old /api/<resource> paths are kept as
+// deprecated shims (same Router, different mount point) so in-flight requests
+// and older cached tabs keep working. Remove shims when launching v2.
+
+app.use('/api/v1', (_req: Request, res: Response, next) => {
+  res.setHeader('X-API-Version', '1');
+  next();
+});
+
+function deprecatedApiPath(canonicalPath: string) {
+  return (_req: Request, res: Response, next: () => void) => {
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('X-Deprecated-Use', canonicalPath);
+    next();
+  };
+}
+
+const blogRouter = registerBlogRoutes({
   app,
   pool,
   requireAuth,
@@ -14636,6 +14654,76 @@ registerBlogRoutes({
   recordAuditLog,
   getVisibleUserPlatformSlugs,
   syncSocialAutomationForPost,
+});
+app.use('/api/v1/blog', blogRouter);
+app.use('/api/blog', deprecatedApiPath('/api/v1/blog'), blogRouter);
+
+// GET /api/v1/calendar — schedule calendar view (outside /api/v1/blog namespace)
+app.get('/api/v1/calendar', async (req: Request, res: Response) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const year = Number.parseInt(String(req.query.year || ''), 10);
+  const month = Number.parseInt(String(req.query.month || ''), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return res.status(400).json({ success: false, error: 'Invalid year or month' });
+  }
+  if (!hasDatabase()) {
+    return res.json({ success: true, year, month, posts_by_date: {}, total_posts: 0 });
+  }
+  const cacheKey = `calendar:${user.userId}:${year}:${month}`;
+  const cached = getCalendarCache(cacheKey);
+  if (cached) return res.json({ success: true, ...cached });
+  try {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const { rows } = await pool!.query(
+      `SELECT id, title, status, scheduled_at, published_at, created_at, updated_at,
+              COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) AS calendar_at
+       FROM blog_posts
+       WHERE user_id=$1
+         AND status IN ('draft','scheduled','published')
+         AND COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) BETWEEN $2 AND $3
+       ORDER BY calendar_at ASC, updated_at DESC`,
+      [user.userId, start.toISOString(), end.toISOString()],
+    );
+    const postsByDate: Record<string, any[]> = {};
+    rows.forEach((post) => {
+      const calendarAt = post.calendar_at ? new Date(post.calendar_at) : null;
+      if (!calendarAt || Number.isNaN(calendarAt.getTime())) return;
+      const dateKey = calendarAt.toISOString().slice(0, 10);
+      if (!postsByDate[dateKey]) postsByDate[dateKey] = [];
+      postsByDate[dateKey].push(post);
+    });
+    const payload = { year, month, posts_by_date: postsByDate, total_posts: rows.length };
+    setCalendarCache(cacheKey, payload);
+    return res.json({ success: true, ...payload });
+  } catch (err) {
+    console.error('calendar fetch error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load calendar' });
+  }
+});
+
+// GET /api/v1/posts — list posts by status (lightweight, used by calendar sidebar)
+app.get('/api/v1/posts', async (req: Request, res: Response) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const rawStatus = String(req.query.status || 'draft').toLowerCase();
+  const allowed = new Set(['draft', 'scheduled', 'published']);
+  if (!allowed.has(rawStatus)) {
+    return res.status(400).json({ success: false, error: 'Invalid status' });
+  }
+  if (!hasDatabase()) return res.json({ success: true, posts: [] });
+  try {
+    let q = `SELECT id, title, status, scheduled_at, created_at, updated_at FROM blog_posts WHERE user_id=$1 AND status=$2`;
+    const params: (string | number)[] = [user.userId, rawStatus];
+    if (rawStatus === 'draft') q += ' AND scheduled_at IS NULL';
+    q += ' ORDER BY created_at DESC';
+    const { rows } = await pool!.query(q, params);
+    return res.json({ success: true, posts: rows });
+  } catch (err) {
+    console.error('posts list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load posts' });
+  }
 });
 
 app.post('/api/v1/posts', async (req: Request, res: Response) => {
@@ -24440,14 +24528,9 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
 
 // ─── Billing Routes ────────────────────────────────────────────────────────────
 
-registerBillingRoutes({
-  app,
-  requireAuth,
-  hasDatabase,
-  dbQuery,
-  stripe,
-  getOrCreateStripeCustomer,
-});
+const billingRouter = registerBillingRoutes({ requireAuth, hasDatabase, dbQuery, stripe, getOrCreateStripeCustomer });
+app.use('/api/v1/billing', billingRouter);
+app.use('/api/billing', deprecatedApiPath('/api/v1/billing'), billingRouter);
 
 // ── User Memory Routes ────────────────────────────────────────────────────────
 
@@ -25155,14 +25238,11 @@ app.post('/api/learn/compile', async (req: Request, res: Response) => {
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 
-registerNotificationRoutes({
-  app,
-  pool,
-  requireAuth,
-  dbQuery,
-  hasDatabase,
-  createNotification,
-});
+const { notifRouter, inviteRouter } = registerNotificationRoutes({ pool, requireAuth, dbQuery, hasDatabase, createNotification });
+app.use('/api/v1/notifications', notifRouter);
+app.use('/api/notifications', deprecatedApiPath('/api/v1/notifications'), notifRouter);
+app.use('/api/v1/invitations', inviteRouter);
+app.use('/api/invitations', deprecatedApiPath('/api/v1/invitations'), inviteRouter);
 
 // ── End Notifications ─────────────────────────────────────────────────────────
 

@@ -100,7 +100,7 @@ export default function NotificationBell() {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const r = await fetch(`${getApiBaseUrl()}/api/notifications`, {
+      const r = await fetch(`${getApiBaseUrl()}/api/v1/notifications`, {
         headers: { Authorization: `Bearer ${tok()}` },
       });
       const d = await r.json();
@@ -132,7 +132,7 @@ export default function NotificationBell() {
   }, [open]);
 
   const markAllRead = async () => {
-    await fetch(`${getApiBaseUrl()}/api/notifications/read-all`, {
+    await fetch(`${getApiBaseUrl()}/api/v1/notifications/read-all`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${tok()}` },
     }).catch(() => undefined);
@@ -141,7 +141,7 @@ export default function NotificationBell() {
   };
 
   const markRead = async (id: string) => {
-    await fetch(`${getApiBaseUrl()}/api/notifications/${id}/read`, {
+    await fetch(`${getApiBaseUrl()}/api/v1/notifications/${id}/read`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${tok()}` },
     }).catch(() => undefined);
@@ -151,7 +151,7 @@ export default function NotificationBell() {
 
   const dismiss = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    await fetch(`${getApiBaseUrl()}/api/notifications/${id}`, {
+    await fetch(`${getApiBaseUrl()}/api/v1/notifications/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${tok()}` },
     }).catch(() => undefined);
@@ -161,7 +161,7 @@ export default function NotificationBell() {
   };
 
   const clearAll = async () => {
-    await fetch(`${getApiBaseUrl()}/api/notifications`, {
+    await fetch(`${getApiBaseUrl()}/api/v1/notifications`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${tok()}` },
     }).catch(() => undefined);
@@ -175,7 +175,7 @@ export default function NotificationBell() {
     if (!token) return;
     setActionLoading(`${n.id}-${action}`);
     try {
-      const r = await fetch(`${getApiBaseUrl()}/api/invitations/${token}/${action}`, {
+      const r = await fetch(`${getApiBaseUrl()}/api/v1/invitations/${token}/${action}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${tok()}` },
       });

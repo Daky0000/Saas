@@ -126,8 +126,8 @@ export default function Billing() {
     setError(null);
     try {
       const [billingRes, invRes] = await Promise.all([
-        fetchJson<{ success: boolean } & BillingData>(`${API_BASE_URL}/api/billing/subscription`),
-        fetchJson<{ success: boolean; invoices: Invoice[] }>(`${API_BASE_URL}/api/billing/invoices`),
+        fetchJson<{ success: boolean } & BillingData>(`${API_BASE_URL}/api/v1/billing/subscription`),
+        fetchJson<{ success: boolean; invoices: Invoice[] }>(`${API_BASE_URL}/api/v1/billing/invoices`),
       ]);
       setData({ subscription: billingRes.subscription, plan: billingRes.plan, usage: billingRes.usage, stripeConfigured: billingRes.stripeConfigured });
       setInvoices(invRes.invoices ?? []);
@@ -144,7 +144,7 @@ export default function Billing() {
     setPortalLoading(true);
     setError(null);
     try {
-      const res = await fetchJson<{ url: string }>(`${API_BASE_URL}/api/billing/portal`, { method: 'POST' });
+      const res = await fetchJson<{ url: string }>(`${API_BASE_URL}/api/v1/billing/portal`, { method: 'POST' });
       window.location.href = res.url;
     } catch (e: any) {
       setError(e.message);
@@ -156,7 +156,7 @@ export default function Billing() {
     setCancelLoading(true);
     setError(null);
     try {
-      await fetchJson(`${API_BASE_URL}/api/billing/cancel`, { method: 'POST' });
+      await fetchJson(`${API_BASE_URL}/api/v1/billing/cancel`, { method: 'POST' });
       setShowCancelConfirm(false);
       await load();
     } catch (e: any) {
@@ -170,7 +170,7 @@ export default function Billing() {
     setReactivateLoading(true);
     setError(null);
     try {
-      await fetchJson(`${API_BASE_URL}/api/billing/reactivate`, { method: 'POST' });
+      await fetchJson(`${API_BASE_URL}/api/v1/billing/reactivate`, { method: 'POST' });
       await load();
     } catch (e: any) {
       setError(e.message);

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import type { Express, Request, Response } from 'express';
+import express from 'express';
+import type { Express, Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { registerBlogAnalyticsRoutes } from './blogAnalyticsRoutes.ts';
 
@@ -7,6 +8,10 @@ type AuthResult = { userId: string; email?: string } | null;
 type RequireAuthFn = (req: Request, res: Response) => AuthResult;
 
 type BlogRouteDeps = {
+  /**
+   * The global Express app — used only to register /api/v1/calendar and
+   * /api/v1/posts GET routes that live outside the /api/v1/blog/ namespace.
+   */
   app: Express;
   pool: Pool | null;
   requireAuth: RequireAuthFn;
@@ -27,6 +32,15 @@ type BlogRouteDeps = {
   syncSocialAutomationForPost: (userId: string, postId: string) => Promise<void>;
 };
 
+/**
+ * Registers all /api/v1/blog/* routes and returns the Express Router.
+ * The caller mounts the returned router at the desired path(s):
+ *   app.use('/api/v1/blog', blogRouter);          // canonical
+ *   app.use('/api/blog', deprecate(), blogRouter); // backward-compat shim
+ *
+ * Also registers /api/v1/calendar and /api/v1/posts GET directly on `app`
+ * because those endpoints predate the /blog/ namespace.
+ */
 export function registerBlogRoutes({
   app,
   pool,
@@ -43,24 +57,24 @@ export function registerBlogRoutes({
   recordAuditLog,
   getVisibleUserPlatformSlugs,
   syncSocialAutomationForPost,
-}: BlogRouteDeps) {
-  // Guard all /api/blog routes against missing DB
-  app.use('/api/blog', (_req: Request, res: Response, next) => {
+}: BlogRouteDeps): Router {
+  const router = express.Router();
+
+  // Analytics sub-router (mounted at /analytics relative to this router)
+  const analyticsRouter = express.Router();
+  registerBlogAnalyticsRoutes({ router: analyticsRouter, getPool: () => pool, requireAuth });
+  router.use('/analytics', analyticsRouter);
+
+  // Guard: all routes in this router require a live DB
+  router.use((_req: Request, res: Response, next) => {
     if (!hasDatabase()) {
       return res.status(503).json({ success: false, error: 'Database not configured' });
     }
     return next();
   });
 
-  // Blog analytics sub-routes
-  registerBlogAnalyticsRoutes({
-    app,
-    getPool: () => pool,
-    requireAuth,
-  });
-
-  // GET /api/blog/categories
-  app.get('/api/blog/categories', async (req: Request, res: Response) => {
+  // GET /categories
+  router.get('/categories', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { rows } = await pool!.query(
@@ -70,8 +84,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, categories: rows });
   });
 
-  // POST /api/blog/categories
-  app.post('/api/blog/categories', async (req: Request, res: Response) => {
+  // POST /categories
+  router.post('/categories', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { name } = req.body as { name: string };
@@ -85,8 +99,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, category: rows[0] });
   });
 
-  // PUT /api/blog/categories/:id
-  app.put('/api/blog/categories/:id', async (req: Request, res: Response) => {
+  // PUT /categories/:id
+  router.put('/categories/:id', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -101,8 +115,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, category: rows[0] });
   });
 
-  // DELETE /api/blog/categories/:id
-  app.delete('/api/blog/categories/:id', async (req: Request, res: Response) => {
+  // DELETE /categories/:id
+  router.delete('/categories/:id', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -110,8 +124,8 @@ export function registerBlogRoutes({
     return res.json({ success: true });
   });
 
-  // GET /api/blog/tags
-  app.get('/api/blog/tags', async (req: Request, res: Response) => {
+  // GET /tags
+  router.get('/tags', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { rows } = await pool!.query(
@@ -121,8 +135,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, tags: rows });
   });
 
-  // POST /api/blog/tags
-  app.post('/api/blog/tags', async (req: Request, res: Response) => {
+  // POST /tags
+  router.post('/tags', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { name } = req.body as { name: string };
@@ -136,8 +150,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, tag: rows[0] });
   });
 
-  // DELETE /api/blog/tags/:id
-  app.delete('/api/blog/tags/:id', async (req: Request, res: Response) => {
+  // DELETE /tags/:id
+  router.delete('/tags/:id', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -145,8 +159,8 @@ export function registerBlogRoutes({
     return res.json({ success: true });
   });
 
-  // GET /api/blog/posts
-  app.get('/api/blog/posts', async (req: Request, res: Response) => {
+  // GET /posts
+  router.get('/posts', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { status, search } = req.query as { status?: string; search?: string };
@@ -168,8 +182,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, posts: rows });
   });
 
-  // GET /api/blog/posts/:id
-  app.get('/api/blog/posts/:id', async (req: Request, res: Response) => {
+  // GET /posts/:id — must come AFTER batch routes to avoid /:id swallowing batch paths
+  router.get('/posts/:id', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -185,8 +199,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, post: rows[0] });
   });
 
-  // POST /api/blog/posts
-  app.post('/api/blog/posts', async (req: Request, res: Response) => {
+  // POST /posts
+  router.post('/posts', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const {
@@ -247,8 +261,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, post: rows[0] });
   });
 
-  // PUT /api/blog/posts/:id
-  app.put('/api/blog/posts/:id', async (req: Request, res: Response) => {
+  // PUT /posts/:id
+  router.put('/posts/:id', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -316,8 +330,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, post: rows[0] });
   });
 
-  // DELETE /api/blog/posts/:id
-  app.delete('/api/blog/posts/:id', async (req: Request, res: Response) => {
+  // DELETE /posts/:id
+  router.delete('/posts/:id', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -326,8 +340,8 @@ export function registerBlogRoutes({
     return res.json({ success: true });
   });
 
-  // PATCH /api/blog/posts/batch/reschedule
-  app.patch('/api/blog/posts/batch/reschedule', async (req: Request, res: Response) => {
+  // PATCH /posts/batch/reschedule
+  router.patch('/posts/batch/reschedule', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { postIds = [], scheduled_at } = req.body as { postIds?: string[]; scheduled_at?: string };
@@ -352,8 +366,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, updated: result.rowCount });
   });
 
-  // PATCH /api/blog/posts/batch/tag
-  app.patch('/api/blog/posts/batch/tag', async (req: Request, res: Response) => {
+  // PATCH /posts/batch/tag
+  router.patch('/posts/batch/tag', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { postIds = [], tagIds = [] } = req.body as { postIds?: string[]; tagIds?: string[] };
@@ -384,8 +398,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, updated: result.rowCount });
   });
 
-  // PATCH /api/blog/posts/batch/archive
-  app.patch('/api/blog/posts/batch/archive', async (req: Request, res: Response) => {
+  // PATCH /posts/batch/archive
+  router.patch('/posts/batch/archive', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { postIds = [] } = req.body as { postIds?: string[] };
@@ -404,8 +418,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, updated: result.rowCount });
   });
 
-  // PATCH /api/blog/posts/batch/delete
-  app.patch('/api/blog/posts/batch/delete', async (req: Request, res: Response) => {
+  // PATCH /posts/batch/delete
+  router.patch('/posts/batch/delete', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { postIds = [] } = req.body as { postIds?: string[] };
@@ -424,8 +438,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, updated: result.rowCount });
   });
 
-  // POST /api/blog/posts/batch/duplicate
-  app.post('/api/blog/posts/batch/duplicate', async (req: Request, res: Response) => {
+  // POST /posts/batch/duplicate
+  router.post('/posts/batch/duplicate', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { postIds = [] } = req.body as { postIds?: string[] };
@@ -465,8 +479,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, created });
   });
 
-  // PATCH /api/blog/posts/batch/platforms
-  app.patch('/api/blog/posts/batch/platforms', async (req: Request, res: Response) => {
+  // PATCH /posts/batch/platforms
+  router.patch('/posts/batch/platforms', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { postIds = [], accountIds = [] } = req.body as { postIds?: string[]; accountIds?: string[] };
@@ -546,8 +560,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, updated: ids.length });
   });
 
-  // GET /api/blog/posts/batch/export
-  app.get('/api/blog/posts/batch/export', async (req: Request, res: Response) => {
+  // GET /posts/batch/export
+  router.get('/posts/batch/export', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const postIds = req.query.postIds;
@@ -586,8 +600,8 @@ export function registerBlogRoutes({
     return res.send(csv);
   });
 
-  // POST /api/blog/posts/batch/restore
-  app.post('/api/blog/posts/batch/restore', async (req: Request, res: Response) => {
+  // POST /posts/batch/restore
+  router.post('/posts/batch/restore', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { previousState = [] } = req.body as { previousState?: any[] };
@@ -627,8 +641,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, restored: ids.length });
   });
 
-  // POST /api/blog/posts/:id/duplicate
-  app.post('/api/blog/posts/:id/duplicate', async (req: Request, res: Response) => {
+  // POST /posts/:id/duplicate
+  router.post('/posts/:id/duplicate', async (req: Request, res: Response) => {
     const user = requireAuth(req, res);
     if (!user) return;
     const { id } = req.params;
@@ -656,76 +670,8 @@ export function registerBlogRoutes({
     return res.json({ success: true, post: newRows[0] });
   });
 
-  // ── Schedule Calendar (v1) ──────────────────────────────────────────────────
+  // ── /api/v1/calendar and /api/v1/posts GET — registered on app (not on this router)
+  // These live outside the /api/v1/blog/ namespace and are managed in server.ts.
 
-  app.get('/api/v1/calendar', async (req: Request, res: Response) => {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const year = Number.parseInt(String(req.query.year || ''), 10);
-    const month = Number.parseInt(String(req.query.month || ''), 10);
-    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
-      return res.status(400).json({ success: false, error: 'Invalid year or month' });
-    }
-
-    if (!hasDatabase()) {
-      return res.json({ success: true, year, month, posts_by_date: {}, total_posts: 0 });
-    }
-
-    const cacheKey = `calendar:${user.userId}:${year}:${month}`;
-    const cached = getCalendarCache(cacheKey);
-    if (cached) return res.json({ success: true, ...cached });
-
-    try {
-      const start = new Date(Date.UTC(year, month - 1, 1));
-      const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-      const { rows } = await pool!.query(
-        `SELECT id, title, status, scheduled_at, published_at, created_at, updated_at,
-                COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) AS calendar_at
-         FROM blog_posts
-         WHERE user_id=$1
-           AND status IN ('draft','scheduled','published')
-           AND COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) BETWEEN $2 AND $3
-         ORDER BY calendar_at ASC, updated_at DESC`,
-        [user.userId, start.toISOString(), end.toISOString()],
-      );
-
-      const postsByDate: Record<string, any[]> = {};
-      rows.forEach((post) => {
-        const calendarAt = post.calendar_at ? new Date(post.calendar_at) : null;
-        if (!calendarAt || Number.isNaN(calendarAt.getTime())) return;
-        const dateKey = calendarAt.toISOString().slice(0, 10);
-        if (!postsByDate[dateKey]) postsByDate[dateKey] = [];
-        postsByDate[dateKey].push(post);
-      });
-
-      const payload = { year, month, posts_by_date: postsByDate, total_posts: rows.length };
-      setCalendarCache(cacheKey, payload);
-      return res.json({ success: true, ...payload });
-    } catch (err) {
-      console.error('calendar fetch error:', err);
-      return res.status(500).json({ success: false, error: 'Failed to load calendar' });
-    }
-  });
-
-  app.get('/api/v1/posts', async (req: Request, res: Response) => {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const rawStatus = String(req.query.status || 'draft').toLowerCase();
-    const allowed = new Set(['draft', 'scheduled', 'published']);
-    if (!allowed.has(rawStatus)) {
-      return res.status(400).json({ success: false, error: 'Invalid status' });
-    }
-    if (!hasDatabase()) return res.json({ success: true, posts: [] });
-    try {
-      let q = `SELECT id, title, status, scheduled_at, created_at, updated_at FROM blog_posts WHERE user_id=$1 AND status=$2`;
-      const params: (string | number)[] = [user.userId, rawStatus];
-      if (rawStatus === 'draft') q += ' AND scheduled_at IS NULL';
-      q += ' ORDER BY created_at DESC';
-      const { rows } = await pool!.query(q, params);
-      return res.json({ success: true, posts: rows });
-    } catch (err) {
-      console.error('posts list error:', err);
-      return res.status(500).json({ success: false, error: 'Failed to load posts' });
-    }
-  });
+  return router;
 }

@@ -27,7 +27,7 @@ export default function AcceptInvite({ token, onLoginClick }: Props) {
   const isLoggedIn = Boolean(localStorage.getItem('auth_token'));
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/invitations/${token}`)
+    fetch(`${API_BASE_URL}/api/v1/invitations/${token}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.success) setInvite(data.invitation);
@@ -42,7 +42,7 @@ export default function AcceptInvite({ token, onLoginClick }: Props) {
     setAccepting(true);
     setAcceptError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/invitations/${token}/accept`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/invitations/${token}/accept`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}` },
       });

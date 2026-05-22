@@ -93,7 +93,7 @@ export interface BlogPostPayload {
 export const blogService = {
   // Categories
   async listCategories(): Promise<BlogCategory[]> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/categories`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/categories`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     const data = await parseApiResponse<{ categories?: BlogCategory[] }>(res);
@@ -101,7 +101,7 @@ export const blogService = {
   },
 
   async createCategory(name: string): Promise<BlogCategory> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/categories`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/categories`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ name }),
@@ -112,7 +112,7 @@ export const blogService = {
   },
 
   async updateCategory(id: string, name: string): Promise<BlogCategory> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/categories/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/categories/${id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify({ name }),
@@ -123,7 +123,7 @@ export const blogService = {
   },
 
   async deleteCategory(id: string): Promise<void> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/categories/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/categories/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
@@ -132,7 +132,7 @@ export const blogService = {
 
   // Tags
   async listTags(): Promise<BlogTag[]> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/tags`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/tags`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     const data = await parseApiResponse<{ tags?: BlogTag[] }>(res);
@@ -140,7 +140,7 @@ export const blogService = {
   },
 
   async createTag(name: string): Promise<BlogTag> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/tags`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/tags`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ name }),
@@ -151,7 +151,7 @@ export const blogService = {
   },
 
   async deleteTag(id: string): Promise<void> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/tags/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/tags/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
@@ -163,7 +163,7 @@ export const blogService = {
     const qs = new URLSearchParams();
     if (params?.status && params.status !== 'all') qs.set('status', params.status);
     if (params?.search) qs.set('search', params.search);
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts?${qs}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts?${qs}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     const data = await parseApiResponse<{ posts?: BlogPost[] }>(res);
@@ -171,7 +171,7 @@ export const blogService = {
   },
 
   async getPost(id: string): Promise<BlogPost> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/${id}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     const data = await parseApiResponse<{ success?: boolean; post?: BlogPost; error?: string }>(res);
@@ -180,7 +180,7 @@ export const blogService = {
   },
 
   async createPost(payload: BlogPostPayload): Promise<BlogPost> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(payload),
@@ -191,7 +191,7 @@ export const blogService = {
   },
 
   async updatePost(id: string, payload: BlogPostPayload): Promise<BlogPost> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/${id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify(payload),
@@ -202,7 +202,7 @@ export const blogService = {
   },
 
   async deletePost(id: string): Promise<void> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
@@ -210,7 +210,7 @@ export const blogService = {
   },
 
   async duplicatePost(id: string): Promise<BlogPost> {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/${id}/duplicate`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/${id}/duplicate`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${getToken()}` },
     });
@@ -236,7 +236,7 @@ export const blogService = {
   },
 
   async batchReschedule(postIds: string[], scheduledAt: string) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/reschedule`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/reschedule`, {
       method: 'PATCH',
       headers: authHeaders(),
       body: JSON.stringify({ postIds, scheduled_at: scheduledAt }),
@@ -245,7 +245,7 @@ export const blogService = {
   },
 
   async batchTag(postIds: string[], tagIds: string[]) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/tag`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/tag`, {
       method: 'PATCH',
       headers: authHeaders(),
       body: JSON.stringify({ postIds, tagIds }),
@@ -254,7 +254,7 @@ export const blogService = {
   },
 
   async batchArchive(postIds: string[]) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/archive`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/archive`, {
       method: 'PATCH',
       headers: authHeaders(),
       body: JSON.stringify({ postIds }),
@@ -263,7 +263,7 @@ export const blogService = {
   },
 
   async batchDelete(postIds: string[]) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/delete`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/delete`, {
       method: 'PATCH',
       headers: authHeaders(),
       body: JSON.stringify({ postIds }),
@@ -272,7 +272,7 @@ export const blogService = {
   },
 
   async batchDuplicate(postIds: string[]) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/duplicate`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/duplicate`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ postIds }),
@@ -283,7 +283,7 @@ export const blogService = {
   async batchExport(postIds: string[]): Promise<string> {
     const qs = new URLSearchParams();
     postIds.forEach((id) => qs.append('postIds', id));
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/export?${qs.toString()}`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/export?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) {
@@ -294,7 +294,7 @@ export const blogService = {
   },
 
   async batchUpdatePlatforms(postIds: string[], accountIds: string[]) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/platforms`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/platforms`, {
       method: 'PATCH',
       headers: authHeaders(),
       body: JSON.stringify({ postIds, accountIds }),
@@ -303,7 +303,7 @@ export const blogService = {
   },
 
   async batchRestore(previousState: BlogPost[]) {
-    const res = await fetch(`${API_BASE_URL}/api/blog/posts/batch/restore`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/blog/posts/batch/restore`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ previousState }),

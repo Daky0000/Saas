@@ -1,4 +1,5 @@
-import type { Express, Request, Response } from 'express';
+import express from 'express';
+import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 
 type AuthResult = { userId: string; email?: string } | null;
@@ -14,7 +15,6 @@ type CreateNotificationFn = (
 ) => Promise<void>;
 
 type NotificationDeps = {
-  app: Express;
   pool: Pool | null;
   requireAuth: RequireAuthFn;
   dbQuery: DbQueryFn;
@@ -22,16 +22,33 @@ type NotificationDeps = {
   createNotification: CreateNotificationFn;
 };
 
+type NotificationRouters = {
+  /** Mount at /api/v1/notifications (and /api/notifications for compat) */
+  notifRouter: Router;
+  /** Mount at /api/v1/invitations (and /api/invitations for compat) */
+  inviteRouter: Router;
+};
+
+/**
+ * Registers notification and invitation routes, returning two Express Routers.
+ * Caller mounts each at canonical + compat paths:
+ *   app.use('/api/v1/notifications', notifRouter);
+ *   app.use('/api/notifications',    deprecate(), notifRouter);
+ *   app.use('/api/v1/invitations',   inviteRouter);
+ *   app.use('/api/invitations',      deprecate(), inviteRouter);
+ */
 export function registerNotificationRoutes({
-  app,
   pool,
   requireAuth,
   dbQuery,
   hasDatabase,
   createNotification,
-}: NotificationDeps) {
-  // POST /api/notifications — create an in-app notification
-  app.post('/api/notifications', async (req: Request, res: Response) => {
+}: NotificationDeps): NotificationRouters {
+  const notifRouter = express.Router();
+  const inviteRouter = express.Router();
+
+  // POST / — create an in-app notification
+  notifRouter.post('/', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     const { type = 'marketing_alert', title, message, data } = req.body as {
@@ -49,8 +66,8 @@ export function registerNotificationRoutes({
     }
   });
 
-  // GET /api/notifications — list recent notifications with unread count
-  app.get('/api/notifications', async (req: Request, res: Response) => {
+  // GET / — list recent notifications with unread count
+  notifRouter.get('/', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!pool) return res.json({ success: true, notifications: [], unreadCount: 0 });
@@ -68,8 +85,8 @@ export function registerNotificationRoutes({
     }
   });
 
-  // PATCH /api/notifications/read-all — mark all as read
-  app.patch('/api/notifications/read-all', async (req: Request, res: Response) => {
+  // PATCH /read-all — mark all as read
+  notifRouter.patch('/read-all', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     try {
@@ -80,8 +97,8 @@ export function registerNotificationRoutes({
     }
   });
 
-  // PATCH /api/notifications/:id/read — mark one as read
-  app.patch('/api/notifications/:id/read', async (req: Request, res: Response) => {
+  // PATCH /:id/read — mark one as read
+  notifRouter.patch('/:id/read', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     try {
@@ -95,8 +112,8 @@ export function registerNotificationRoutes({
     }
   });
 
-  // DELETE /api/notifications/:id — dismiss one
-  app.delete('/api/notifications/:id', async (req: Request, res: Response) => {
+  // DELETE /:id — dismiss one
+  notifRouter.delete('/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     try {
@@ -110,8 +127,8 @@ export function registerNotificationRoutes({
     }
   });
 
-  // DELETE /api/notifications — clear all non-pinned
-  app.delete('/api/notifications', async (req: Request, res: Response) => {
+  // DELETE / — clear all non-pinned
+  notifRouter.delete('/', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     try {
@@ -125,8 +142,8 @@ export function registerNotificationRoutes({
     }
   });
 
-  // POST /api/invitations/:token/decline — decline an invitation
-  app.post('/api/invitations/:token/decline', async (req: Request, res: Response) => {
+  // POST /:token/decline — decline an invitation
+  inviteRouter.post('/:token/decline', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
@@ -163,4 +180,6 @@ export function registerNotificationRoutes({
       return res.status(500).json({ success: false, error: e.message });
     }
   });
+
+  return { notifRouter, inviteRouter };
 }

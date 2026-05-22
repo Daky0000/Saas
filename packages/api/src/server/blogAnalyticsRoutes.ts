@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from 'express';
+import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 
 type AuthResult = { userId: string; email?: string } | null;
@@ -9,7 +9,8 @@ type RequireAuthFn = (
 ) => AuthResult | Promise<AuthResult>;
 
 type RouteDeps = {
-  app: Express;
+  /** Express Router to mount routes on. Caller is responsible for mounting at the desired path. */
+  router: Router;
   getPool: () => Pool | null;
   requireAuth: RequireAuthFn;
 };
@@ -838,8 +839,8 @@ function dashboardToCsv(dashboard: any) {
     .join('\n');
 }
 
-export function registerBlogAnalyticsRoutes({ app, getPool, requireAuth }: RouteDeps) {
-  app.get('/api/blog/analytics/dashboard', async (req: Request, res: Response) => {
+export function registerBlogAnalyticsRoutes({ router, getPool, requireAuth }: RouteDeps) {
+  router.get('/dashboard', async (req: Request, res: Response) => {
     const user = await Promise.resolve(requireAuth(req, res));
     if (!user) return;
 
@@ -862,7 +863,7 @@ export function registerBlogAnalyticsRoutes({ app, getPool, requireAuth }: Route
     }
   });
 
-  app.get('/api/blog/analytics/export', async (req: Request, res: Response) => {
+  router.get('/export', async (req: Request, res: Response) => {
     const user = await Promise.resolve(requireAuth(req, res));
     if (!user) return;
 
@@ -891,7 +892,7 @@ export function registerBlogAnalyticsRoutes({ app, getPool, requireAuth }: Route
     }
   });
 
-  app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
+  router.post('/refresh', async (req: Request, res: Response) => {
     const user = await Promise.resolve(requireAuth(req, res));
     if (!user) return;
 

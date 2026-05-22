@@ -12,7 +12,7 @@ function discountedPrice(price: number, pct: number) {
 
 async function startCheckout(planId: string): Promise<void> {
   const token = localStorage.getItem('auth_token');
-  const r = await fetch(`${API_BASE_URL}/api/billing/checkout`, {
+  const r = await fetch(`${API_BASE_URL}/api/v1/billing/checkout`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
     body: JSON.stringify({ planId }),

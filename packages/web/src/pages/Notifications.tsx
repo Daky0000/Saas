@@ -64,7 +64,7 @@ export default function Notifications() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/notifications`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications`, {
         headers: authHeaders(),
       });
       const data = await res.json();
@@ -82,7 +82,7 @@ export default function Notifications() {
   useEffect(() => { void load(); }, []);
 
   const markRead = async (id: string) => {
-    await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, {
+    await fetch(`${API_BASE_URL}/api/v1/notifications/${id}/read`, {
       method: 'PATCH', headers: authHeaders(),
     });
     setItems((prev) => prev.map((n) => n.id === id ? { ...n, is_read: true } : n));
@@ -90,7 +90,7 @@ export default function Notifications() {
   };
 
   const markAllRead = async () => {
-    await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
+    await fetch(`${API_BASE_URL}/api/v1/notifications/read-all`, {
       method: 'PATCH', headers: authHeaders(),
     });
     setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
@@ -98,7 +98,7 @@ export default function Notifications() {
   };
 
   const dismiss = async (id: string) => {
-    await fetch(`${API_BASE_URL}/api/notifications/${id}`, {
+    await fetch(`${API_BASE_URL}/api/v1/notifications/${id}`, {
       method: 'DELETE', headers: authHeaders(),
     });
     setItems((prev) => prev.filter((n) => n.id !== id));
@@ -110,7 +110,7 @@ export default function Notifications() {
 
   const clearAll = async () => {
     if (!confirm('Clear all non-pinned notifications?')) return;
-    await fetch(`${API_BASE_URL}/api/notifications`, {
+    await fetch(`${API_BASE_URL}/api/v1/notifications`, {
       method: 'DELETE', headers: authHeaders(),
     });
     setItems((prev) => prev.filter((n) => n.pinned));
