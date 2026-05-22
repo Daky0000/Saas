@@ -28,6 +28,7 @@ import OnboardingWizard from './components/OnboardingWizard';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import HelpModal from './components/HelpModal';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Pages — lazy-loaded to split the 3.7 MB bundle into per-route chunks
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -1017,7 +1018,9 @@ function App() {
           </header>
 
           <main className="flex-1 overflow-auto p-5 md:p-7">
-            <Suspense fallback={<PageFallback />}>{renderPage()}</Suspense>
+            <ErrorBoundary>
+              <Suspense fallback={<PageFallback />}>{renderPage()}</Suspense>
+            </ErrorBoundary>
           </main>
         </div>
       </div>
