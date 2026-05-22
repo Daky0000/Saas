@@ -12,10 +12,8 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
-      console.error('[ErrorBoundary]', error, info.componentStack);
-    }
+    // eslint-disable-next-line no-console
+    console.error('[ErrorBoundary]', error, info.componentStack);
   }
 
   render() {
@@ -30,7 +28,7 @@ export default class ErrorBoundary extends React.Component<Props, State> {
             <p className="mt-1 text-sm text-slate-500">
               This page encountered an unexpected error.
             </p>
-            {import.meta.env.DEV && this.state.error && (
+            {this.state.error && (
               <pre className="mt-3 max-w-lg overflow-auto rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-600">
                 {this.state.error.message}
               </pre>
