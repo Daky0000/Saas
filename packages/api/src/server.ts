@@ -18008,27 +18008,6 @@ app.get('/', (req: Request, res: Response) => {
   res.json({ message: 'OAuth Backend Server Running', version: '1.0.0' });
 });
 
-// Last-resort JSON error handler for API routes (prevents Express HTML error pages)
-app.use((err: any, req: Request, res: Response, next: Function) => {
-  if (res.headersSent) return next(err);
-  const path = (req.originalUrl || req.url || '').toString();
-  const isApi = path.startsWith('/api/');
-  const accept = String(req.headers.accept || '');
-  if (!isApi && !accept.includes('application/json')) return next(err);
-
-  const status =
-    err?.type === 'entity.too.large' ? 413 :
-    err?.type === 'entity.parse.failed' ? 400 :
-    (typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500));
-
-  const message =
-    status === 413 ? 'Request too large' :
-    status === 400 ? 'Invalid JSON payload' :
-    (err instanceof Error ? err.message : 'Internal Server Error');
-
-  console.error('Unhandled API error:', err);
-  return res.status(status).json({ success: false, error: message });
-});
 
 // ─── Mailing Helpers ──────────────────────────────────────────────────────────
 

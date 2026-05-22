@@ -217,21 +217,34 @@ export function registerBlogRoutes({
     const id = randomUUID();
     const slug = rawSlug?.trim() || slugify(title) || id;
     const published_at = status === 'published' ? new Date().toISOString() : null;
-    const { rows } = await pool!.query(
-      `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
-        meta_title,meta_description,focus_keyword,social_title,social_description,social_image,social_automation,scheduled_at,published_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
-      [id, user.userId, title, slug, content, excerpt, featured_image, status,
-       category_id || null, meta_title, meta_description, focus_keyword,
-       social_title, social_description, social_image, JSON.stringify(social_automation || {}),
-       scheduled_at || null, published_at],
-    );
-    if (tag_ids.length) {
-      await Promise.all(
-        tag_ids.map((tid: string) =>
-          pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, tid]),
-        ),
+
+    const client = await pool!.connect();
+    let rows: Array<Record<string, unknown>>;
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO blog_posts (id,user_id,title,slug,content,excerpt,featured_image,status,category_id,
+          meta_title,meta_description,focus_keyword,social_title,social_description,social_image,social_automation,scheduled_at,published_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+        [id, user.userId, title, slug, content, excerpt, featured_image, status,
+         category_id || null, meta_title, meta_description, focus_keyword,
+         social_title, social_description, social_image, JSON.stringify(social_automation || {}),
+         scheduled_at || null, published_at],
       );
+      rows = result.rows;
+      if (tag_ids.length) {
+        await Promise.all(
+          tag_ids.map((tid: string) =>
+            client.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, tid]),
+          ),
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
     }
 
     await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
@@ -284,29 +297,41 @@ export function registerBlogRoutes({
     const newStatus = status ?? cur.status;
     const willPublish = newStatus === 'published' && String(cur.status || '') !== 'published';
     const published_at = newStatus === 'published' && !cur.published_at ? new Date().toISOString() : cur.published_at;
-    const { rows } = await pool!.query(
-      `UPDATE blog_posts SET title=$1,slug=$2,content=$3,excerpt=$4,featured_image=$5,status=$6,
-        category_id=$7,meta_title=$8,meta_description=$9,focus_keyword=$10,social_title=$11,
-        social_description=$12,social_image=$13,social_automation=$14,scheduled_at=$15,published_at=$16,updated_at=NOW()
-       WHERE id=$17 AND user_id=$18 RETURNING *`,
-      [newTitle, newSlug, content ?? cur.content, excerpt ?? cur.excerpt, featured_image ?? cur.featured_image,
-       newStatus, category_id !== undefined ? (category_id || null) : cur.category_id,
-       meta_title ?? cur.meta_title, meta_description ?? cur.meta_description,
-       focus_keyword ?? cur.focus_keyword, social_title ?? cur.social_title,
-       social_description ?? cur.social_description, social_image ?? cur.social_image,
-       social_automation !== undefined ? JSON.stringify(social_automation || {}) : JSON.stringify(cur.social_automation || {}),
-       scheduled_at !== undefined ? (scheduled_at || null) : cur.scheduled_at,
-       published_at, id, user.userId],
-    );
-    if (tag_ids !== undefined) {
-      await pool!.query('DELETE FROM blog_post_tags WHERE post_id=$1', [id]);
-      if (tag_ids.length) {
-        await Promise.all(
-          tag_ids.map((tid: string) =>
-            pool!.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, tid]),
-          ),
-        );
+    const client = await pool!.connect();
+    let rows: Array<Record<string, unknown>>;
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE blog_posts SET title=$1,slug=$2,content=$3,excerpt=$4,featured_image=$5,status=$6,
+          category_id=$7,meta_title=$8,meta_description=$9,focus_keyword=$10,social_title=$11,
+          social_description=$12,social_image=$13,social_automation=$14,scheduled_at=$15,published_at=$16,updated_at=NOW()
+         WHERE id=$17 AND user_id=$18 RETURNING *`,
+        [newTitle, newSlug, content ?? cur.content, excerpt ?? cur.excerpt, featured_image ?? cur.featured_image,
+         newStatus, category_id !== undefined ? (category_id || null) : cur.category_id,
+         meta_title ?? cur.meta_title, meta_description ?? cur.meta_description,
+         focus_keyword ?? cur.focus_keyword, social_title ?? cur.social_title,
+         social_description ?? cur.social_description, social_image ?? cur.social_image,
+         social_automation !== undefined ? JSON.stringify(social_automation || {}) : JSON.stringify(cur.social_automation || {}),
+         scheduled_at !== undefined ? (scheduled_at || null) : cur.scheduled_at,
+         published_at, id, user.userId],
+      );
+      rows = result.rows;
+      if (tag_ids !== undefined) {
+        await client.query('DELETE FROM blog_post_tags WHERE post_id=$1', [id]);
+        if (tag_ids.length) {
+          await Promise.all(
+            tag_ids.map((tid: string) =>
+              client.query('INSERT INTO blog_post_tags (post_id,tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, tid]),
+            ),
+          );
+        }
       }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
     }
 
     await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
