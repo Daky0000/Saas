@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart4,
@@ -10,6 +10,7 @@ import {
   CreditCard,
   FileText,
   HelpCircle,
+  Loader2,
   LogOut,
   Megaphone,
   Menu,
@@ -22,49 +23,51 @@ import {
   Waypoints,
   Settings,
 } from 'lucide-react';
-import Dashboard from './pages/Dashboard';
 import NotificationBell from './components/NotificationBell';
 import OnboardingWizard from './components/OnboardingWizard';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
-import Posts from './pages/Posts';
-import Cards from './pages/Cards';
-import WorkflowPage from './pages/Workflow';
-import Admin from './pages/Admin';
-import Analytics from './pages/Analytics';
-import Pricing from './pages/Pricing';
-import Profile from './pages/Profile';
-import Media from './pages/Media';
-import Integrations from './pages/Integrations';
-import Auth from './pages/Auth';
-import PrivacyPolicy from './pages/PrivacyPolicy';
-import TermsOfService from './pages/TermsOfService';
-import RefundPolicy from './pages/RefundPolicy';
-import Landing from './pages/Landing';
-import Tools from './pages/Tools';
-import PublicPricing from './pages/PublicPricing';
-import DataDeletion from './pages/DataDeletion';
-import OAuthCallback from './pages/OAuthCallback';
-import ChatWidget from './components/ChatWidget';
-import PostAutomation from './pages/PostAutomation';
-import MarketingOverview from './pages/MarketingOverview';
-import MarketingContacts from './pages/MarketingContacts';
-import MarketingEmail from './pages/MarketingEmail';
-import MarketingCampaigns from './pages/MarketingCampaigns';
-import MarketingSurveys from './pages/MarketingSurveys';
-import MarketingAutomations from './pages/MarketingAutomations';
-import PublicSurvey from './pages/PublicSurvey';
-import Workspace from './pages/Workspace';
-import AcceptInvite from './pages/AcceptInvite';
-import Billing from './pages/Billing';
-import Memory from './pages/Memory';
-import AITeam from './pages/AITeam';
-import Discover from './pages/Discover';
-import Notifications from './pages/Notifications';
-import TasksPage from './components/tasks/TasksPage';
-import ProjectSettings from './pages/ProjectSettings';
-import SettingsPage from './pages/Settings';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import HelpModal from './components/HelpModal';
+
+// Pages — lazy-loaded to split the 3.7 MB bundle into per-route chunks
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Posts = lazy(() => import('./pages/Posts'));
+const Cards = lazy(() => import('./pages/Cards'));
+const WorkflowPage = lazy(() => import('./pages/Workflow'));
+const Admin = lazy(() => import('./pages/Admin'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Pricing = lazy(() => import('./pages/Pricing'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Media = lazy(() => import('./pages/Media'));
+const Integrations = lazy(() => import('./pages/Integrations'));
+const Auth = lazy(() => import('./pages/Auth'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const TermsOfService = lazy(() => import('./pages/TermsOfService'));
+const RefundPolicy = lazy(() => import('./pages/RefundPolicy'));
+const Landing = lazy(() => import('./pages/Landing'));
+const Tools = lazy(() => import('./pages/Tools'));
+const PublicPricing = lazy(() => import('./pages/PublicPricing'));
+const DataDeletion = lazy(() => import('./pages/DataDeletion'));
+const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
+const ChatWidget = lazy(() => import('./components/ChatWidget'));
+const PostAutomation = lazy(() => import('./pages/PostAutomation'));
+const MarketingOverview = lazy(() => import('./pages/MarketingOverview'));
+const MarketingContacts = lazy(() => import('./pages/MarketingContacts'));
+const MarketingEmail = lazy(() => import('./pages/MarketingEmail'));
+const MarketingCampaigns = lazy(() => import('./pages/MarketingCampaigns'));
+const MarketingSurveys = lazy(() => import('./pages/MarketingSurveys'));
+const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
+const PublicSurvey = lazy(() => import('./pages/PublicSurvey'));
+const Workspace = lazy(() => import('./pages/Workspace'));
+const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
+const Billing = lazy(() => import('./pages/Billing'));
+const Memory = lazy(() => import('./pages/Memory'));
+const AITeam = lazy(() => import('./pages/AITeam'));
+const Discover = lazy(() => import('./pages/Discover'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const TasksPage = lazy(() => import('./components/tasks/TasksPage'));
+const ProjectSettings = lazy(() => import('./pages/ProjectSettings'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
 import { API_BASE_URL } from './utils/apiBase';
@@ -76,6 +79,12 @@ import {
   normalizeUser,
   setStoredUser,
 } from './utils/userSession';
+
+const PageFallback = () => (
+  <div className="flex items-center justify-center h-full min-h-[200px]">
+    <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+  </div>
+);
 
 export type PageType =
   | 'dashboard'
@@ -884,38 +893,38 @@ function App() {
 
   const goToLogin = () => { navigatePath('/login', true); setCurrentPathname('/login'); };
   // Public pages — always accessible regardless of auth state
-  if (currentPathname === '/privacy') return <PrivacyPolicy />;
-  if (currentPathname === '/terms') return <TermsOfService />;
-  if (currentPathname === '/refund') return <RefundPolicy />;
-  if (currentPathname === '/tools') return <Tools onLoginClick={goToLogin} />;
-  if (currentPathname === '/data-deletion') return <DataDeletion />;
-  if (currentPathname.startsWith('/auth/')) return <OAuthCallback />;
+  if (currentPathname === '/privacy') return <Suspense fallback={<PageFallback />}><PrivacyPolicy /></Suspense>;
+  if (currentPathname === '/terms') return <Suspense fallback={<PageFallback />}><TermsOfService /></Suspense>;
+  if (currentPathname === '/refund') return <Suspense fallback={<PageFallback />}><RefundPolicy /></Suspense>;
+  if (currentPathname === '/tools') return <Suspense fallback={<PageFallback />}><Tools onLoginClick={goToLogin} /></Suspense>;
+  if (currentPathname === '/data-deletion') return <Suspense fallback={<PageFallback />}><DataDeletion /></Suspense>;
+  if (currentPathname.startsWith('/auth/')) return <Suspense fallback={<PageFallback />}><OAuthCallback /></Suspense>;
   if (currentPathname.startsWith('/invite/')) {
     const token = currentPathname.replace('/invite/', '');
-    return <AcceptInvite token={token} onLoginClick={goToLogin} />;
+    return <Suspense fallback={<PageFallback />}><AcceptInvite token={token} onLoginClick={goToLogin} /></Suspense>;
   }
-  if (currentPathname === '/pricing' && !isAuthenticated) return <PublicPricing onLoginClick={goToLogin} />;
+  if (currentPathname === '/pricing' && !isAuthenticated) return <Suspense fallback={<PageFallback />}><PublicPricing onLoginClick={goToLogin} /></Suspense>;
   if (currentPathname.startsWith('/survey/')) {
     const surveyId = currentPathname.replace('/survey/', '');
-    return <PublicSurvey surveyId={surveyId} />;
+    return <Suspense fallback={<PageFallback />}><PublicSurvey surveyId={surveyId} /></Suspense>;
   }
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
-    return <Landing onLoginClick={goToLogin} />;
+    return <Suspense fallback={<PageFallback />}><Landing onLoginClick={goToLogin} /></Suspense>;
   }
 
   if (!isAuthenticated) {
-    return <Auth onLogin={handleLogin} />;
+    return <Suspense fallback={<PageFallback />}><Auth onLogin={handleLogin} /></Suspense>;
   }
 
   if (isAuthenticated && currentPage === 'admin' && authUser?.role !== 'admin') {
     navigateToPage('dashboard', true);
-    return <Dashboard currentUser={authUser} />;
+    return <Suspense fallback={<PageFallback />}><Dashboard currentUser={authUser} /></Suspense>;
   }
 
   if (isAuthenticated && currentPage === 'admin') {
     return (
       <TemplateEditorProvider>
-        <Admin currentUser={authUser} />
+        <Suspense fallback={<PageFallback />}><Admin currentUser={authUser} /></Suspense>
         <AdvancedTemplateCardModal />
       </TemplateEditorProvider>
     );
@@ -1007,7 +1016,9 @@ function App() {
             <NotificationBell />
           </header>
 
-          <main className="flex-1 overflow-auto p-5 md:p-7">{renderPage()}</main>
+          <main className="flex-1 overflow-auto p-5 md:p-7">
+            <Suspense fallback={<PageFallback />}>{renderPage()}</Suspense>
+          </main>
         </div>
       </div>
 
