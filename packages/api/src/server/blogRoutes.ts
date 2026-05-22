@@ -165,9 +165,18 @@ export function registerBlogRoutes({
     if (!user) return;
     const { status, search } = req.query as { status?: string; search?: string };
     let q = `SELECT p.*, c.name AS category_name,
-      ARRAY(SELECT t.id FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_ids,
-      ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
-      FROM blog_posts p LEFT JOIN blog_categories c ON c.id=p.category_id
+      COALESCE(tags.tag_ids, '{}') AS tag_ids,
+      COALESCE(tags.tag_names, '{}') AS tag_names
+      FROM blog_posts p
+      LEFT JOIN blog_categories c ON c.id = p.category_id
+      LEFT JOIN (
+        SELECT pt.post_id,
+          ARRAY_AGG(t.id ORDER BY t.name) AS tag_ids,
+          ARRAY_AGG(t.name ORDER BY t.name) AS tag_names
+        FROM blog_post_tags pt
+        JOIN blog_tags t ON t.id = pt.tag_id
+        GROUP BY pt.post_id
+      ) tags ON tags.post_id = p.id
       WHERE p.user_id=$1`;
     const params: (string | number)[] = [user.userId];
     if (status && status !== 'all') {
@@ -189,9 +198,18 @@ export function registerBlogRoutes({
     const { id } = req.params;
     const { rows } = await pool!.query(
       `SELECT p.*, c.name AS category_name,
-        ARRAY(SELECT t.id FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_ids,
-        ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
-       FROM blog_posts p LEFT JOIN blog_categories c ON c.id=p.category_id
+        COALESCE(tags.tag_ids, '{}') AS tag_ids,
+        COALESCE(tags.tag_names, '{}') AS tag_names
+       FROM blog_posts p
+       LEFT JOIN blog_categories c ON c.id = p.category_id
+       LEFT JOIN LATERAL (
+         SELECT
+           ARRAY_AGG(t.id ORDER BY t.name) AS tag_ids,
+           ARRAY_AGG(t.name ORDER BY t.name) AS tag_names
+         FROM blog_post_tags pt
+         JOIN blog_tags t ON t.id = pt.tag_id
+         WHERE pt.post_id = p.id
+       ) tags ON TRUE
        WHERE p.id=$1 AND p.user_id=$2`,
       [id, user.userId],
     );
@@ -598,8 +616,14 @@ export function registerBlogRoutes({
     if (!ids.length) return res.status(400).json({ success: false, error: 'Invalid postIds' });
 
     const { rows } = await pool!.query(
-      `SELECT p.*, ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
-       FROM blog_posts p WHERE p.id = ANY($1) AND p.user_id=$2`,
+      `SELECT p.*, COALESCE(tags.tag_names, '{}') AS tag_names
+       FROM blog_posts p
+       LEFT JOIN LATERAL (
+         SELECT ARRAY_AGG(t.name ORDER BY t.name) AS tag_names
+         FROM blog_post_tags pt JOIN blog_tags t ON t.id = pt.tag_id
+         WHERE pt.post_id = p.id
+       ) tags ON TRUE
+       WHERE p.id = ANY($1) AND p.user_id=$2`,
       [ids, user.userId],
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Posts not found' });
