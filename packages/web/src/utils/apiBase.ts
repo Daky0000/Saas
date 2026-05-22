@@ -1,59 +1,23 @@
-const DEFAULT_PROD_API_BASE_URL = 'https://contentflow-api-production.up.railway.app';
-const DEFAULT_PROD_HOSTS = new Set(['marketing.dakyworld.com', 'daky0000.github.io']);
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
-const FRONTEND_HOST_PATTERNS = [/\.github\.io$/i, /\.dakyworld\.com$/i];
-const BACKEND_HOST_PATTERNS = [/\.railway\.app$/i];
+const PROD_API_URL = 'https://contentflow-api-production.up.railway.app';
 
-const normalizeBaseUrl = (value: string) => value.trim().replace(/\/$/, '');
-const isPlaceholderBase = (value: string) => /api\.yourdomain\.com/i.test(value);
-const matchesAnyPattern = (value: string, patterns: RegExp[]) => patterns.some((pattern) => pattern.test(value));
+function resolveApiBase(): string {
+  // 1. Explicit env var (set in .env or deployment config) — highest priority
+  const envBase = ((import.meta.env.VITE_API_BASE_URL as string) || '').trim().replace(/\/$/, '');
+  if (envBase) return envBase;
 
-const isLikelyFrontendHost = (host: string) =>
-  DEFAULT_PROD_HOSTS.has(host) || matchesAnyPattern(host, FRONTEND_HOST_PATTERNS);
-
-const isLikelyBackendHost = (host: string) => matchesAnyPattern(host, BACKEND_HOST_PATTERNS);
-
-const resolveCandidateBase = (value: string, origin: string) => {
-  try {
-    return normalizeBaseUrl(new URL(value, origin).toString());
-  } catch {
-    return normalizeBaseUrl(value);
-  }
-};
-
-export const getApiBaseUrl = (): string => {
-  const envBase = normalizeBaseUrl((import.meta.env.VITE_API_BASE_URL || '') as string);
-  const runtimeBase =
-    typeof window !== 'undefined' && (window as any).__API_BASE_URL__
-      ? normalizeBaseUrl(String((window as any).__API_BASE_URL__))
-      : '';
-
-  if (typeof window !== 'undefined') {
-    const host = String(window.location.hostname || '').trim().toLowerCase();
-    const origin = normalizeBaseUrl(window.location.origin);
-    const candidate = runtimeBase || envBase;
-
-    if (candidate && !isPlaceholderBase(candidate)) {
-      const resolvedCandidate = resolveCandidateBase(candidate, origin);
-      if (isLikelyFrontendHost(host) && resolvedCandidate === origin) {
-        return DEFAULT_PROD_API_BASE_URL;
-      }
-      return resolvedCandidate;
-    }
-
-    if (isLikelyFrontendHost(host) && !isLikelyBackendHost(host) && !LOCAL_HOSTS.has(host)) {
-      return DEFAULT_PROD_API_BASE_URL;
-    }
-
-    return origin;
+  // 2. Runtime injection (set via window.__API_BASE_URL__ before app boots)
+  if (typeof window !== 'undefined' && (window as any).__API_BASE_URL__) {
+    return String((window as any).__API_BASE_URL__).trim().replace(/\/$/, '');
   }
 
-  const candidate = runtimeBase || envBase;
-  if (candidate && !isPlaceholderBase(candidate)) {
-    return candidate;
-  }
+  // 3. Dev mode: empty string means relative paths → Vite proxy forwards to localhost:5000
+  if (import.meta.env.DEV) return '';
 
-  return '';
-};
+  // 4. Production fallback: VITE_API_BASE_URL should always be set in deployed envs
+  // eslint-disable-next-line no-console
+  console.warn('[api] VITE_API_BASE_URL is not set — falling back to hardcoded production URL');
+  return PROD_API_URL;
+}
 
-export const API_BASE_URL = getApiBaseUrl();
+export const getApiBaseUrl = resolveApiBase;
+export const API_BASE_URL = resolveApiBase();

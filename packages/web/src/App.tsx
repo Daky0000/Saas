@@ -29,6 +29,8 @@ import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import HelpModal from './components/HelpModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import ToastContainer from './components/ToastContainer';
+import { ToastContext, useToast, useToastState } from './hooks/useToast';
 
 // Pages — lazy-loaded to split the 3.7 MB bundle into per-route chunks
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -653,6 +655,7 @@ function AppSidebar({
 }
 
 function App() {
+  const { addToast } = useToast();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AppUser | null>(() => getStoredUser());
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
@@ -746,6 +749,7 @@ function App() {
           clearStoredUser();
           setAuthUser(null);
           setIsAuthenticated(false);
+          addToast('error', 'Your session has expired. Please log in again.');
           navigatePath('/login', true);
         }
       }
@@ -1053,4 +1057,14 @@ function App() {
   );
 }
 
-export default App;
+function AppWithToast() {
+  const toastState = useToastState();
+  return (
+    <ToastContext.Provider value={toastState}>
+      <App />
+      <ToastContainer />
+    </ToastContext.Provider>
+  );
+}
+
+export default AppWithToast;
