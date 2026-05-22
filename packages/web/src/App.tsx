@@ -29,6 +29,7 @@ import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import HelpModal from './components/HelpModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import ChatWidget from './components/ChatWidget';
 import ToastContainer from './components/ToastContainer';
 import { ToastContext, useToast, useToastState } from './hooks/useToast';
 
@@ -52,7 +53,6 @@ const Tools = lazy(() => import('./pages/Tools'));
 const PublicPricing = lazy(() => import('./pages/PublicPricing'));
 const DataDeletion = lazy(() => import('./pages/DataDeletion'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
-const ChatWidget = lazy(() => import('./components/ChatWidget'));
 const PostAutomation = lazy(() => import('./pages/PostAutomation'));
 const MarketingOverview = lazy(() => import('./pages/MarketingOverview'));
 const MarketingContacts = lazy(() => import('./pages/MarketingContacts'));
