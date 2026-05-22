@@ -39,6 +39,7 @@ import { logger } from './logger.ts';
 import { requestIdMiddleware } from './middleware/requestId.ts';
 import { errorHandler } from './middleware/errorHandler.ts';
 import { validateBody } from './middleware/validate.ts';
+import { authLimiter, passwordLimiter } from './middleware/rateLimiter.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -5234,7 +5235,7 @@ const authProfileSchema = z.object({
 });
 
 // Auth routes
-app.post('/api/auth/register', validateBody(authRegisterSchema), async (req: Request, res: Response) => {
+app.post('/api/auth/register', authLimiter, validateBody(authRegisterSchema), async (req: Request, res: Response) => {
   try {
     const { email, password, name, username } = req.body;
     if (!email || !password || !name || !username) {
@@ -5273,7 +5274,7 @@ app.post('/api/auth/register', validateBody(authRegisterSchema), async (req: Req
   }
 });
 
-app.post('/api/auth/login', validateBody(authLoginSchema), async (req: Request, res: Response) => {
+app.post('/api/auth/login', authLimiter, validateBody(authLoginSchema), async (req: Request, res: Response) => {
   try {
     const { identifier, email, password } = req.body;
     const loginIdentifier = (identifier || email || '').trim();
@@ -5372,7 +5373,7 @@ app.put('/api/auth/profile', validateBody(authProfileSchema), async (req: Reques
   }
 });
 
-app.post('/api/auth/change-password', async (req: Request, res: Response) => {
+app.post('/api/auth/change-password', passwordLimiter, async (req: Request, res: Response) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
   const { currentPassword, newPassword } = req.body as Record<string, string>;
