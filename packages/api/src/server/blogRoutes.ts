@@ -3,6 +3,7 @@ import express from 'express';
 import type { Express, Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { registerBlogAnalyticsRoutes } from './blogAnalyticsRoutes.ts';
+import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string; email?: string } | null;
 type RequireAuthFn = (req: Request, res: Response) => AuthResult;
@@ -266,7 +267,7 @@ export function registerBlogRoutes({
     }
 
     await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
-      console.error('Blog post media sync error:', error);
+      logger.error({ err: error }, 'blog_media_sync_error');
     });
 
     void checkTaskActions(user.userId, 'create_post');
@@ -280,7 +281,7 @@ export function registerBlogRoutes({
         await queueSocialAutomationForPublishedPost(user.userId, rows[0]);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Social Automation queue failed';
-        console.error('Social Automation queue error:', err);
+        logger.error({ err }, 'social_automation_queue_error');
         await pool!.query(
           'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,error_message) VALUES ($1,$2,$3,$4,$5,$6)',
           [randomUUID(), id, user.userId, 'facebook', 'failed', msg],
@@ -353,7 +354,7 @@ export function registerBlogRoutes({
     }
 
     await syncBlogPostMedia(user.userId, rows[0]).catch((error) => {
-      console.error('Blog post media sync error:', error);
+      logger.error({ err: error }, 'blog_media_sync_error');
     });
 
     if (willPublish) {
@@ -361,7 +362,7 @@ export function registerBlogRoutes({
         await queueSocialAutomationForPublishedPost(user.userId, rows[0]);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Social Automation queue failed';
-        console.error('Social Automation queue error:', err);
+        logger.error({ err }, 'social_automation_queue_error');
         await pool!.query(
           'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,error_message) VALUES ($1,$2,$3,$4,$5,$6)',
           [randomUUID(), id, user.userId, 'facebook', 'failed', msg],
@@ -584,7 +585,7 @@ export function registerBlogRoutes({
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
-      console.error('batch platform update error:', err);
+      logger.error({ err }, 'batch_platform_update_error');
       return res.status(500).json({ success: false, error: 'Failed to update platforms' });
     } finally {
       client.release();

@@ -5,6 +5,7 @@ import Stripe from 'stripe';
 import express from 'express';
 import type { Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -241,7 +242,7 @@ async function loadLinkMetadataFromDb(url: string): Promise<LinkMetadataRecord |
       expiresAt: new Date(row.expires_at).toISOString(),
     };
   } catch (err) {
-    console.warn('Failed to read link metadata cache:', err);
+    logger.warn('Failed to read link metadata cache:', err);
     return null;
   }
 }
@@ -258,7 +259,7 @@ async function saveLinkMetadataToDb(data: LinkMetadataRecord) {
       [randomUUID(), data.url, data.title, data.description, data.image, data.fetchedAt, data.expiresAt]
     );
   } catch (err) {
-    console.warn('Failed to save link metadata cache:', err);
+    logger.warn('Failed to save link metadata cache:', err);
   }
 }
 
@@ -306,7 +307,7 @@ async function fetchLinkMetadata(url: string): Promise<LinkMetadataRecord | null
     await saveLinkMetadataToDb(record);
     return record;
   } catch (err) {
-    console.warn(`Failed to fetch link metadata for ${url}:`, err);
+    logger.warn(`Failed to fetch link metadata for ${url}:`, err);
     return null;
   }
 }
@@ -319,7 +320,7 @@ async function recordAuditLog(userId: string, action: string, postIds: string[],
       [randomUUID(), userId, action, JSON.stringify(postIds), JSON.stringify(changes)]
     );
   } catch (err) {
-    console.warn('Failed to record audit log:', err);
+    logger.warn('Failed to record audit log:', err);
   }
 }
 const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
@@ -349,7 +350,7 @@ try {
     statement_timeout: 30000,
   }) : null;
 } catch (err) {
-  console.error('Failed to create database pool, running in in-memory mode:', err);
+  logger.error('Failed to create database pool, running in in-memory mode:', err);
   pool = null;
 }
 let dbReady = false;
@@ -411,7 +412,7 @@ const inMemoryDataDeletionRequests = new Map<string, DataDeletionRecord>();
 
 async function ensureDatabase() {
   if (!pool) {
-    console.warn('DATABASE_URL is not set; running in in-memory mode.');
+    logger.warn('DATABASE_URL is not set; running in in-memory mode.');
     dbReady = false;
     seedInMemoryUsers();
     return;
@@ -1211,7 +1212,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       [cgId, 'Content Generator', 'Three-stage content pipeline: research inspiration, keyword extraction, and full SEO article generation.', cgPrompt]
     );
   } catch (e) {
-    console.warn('ai_skills seed skipped:', e);
+    logger.warn('ai_skills seed skipped:', e);
   }
 
   // Ensure cover_image_url exists on card_templates (added in v6.4)
@@ -1229,10 +1230,10 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
       //     [tid, t.name, t.description, JSON.stringify(t.designData), '', true, now, now],
       //   );
       // }
-      // console.log(`Seeded ${SAMPLE_TEMPLATES.length} card templates.`);
+      // logger.info(`Seeded ${SAMPLE_TEMPLATES.length} card templates.`);
     }
   } catch (e) {
-    console.warn('Card template seed skipped:', e);
+    logger.warn('Card template seed skipped:', e);
   }
 
   // ─── Seed: Solo Leveling promotional poster template ──────────────────────
@@ -1359,10 +1360,10 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
           now, now,
         ]
       );
-      console.log('Solo Leveling card template upserted.');
+      logger.info('Solo Leveling card template upserted.');
     }
   } catch (e) {
-    console.warn('Solo Leveling template seed skipped:', e);
+    logger.warn('Solo Leveling template seed skipped:', e);
   }
   // ── end Solo Leveling seed ─────────────────────────────────────────────────
 
@@ -1511,9 +1512,9 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
        ON CONFLICT (id) DO UPDATE SET design_data=EXCLUDED.design_data, name=EXCLUDED.name, updated_at=EXCLUDED.updated_at`,
       ['verdant04-dark-studio-carousel-cover-2026', 'Verdant Dark Studio — Carousel Cover', 'Before-and-after brand transformation carousel cover. Swipe pill, loop swoosh, stamp badge, accent outline box on "Before". Fully editable.', JSON.stringify(c04data), true, now, now]
     );
-    console.log('Verdant Dark Studio card templates upserted.');
+    logger.info('Verdant Dark Studio card templates upserted.');
   } catch (e) {
-    console.warn('Verdant Dark Studio template seed skipped:', e);
+    logger.warn('Verdant Dark Studio template seed skipped:', e);
   }
   // ── end Verdant Dark Studio seed ────────────────────────────────────────────
 
@@ -1731,9 +1732,9 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
         [tmpl.id, tmpl.name, tmpl.desc, JSON.stringify(tmpl.data), true, now, now]
       );
     }
-    console.log('Social media card templates upserted (5 templates).');
+    logger.info('Social media card templates upserted (5 templates).');
   } catch (e) {
-    console.warn('Social media template seed skipped:', e);
+    logger.warn('Social media template seed skipped:', e);
   }
   // ── end Social Media Templates seed ────────────────────────────────────────
 
@@ -1945,8 +1946,8 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
         [tmpl.id,tmpl.name,tmpl.desc,JSON.stringify(tmpl.data),true,now,now]
       );
     }
-    console.log('10 editable card templates upserted.');
-  } catch(e){ console.warn('10 templates seed skipped:',e); }
+    logger.info('10 editable card templates upserted.');
+  } catch(e){ logger.warn('10 templates seed skipped:',e); }
   // ── end 10 Editable Card Templates ─────────────────────────────────────────
 
   // ── UpDraft Agency Tape poster template ────────────────────────────────────
@@ -2035,8 +2036,8 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
         now, now,
       ]
     );
-    console.log('UpDraft Agency Tape template upserted.');
-  } catch (e) { console.warn('UpDraft template seed skipped:', e); }
+    logger.info('UpDraft Agency Tape template upserted.');
+  } catch (e) { logger.warn('UpDraft template seed skipped:', e); }
   // ── end UpDraft Agency Tape seed ────────────────────────────────────────────
 
   // ── arcgraphix Before/After carousel cover template ───────────────────────
@@ -2145,8 +2146,8 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
         now, now,
       ]
     );
-    console.log('arcgraphix Before/After template upserted.');
-  } catch (e) { console.warn('arcgraphix template seed skipped:', e); }
+    logger.info('arcgraphix Before/After template upserted.');
+  } catch (e) { logger.warn('arcgraphix template seed skipped:', e); }
   // ── end arcgraphix seed ─────────────────────────────────────────────────────
 
   // ─── Mailing Module (additive only) ────────────────────────────────────────
@@ -3981,6 +3982,7 @@ app.use(
     credentials: true,
   })
 );
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -3995,7 +3997,7 @@ app.post('/webhooks/stripe', async (req: Request, res: Response) => {
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err: any) {
-    console.error('Stripe webhook signature error:', err.message);
+    logger.error('Stripe webhook signature error:', err.message);
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
 
@@ -4074,7 +4076,7 @@ app.post('/webhooks/stripe', async (req: Request, res: Response) => {
       ).catch(() => undefined);
     }
   } catch (e) {
-    console.error('Stripe webhook handler error:', e);
+    logger.error('Stripe webhook handler error:', e);
   }
 
   res.json({ received: true });
@@ -4126,7 +4128,7 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
   try {
     const appSecret = String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '').trim();
     if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
-      console.warn('Meta webhook: invalid signature — discarding');
+      logger.warn('Meta webhook: invalid signature — discarding');
       return;
     }
 
@@ -4226,7 +4228,7 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
       }
     }
   } catch (err) {
-    console.error('Meta webhook processing error:', err);
+    logger.error('Meta webhook processing error:', err);
   }
 });
 
@@ -4236,7 +4238,7 @@ app.post('/api/v1/webhooks/facebook', async (req: Request, res: Response) => {
   try {
     const appSecret = String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '').trim();
     if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
-      console.warn('Facebook v1 webhook: invalid signature — discarding');
+      logger.warn('Facebook v1 webhook: invalid signature — discarding');
       return;
     }
     // Delegate processing — re-emit to the shared handler by forwarding the body
@@ -4261,7 +4263,7 @@ app.post('/api/v1/webhooks/facebook', async (req: Request, res: Response) => {
       }
     }
   } catch (err) {
-    console.error('Facebook v1 webhook error:', err);
+    logger.error('Facebook v1 webhook error:', err);
   }
 });
 
@@ -4320,7 +4322,7 @@ app.post('/api/v1/social/facebook/webhook-subscribe', async (req: Request, res: 
 
     return res.json({ success: true, pageId, subscribed: subData?.success ?? true });
   } catch (err) {
-    console.error('v1 facebook webhook-subscribe error:', err);
+    logger.error('v1 facebook webhook-subscribe error:', err);
     return res.status(500).json({ success: false, error: 'Failed to subscribe page to webhooks' });
   }
 });
@@ -4520,7 +4522,7 @@ ensureDatabase()
     // Even when a Pool exists, schema init can fail (permissions, missing extensions, etc).
     // Fall back to in-memory users so auth endpoints still work.
     seedInMemoryUsers();
-    console.error('Database initialization failed:', err);
+    logger.error('Database initialization failed:', err);
   });
 
 function titleRole(role: string) {
@@ -4867,7 +4869,7 @@ async function ensureSeedPricingPlans() {
         updated_at: now,
       });
     });
-    console.log(`Seeded ${inMemoryPricingPlansById.size} pricing plans in-memory`);
+    logger.info(`Seeded ${inMemoryPricingPlansById.size} pricing plans in-memory`);
     return;
   }
 
@@ -4877,7 +4879,7 @@ async function ensureSeedPricingPlans() {
   );
 
   if (existing.rows[0]?.count > 0) {
-    console.log('Pricing plans already seeded in database');
+    logger.info('Pricing plans already seeded in database');
     return; // Plans already seeded
   }
 
@@ -4917,7 +4919,7 @@ async function ensureSeedPricingPlans() {
       ]
     );
   }
-  console.log(`Seeded 6 pricing plans in database (${plans.length} plan types)`);
+  logger.info(`Seeded 6 pricing plans in database (${plans.length} plan types)`);
 }
 
 async function updateUserProfile(
@@ -5331,7 +5333,7 @@ app.get('/api/auth/me', async (req: Request, res: Response) => {
       user: userToAuthPayload(user),
     });
   } catch (error) {
-    console.error('Me error:', error);
+    logger.error('Me error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch user' });
   }
 });
@@ -5366,7 +5368,7 @@ app.put('/api/auth/profile', validateBody(authProfileSchema), async (req: Reques
       avatar_url: updated.avatar_url,
       cover_url: updated.cover_url,
     }).catch((error) => {
-      console.error('Profile media sync error:', error);
+      logger.error('Profile media sync error:', error);
     });
 
     return res.json({
@@ -5451,7 +5453,7 @@ app.get('/api/users', async (req: Request, res: Response) => {
       perPage,
     });
   } catch (error) {
-    console.error('List users error:', error);
+    logger.error('List users error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch users' });
   }
 });
@@ -5481,7 +5483,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
     });
     return res.status(201).json(userToManagedUser(created));
   } catch (error) {
-    console.error('Create user error:', error);
+    logger.error('Create user error:', error);
     const message = error instanceof Error ? error.message : 'Failed to create user';
     return res.status(500).json({ success: false, error: message });
   }
@@ -5545,7 +5547,7 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
 
     return res.json(userToManagedUser(updated!));
   } catch (error) {
-    console.error('Update user error:', error);
+    logger.error('Update user error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update user' });
   }
 });
@@ -5575,7 +5577,7 @@ app.delete('/api/users/:id', async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Delete user error:', error);
+    logger.error('Delete user error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete user' });
   }
 });
@@ -5598,7 +5600,7 @@ app.patch('/api/users/:id/status', async (req: Request, res: Response) => {
     }
     return res.json({ success: true });
   } catch (error) {
-    console.error('Patch user status error:', error);
+    logger.error('Patch user status error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update status' });
   }
 });
@@ -5621,7 +5623,7 @@ app.patch('/api/users/:id/role', async (req: Request, res: Response) => {
     }
     return res.json({ success: true });
   } catch (error) {
-    console.error('Patch user role error:', error);
+    logger.error('Patch user role error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update role' });
   }
 });
@@ -5661,7 +5663,7 @@ app.post('/api/oauth/state', async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('OAuth state error:', error);
+    logger.error('OAuth state error:', error);
     return res.status(500).json({ success: false, error: 'Failed to store state' });
   }
 });
@@ -5682,7 +5684,7 @@ app.get('/api/user-settings/:key', async (req: Request, res: Response) => {
     const value = result.rows[0]?.value ?? null;
     return res.json({ success: true, value });
   } catch (error) {
-    console.error('Get user setting error:', error);
+    logger.error('Get user setting error:', error);
     return res.status(500).json({ success: false, error: 'Failed to load setting' });
   }
 });
@@ -5713,7 +5715,7 @@ const saveUserSetting = async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Save user setting error:', error);
+    logger.error('Save user setting error:', error);
     return res.status(500).json({ success: false, error: 'Failed to save setting' });
   }
 };
@@ -5747,7 +5749,7 @@ app.post('/api/oauth/callback', async (req: Request, res: Response) => {
 
     return res.json({ success: true, data: tokenData, returnTo: (stateRow as any).return_to || null });
   } catch (error) {
-    console.error('OAuth callback error:', error);
+    logger.error('OAuth callback error:', error);
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'OAuth callback failed',
@@ -5764,7 +5766,7 @@ app.get('/api/accounts', async (req: Request, res: Response) => {
     const accounts = await getUserConnectedAccounts(auth.userId);
     return res.json({ success: true, data: accounts });
   } catch (error) {
-    console.error('Accounts error:', error);
+    logger.error('Accounts error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch accounts' });
   }
 });
@@ -5827,7 +5829,7 @@ app.get('/api/facebook/targets', async (req: Request, res: Response) => {
 
     return res.json({ success: true, pages, groups, warnings });
   } catch (error) {
-    console.error('Facebook targets error:', error);
+    logger.error('Facebook targets error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
   }
 });
@@ -5854,7 +5856,7 @@ app.get('/api/instagram/targets', async (req: Request, res: Response) => {
       warnings: result.warnings,
     });
   } catch (error) {
-    console.error('Instagram targets error:', error);
+    logger.error('Instagram targets error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch Instagram targets' });
   }
 });
@@ -5968,7 +5970,7 @@ app.post('/api/instagram/connect', async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Instagram connect error:', error);
+    logger.error('Instagram connect error:', error);
     await logIntegrationEvent({
       userId: null,
       integrationSlug: 'instagram',
@@ -6008,7 +6010,7 @@ app.get('/api/pinterest/boards', async (req: Request, res: Response) => {
 
     return res.json({ success: true, boards });
   } catch (error) {
-    console.error('Pinterest boards error:', error);
+    logger.error('Pinterest boards error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest boards' });
   }
 });
@@ -6059,7 +6061,7 @@ app.post('/api/pinterest/boards', async (req: Request, res: Response) => {
 
     return res.json({ success: true, board: { id: boardId, name: boardName } });
   } catch (error) {
-    console.error('Pinterest create board error:', error);
+    logger.error('Pinterest create board error:', error);
     return res.status(500).json({ success: false, error: 'Failed to create Pinterest board' });
   }
 });
@@ -6105,7 +6107,7 @@ app.post('/api/integrations/mailchimp/connect', async (req: Request, res: Respon
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Mailchimp connect error:', error);
+    logger.error('Mailchimp connect error:', error);
     await logIntegrationEvent({
       userId: null,
       integrationSlug: 'mailchimp',
@@ -6144,7 +6146,7 @@ app.delete('/api/integrations/mailchimp/disconnect', async (req: Request, res: R
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Mailchimp disconnect error:', error);
+    logger.error('Mailchimp disconnect error:', error);
     return res.status(500).json({ success: false, error: 'Failed to disconnect Mailchimp' });
   }
 });
@@ -6159,7 +6161,7 @@ app.delete('/api/accounts/:platform', async (req: Request, res: Response) => {
     await removeUserConnection(auth.userId, platform);
     return res.json({ success: true });
   } catch (error) {
-    console.error('Disconnect error:', error);
+    logger.error('Disconnect error:', error);
     return res.status(500).json({ success: false, error: 'Failed to disconnect' });
   }
 });
@@ -6174,7 +6176,7 @@ app.get('/api/accounts/:platform/test', async (req: Request, res: Response) => {
     const result = await testPlatformConnection(auth.userId, platform);
     return res.json({ success: true, data: result });
   } catch (error) {
-    console.error('Test connection error:', error);
+    logger.error('Test connection error:', error);
     return res.status(500).json({ success: false, error: 'Connection test failed' });
   }
 });
@@ -6196,7 +6198,7 @@ app.post('/api/posts/:platform/publish', async (req: Request, res: Response) => 
 
     return res.json({ success: true, data: result });
   } catch (error) {
-    console.error('Publish error:', error);
+    logger.error('Publish error:', error);
     return res.status(500).json({ success: false, error: 'Failed to publish post' });
   }
 });
@@ -6533,7 +6535,7 @@ async function exchangePinterestCode(code: string, req?: Request) {
   });
   if (resp.status >= 400) {
     const msg = (resp.data as any)?.message || (resp.data as any)?.error || `Pinterest token exchange failed (${resp.status})`;
-    console.error('Pinterest token exchange error:', { status: resp.status, body: resp.data, redirectUri });
+    logger.error('Pinterest token exchange error:', { status: resp.status, body: resp.data, redirectUri });
     throw new Error(msg);
   }
   const tokenData: any = resp.data || {};
@@ -6887,7 +6889,7 @@ async function getStoredState(state: string): Promise<boolean> {
 
 async function storeUserConnection(userId: string, platform: string, tokenData: any): Promise<void> {
   if (!pool) {
-    console.warn('DATABASE_URL not set; cannot persist social connection');
+    logger.warn('DATABASE_URL not set; cannot persist social connection');
     return;
   }
 
@@ -7085,7 +7087,7 @@ async function seedSocialMemory(
     }
     await triggerAgentCompilation(userId).catch(() => undefined);
   } catch (e) {
-    console.error('seedSocialMemory DB error:', e);
+    logger.error('seedSocialMemory DB error:', e);
   }
 }
 
@@ -7104,7 +7106,7 @@ async function createNotification(
       [userId, type, title, message, data, pinned],
     );
   } catch (e) {
-    console.error('createNotification error:', e);
+    logger.error('createNotification error:', e);
   }
 }
 
@@ -7188,7 +7190,7 @@ async function getUserSaaSContext(userId: string): Promise<string> {
     }
 
   } catch (e) {
-    console.error('getUserSaaSContext error:', e);
+    logger.error('getUserSaaSContext error:', e);
   }
   if (parts.length === 0) return '';
   return `## YOUR LIVE SAAS STATE (as of this message)\n${parts.join('\n\n')}`;
@@ -7733,7 +7735,7 @@ app.post('/api/wordpress/connect', async (req: Request, res: Response) => {
     return res.json({ success: true, message: 'WordPress Connected Successfully' });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('password')) {
-      console.error('WordPress connect error:', err.message);
+      logger.error('WordPress connect error:', err.message);
     }
     await logIntegrationEvent({
       userId: null,
@@ -7762,7 +7764,7 @@ app.get('/api/wordpress/status', async (req: Request, res: Response) => {
     }
     return res.json({ success: true, connected: true, connectionType: 'wordpress_api', siteUrl: conn.siteUrl });
   } catch (err) {
-    console.error('WordPress status error:', err);
+    logger.error('WordPress status error:', err);
     return res.status(500).json({ success: false, error: 'Failed to get status' });
   }
 });
@@ -7800,7 +7802,7 @@ app.delete('/api/wordpress/disconnect', async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (err) {
-    console.error('WordPress disconnect error:', err);
+    logger.error('WordPress disconnect error:', err);
     return res.status(500).json({ success: false, error: 'Failed to disconnect' });
   }
 });
@@ -7864,7 +7866,7 @@ app.post('/api/wordpress/connect-webhook', async (req: Request, res: Response) =
     return res.json({ success: true, message: 'WordPress (Make) connected successfully' });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('webhook')) {
-      console.error('Connect webhook error:', err.message);
+      logger.error('Connect webhook error:', err.message);
     }
     return res.status(500).json({ success: false, error: 'Connection failed' });
   }
@@ -7928,7 +7930,7 @@ app.post('/api/wordpress/publish-webhook', async (req: Request, res: Response) =
     return res.json({ success: true, message: 'Post sent to WordPress successfully.' });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('webhook')) {
-      console.error('Publish webhook error:', err.message);
+      logger.error('Publish webhook error:', err.message);
     }
     return res.status(500).json({ success: false, error: 'Failed to publish to WordPress.' });
   }
@@ -7952,7 +7954,7 @@ app.get('/api/wordpress/categories', async (req: Request, res: Response) => {
     return res.json({ success: true, data: Array.isArray(data) ? data : [] });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('password')) {
-      console.error('WordPress categories error:', err.message);
+      logger.error('WordPress categories error:', err.message);
     }
     return res.status(500).json({ success: false, error: 'Failed to fetch categories' });
   }
@@ -7976,7 +7978,7 @@ app.get('/api/wordpress/tags', async (req: Request, res: Response) => {
     return res.json({ success: true, data: Array.isArray(data) ? data : [] });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('password')) {
-      console.error('WordPress tags error:', err.message);
+      logger.error('WordPress tags error:', err.message);
     }
     return res.status(500).json({ success: false, error: 'Failed to fetch tags' });
   }
@@ -8002,7 +8004,7 @@ app.get('/api/wordpress/posts', async (req: Request, res: Response) => {
     if (s !== 200) return res.status(400).json({ success: false, error: error || 'Failed to fetch posts' });
     return res.json({ success: true, data: Array.isArray(data) ? data : [] });
   } catch (err) {
-    console.error('WordPress list posts error:', err);
+    logger.error('WordPress list posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch posts' });
   }
 });
@@ -8024,7 +8026,7 @@ app.get('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
     if (s !== 200) return res.status(400).json({ success: false, error: error || 'Failed to fetch post' });
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('WordPress get post error:', err);
+    logger.error('WordPress get post error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch post' });
   }
 });
@@ -8056,7 +8058,7 @@ app.patch('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('WordPress update post error:', err);
+    logger.error('WordPress update post error:', err);
     return res.status(500).json({ success: false, error: 'Failed to update post' });
   }
 });
@@ -8101,7 +8103,7 @@ app.post('/api/wordpress/media/upload', async (req: Request, res: Response) => {
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('WordPress media upload error:', err);
+    logger.error('WordPress media upload error:', err);
     return res.status(500).json({ success: false, error: 'Failed to upload media' });
   }
 });
@@ -8232,7 +8234,7 @@ app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
     });
   } catch (err) {
     if (err instanceof Error && !err.message.includes('password')) {
-      console.error('WordPress publish error:', err.message);
+      logger.error('WordPress publish error:', err.message);
     }
     return res.status(500).json({ success: false, error: 'Failed to publish post' });
   }
@@ -8245,16 +8247,16 @@ app.get('/api/pricing/plans', async (req: Request, res: Response) => {
 
     if (!hasDatabase()) {
       plans = Array.from(inMemoryPricingPlansById.values());
-      console.log(`GET /api/pricing/plans - Returning ${plans.length} in-memory plans`);
+      logger.info(`GET /api/pricing/plans - Returning ${plans.length} in-memory plans`);
     } else {
       const result = await dbQuery<DbPricingPlan>(
         'SELECT id, name, description, price, billing_period, features, is_active, discount_percentage, is_on_sale, created_at, updated_at FROM pricing_plans ORDER BY created_at DESC'
       );
       plans = result.rows;
-      console.log(`GET /api/pricing/plans - Returning ${plans.length} database plans`);
+      logger.info(`GET /api/pricing/plans - Returning ${plans.length} database plans`);
     }
 
-    console.log('Plans to return:', plans.length > 0 ? plans[0] : 'No plans');
+    logger.info('Plans to return:', plans.length > 0 ? plans[0] : 'No plans');
 
     return res.json({
       success: true,
@@ -8273,7 +8275,7 @@ app.get('/api/pricing/plans', async (req: Request, res: Response) => {
       })),
     });
   } catch (error) {
-    console.error('Get pricing plans error:', error);
+    logger.error('Get pricing plans error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch pricing plans' });
   }
 });
@@ -8363,7 +8365,7 @@ app.post('/api/pricing/plans', async (req: Request, res: Response) => {
       });
     }
   } catch (error) {
-    console.error('Create pricing plan error:', error);
+    logger.error('Create pricing plan error:', error);
     return res.status(500).json({ success: false, error: 'Failed to create pricing plan' });
   }
 });
@@ -8462,7 +8464,7 @@ app.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
       });
     }
   } catch (error) {
-    console.error('Update pricing plan error:', error);
+    logger.error('Update pricing plan error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update pricing plan' });
   }
 });
@@ -8488,7 +8490,7 @@ app.delete('/api/pricing/plans/:id', async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Delete pricing plan error:', error);
+    logger.error('Delete pricing plan error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete pricing plan' });
   }
 });
@@ -8561,7 +8563,7 @@ app.patch('/api/pricing/plans/:id/status', async (req: Request, res: Response) =
       });
     }
   } catch (error) {
-    console.error('Update pricing plan status error:', error);
+    logger.error('Update pricing plan status error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update pricing plan status' });
   }
 });
@@ -8597,7 +8599,7 @@ app.get('/api/card-templates', async (req: Request, res: Response) => {
       })),
     });
   } catch (error) {
-    console.error('Get card templates error:', error);
+    logger.error('Get card templates error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch card templates' });
   }
 });
@@ -8631,7 +8633,7 @@ app.get('/api/card-templates/published', async (req: Request, res: Response) => 
       })),
     });
   } catch (error) {
-    console.error('Get published card templates error:', error);
+    logger.error('Get published card templates error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch published card templates' });
   }
 });
@@ -8682,7 +8684,7 @@ app.post('/api/card-templates', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Create card template error:', error);
+    logger.error('Create card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to create card template' });
   }
 });
@@ -8719,7 +8721,7 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
       inMemoryCardTemplatesById.set(id, updated);
 
       await syncCardTemplateMedia(admin.id, updated).catch((error) => {
-        console.error('Card template media sync error:', error);
+        logger.error('Card template media sync error:', error);
       });
 
       return res.json({
@@ -8759,7 +8761,7 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
 
       const template = result.rows[0];
       await syncCardTemplateMedia(admin.id, template).catch((error) => {
-        console.error('Card template media sync error:', error);
+        logger.error('Card template media sync error:', error);
       });
       return res.json({
         success: true,
@@ -8776,7 +8778,7 @@ app.put('/api/card-templates/:id', async (req: Request, res: Response) => {
       });
     }
   } catch (error) {
-    console.error('Update card template error:', error);
+    logger.error('Update card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update card template' });
   }
 });
@@ -8807,7 +8809,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
       inMemoryCardTemplatesById.set(id, updated);
 
       await syncCardTemplateMedia(admin.id, updated).catch((error) => {
-        console.error('Card template media sync error:', error);
+        logger.error('Card template media sync error:', error);
       });
 
       return res.json({
@@ -8840,7 +8842,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
 
       const template = result.rows[0];
       await syncCardTemplateMedia(admin.id, template).catch((error) => {
-        console.error('Card template media sync error:', error);
+        logger.error('Card template media sync error:', error);
       });
       return res.json({
         success: true,
@@ -8857,7 +8859,7 @@ app.post('/api/card-templates/:id/publish', async (req: Request, res: Response) 
       });
     }
   } catch (error) {
-    console.error('Publish card template error:', error);
+    logger.error('Publish card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to publish card template' });
   }
 });
@@ -8885,7 +8887,7 @@ app.post('/api/card-templates/:id/unpublish', async (req: Request, res: Response
       return res.json({ success: true });
     }
   } catch (error) {
-    console.error('Unpublish card template error:', error);
+    logger.error('Unpublish card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to unpublish card template' });
   }
 });
@@ -8909,7 +8911,7 @@ app.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
       return res.json({ success: true, message: 'Card template deleted' });
     }
   } catch (error) {
-    console.error('Delete card template error:', error);
+    logger.error('Delete card template error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete card template' });
   }
 });
@@ -9137,7 +9139,7 @@ app.get('/api/designs', async (req: Request, res: Response) => {
       return res.json({ success: true, designs });
     }
   } catch (error) {
-    console.error('Get designs error:', error);
+    logger.error('Get designs error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch designs' });
   }
 });
@@ -9164,7 +9166,7 @@ app.get('/api/designs/:id', async (req: Request, res: Response) => {
       return res.json({ success: true, design });
     }
   } catch (error) {
-    console.error('Get design error:', error);
+    logger.error('Get design error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch design' });
   }
 });
@@ -9201,14 +9203,14 @@ app.post('/api/designs', async (req: Request, res: Response) => {
     }
 
     await syncUserDesignMedia(auth.userId, design).catch((error) => {
-      console.error('Design media sync error:', error);
+      logger.error('Design media sync error:', error);
     });
 
     void checkTaskActions(auth.userId, 'create_card');
 
     return res.status(201).json({ success: true, design });
   } catch (error) {
-    console.error('Create design error:', error);
+    logger.error('Create design error:', error);
     return res.status(500).json({ success: false, error: 'Failed to create design' });
   }
 });
@@ -9238,7 +9240,7 @@ app.put('/api/designs/:id', async (req: Request, res: Response) => {
       if (result.rows.length === 0)
         return res.status(404).json({ success: false, error: 'Design not found' });
       await syncUserDesignMedia(auth.userId, result.rows[0] as DbDesign).catch((error) => {
-        console.error('Design media sync error:', error);
+        logger.error('Design media sync error:', error);
       });
       return res.json({ success: true, design: result.rows[0] });
     } else {
@@ -9256,12 +9258,12 @@ app.put('/api/designs/:id', async (req: Request, res: Response) => {
       };
       inMemoryDesigns.set(id, updated);
       await syncUserDesignMedia(auth.userId, updated).catch((error) => {
-        console.error('Design media sync error:', error);
+        logger.error('Design media sync error:', error);
       });
       return res.json({ success: true, design: updated });
     }
   } catch (error) {
-    console.error('Update design error:', error);
+    logger.error('Update design error:', error);
     return res.status(500).json({ success: false, error: 'Failed to update design' });
   }
 });
@@ -9281,7 +9283,7 @@ app.delete('/api/designs/:id', async (req: Request, res: Response) => {
     }
     return res.json({ success: true });
   } catch (error) {
-    console.error('Delete design error:', error);
+    logger.error('Delete design error:', error);
     return res.status(500).json({ success: false, error: 'Failed to delete design' });
   }
 });
@@ -9318,7 +9320,7 @@ app.get('/api/admin/platform-configs', async (req: Request, res: Response) => {
     }));
     return res.json({ success: true, configs });
   } catch (error) {
-    console.error('Get platform configs error:', error);
+    logger.error('Get platform configs error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch platform configs' });
   }
 });
@@ -9340,7 +9342,7 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
     const cfg = inMemoryPlatformConfigs.get(platform);
     return res.json({ success: true, config: cfg ?? null });
   } catch (error) {
-    console.error('Get platform config error:', error);
+    logger.error('Get platform config error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch platform config' });
   }
 });
@@ -9405,7 +9407,7 @@ app.get('/api/admin/platform-configs/:platform', async (req: Request, res: Respo
 
     return res.json({ success: true, message: 'Platform config saved' });
   } catch (error) {
-    console.error('Save platform config error:', error);
+    logger.error('Save platform config error:', error);
     return res.status(500).json({ success: false, error: 'Failed to save platform config' });
   }
 });
@@ -9564,7 +9566,7 @@ app.post('/api/payments/hubtel/initiate', async (req: Request, res: Response) =>
 
     return res.json({ success: true, checkoutUrl, clientReference });
   } catch (error: any) {
-    console.error('Hubtel initiate error:', error?.response?.data || error);
+    logger.error('Hubtel initiate error:', error?.response?.data || error);
     return res.status(502).json({ success: false, error: error?.response?.data?.message || 'Failed to initiate payment' });
   }
 });
@@ -9594,7 +9596,7 @@ app.post('/api/payments/hubtel/callback', async (req: Request, res: Response) =>
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Hubtel callback error:', error);
+    logger.error('Hubtel callback error:', error);
     return res.status(500).json({ success: false, error: 'Callback processing failed' });
   }
 });
@@ -9639,7 +9641,7 @@ app.get('/api/payments/hubtel/verify/:clientReference', async (req: Request, res
     if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found' });
     return res.json({ success: true, status: txn.status });
   } catch (error) {
-    console.error('Verify payment error:', error);
+    logger.error('Verify payment error:', error);
     return res.status(500).json({ success: false, error: 'Failed to verify payment' });
   }
 });
@@ -9661,7 +9663,7 @@ app.get('/api/admin/payments', async (req: Request, res: Response) => {
 
     return res.json({ success: true, transactions: inMemoryPaymentTransactions.slice(0, 200) });
   } catch (error) {
-    console.error('List payments error:', error);
+    logger.error('List payments error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch transactions' });
   }
 });
@@ -9697,7 +9699,7 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Payment stats error:', error);
+    logger.error('Payment stats error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch payment stats' });
   }
 });
@@ -10803,7 +10805,7 @@ function resolveOAuthRedirectUri(platform: string, redirectUri?: string, req?: R
 
     return res.json({ success: true, url: `${meta.authUrl}?${params.toString()}` });
   } catch (err) {
-    console.error('Authorize URL error:', err);
+    logger.error('Authorize URL error:', err);
     return res.status(500).json({ success: false, error: 'Failed to build authorization URL' });
   }
 });
@@ -10996,7 +10998,7 @@ app.get('/api/auth/:provider/start', async (req: Request, res: Response) => {
     });
     return res.redirect(`${authUrl}?${params.toString()}`);
   } catch (error) {
-    console.error('Social auth start error:', error);
+    logger.error('Social auth start error:', error);
     return res.status(500).json({ success: false, error: 'Failed to start social login' });
   }
 });
@@ -11011,7 +11013,7 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
     // Integration callbacks (LinkedIn/Twitter/Facebook/Instagram/Pinterest/Threads) belong to the frontend SPA path.
     if (!SOCIAL_PROVIDER_CONFIG[providerKey]) {
       const hasError = req.query['error'] || req.query['error_description'];
-      if (hasError) console.error(`OAuth callback error for ${providerKey}:`, req.query);
+      if (hasError) logger.error(`OAuth callback error for ${providerKey}:`, req.query);
       const query = new URLSearchParams(req.query as Record<string, string>).toString();
       const target = `${FRONTEND_URL}/auth/${encodeURIComponent(providerKey)}/callback${query ? `?${query}` : ''}`;
       return res.redirect(target);
@@ -11088,7 +11090,7 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
     const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     return res.redirect(`${FRONTEND_URL}/?auth_token=${token}&auth_provider=${provider}`);
   } catch (error) {
-    console.error('Social auth callback error:', error);
+    logger.error('Social auth callback error:', error);
     const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
     return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent('Social login failed')}`);
   }
@@ -11101,7 +11103,7 @@ app.get('/api/auth/providers', async (req: Request, res: Response) => {
   try {
     if (hasDatabase()) {
       const result = await dbQuery('SELECT provider, config FROM auth_providers WHERE enabled = true ORDER BY provider').catch((error) => {
-        console.error('Auth providers query failed; falling back to empty list:', error);
+        logger.error('Auth providers query failed; falling back to empty list:', error);
         return { rows: [] as any[] } as any;
       });
       return res.json({
@@ -11115,7 +11117,7 @@ app.get('/api/auth/providers', async (req: Request, res: Response) => {
     }
     return res.json({ success: true, providers: [] });
   } catch (error) {
-    console.error('Get auth providers error:', error);
+    logger.error('Get auth providers error:', error);
     // Never block the login page just because providers are misconfigured.
     return res.json({ success: true, providers: [] });
   }
@@ -11163,7 +11165,7 @@ app.post('/api/auth/facebook/token', async (req: Request, res: Response) => {
     const token = jwt.sign({ userId, email, role: userRole }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     return res.json({ success: true, token, user: { id: userId, email, name, role: userRole } });
   } catch (error) {
-    console.error('Facebook token auth error:', error);
+    logger.error('Facebook token auth error:', error);
     return res.status(401).json({ success: false, error: 'Facebook authentication failed' });
   }
 });
@@ -11179,7 +11181,7 @@ app.get('/api/admin/auth-providers', async (req: Request, res: Response) => {
     }
     return res.json({ success: true, providers: [] });
   } catch (error) {
-    console.error('Get admin auth providers error:', error);
+    logger.error('Get admin auth providers error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch auth providers' });
   }
 });
@@ -11204,7 +11206,7 @@ app.put('/api/admin/auth-providers/:provider', async (req: Request, res: Respons
     }
     return res.json({ success: true });
   } catch (error) {
-    console.error('Save auth provider error:', error);
+    logger.error('Save auth provider error:', error);
     return res.status(500).json({ success: false, error: 'Failed to save auth provider' });
   }
 });
@@ -11250,7 +11252,7 @@ app.get('/api/integrations/enabled', async (req: Request, res: Response) => {
 
     return res.json({ success: true, enabled });
   } catch (error) {
-    console.error('Get enabled integrations error:', error);
+    logger.error('Get enabled integrations error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch enabled integrations' });
   }
 });
@@ -11405,7 +11407,7 @@ app.get('/api/integrations/catalog', async (req: Request, res: Response) => {
 
     return res.json({ success: true, integrations });
   } catch (error) {
-    console.error('Get integration catalog error:', error);
+    logger.error('Get integration catalog error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch integrations' });
   }
 });
@@ -11446,7 +11448,7 @@ app.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) =
 
     return res.redirect(oauthUrl.toString());
   } catch (err) {
-    console.error('v1 facebook connect error:', err);
+    logger.error('v1 facebook connect error:', err);
     return res.status(500).send('Failed to start Facebook connection');
   }
 });
@@ -11493,7 +11495,7 @@ app.get('/api/v1/social/facebook/authorize-url', async (req: Request, res: Respo
 
     return res.json({ success: true, url: oauthUrl.toString() });
   } catch (err) {
-    console.error('v1 facebook authorize-url error:', err);
+    logger.error('v1 facebook authorize-url error:', err);
     return res.status(500).json({ success: false, error: 'Failed to build authorize URL' });
   }
 });
@@ -11557,7 +11559,7 @@ app.get('/api/v1/social/facebook/callback', async (req: Request, res: Response) 
     const dest = returnTo && returnTo.startsWith('/') ? `${FRONTEND_URL}${returnTo}` : fallbackOk;
     return res.redirect(dest);
   } catch (err) {
-    console.error('v1 facebook callback error:', err);
+    logger.error('v1 facebook callback error:', err);
     const msg = err instanceof Error ? err.message : 'Facebook OAuth failed';
     return res.redirect(fallbackErr(msg));
   }
@@ -11623,7 +11625,7 @@ app.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => 
 
     return res.json({ success: true, pages, missingPermissions });
   } catch (err) {
-    console.error('v1 facebook pages error:', err);
+    logger.error('v1 facebook pages error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook pages' });
   }
 });
@@ -11711,7 +11713,7 @@ app.get('/api/v1/social/facebook/targets', async (req: Request, res: Response) =
 
     return res.json({ success: true, pages, groups, missingPermissions, warnings });
   } catch (err) {
-    console.error('v1 facebook targets error:', err);
+    logger.error('v1 facebook targets error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
   }
 });
@@ -11795,7 +11797,7 @@ app.get('/api/v1/social/facebook/page-insights', async (req: Request, res: Respo
       paging: insightsData.paging || null,
     });
   } catch (err) {
-    console.error('v1 facebook page-insights error:', err);
+    logger.error('v1 facebook page-insights error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch page insights' });
   }
 });
@@ -11888,7 +11890,7 @@ app.get('/api/v1/social/facebook/post-insights', async (req: Request, res: Respo
       rawInsights: insightsData.data || [],
     });
   } catch (err) {
-    console.error('v1 facebook post-insights error:', err);
+    logger.error('v1 facebook post-insights error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch post insights' });
   }
 });
@@ -11952,7 +11954,7 @@ app.post('/api/v1/social/facebook/token-refresh', async (req: Request, res: Resp
 
     return res.json({ success: true, expiresAt, message: 'Facebook token refreshed successfully' });
   } catch (err) {
-    console.error('v1 facebook token-refresh error:', err);
+    logger.error('v1 facebook token-refresh error:', err);
     return res.status(500).json({ success: false, error: 'Failed to refresh Facebook token' });
   }
 });
@@ -12115,7 +12117,7 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
 
     return res.json({ success: true, account: saved });
   } catch (err) {
-    console.error('v1 save social account error:', {error: String(err instanceof Error ? err.message : err), stack: err instanceof Error ? err.stack : undefined});
+    logger.error('v1 save social account error:', {error: String(err instanceof Error ? err.message : err), stack: err instanceof Error ? err.stack : undefined});
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to save account' });
   }
 });
@@ -12146,7 +12148,7 @@ app.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
     const { rows } = await pool!.query(query, params);
     return res.json({ success: true, accounts: rows });
   } catch (err) {
-    console.error('v1 list social accounts error:', err);
+    logger.error('v1 list social accounts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to list accounts' });
   }
 });
@@ -12163,7 +12165,7 @@ app.delete('/api/v1/social/accounts/:id', async (req: Request, res: Response) =>
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Not found' });
     return res.json({ success: true });
   } catch (err) {
-    console.error('v1 delete social account error:', err);
+    logger.error('v1 delete social account error:', err);
     return res.status(500).json({ success: false, error: 'Failed to delete account' });
   }
 });
@@ -12267,7 +12269,7 @@ app.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Respon
 
     return res.json({ success: true, queued, skipped: Array.from(skipped) });
   } catch (err) {
-    console.error('v1 social repost error:', err);
+    logger.error('v1 social repost error:', err);
     return res.status(500).json({ success: false, error: 'Failed to queue repost' });
   }
 });
@@ -12357,7 +12359,7 @@ app.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Resp
     await syncSocialAutomationForPost(auth.userId, String(postId));
     return res.json({ success: true, id: settingId });
   } catch (err) {
-    console.error('v1 save social settings error:', err);
+    logger.error('v1 save social settings error:', err);
     return res.status(500).json({ success: false, error: 'Failed to save social settings' });
   }
 });
@@ -12399,7 +12401,7 @@ app.get('/api/v1/posts/:postId/social-settings', async (req: Request, res: Respo
       },
     });
   } catch (err) {
-    console.error('v1 fetch social settings error:', err);
+    logger.error('v1 fetch social settings error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch social settings' });
   }
 });
@@ -12432,7 +12434,7 @@ app.get('/api/social-templates/:platform', async (req: Request, res: Response) =
 
     return res.json({ success: true, settings });
   } catch (err) {
-    console.error('social templates get error:', err);
+    logger.error('social templates get error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load social template settings' });
   }
 });
@@ -12497,7 +12499,7 @@ app.put('/api/social-templates/:platform', async (req: Request, res: Response) =
     const settings = rows.length ? mergeSocialTemplateSettings(platformId, rows[0]) : next;
     return res.json({ success: true, settings });
   } catch (err) {
-    console.error('social templates save error:', err);
+    logger.error('social templates save error:', err);
     return res.status(500).json({ success: false, error: 'Failed to save social template settings' });
   }
 });
@@ -12542,7 +12544,7 @@ app.post('/api/social-templates/:platform/preview', async (req: Request, res: Re
     const preview = await renderSocialTemplatePreview(auth.userId, post, settings);
     return res.json({ success: true, ...preview });
   } catch (err) {
-    console.error('social templates preview error:', err);
+    logger.error('social templates preview error:', err);
     return res.status(500).json({ success: false, error: 'Failed to generate preview' });
   }
 });
@@ -12579,7 +12581,7 @@ app.delete('/api/admin/platform-configs/:platform', async (req: Request, res: Re
 
     return res.json({ success: true, message: 'Platform config reset' });
   } catch (error) {
-    console.error('Reset platform config error:', error);
+    logger.error('Reset platform config error:', error);
     return res.status(500).json({ success: false, error: 'Failed to reset platform config' });
   }
 });
@@ -12617,7 +12619,7 @@ app.get('/auth/:platform/callback', async (req: Request, res: Response) => {
     return res.redirect(dest);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'OAuth connection failed';
-    console.error('Platform OAuth callback error:', err);
+    logger.error('Platform OAuth callback error:', err);
     return res.redirect(fallbackErr(msg));
   }
 });
@@ -12648,7 +12650,7 @@ app.patch('/api/admin/platform-configs/:platform/toggle', async (req: Request, r
     }
     return res.json({ success: true, enabled: Boolean(enabled) });
   } catch (error) {
-    console.error('Toggle platform config error:', error);
+    logger.error('Toggle platform config error:', error);
     return res.status(500).json({ success: false, error: 'Failed to toggle integration' });
   }
 });
@@ -12762,7 +12764,7 @@ app.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: 
       }
     }
   } catch (err) {
-    console.error('Platform test error:', err);
+    logger.error('Platform test error:', err);
     return res.status(500).json({ success: false, error: 'Test failed' });
   }
 });
@@ -12876,7 +12878,7 @@ app.get('/api/admin/ai-config', async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    console.error('AI config GET error:', err);
+    logger.error('AI config GET error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch AI config' });
   }
 });
@@ -12949,7 +12951,7 @@ app.put('/api/admin/ai-config', async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    console.error('AI config PUT error:', err);
+    logger.error('AI config PUT error:', err);
     return res.status(500).json({ success: false, error: 'Failed to save AI config' });
   }
 });
@@ -12999,7 +13001,7 @@ async function getSkillsPromptForScope(page: string): Promise<string> {
       )
       .join('\n\n');
   } catch (e) {
-    console.error('getSkillsPromptForScope error:', e);
+    logger.error('getSkillsPromptForScope error:', e);
     return '';
   }
 }
@@ -13017,7 +13019,7 @@ app.get('/api/admin/ai-skills', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, skills: rows });
   } catch (err) {
-    console.error('ai-skills GET error:', err);
+    logger.error('ai-skills GET error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch skills' });
   }
 });
@@ -13043,7 +13045,7 @@ app.post('/api/admin/ai-skills', async (req: Request, res: Response) => {
     );
     return res.status(201).json({ success: true, skill: rows[0] });
   } catch (err) {
-    console.error('ai-skills POST error:', err);
+    logger.error('ai-skills POST error:', err);
     return res.status(500).json({ success: false, error: 'Failed to create skill' });
   }
 });
@@ -13081,7 +13083,7 @@ app.put('/api/admin/ai-skills/:id', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, skill: rows[0] });
   } catch (err) {
-    console.error('ai-skills PUT error:', err);
+    logger.error('ai-skills PUT error:', err);
     return res.status(500).json({ success: false, error: 'Failed to update skill' });
   }
 });
@@ -13097,7 +13099,7 @@ app.delete('/api/admin/ai-skills/:id', async (req: Request, res: Response) => {
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Skill not found' });
     return res.json({ success: true });
   } catch (err) {
-    console.error('ai-skills DELETE error:', err);
+    logger.error('ai-skills DELETE error:', err);
     return res.status(500).json({ success: false, error: 'Failed to delete skill' });
   }
 });
@@ -13112,7 +13114,7 @@ app.get('/api/pages/:slug', async (req: Request, res: Response) => {
     const { rows } = await pool!.query('SELECT content FROM page_content WHERE slug = $1', [slug]);
     return res.json({ success: true, content: rows[0]?.content ?? null });
   } catch (err) {
-    console.error('page_content GET error:', err);
+    logger.error('page_content GET error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch page content' });
   }
 });
@@ -13132,7 +13134,7 @@ app.put('/api/pages/:slug', async (req: Request, res: Response) => {
     );
     return res.json({ success: true });
   } catch (err) {
-    console.error('page_content PUT error:', err);
+    logger.error('page_content PUT error:', err);
     return res.status(500).json({ success: false, error: 'Failed to save page content' });
   }
 });
@@ -13659,7 +13661,7 @@ app.get('/media/:id/:filename', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.send(buffer);
   } catch (err) {
-    console.error('media serve error:', err);
+    logger.error('media serve error:', err);
     return res.status(500).send('Failed to serve image');
   }
 });
@@ -13726,7 +13728,7 @@ app.post('/api/media/upload', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, image: transformMediaRow(rows[0]) });
   } catch (err) {
-    console.error('media upload error:', err);
+    logger.error('media upload error:', err);
     return res.status(500).json({ success: false, error: 'Upload failed' });
   }
 });
@@ -13739,7 +13741,7 @@ app.get('/api/media', async (req: Request, res: Response) => {
   const { search, tag } = req.query as { search?: string; tag?: string };
   try {
     await syncAllPersistedMediaForUser(user.userId).catch((error) => {
-      console.error('Media list sync error:', error);
+      logger.error('Media list sync error:', error);
     });
 
     const params: unknown[] = [user.userId];
@@ -13752,7 +13754,7 @@ app.get('/api/media', async (req: Request, res: Response) => {
     const { rows } = await pool!.query(query, params);
     return res.json({ success: true, images: rows.map(transformMediaRow) });
   } catch (err) {
-    console.error('media list error:', err);
+    logger.error('media list error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch images' });
   }
 });
@@ -13786,7 +13788,7 @@ app.get('/api/media/:id/image', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.send(buffer);
   } catch (err) {
-    console.error('media serve error:', err);
+    logger.error('media serve error:', err);
     return res.status(500).send('Failed to serve image');
   }
 });
@@ -13820,7 +13822,7 @@ app.put('/api/media/:id', async (req: Request, res: Response) => {
     if (!rows.length) return res.status(404).json({ success: false, error: 'Image not found' });
     return res.json({ success: true, image: transformMediaRow(rows[0]) });
   } catch (err) {
-    console.error('media update error:', err);
+    logger.error('media update error:', err);
     return res.status(500).json({ success: false, error: 'Update failed' });
   }
 });
@@ -13835,7 +13837,7 @@ app.delete('/api/media/:id', async (req: Request, res: Response) => {
     await pool!.query('DELETE FROM media_images WHERE id = $1 AND user_id = $2', [id, user.userId]);
     return res.json({ success: true });
   } catch (err) {
-    console.error('media delete error:', err);
+    logger.error('media delete error:', err);
     return res.status(500).json({ success: false, error: 'Delete failed' });
   }
 });
@@ -13851,7 +13853,7 @@ app.post('/api/media/bulk-delete', async (req: Request, res: Response) => {
     await pool!.query('DELETE FROM media_images WHERE id = ANY($1) AND user_id = $2', [ids, user.userId]);
     return res.json({ success: true });
   } catch (err) {
-    console.error('media bulk delete error:', err);
+    logger.error('media bulk delete error:', err);
     return res.status(500).json({ success: false, error: 'Bulk delete failed' });
   }
 });
@@ -13865,7 +13867,7 @@ app.get('/api/admin/media', async (req: Request, res: Response) => {
   try {
     if (userId) {
       await syncAllPersistedMediaForUser(userId).catch((error) => {
-        console.error('Admin media list sync error:', error);
+        logger.error('Admin media list sync error:', error);
       });
     }
 
@@ -13882,7 +13884,7 @@ app.get('/api/admin/media', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, images: rows.map(transformMediaRow) });
   } catch (err) {
-    console.error('admin media list error:', err);
+    logger.error('admin media list error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch images' });
   }
 });
@@ -13898,7 +13900,7 @@ app.get('/api/admin/media/stats', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, stats: rows[0] });
   } catch (err) {
-    console.error('admin media stats error:', err);
+    logger.error('admin media stats error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch stats' });
   }
 });
@@ -13913,7 +13915,7 @@ app.delete('/api/admin/media/:id', async (req: Request, res: Response) => {
     await pool!.query('DELETE FROM media_images WHERE id = $1', [id]);
     return res.json({ success: true });
   } catch (err) {
-    console.error('admin media delete error:', err);
+    logger.error('admin media delete error:', err);
     return res.status(500).json({ success: false, error: 'Delete failed' });
   }
 });
@@ -13930,7 +13932,7 @@ app.get('/api/media/admin-assets', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, images: rows.map(transformMediaRow) });
   } catch (err) {
-    console.error('admin assets error:', err);
+    logger.error('admin assets error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load admin assets' });
   }
 });
@@ -13948,7 +13950,7 @@ app.patch('/api/admin/media/:id/category', async (req: Request, res: Response) =
     const { rows } = await pool!.query('UPDATE media_images SET category=$1 WHERE id=$2 RETURNING *', [category, id]);
     return res.json({ success: true, image: transformMediaRow(rows[0]) });
   } catch (err) {
-    console.error('admin media category error:', err);
+    logger.error('admin media category error:', err);
     return res.status(500).json({ success: false, error: 'Update failed' });
   }
 });
@@ -14012,7 +14014,7 @@ app.get('/api/media/audit', async (req: Request, res: Response) => {
       }
     });
   } catch (err) {
-    console.error('media audit error:', err);
+    logger.error('media audit error:', err);
     return res.status(500).json({ success: false, error: 'Audit failed' });
   }
 });
@@ -14031,7 +14033,7 @@ app.post('/api/media/sync-all-images', async (req: Request, res: Response) => {
       message: `Synced ${sync.created} missing image(s) from ${sync.scanned} persisted source reference(s)`,
     });
   } catch (err) {
-    console.error('media sync error:', err);
+    logger.error('media sync error:', err);
     return res.status(500).json({ success: false, error: 'Sync failed' });
   }
 });
@@ -14115,7 +14117,7 @@ app.post('/api/admin/media/verify-integrity', async (req: Request, res: Response
       }
     });
   } catch (err) {
-    console.error('media integrity check error:', err);
+    logger.error('media integrity check error:', err);
     return res.status(500).json({ success: false, error: 'Verification failed' });
   }
 });
@@ -14136,7 +14138,7 @@ app.post('/api/admin/media/fix-integrity', async (req: Request, res: Response) =
     );
     fixed += fixCategoryResult.rows.length;
     if (fixCategoryResult.rows.length > 0) {
-      console.log(`[media-fix] Fixed category for ${fixCategoryResult.rows.length} images`);
+      logger.info(`[media-fix] Fixed category for ${fixCategoryResult.rows.length} images`);
     }
 
     // Fix 2: Delete orphaned images
@@ -14145,7 +14147,7 @@ app.post('/api/admin/media/fix-integrity', async (req: Request, res: Response) =
     );
     fixed += deleteOrphanResult.rows.length;
     if (deleteOrphanResult.rows.length > 0) {
-      console.log(`[media-fix] Deleted ${deleteOrphanResult.rows.length} orphaned images`);
+      logger.info(`[media-fix] Deleted ${deleteOrphanResult.rows.length} orphaned images`);
     }
 
     // Fix 3: Re-scan persisted image sources for every user and register anything missing.
@@ -14155,7 +14157,7 @@ app.post('/api/admin/media/fix-integrity', async (req: Request, res: Response) =
       fixed += sync.created;
     }
     if (usersResult.rows.length > 0) {
-      console.log(`[media-fix] Re-scanned persisted media sources for ${usersResult.rows.length} user(s)`);
+      logger.info(`[media-fix] Re-scanned persisted media sources for ${usersResult.rows.length} user(s)`);
     }
 
     return res.json({ 
@@ -14164,7 +14166,7 @@ app.post('/api/admin/media/fix-integrity', async (req: Request, res: Response) =
       message: `Fixed ${fixed} media integrity issues`
     });
   } catch (err) {
-    console.error('media fix integrity error:', err);
+    logger.error('media fix integrity error:', err);
     return res.status(500).json({ success: false, error: 'Fix failed' });
   }
 });
@@ -14264,7 +14266,7 @@ app.get('/api/admin/db-audit', async (req: Request, res: Response) => {
       cache_hit_ratio_pct: cacheRes.rows[0]?.ratio ?? null,
     });
   } catch (err: any) {
-    console.error('[db-audit]', err);
+    logger.error('[db-audit]', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -14322,7 +14324,7 @@ app.post('/api/admin/db-cleanup', async (req: Request, res: Response) => {
 
     return res.json({ success: errors.length === 0, log, errors });
   } catch (err: any) {
-    console.error('[db-cleanup]', err);
+    logger.error('[db-cleanup]', err);
     return res.status(500).json({ success: false, error: err.message, log, errors });
   }
 });
@@ -14427,7 +14429,7 @@ app.get('/api/linkedin/targets', async (req: Request, res: Response) => {
 
     return res.json({ success: true, targets, warning });
   } catch (error) {
-    console.error('LinkedIn targets error:', error);
+    logger.error('LinkedIn targets error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch LinkedIn targets' });
   }
 });
@@ -14476,7 +14478,7 @@ app.post('/api/v1/social/linkedin/token-refresh', async (req: Request, res: Resp
     });
     return res.json({ success: true, message: 'LinkedIn access token refreshed', expiresAt });
   } catch (err) {
-    console.error('LinkedIn token refresh error:', err);
+    logger.error('LinkedIn token refresh error:', err);
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Refresh failed' });
   }
 });
@@ -14707,7 +14709,7 @@ app.get('/api/v1/calendar', async (req: Request, res: Response) => {
     setCalendarCache(cacheKey, payload);
     return res.json({ success: true, ...payload });
   } catch (err) {
-    console.error('calendar fetch error:', err);
+    logger.error('calendar fetch error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load calendar' });
   }
 });
@@ -14730,7 +14732,7 @@ app.get('/api/v1/posts', async (req: Request, res: Response) => {
     const { rows } = await pool!.query(q, params);
     return res.json({ success: true, posts: rows });
   } catch (err) {
-    console.error('posts list error:', err);
+    logger.error('posts list error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load posts' });
   }
 });
@@ -14779,7 +14781,7 @@ app.post('/api/v1/posts', async (req: Request, res: Response) => {
     clearCalendarCacheForUser(user.userId);
     return res.status(201).json({ success: true, post: rows[0] });
   } catch (err) {
-    console.error('post create error:', err);
+    logger.error('post create error:', err);
     return res.status(500).json({ success: false, error: 'Failed to create post' });
   }
 });
@@ -14858,7 +14860,7 @@ app.put('/api/v1/posts/:id', async (req: Request, res: Response) => {
     clearCalendarCacheForUser(user.userId);
     return res.json({ success: true, post: rows[0] });
   } catch (err) {
-    console.error('post update error:', err);
+    logger.error('post update error:', err);
     return res.status(500).json({ success: false, error: 'Failed to update post' });
   }
 });
@@ -14875,7 +14877,7 @@ app.delete('/api/v1/posts/:id', async (req: Request, res: Response) => {
     clearCalendarCacheForUser(user.userId);
     return res.json({ success: true });
   } catch (err) {
-    console.error('post delete error:', err);
+    logger.error('post delete error:', err);
     return res.status(500).json({ success: false, error: 'Failed to delete post' });
   }
 });
@@ -15224,7 +15226,7 @@ async function resolveBlogPostFeaturedImageUrl(userId: string, post: Record<stri
       if (!ensured?.row) return chosen;
       return buildMediaServeUrl(ensured.row.id, ensured.row.file_name);
     } catch (err) {
-      console.error('Failed to resolve blog post featured image URL:', err);
+      logger.error('Failed to resolve blog post featured image URL:', err);
       return chosen;
     }
   }
@@ -15493,7 +15495,7 @@ function startTokenHealthMonitor() {
     try {
       await flagExpiringSocialAccounts();
     } catch (err) {
-      console.warn('[SocialAutomation] Token health scan failed:', err);
+      logger.warn('[SocialAutomation] Token health scan failed:', err);
     }
   };
   void run();
@@ -15687,7 +15689,7 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
       if (p.is_verified     != null) user.is_verified     = p.is_verified;
     }
   } catch (profileErr: any) {
-    console.log('[TikTok profile] user.info.profile exception:', profileErr?.message);
+    logger.info('[TikTok profile] user.info.profile exception:', profileErr?.message);
   }
 
   // ── Call 3: user.info.stats fields — optional ─────────────────────────────
@@ -15696,7 +15698,7 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
   try {
     const statsResp = await ttGet('follower_count,following_count,likes_count,video_count');
     const statsErr  = statsResp.data?.error?.code;
-    console.log('[TikTok stats] status:', statsResp.status, 'error:', statsErr, 'user:', JSON.stringify(statsResp.data?.data?.user));
+    logger.info('[TikTok stats] status:', statsResp.status, 'error:', statsErr, 'user:', JSON.stringify(statsResp.data?.data?.user));
     if (statsResp.status === 200 && (!statsErr || statsErr === 'ok') && statsResp.data?.data?.user) {
       const s = statsResp.data.data.user;
       if (s.follower_count  != null) user.follower_count  = s.follower_count;
@@ -15705,10 +15707,10 @@ async function fetchTikTokUserProfile(token: string): Promise<{ user: any; scope
       if (s.video_count     != null) user.video_count     = s.video_count;
     }
   } catch (statsErr: any) {
-    console.log('[TikTok stats] exception:', statsErr?.message);
+    logger.info('[TikTok stats] exception:', statsErr?.message);
   }
 
-  console.log('[TikTok profile] final user object:', JSON.stringify(user));
+  logger.info('[TikTok profile] final user object:', JSON.stringify(user));
   const hasStats = user.follower_count != null;
   return { user, scopeLimited: !hasStats };
 }
@@ -16516,7 +16518,7 @@ async function ensureBullMqSocialAutomationQueue() {
   );
 
   socialAutomationWorker.on('error', (err) => {
-    console.error('[SocialAutomation] BullMQ worker error:', err);
+    logger.error('[SocialAutomation] BullMQ worker error:', err);
   });
 }
 
@@ -16970,7 +16972,7 @@ function startSocialAutomationProcessor() {
           await enqueueBullMqJob(String(r.id), String(r.run_at), String(r.platform || ''));
         }
       } catch (err) {
-        console.error('[SocialAutomation] BullMQ init failed, falling back to DB worker:', err);
+        logger.error('[SocialAutomation] BullMQ init failed, falling back to DB worker:', err);
         startSocialAutomationWorker();
       }
     })();
@@ -17655,7 +17657,7 @@ async function publishToplatform(
       };
     }
 
-    console.log(`[Distribution] ${platformName}: token available, platform publishing not yet implemented`);
+    logger.info(`[Distribution] ${platformName}: token available, platform publishing not yet implemented`);
     return { status: 'failed', error: `${platformName} publishing is not implemented yet` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -17958,7 +17960,7 @@ app.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
     // Meta expects: { url, confirmation_code }
     return res.json({ url: statusUrl, confirmation_code: confirmationCode });
   } catch (error) {
-    console.error('Meta data deletion error:', error);
+    logger.error('Meta data deletion error:', error);
     return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
   }
 });
@@ -17982,7 +17984,7 @@ app.get('/api/meta/data-deletion/status', async (req: Request, res: Response) =>
       },
     });
   } catch (error) {
-    console.error('Meta deletion status error:', error);
+    logger.error('Meta deletion status error:', error);
     return res.status(500).json({ success: false, error: 'Failed to load status' });
   }
 });
@@ -18007,7 +18009,7 @@ app.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('Meta deauthorize error:', error);
+    logger.error('Meta deauthorize error:', error);
     return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
   }
 });
@@ -18218,7 +18220,7 @@ app.get('/api/mailing/contacts/analytics', async (req: Request, res: Response) =
       over_time: overTime.rows.map(r => ({ label: r.label, new_contacts: +r.new_contacts, cumulative: +r.cumulative })),
       by_source: bySource.rows.map(r => ({ source: r.source, total: +r.total, subscribed: +r.subscribed, unsubscribed: +r.unsubscribed })),
     });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
+  } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
 });
 
 // POST /api/mailing/contacts/:id/send-email — send a direct email to one contact
@@ -18247,7 +18249,7 @@ app.post('/api/mailing/contacts/:id/send-email', async (req: Request, res: Respo
       [randomUUID(), auth.userId, contact.id]
     ).catch(() => undefined);
     return res.json({ success: true });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Send failed' }); }
+  } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Send failed' }); }
 });
 
 // GET /api/mailing/contacts/tags — list all unique tags for user
@@ -18409,7 +18411,7 @@ app.get('/api/mailing/segments/:id/contacts', async (req: Request, res: Response
     );
     return res.json({ success: true, contacts: rows });
   } catch (err) {
-    console.error('[segment contacts]', err);
+    logger.error('[segment contacts]', err);
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to fetch contacts' });
   }
 });
@@ -18834,7 +18836,7 @@ app.get('/api/surveys/:id/analytics', async (req: Request, res: Response) => {
       }
     }
     return res.json({ success: true, total_responses: totalResponses, completion_rate: 100, questions: questionsRecord });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
+  } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
 });
 
 // ── Public Survey Routes (no auth) ──────────────────────────────────────────
@@ -18868,7 +18870,7 @@ app.post('/api/public/surveys/:id/respond', async (req: Request, res: Response) 
       `INSERT INTO survey_responses (id, survey_id, contact_id, respondent_email, answers, ip_address) VALUES ($1,$2,$3,$4,$5,$6)`,
       [id, req.params.id, contactId, email?.toLowerCase().trim() || null, JSON.stringify(answers), ip]);
     return res.json({ success: true, thank_you_message: survey.thank_you_message });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, error: 'Failed to submit response' }); }
+  } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: 'Failed to submit response' }); }
 });
 
 // ─── End Surveys API Routes ───────────────────────────────────────────────────
@@ -19517,7 +19519,7 @@ app.get('/api/blog/analytics/dashboard', async (req: Request, res: Response) => 
       },
     });
   } catch (err) {
-    console.error('Analytics dashboard error:', err);
+    logger.error('Analytics dashboard error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch analytics dashboard' });
   }
 });
@@ -19566,7 +19568,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
               const postsCount = parseInt(String(pd.posts?.summary?.total_count ?? 0)) || 0;
               const bio        = typeof pd.about === 'string' && pd.about.trim() ? pd.about.trim() : null;
               const pageName   = typeof pd.name  === 'string' && pd.name.trim()  ? pd.name.trim()  : null;
-              console.log('[Facebook sync] page:', pageName, 'followers:', followers, 'posts:', postsCount);
+              logger.info('[Facebook sync] page:', pageName, 'followers:', followers, 'posts:', postsCount);
               await pool!.query(
                 `INSERT INTO social_profile_stats
                    (id, user_id, social_account_id, platform,
@@ -19674,7 +19676,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
               const following  = Number(u.following_count ?? 0);
               const postsCount = Number(u.video_count     ?? 0);
               const totalLikes = Number(u.likes_count     ?? 0);
-              console.log('[TikTok sync] followers:', followers, 'following:', following, 'posts:', postsCount, 'likes:', totalLikes, 'scopeLimited:', scopeLimited);
+              logger.info('[TikTok sync] followers:', followers, 'following:', following, 'posts:', postsCount, 'likes:', totalLikes, 'scopeLimited:', scopeLimited);
               const bio        = typeof u.bio_description === 'string' ? u.bio_description : null;
               const isVerified = Boolean(u.is_verified ?? false);
 
@@ -19711,7 +19713,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
               );
               // Verify what actually landed in the DB
               const verify = await pool!.query(`SELECT followers FROM social_profile_stats WHERE social_account_id=$1`, [acct.id]);
-              console.log('[TikTok sync] DB followers after upsert:', verify.rows[0]?.followers);
+              logger.info('[TikTok sync] DB followers after upsert:', verify.rows[0]?.followers);
               synced++;
               if (scopeLimited) {
                 errors.push('tiktok: stats scope not granted — reconnect TikTok to enable follower/video counts');
@@ -19747,7 +19749,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
 
               const vidErrCode = videosResp.data?.error?.code;
               if (vidErrCode && vidErrCode !== 'ok') {
-                if (ttPage === 0) console.log(`TikTok video.list scope not available (${vidErrCode}) — skipping`);
+                if (ttPage === 0) logger.info(`TikTok video.list scope not available (${vidErrCode}) — skipping`);
                 break;
               }
               if (videosResp.status !== 200) break;
@@ -19817,7 +19819,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
               if (!ttHasMore || ttCursor === undefined) break;
             }
           } catch (vidErr: any) {
-            console.error('TikTok video fetch error:', vidErr.message);
+            logger.error('TikTok video fetch error:', vidErr.message);
           }
         } else if (platform === 'pinterest') {
           const pinterestResult = await syncPinterestAnalyticsAccount({
@@ -19878,7 +19880,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
       } catch (platformErr: any) {
         const msg = platformErr?.response?.data?.error?.message || platformErr?.message || 'Failed';
         errors.push(`${platform}: ${msg}`);
-        console.error(`Analytics sync error for ${platform}:`, msg);
+        logger.error(`Analytics sync error for ${platform}:`, msg);
       }
     }
 
@@ -19892,7 +19894,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
 
     return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
-    console.error('Analytics refresh error:', err);
+    logger.error('Analytics refresh error:', err);
     return res.status(500).json({ success: false, error: 'Failed to sync analytics' });
   }
 });
@@ -19938,7 +19940,7 @@ app.get('/api/blog/analytics/export', async (req: Request, res: Response) => {
     res.setHeader('Content-Disposition', `attachment; filename="analytics-${range.preset}-${analyticsFmtDate(new Date())}.csv"`);
     return res.send(csvLines.join('\n'));
   } catch (err) {
-    console.error('Analytics export error:', err);
+    logger.error('Analytics export error:', err);
     return res.status(500).json({ success: false, error: 'Failed to export analytics' });
   }
 });
@@ -19996,7 +19998,7 @@ app.get('/api/analytics/social/accounts', async (req: Request, res: Response) =>
 
     return res.json({ success: true, accounts: result.rows, days });
   } catch (err) {
-    console.error('Social accounts analytics error:', err);
+    logger.error('Social accounts analytics error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch account analytics' });
   }
 });
@@ -20093,7 +20095,7 @@ app.get('/api/analytics/social/account/:accountId', async (req: Request, res: Re
       ),
     ]);
 
-    console.log('[TikTok dashboard] account row followers:', account.followers, 'following_count:', account.following_count, 'video_count:', account.video_count);
+    logger.info('[TikTok dashboard] account row followers:', account.followers, 'following_count:', account.following_count, 'video_count:', account.video_count);
     return res.json({
       success: true,
       account: {
@@ -20115,7 +20117,7 @@ app.get('/api/analytics/social/account/:accountId', async (req: Request, res: Re
       days,
     });
   } catch (err) {
-    console.error('Account analytics error:', err);
+    logger.error('Account analytics error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch account analytics' });
   }
 });
@@ -20193,7 +20195,7 @@ app.get('/api/analytics/social/comparison', async (req: Request, res: Response) 
       days,
     });
   } catch (err) {
-    console.error('Comparison analytics error:', err);
+    logger.error('Comparison analytics error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch comparison analytics' });
   }
 });
@@ -20306,7 +20308,7 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
           const listErrCode = listResp.data?.error?.code;
           if (listErrCode && listErrCode !== 'ok') {
             if (pageCount === 0) {
-              console.log(`TikTok video.list scope not available (${listErrCode}) — skipping video sync`);
+              logger.info(`TikTok video.list scope not available (${listErrCode}) — skipping video sync`);
             }
             break;
           }
@@ -20381,7 +20383,7 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
 
     return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
-    console.error('TikTok sync error:', err);
+    logger.error('TikTok sync error:', err);
     return res.status(500).json({ success: false, error: 'TikTok sync failed' });
   }
 });
@@ -20450,7 +20452,7 @@ app.get('/api/social/tiktok/videos', async (req: Request, res: Response) => {
       days,
     });
   } catch (err) {
-    console.error('TikTok videos error:', err);
+    logger.error('TikTok videos error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch TikTok videos' });
   }
 });
@@ -20500,7 +20502,7 @@ app.get('/api/social/tiktok/followers', async (req: Request, res: Response) => {
       synced_at:    row.synced_at    ?? null,
     });
   } catch (err) {
-    console.error('TikTok followers error:', err);
+    logger.error('TikTok followers error:', err);
     return res.json({ followers: null, hasData: false });
   }
 });
@@ -20615,7 +20617,7 @@ app.post('/api/social/facebook/sync', async (req: Request, res: Response) => {
 
           if (postsResp.status !== 200) {
             if (pageCount === 0) {
-              console.log(`Facebook posts endpoint error (${postsResp.status}) — skipping posts sync`);
+              logger.info(`Facebook posts endpoint error (${postsResp.status}) — skipping posts sync`);
             }
             break;
           }
@@ -20680,7 +20682,7 @@ app.post('/api/social/facebook/sync', async (req: Request, res: Response) => {
 
     return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
-    console.error('Facebook sync error:', err);
+    logger.error('Facebook sync error:', err);
     return res.status(500).json({ success: false, error: 'Facebook sync failed' });
   }
 });
@@ -20746,7 +20748,7 @@ app.get('/api/social/facebook/posts', async (req: Request, res: Response) => {
       days,
     });
   } catch (err) {
-    console.error('Facebook posts error:', err);
+    logger.error('Facebook posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook posts' });
   }
 });
@@ -20793,7 +20795,7 @@ app.get('/api/social/facebook/stats', async (req: Request, res: Response) => {
       synced_at:      row.synced_at    ?? null,
     });
   } catch (err) {
-    console.error('Facebook stats error:', err);
+    logger.error('Facebook stats error:', err);
     return res.json({ stats: null, hasData: false });
   }
 });
@@ -20845,7 +20847,7 @@ app.get('/api/social/facebook/accounts', async (req: Request, res: Response) => 
       total_groups: groups.length,
     });
   } catch (err) {
-    console.error('Facebook accounts error:', err);
+    logger.error('Facebook accounts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook accounts' });
   }
 });
@@ -20884,7 +20886,7 @@ app.post('/api/social/instagram/sync', async (req: Request, res: Response) => {
 
     return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
-    console.error('Instagram sync error:', err);
+    logger.error('Instagram sync error:', err);
     return res.status(500).json({ success: false, error: 'Instagram sync failed' });
   }
 });
@@ -20946,7 +20948,7 @@ app.get('/api/social/instagram/profile', async (req: Request, res: Response) => 
       synced_at: row.synced_at ?? null,
     });
   } catch (err) {
-    console.error('Instagram profile error:', err);
+    logger.error('Instagram profile error:', err);
     return res.json({ profile: null, hasData: false });
   }
 });
@@ -21052,7 +21054,7 @@ app.get('/api/social/instagram/posts', async (req: Request, res: Response) => {
       days,
     });
   } catch (err) {
-    console.error('Instagram posts error:', err);
+    logger.error('Instagram posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Instagram posts' });
   }
 });
@@ -21092,7 +21094,7 @@ app.post('/api/social/pinterest/sync', async (req: Request, res: Response) => {
       errors: result.errors.length > 0 ? result.errors : undefined,
     });
   } catch (err) {
-    console.error('Pinterest sync error:', err);
+    logger.error('Pinterest sync error:', err);
     return res.status(500).json({ success: false, error: 'Pinterest sync failed' });
   }
 });
@@ -21179,7 +21181,7 @@ app.get('/api/social/pinterest/profile', async (req: Request, res: Response) => 
       synced_at: row.synced_at ?? null,
     });
   } catch (err) {
-    console.error('Pinterest profile error:', err);
+    logger.error('Pinterest profile error:', err);
     return res.json({
       hasData: false,
       followers: null,
@@ -21321,7 +21323,7 @@ app.get('/api/social/pinterest/pins', async (req: Request, res: Response) => {
       days,
     });
   } catch (err) {
-    console.error('Pinterest pins error:', err);
+    logger.error('Pinterest pins error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest pins' });
   }
 });
@@ -21384,7 +21386,7 @@ app.get('/api/social/pinterest/boards-performance', async (req: Request, res: Re
 
     return res.json({ success: true, boards, days });
   } catch (err) {
-    console.error('Pinterest boards performance error:', err);
+    logger.error('Pinterest boards performance error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Pinterest board performance' });
   }
 });
@@ -21429,7 +21431,7 @@ app.post('/api/social/threads/sync', async (req: Request, res: Response) => {
       errors: result.errors.length > 0 ? result.errors : undefined,
     });
   } catch (err) {
-    console.error('Threads sync error:', err);
+    logger.error('Threads sync error:', err);
     return res.status(500).json({ success: false, error: 'Threads sync failed' });
   }
 });
@@ -21577,7 +21579,7 @@ app.get('/api/social/threads/profile', async (req: Request, res: Response) => {
       synced_at: row.synced_at ?? null,
     });
   } catch (err) {
-    console.error('Threads profile error:', err);
+    logger.error('Threads profile error:', err);
     return res.json({
       hasData: false,
       followers: null,
@@ -21719,7 +21721,7 @@ app.get('/api/social/threads/posts', async (req: Request, res: Response) => {
       days,
     });
   } catch (err) {
-    console.error('Threads posts error:', err);
+    logger.error('Threads posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Threads posts' });
   }
 });
@@ -21760,7 +21762,7 @@ app.get('/api/social/threads/debug-token', async (req: Request, res: Response) =
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('Threads debug-token error:', err);
+    logger.error('Threads debug-token error:', err);
     return res.status(500).json({ success: false, error: 'Failed to debug Threads token' });
   }
 });
@@ -21808,7 +21810,7 @@ app.get('/api/social/threads/replies', async (req: Request, res: Response) => {
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('Threads replies error:', err);
+    logger.error('Threads replies error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Threads replies' });
   }
 });
@@ -21849,7 +21851,7 @@ app.post('/api/social/threads/replies/hide', async (req: Request, res: Response)
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('Threads manage-reply error:', err);
+    logger.error('Threads manage-reply error:', err);
     return res.status(500).json({ success: false, error: 'Failed to manage Threads reply' });
   }
 });
@@ -21931,7 +21933,7 @@ app.post('/api/social/threads/replies/respond', async (req: Request, res: Respon
     const platformPostId = String(pubData?.id || '').trim();
     return res.json({ success: true, platformPostId });
   } catch (err) {
-    console.error('Threads reply publish error:', err);
+    logger.error('Threads reply publish error:', err);
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Failed to publish Threads reply' });
   }
 });
@@ -21976,7 +21978,7 @@ app.get('/api/social/threads/locations/search', async (req: Request, res: Respon
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('Threads location search error:', err);
+    logger.error('Threads location search error:', err);
     return res.status(500).json({ success: false, error: 'Failed to search Threads locations' });
   }
 });
@@ -22013,7 +22015,7 @@ app.get('/api/social/threads/locations/:locationId', async (req: Request, res: R
 
     return res.json({ success: true, data });
   } catch (err) {
-    console.error('Threads location lookup error:', err);
+    logger.error('Threads location lookup error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Threads location' });
   }
 });
@@ -22143,7 +22145,7 @@ app.post('/api/social/linkedin/sync', async (req: Request, res: Response) => {
 
     return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
-    console.error('LinkedIn sync error:', err);
+    logger.error('LinkedIn sync error:', err);
     return res.status(500).json({ success: false, error: 'LinkedIn sync failed' });
   }
 });
@@ -22188,7 +22190,7 @@ app.get('/api/social/linkedin/profile', async (req: Request, res: Response) => {
       synced_at: row.synced_at ?? null,
     });
   } catch (err) {
-    console.error('LinkedIn profile error:', err);
+    logger.error('LinkedIn profile error:', err);
     return res.json({ profile: null, hasData: false });
   }
 });
@@ -22234,7 +22236,7 @@ app.get('/api/social/linkedin/posts', async (req: Request, res: Response) => {
       summary: summaryRes.rows[0] || { total_posts: 0 },
     });
   } catch (err) {
-    console.error('LinkedIn posts error:', err);
+    logger.error('LinkedIn posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch LinkedIn posts' });
   }
 });
@@ -22274,11 +22276,11 @@ app.get('/api/social/linkedin/organizations', async (req: Request, res: Response
       });
       return res.json({ success: true, organizations });
     } catch (err: any) {
-      console.error('LinkedIn organizations error:', err.message);
+      logger.error('LinkedIn organizations error:', err.message);
       return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch organizations' });
     }
   } catch (err) {
-    console.error('LinkedIn organizations list error:', err);
+    logger.error('LinkedIn organizations list error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch organizations' });
   }
 });
@@ -22447,7 +22449,7 @@ app.post('/api/social/linkedin/company-sync', async (req: Request, res: Response
 
     return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
-    console.error('LinkedIn company sync error:', err);
+    logger.error('LinkedIn company sync error:', err);
     return res.status(500).json({ success: false, error: 'LinkedIn company sync failed' });
   }
 });
@@ -22497,7 +22499,7 @@ app.get('/api/social/linkedin/company-stats', async (req: Request, res: Response
       synced_at: row.synced_at ?? null,
     });
   } catch (err) {
-    console.error('LinkedIn company stats error:', err);
+    logger.error('LinkedIn company stats error:', err);
     return res.json({ stats: null, hasData: false });
   }
 });
@@ -22554,7 +22556,7 @@ app.get('/api/social/linkedin/company-posts', async (req: Request, res: Response
       summary: summaryRes.rows[0] || {},
     });
   } catch (err) {
-    console.error('LinkedIn company posts error:', err);
+    logger.error('LinkedIn company posts error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch company posts' });
   }
 });
@@ -22629,9 +22631,9 @@ async function ensureCampaignQueue() {
         throw err;
       }
     }, { connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }) as any, concurrency: 5 });
-    campaignWorker.on('error', (err) => console.error('[CampaignQueue] Worker error:', err));
+    campaignWorker.on('error', (err) => logger.error('[CampaignQueue] Worker error:', err));
   } catch (err) {
-    console.error('[CampaignQueue] Init failed:', err);
+    logger.error('[CampaignQueue] Init failed:', err);
     campaignQueue = null;
   }
 }
@@ -22645,7 +22647,7 @@ async function enqueueCampaignJob(jobRowId: string): Promise<string | null> {
     return String(job.id);
   } catch (err: any) {
     if (/Job.*already exists/i.test(String(err?.message || ''))) return jobRowId;
-    console.error('[CampaignQueue] Enqueue error:', err);
+    logger.error('[CampaignQueue] Enqueue error:', err);
     return null;
   }
 }
@@ -22896,7 +22898,7 @@ app.post('/api/campaign/campaigns/create', async (req: Request, res: Response) =
     });
   } catch (err: any) {
     await client.query('ROLLBACK').catch(() => undefined);
-    console.error('[Campaign Create] Transaction failed:', err?.message || err);
+    logger.error('[Campaign Create] Transaction failed:', err?.message || err);
     // Log error context for debugging
     pool.query(
       `INSERT INTO funnel_events (id, owner_user_id, event_type, event_name, properties)
@@ -22926,7 +22928,7 @@ app.get('/api/campaign/campaigns', async (req: Request, res: Response) => {
     );
     return res.json({ success: true, campaigns: rows });
   } catch (err) {
-    console.error('list campaigns error:', err);
+    logger.error('list campaigns error:', err);
     return res.status(500).json({ success: false, error: 'Failed to list campaigns' });
   }
 });
@@ -22946,7 +22948,7 @@ app.post('/api/campaign/campaigns', async (req: Request, res: Response) => {
     );
     return res.status(201).json({ success: true, campaign: rows[0] });
   } catch (err) {
-    console.error('create campaign error:', err);
+    logger.error('create campaign error:', err);
     return res.status(500).json({ success: false, error: 'Failed to create campaign' });
   }
 });
@@ -23207,7 +23209,7 @@ app.post('/api/campaign/campaigns/:id/utmlinks', async (req: Request, res: Respo
     );
     return res.status(201).json({ success: true, link: rows[0] });
   } catch (err) {
-    console.error('create utm link error:', err);
+    logger.error('create utm link error:', err);
     return res.status(500).json({ success: false, error: 'Failed to create UTM link' });
   }
 });
@@ -23258,7 +23260,7 @@ app.get('/api/campaign/campaigns/:id/metrics', async (req: Request, res: Respons
       },
     });
   } catch (err) {
-    console.error('campaign metrics error:', err);
+    logger.error('campaign metrics error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch metrics' });
   }
 });
@@ -23954,7 +23956,7 @@ async function preselectPlatformsForPost(
       );
     }
   } catch (e) {
-    console.error('preselectPlatformsForPost error:', e);
+    logger.error('preselectPlatformsForPost error:', e);
   }
   return result;
 }
@@ -24322,7 +24324,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
     res.write('data: [DONE]\n\n');
     res.end();
   } catch (error: any) {
-    console.error('AI chat error:', error);
+    logger.error('AI chat error:', error);
     if (!res.headersSent) {
       return res.status(500).json({ success: false, error: error?.message || 'AI request failed' });
     }
@@ -24825,7 +24827,7 @@ app.post('/api/memory/scrape', async (req: Request, res: Response) => {
         }
       }
     } catch (e) {
-      console.error(`Apify scrape error for ${job.type}:`, (e as any)?.message);
+      logger.error(`Apify scrape error for ${job.type}:`, (e as any)?.message);
     }
   }
 
@@ -24884,7 +24886,7 @@ Extract 8–15 fields covering: brand name, tagline/description, mission, produc
         }
       }
     } catch (e) {
-      console.error('AI memory extraction error:', (e as any)?.message);
+      logger.error('AI memory extraction error:', (e as any)?.message);
     }
   }
 
@@ -25760,7 +25762,7 @@ app.delete('/api/admin/higgsfield/generations/:id', async (req: Request, res: Re
 
 function sanitizeMagnificError(raw: string): string {
   if (raw.toLowerCase().includes('free trial') || raw.toLowerCase().includes('magnific.com/developers')) {
-    console.error('[Magnific] Account limit reached:', raw);
+    logger.error('[Magnific] Account limit reached:', raw);
     return 'Video generation is temporarily unavailable. Please try again later.';
   }
   return raw;
@@ -25772,7 +25774,7 @@ const _PROXY = (() => {
   const raw = (process.env.MAGNIFIC_PROXY_URL ?? '').trim().replace(/\/$/, '');
   if (!raw) return '';
   try { new URL(raw); return raw; }
-  catch { console.error(`[proxy] Invalid MAGNIFIC_PROXY_URL "${raw}" — must start with https://. Falling back to direct API.`); return ''; }
+  catch { logger.error(`[proxy] Invalid MAGNIFIC_PROXY_URL "${raw}" — must start with https://. Falling back to direct API.`); return ''; }
 })();
 const MAGNIFIC_BASE = _PROXY ? `${_PROXY}/magnific` : 'https://api.magnific.com';
 
@@ -25918,7 +25920,7 @@ async function magnificGenerateImage(
   }
 
   const submitResp = await magnificPost(cfg.endpoint, body, apiKey);
-  console.log(`[Magnific] ${modelId} ${cfg.endpoint} → HTTP ${submitResp.status}`, JSON.stringify(submitResp.data)?.slice(0, 300));
+  logger.info(`[Magnific] ${modelId} ${cfg.endpoint} → HTTP ${submitResp.status}`, JSON.stringify(submitResp.data)?.slice(0, 300));
   if (submitResp.status >= 400) {
     const isHtml = typeof submitResp.data === 'string' && submitResp.data.trimStart().startsWith('<');
     const msg = isHtml
@@ -25931,7 +25933,7 @@ async function magnificGenerateImage(
   // Mystic and some endpoints use 'id' instead of 'task_id'
   const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id ?? submitResp.data?.data?.id ?? submitResp.data?.id;
   if (!taskId) {
-    console.error('[Magnific] response missing task_id:', JSON.stringify(submitResp.data)?.slice(0, 500));
+    logger.error('[Magnific] response missing task_id:', JSON.stringify(submitResp.data)?.slice(0, 500));
     return { url: null, taskId: null, error: 'No task_id in Magnific response' };
   }
   const poll = await pollMagnificTask(cfg.pollPath(taskId), apiKey, 120, onProgress);
@@ -26680,7 +26682,7 @@ async function storeGoogleImage(base64Data: string, mimeType: string): Promise<s
       const url: string = resp.data?.data?.display_url ?? resp.data?.data?.url ?? '';
       if (url) return url;
     }
-  } catch (e) { console.error('[storeGoogleImage] imgbb upload failed:', e); }
+  } catch (e) { logger.error('[storeGoogleImage] imgbb upload failed:', e); }
   return `data:${mimeType};base64,${base64Data}`;
 }
 
@@ -26705,7 +26707,7 @@ async function pollGoogleOperation(
         const errMsg: string = resp.data.error?.message ?? 'Generation failed';
         return { error: errMsg };
       }
-    } catch (e: any) { console.error('[pollGoogleOperation]', e.message); }
+    } catch (e: any) { logger.error('[pollGoogleOperation]', e.message); }
   }
   return { error: 'Video generation timed out' };
 }
@@ -26853,7 +26855,7 @@ app.post('/api/google/generate-image', async (req: Request, res: Response) => {
     return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId });
   } catch (e: any) {
     const msg: string = e.response?.data?.error?.message ?? e.message;
-    console.error('[google/generate-image]', msg);
+    logger.error('[google/generate-image]', msg);
     await pool!.query(`UPDATE google_generations SET status='failed', error=$1 WHERE id=$2`, [msg, genId]).catch(() => undefined);
     return res.status(500).json({ error: 'Image generation is temporarily unavailable. Please try again later.' });
   }
@@ -26934,7 +26936,7 @@ app.post('/api/google/generate-video', async (req: Request, res: Response) => {
     return res.json({ success: true, url: result.url, design_id: designId, gen_id: genId });
   } catch (e: any) {
     const msg: string = e.response?.data?.error?.message ?? e.message;
-    console.error('[google/generate-video]', msg);
+    logger.error('[google/generate-video]', msg);
     await pool!.query(`UPDATE google_generations SET status='failed', error=$1 WHERE id=$2`, [msg, genId]).catch(() => undefined);
     return res.status(500).json({ error: 'Video generation is temporarily unavailable. Please try again later.' });
   }
@@ -27112,7 +27114,7 @@ app.post('/api/openai/generate-image', async (req: Request, res: Response) => {
     return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId, revised_prompt: item.revised_prompt ?? null });
   } catch (e: any) {
     const msg: string = e.response?.data?.error?.message ?? e.message;
-    console.error('[openai/generate-image]', msg);
+    logger.error('[openai/generate-image]', msg);
     await pool!.query(`UPDATE openai_generations SET status='failed', error=$1 WHERE id=$2`, [msg, genId]).catch(() => undefined);
     return res.status(500).json({ error: 'Image generation is temporarily unavailable. Please try again later.' });
   }
@@ -27169,7 +27171,7 @@ app.post('/api/openai/tts', async (req: Request, res: Response) => {
     const msg: string = e.response
       ? JSON.parse(Buffer.from(e.response.data).toString())?.error?.message ?? `HTTP ${e.response.status}`
       : e.message;
-    console.error('[openai/tts]', msg);
+    logger.error('[openai/tts]', msg);
     await pool!.query(`UPDATE openai_generations SET status='failed', error=$1 WHERE id=$2`, [msg, genId]).catch(() => undefined);
     return res.status(500).json({ error: 'Text-to-speech is temporarily unavailable. Please try again later.' });
   }
@@ -27718,7 +27720,7 @@ async function checkTaskActions(
       });
     }
   } catch (err) {
-    console.error('[checkTaskActions] error:', err);
+    logger.error('[checkTaskActions] error:', err);
   }
   return progressed;
 }
@@ -30283,13 +30285,13 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
       if (!result.error) {
         imageUrl = result.url;
       } else {
-        console.log('[generate-image] Replicate failed:', result.error);
+        logger.info('[generate-image] Replicate failed:', result.error);
         if (result.error.includes('Invalid Replicate')) {
           await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [result.error, genId]).catch(() => undefined);
           return res.status(400).json({ error: result.error });
         }
         // Non-auth Replicate error — skip Magnific (Akamai-blocked from Railway), fall through to Freepik
-        console.log('[generate-image] Replicate non-auth error, skipping Magnific, trying Freepik');
+        logger.info('[generate-image] Replicate non-auth error, skipping Magnific, trying Freepik');
       }
     }
 
@@ -30309,7 +30311,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
             await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [genResult.error, genId]).catch(() => undefined);
             return res.status(400).json({ error: genResult.error });
           }
-          console.log('[generate-image] Magnific blocked, trying Freepik');
+          logger.info('[generate-image] Magnific blocked, trying Freepik');
         }
       }
     }
@@ -30362,7 +30364,7 @@ app.post('/api/nova/generate-image', async (req: Request, res: Response) => {
          VALUES ($1, GREATEST(0, 100 - $2), date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
          ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
         [auth.userId, actualCreditCost]
-      ).catch((e) => console.error('Credit deduction fallback failed:', e));
+      ).catch((e) => logger.error('Credit deduction fallback failed:', e));
     }
 
     return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId });

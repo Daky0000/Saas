@@ -1,5 +1,6 @@
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
+import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string; email?: string } | null;
 
@@ -858,7 +859,7 @@ export function registerBlogAnalyticsRoutes({ router, getPool, requireAuth }: Ro
       const dashboard = await buildBlogAnalyticsDashboard(pool, user.userId, range);
       return res.json({ success: true, data: dashboard });
     } catch (error) {
-      console.error('blog analytics dashboard error:', error);
+      logger.error({ err: error }, 'blog_analytics_dashboard_error');
       return sendApiError(res, 500, 'Failed to load analytics dashboard.', 'ANALYTICS_DASHBOARD_ERROR');
     }
   });
@@ -887,7 +888,7 @@ export function registerBlogAnalyticsRoutes({ router, getPool, requireAuth }: Ro
       );
       return res.send(csv);
     } catch (error) {
-      console.error('blog analytics export error:', error);
+      logger.error({ err: error }, 'blog_analytics_export_error');
       return sendApiError(res, 500, 'Failed to export analytics.', 'ANALYTICS_EXPORT_ERROR');
     }
   });
@@ -909,7 +910,7 @@ export function registerBlogAnalyticsRoutes({ router, getPool, requireAuth }: Ro
       }
       return res.json({ success: true, message: 'Analytics refreshed.' });
     } catch (error) {
-      console.error('blog analytics refresh error:', error);
+      logger.error({ err: error }, 'blog_analytics_refresh_error');
       return sendApiError(res, 500, 'Failed to refresh analytics.', 'ANALYTICS_REFRESH_ERROR');
     }
   });

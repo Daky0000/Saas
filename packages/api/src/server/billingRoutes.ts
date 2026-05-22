@@ -1,6 +1,7 @@
 import express from 'express';
 import type Stripe from 'stripe';
 import type { Router, Request, Response } from 'express';
+import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string; email?: string } | null;
 type RequireAuthFn = (req: Request, res: Response) => AuthResult;
@@ -130,7 +131,7 @@ export function registerBillingRoutes({
 
       res.json({ success: true, url: session.url });
     } catch (e: any) {
-      console.error('Stripe checkout error:', e);
+      logger.error({ err: e }, 'stripe_checkout_error');
       res.status(500).json({ success: false, error: e.message || 'Failed to create checkout session' });
     }
   });
@@ -156,7 +157,7 @@ export function registerBillingRoutes({
       });
       res.json({ success: true, url: session.url });
     } catch (e: any) {
-      console.error('Stripe portal error:', e);
+      logger.error({ err: e }, 'stripe_portal_error');
       res.status(500).json({ success: false, error: e.message || 'Failed to open billing portal' });
     }
   });
