@@ -2,7 +2,6 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -13,12 +12,8 @@ const rootDir = resolve(process.cwd());
 const buildDir = resolve(rootDir, 'packages', 'web', 'dist');
 const buildIndex = resolve(buildDir, 'index.html');
 const buildAssets = resolve(buildDir, 'assets');
-const build404 = resolve(buildDir, '404.html');
 const buildNoJekyll = resolve(buildDir, '.nojekyll');
 const docsDir = resolve(rootDir, 'docs');
-const rootAssets = resolve(rootDir, 'assets');
-const rootIndex = resolve(rootDir, 'index.html');
-const root404 = resolve(rootDir, '404.html');
 const rootCname = resolve(rootDir, 'CNAME');
 
 console.log('Starting post-build sync process for GitHub Pages (from packages/web)...');
@@ -31,66 +26,33 @@ if (!existsSync(buildAssets)) {
   throw new Error('dist/assets not found. Run the Vite build before syncing.');
 }
 
-const assets = readdirSync(buildAssets);
-const jsBundle = assets.find((file) => /^index-.*\.js$/.test(file));
-const cssBundle = assets.find((file) => /^index-.*\.css$/.test(file));
-
-if (!jsBundle || !cssBundle) {
-  throw new Error('Expected built index JS/CSS bundles were not found in dist/assets.');
-}
-
-const jsBundlePath = resolve(buildAssets, jsBundle);
-const cssBundlePath = resolve(buildAssets, cssBundle);
-const finalJsPath = resolve(buildAssets, 'app.js');
-const finalCssPath = resolve(buildAssets, 'app.css');
-
-// Rename hashed assets to stable names
-cpSync(jsBundlePath, finalJsPath);
-cpSync(cssBundlePath, finalCssPath);
-
-// Remove original hashed files
-rmSync(jsBundlePath);
-rmSync(cssBundlePath);
-const jsMap = assets.find(f => f === `${jsBundle}.map`);
-if (jsMap) rmSync(resolve(buildAssets, jsMap));
-const cssMap = assets.find(f => f === `${cssBundle}.map`);
-if (cssMap) rmSync(resolve(buildAssets, cssMap));
-
-
-const rewriteHtml = (html) =>
-  html
-    .replace(/src="\/assets\/[^"]+\.js(\?[^"]*)?"/g, `src="/assets/app.js"`)
-    .replace(/href="\/assets\/[^"]+\.css(\?[^"]*)?"/g, `href="/assets/app.css"`);
-
+// index.html is the SPA entry — also serve it as 404.html so GitHub Pages
+// routes all unknown paths back to the React app (client-side routing).
 const builtHtml = readFileSync(buildIndex, 'utf8');
-const syncedHtml = rewriteHtml(builtHtml);
-
-// Overwrite dist output with stable entry files
-writeFileSync(buildIndex, syncedHtml, 'utf8');
-writeFileSync(build404, syncedHtml, 'utf8');
+writeFileSync(resolve(buildDir, '404.html'), builtHtml, 'utf8');
 writeFileSync(buildNoJekyll, '', 'utf8');
 
 if (existsSync(rootCname)) {
   cpSync(rootCname, resolve(buildDir, 'CNAME'));
 }
 
-console.log(`Synced GitHub Pages files within 'dist' directory. Stable files: app.js, app.css`);
+console.log('Built GitHub Pages files in dist directory. Entry files retain hash-based names for cache busting.');
 
 const mirrorStaticSite = (targetDir, label) => {
   const targetAssets = resolve(targetDir, 'assets');
-  const targetIndex = resolve(targetDir, 'index.html');
-  const target404 = resolve(targetDir, '404.html');
-  const targetNoJekyll = resolve(targetDir, '.nojekyll');
 
+  // Remove old assets entirely so stale chunk files don't linger
   if (existsSync(targetAssets)) {
     rmSync(targetAssets, { recursive: true, force: true });
   }
 
   mkdirSync(targetAssets, { recursive: true });
   cpSync(buildAssets, targetAssets, { recursive: true });
-  writeFileSync(targetIndex, syncedHtml, 'utf8');
-  writeFileSync(target404, syncedHtml, 'utf8');
-  writeFileSync(targetNoJekyll, '', 'utf8');
+
+  // Write index.html and 404.html (404 = SPA fallback for client-side routes)
+  writeFileSync(resolve(targetDir, 'index.html'), builtHtml, 'utf8');
+  writeFileSync(resolve(targetDir, '404.html'), builtHtml, 'utf8');
+  writeFileSync(resolve(targetDir, '.nojekyll'), '', 'utf8');
 
   if (existsSync(rootCname) && resolve(targetDir, 'CNAME') !== rootCname) {
     cpSync(rootCname, resolve(targetDir, 'CNAME'));
