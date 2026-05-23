@@ -1,6 +1,7 @@
+import { prisma } from "../utils/prisma";
 
 import axios from "axios";
-import { PrismaClient, PostStatus 
+import { PostStatus } from "@prisma/client";
 
   static async fetchAccountProfile(integration: any) {
     const accessToken = integration.accessToken
@@ -369,7 +370,6 @@ import { PinterestAdapter
   }
 } from "./platform-adapters/pinterest.adapter";
 
-const prisma = new PrismaClient();
 
 export type DateRange = { start: Date; end: Date 
 

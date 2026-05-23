@@ -1,9 +1,9 @@
-import { PrismaClient, PostPlatformStatus, PostStatus } from "@prisma/client";
+import { PostPlatformStatus, PostStatus } from "@prisma/client";
 import { addPostToQueue, removePostJobs } from "./automation/queue";
 import { pickPlatformContent } from "../utils/platform-helpers";
 import { logIntegrationEvent } from "../utils/integration-log";
+import { prisma } from "../utils/prisma";
 
-const prisma = new PrismaClient();
 
 export class PostService {
   static async getPostById(id: string, agencyId: string) {

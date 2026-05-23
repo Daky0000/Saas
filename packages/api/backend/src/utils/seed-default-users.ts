@@ -1,7 +1,6 @@
-import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";import { prisma } from "./prisma";
 
-const prisma = new PrismaClient();
+
 
 const DEFAULT_AGENCY = "Default Agency";
 const MAX_RETRIES = Number(process.env.SEED_DEFAULT_USERS_RETRIES || "5");

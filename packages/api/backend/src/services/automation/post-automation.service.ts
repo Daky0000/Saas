@@ -1,4 +1,5 @@
-import {
+import {import { prisma } from "../../utils/prisma";
+
   PrismaClient,
   PostPlatformStatus,
   PostStatus,
@@ -8,7 +9,6 @@ import { addPostToQueue, removePostJobs } from "./queue";
 import { pickPlatformContent } from "../../utils/platform-helpers";
 import { logIntegrationEvent } from "../../utils/integration-log";
 
-const prisma = new PrismaClient();
 
 type RecurringConfig = {
   daysOfWeek?: number[];

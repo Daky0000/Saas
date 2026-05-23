@@ -1,11 +1,6 @@
 import axios from "axios";
 import crypto from "crypto";
-import {
-  PrismaClient,
-  ConnectionStatus,
-  Integration,
-  UserIntegration,
-} from "@prisma/client";
+import { ConnectionStatus, Integration, UserIntegration } from "@prisma/client";
 import { encryptToken, decryptToken } from "../utils/encryption";
 import { logIntegrationEvent } from "../utils/integration-log";
 import { FacebookAdapter } from "./platform-adapters/facebook.adapter";
@@ -13,8 +8,8 @@ import { InstagramAdapter } from "./platform-adapters/instagram.adapter";
 import { TwitterAdapter } from "./platform-adapters/twitter.adapter";
 import { LinkedInAdapter } from "./platform-adapters/linkedin.adapter";
 import { PinterestAdapter } from "./platform-adapters/pinterest.adapter";
+import { prisma } from "../utils/prisma";
 
-const prisma = new PrismaClient();
 
 const DEFAULT_INTEGRATIONS: Array<Pick<Integration, "name" | "slug" | "type">> = [
   { name: "Facebook", slug: "facebook", type: "social" },

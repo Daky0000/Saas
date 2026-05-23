@@ -1,8 +1,8 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../utils/prisma";
+
 import { TikTokAdapter } from "./platform-adapters/tiktok.adapter";
 import { decryptToken } from "../utils/encryption";
 
-const prisma = new PrismaClient();
 
 export class AccountMetricsService {
   /**

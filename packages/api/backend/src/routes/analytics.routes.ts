@@ -1,6 +1,7 @@
+import { prisma } from "../utils/prisma";
 
 import axios from "axios";
-import { PrismaClient, PostStatus } from "@prisma/client";
+import { PostStatus } from "@prisma/client";
 import { logIntegrationEvent } from "../utils/integration-log";
 import { decryptToken } from "../utils/encryption";
 import { FacebookAdapter } from "./platform-adapters/facebook.adapter";
@@ -9,7 +10,6 @@ import { TwitterAdapter } from "./platform-adapters/twitter.adapter";
 import { LinkedInAdapter } from "./platform-adapters/linkedin.adapter";
 import { PinterestAdapter } from "./platform-adapters/pinterest.adapter";
 
-const prisma = new PrismaClient();
 
 export type DateRange = { start: Date; end: Date };
 

@@ -1,9 +1,8 @@
-import bcrypt from "bcryptjs";
+import bcrypt from "bcryptjs";import { prisma } from "../utils/prisma";
+
 import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
 import { seedDefaultUsersNow } from "../utils/seed-default-users";
 
-const prisma = new PrismaClient();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
 export class AuthService {

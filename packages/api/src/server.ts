@@ -35,6 +35,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { registerBlogRoutes } from './server/blogRoutes.ts';
 import { registerBillingRoutes } from './server/billingRoutes.ts';
+import { registerSurveyRoutes, registerPublicSurveyRoutes } from './server/surveyRoutes.ts';
 import { registerNotificationRoutes } from './server/notificationsRoutes.ts';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
@@ -74,7 +75,8 @@ async function refreshStripe(): Promise<void> {
       stripe = null;
       STRIPE_WEBHOOK_SECRET = '';
     }
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // DB not ready yet — ignore, keep current value
   }
 }
@@ -82,6 +84,52 @@ async function refreshStripe(): Promise<void> {
 const app = express();
 const PORT = config.port;
 app.use(requestIdMiddleware);
+
+// ── Security & parsing middleware — must be before ALL routes ─────────────────
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
+    credentials: true,
+  })
+);
+app.use(
+  helmet({
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          'https://connect.facebook.net',
+          'https://www.googletagmanager.com',
+          'https://www.google-analytics.com',
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        connectSrc: [
+          "'self'",
+          'https://contentflow-api-production.up.railway.app',
+          'https://www.google-analytics.com',
+        ],
+        frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.facebook.com'],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: config.nodeEnv === 'production' ? [] : null,
+      },
+    },
+  })
+);
+// Raw body capture for Stripe webhook signature verification
+app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Health check — registered first so Railway can reach it immediately on startup
 app.get('/health', (_req: Request, res: Response) => {
@@ -119,7 +167,8 @@ app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
       res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
       return;
     }
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // DB error — fail open so a transient hiccup doesn't lock everyone out
   }
   next();
@@ -247,7 +296,8 @@ function resolveMetaUrl(base: string, value: string) {
   if (!value) return '';
   try {
     return new URL(value, base).toString();
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return value;
   }
 }
@@ -4030,58 +4080,7 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
   dbReady = true;
 }
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.has(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error(`Origin not allowed by CORS: ${origin}`));
-    },
-    credentials: true,
-  })
-);
-app.use(
-  helmet({
-    crossOriginEmbedderPolicy: false,
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        // Scripts: self + Google Fonts/Analytics + Facebook SDK
-        scriptSrc: [
-          "'self'",
-          'https://connect.facebook.net',
-          'https://www.googletagmanager.com',
-          'https://www.google-analytics.com',
-        ],
-        // Styles: self + Google Fonts + inline (Tailwind/styled-components)
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-        // Images: self + data URIs + common CDNs
-        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-        // Connections: self + API + common analytics
-        connectSrc: [
-          "'self'",
-          'https://contentflow-api-production.up.railway.app',
-          'https://www.google-analytics.com',
-        ],
-        // Frames: YouTube embeds (surveys), Facebook OAuth
-        frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.facebook.com'],
-        // Restrict object/embed/base
-        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-        formAction: ["'self'"],
-        // Upgrade insecure requests in production
-        upgradeInsecureRequests: config.nodeEnv === 'production' ? [] : null,
-      },
-    },
-  })
-);
-app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-
-// ── Stripe Webhook (must be after raw-body capture, before nothing else needs raw) ──
+// ── Stripe Webhook ──
 app.post('/webhooks/stripe', async (req: Request, res: Response) => {
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
   const sig = req.headers['stripe-signature'] as string;
@@ -4386,7 +4385,7 @@ app.post('/api/v1/social/facebook/webhook-subscribe', async (req: Request, res: 
     const row: any = pageResult.rows[0] || {};
     let pageToken = '';
     if (row.access_token_encrypted) {
-      try { pageToken = decryptIntegrationSecret(String(row.access_token_encrypted)); } catch { /* ignore */ }
+      try { pageToken = decryptIntegrationSecret(String(row.access_token_encrypted)); } catch (_err) { /* ignore */ }
     }
     if (!pageToken) pageToken = String(row.access_token || '').trim();
     if (!pageToken) return res.status(400).json({ success: false, error: 'Page token not available — save the page first' });
@@ -4500,16 +4499,7 @@ const inMemoryPricingPlansById = new Map<string, DbPricingPlan>();
 const inMemoryCardTemplatesById = new Map<string, DbCardTemplate>();
 
 type PlatformConfigRow = { platform: string; config: Record<string, string>; enabled: boolean; updated_at: string };
-type PaymentTransactionRow = {
-  id: string; amount: number; currency: string; description: string | null;
-  status: string; provider: string; client_reference: string | null;
-  provider_reference: string | null; customer_name: string | null;
-  customer_email: string | null; customer_phone: string | null;
-  checkout_url: string | null; metadata: Record<string, unknown> | null;
-  created_at: string; updated_at: string;
-};
 const inMemoryPlatformConfigs = new Map<string, PlatformConfigRow>();
-const inMemoryPaymentTransactions: PaymentTransactionRow[] = [];
 
 async function getPlatformConfig(platform: string): Promise<Record<string, string>> {
   if (hasDatabase()) {
@@ -4688,7 +4678,8 @@ async function getUserPlanName(userId: string): Promise<string> {
       [userId]
     );
     return rows[0]?.name ?? 'Free';
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return 'Free';
   }
 }
@@ -4750,7 +4741,8 @@ function getAuthUser(req: Request) {
       email: typeof payload.email === 'string' ? payload.email : '',
       tokenVersion: typeof payload.tokenVersion === 'number' ? payload.tokenVersion : null,
     };
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return null;
   }
 }
@@ -5255,7 +5247,8 @@ async function checkTokenVersion(auth: { userId: string; tokenVersion: number | 
       return false;
     }
     return true;
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return true; // DB error — fail open to avoid blocking all requests
   }
 }
@@ -5376,7 +5369,7 @@ async function compileAgentSkill(userId: string, agentKey: string): Promise<void
       512
     );
     await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [skill, userId, agentKey]);
-  } catch { /* non-fatal */ }
+  } catch (_err) { /* non-fatal */ }
 }
 
 async function triggerAgentCompilation(userId: string): Promise<void> {
@@ -6228,7 +6221,8 @@ app.get('/api/facebook/targets', async (req: Request, res: Response) => {
               .filter((g: any) => g.id)
           : [];
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       warnings.push('Facebook groups lookup failed');
     }
 
@@ -6667,7 +6661,8 @@ function parseLinkedInScopeList(value: unknown): string[] {
   let decoded = raw;
   try {
     decoded = decodeURIComponent(raw);
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     decoded = raw;
   }
   return Array.from(new Set(decoded.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean)));
@@ -6820,7 +6815,8 @@ async function introspectLinkedInAccessToken(accessToken: string, req?: Request)
     }
 
     return lastResponse?.data || null;
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return null;
   }
 }
@@ -6890,7 +6886,8 @@ async function enrichLinkedInTokenData(tokenData: any, req?: Request) {
         enriched.sub = linkedInId;
       }
       if (fullName) enriched.name = fullName;
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // best-effort enrichment; token can still be stored without profile data
     }
   }
@@ -6975,7 +6972,8 @@ async function exchangePinterestCode(code: string, req?: Request) {
           tokenData?.name ||
           null;
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // Ignore identity enrichment failures; token exchange still succeeds.
     }
   }
@@ -7111,7 +7109,8 @@ async function exchangeFacebookCode(code: string, redirectUriOverride?: string) 
         if (meData?.picture) tokenData.picture = meData.picture;
         if (meData?.picture?.data?.url) tokenData.avatar_url = String(meData.picture.data.url);
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // best-effort; token still valid even if profile lookup fails
     }
   }
@@ -7183,7 +7182,8 @@ async function exchangeThreadsCode(code: string) {
         access_token: String((longRes.data as any).access_token || '').trim() || shortLived,
       };
     }
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // ignore - keep short-lived token if exchange fails
     finalTokenData = tokenData;
   }
@@ -7214,7 +7214,8 @@ async function exchangeThreadsCode(code: string) {
         if (me?.threads_profile_picture_url) finalTokenData.avatar_url = String(me.threads_profile_picture_url);
         if (me?.threads_biography) finalTokenData.about = String(me.threads_biography);
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // ignore — token is still valid even if enrichment fails
     }
   }
@@ -7275,7 +7276,8 @@ async function exchangeTikTokCode(code: string, codeVerifier?: string) {
       if (finalUser.display_name) tokenData.name = finalUser.display_name;
       if (finalUser.username) tokenData.username = finalUser.username;
       if (finalUser.avatar_url) tokenData.avatar_url = finalUser.avatar_url;
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // best-effort enrichment
     }
   }
@@ -7332,7 +7334,8 @@ async function storeUserConnection(userId: string, platform: string, tokenData: 
             : {}),
         };
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // Best-effort enrichment only; posting can still proceed with the token alone.
     }
   }
@@ -7468,7 +7471,7 @@ async function seedSocialMemory(
         200,
       );
     }
-  } catch { /* fall through to plain text */ }
+  } catch (_err) { /* fall through to plain text */ }
 
   if (!content) {
     content = `${platformLabel} account ${handleDisplay}${profile.accountName ? ` (${profile.accountName})` : ''} — ${profile.followers.toLocaleString()} followers.${profile.bio ? ` Bio: "${profile.bio}"` : ''}`;
@@ -8484,7 +8487,8 @@ app.post('/api/wordpress/media/upload', async (req: Request, res: Response) => {
     let buffer: Buffer;
     try {
       buffer = Buffer.from(base64, 'base64');
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       return res.status(400).json({ success: false, error: 'Invalid fileBase64' });
     }
 
@@ -8551,7 +8555,8 @@ app.post('/api/wordpress/publish', async (req: Request, res: Response) => {
       let buffer: Buffer;
       try {
         buffer = Buffer.from(base64, 'base64');
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         return res.status(400).json({ success: false, error: 'Invalid featured image data' });
       }
       const filename = featuredImageFilename && typeof featuredImageFilename === 'string'
@@ -9939,34 +9944,20 @@ app.post('/api/payments/hubtel/initiate', async (req: Request, res: Response) =>
     });
 
     const checkoutUrl: string = response.data?.data?.checkoutUrl || response.data?.checkoutUrl || '';
-
-    const txn: PaymentTransactionRow = {
-      id: randomUUID(),
-      amount: Number(amount),
-      currency: 'GHS',
-      description: description || null,
-      status: 'pending',
-      provider: 'hubtel',
-      client_reference: clientReference,
-      provider_reference: null,
-      customer_name: customerName,
-      customer_email: customerEmail || null,
-      customer_phone: customerMsisdn,
-      checkout_url: checkoutUrl,
-      metadata: response.data || null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    const txnId = randomUUID();
+    const txnAmount = Number(amount);
+    const txnDescription = description || null;
+    const txnMetadata = response.data || null;
 
     if (hasDatabase()) {
       await dbQuery(
         `INSERT INTO payment_transactions
            (id, amount, currency, description, status, provider, client_reference, customer_name, customer_email, customer_phone, checkout_url, metadata)
-         VALUES ($1,$2,$3,$4,'pending','hubtel',$5,$6,$7,$8,$9,$10)`,
-        [txn.id, txn.amount, txn.currency, txn.description, clientReference, customerName, customerEmail || null, customerMsisdn, checkoutUrl, JSON.stringify(txn.metadata)]
+         VALUES ($1,$2,'GHS',$3,'pending','hubtel',$4,$5,$6,$7,$8,$9)`,
+        [txnId, txnAmount, txnDescription, clientReference, customerName, customerEmail || null, customerMsisdn, checkoutUrl, JSON.stringify(txnMetadata)]
       );
     } else {
-      inMemoryPaymentTransactions.unshift(txn);
+      logger.warn('Payment transaction could not be persisted — no database available');
     }
 
     return res.json({ success: true, checkoutUrl, clientReference });
@@ -9994,8 +9985,7 @@ app.post('/api/payments/hubtel/callback', async (req: Request, res: Response) =>
           [mappedStatus, providerRef, JSON.stringify({ hubtelCallback: body }), clientReference]
         );
       } else {
-        const txn = inMemoryPaymentTransactions.find((t) => t.client_reference === clientReference);
-        if (txn) { txn.status = mappedStatus; txn.provider_reference = providerRef; txn.updated_at = new Date().toISOString(); }
+        logger.warn('Hubtel callback: no database available to update transaction', { clientReference });
       }
     }
 
@@ -10025,12 +10015,10 @@ app.get('/api/payments/hubtel/verify/:clientReference', async (req: Request, res
 
         if (hasDatabase()) {
           await dbQuery(`UPDATE payment_transactions SET status = $1, updated_at = NOW() WHERE client_reference = $2`, [mappedStatus, clientReference]);
-        } else {
-          const txn = inMemoryPaymentTransactions.find((t) => t.client_reference === clientReference);
-          if (txn) txn.status = mappedStatus;
         }
         return res.json({ success: true, status: mappedStatus, data: response.data });
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         // fall through to DB lookup
       }
     }
@@ -10042,9 +10030,7 @@ app.get('/api/payments/hubtel/verify/:clientReference', async (req: Request, res
       return res.json({ success: true, status: result.rows[0].status });
     }
 
-    const txn = inMemoryPaymentTransactions.find((t) => t.client_reference === clientReference);
-    if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found' });
-    return res.json({ success: true, status: txn.status });
+    return res.status(503).json({ success: false, error: 'Database unavailable' });
   } catch (error) {
     logger.error('Verify payment error:', error);
     return res.status(500).json({ success: false, error: 'Failed to verify payment' });
@@ -10066,7 +10052,7 @@ app.get('/api/admin/payments', async (req: Request, res: Response) => {
       return res.json({ success: true, transactions: result.rows });
     }
 
-    return res.json({ success: true, transactions: inMemoryPaymentTransactions.slice(0, 200) });
+    return res.status(503).json({ success: false, error: 'Database unavailable' });
   } catch (error) {
     logger.error('List payments error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch transactions' });
@@ -10092,17 +10078,7 @@ app.get('/api/admin/payments/stats', async (req: Request, res: Response) => {
       return res.json({ success: true, stats: result.rows[0] });
     }
 
-    const all = inMemoryPaymentTransactions;
-    return res.json({
-      success: true,
-      stats: {
-        total: all.length,
-        successful: all.filter((t) => t.status === 'successful').length,
-        pending: all.filter((t) => t.status === 'pending').length,
-        failed: all.filter((t) => t.status === 'failed').length,
-        revenue: all.filter((t) => t.status === 'successful').reduce((s, t) => s + t.amount, 0),
-      },
-    });
+    return res.status(503).json({ success: false, error: 'Database unavailable' });
   } catch (error) {
     logger.error('Payment stats error:', error);
     return res.status(500).json({ success: false, error: 'Failed to fetch payment stats' });
@@ -10177,7 +10153,8 @@ async function fetchMetaPermissionSet(accessToken: string): Promise<Set<string>>
     });
     if (permsResp.status >= 400) return new Set();
     return getGrantedMetaPermissionSet(permsResp.data || {});
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return new Set();
   }
 }
@@ -10704,7 +10681,8 @@ async function syncThreadsAnalyticsAccount(params: {
           const dt = post?.timestamp ? new Date(post.timestamp) : null;
           postedAt = dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : null;
           postedAtMs = dt ? dt.getTime() : NaN;
-        } catch {
+        } catch (err) {
+    logger.error('Unhandled error:', err);
           postedAt = null;
           postedAtMs = NaN;
         }
@@ -11023,7 +11001,8 @@ async function syncPinterestAnalyticsAccount(params: {
         try {
           const dt = pin?.created_at ? new Date(pin.created_at) : null;
           postedAt = dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : null;
-        } catch {
+        } catch (err) {
+    logger.error('Unhandled error:', err);
           postedAt = null;
         }
 
@@ -12068,7 +12047,8 @@ app.get('/api/v1/social/facebook/targets', async (req: Request, res: Response) =
         );
         missingPermissions = requiredPermissions.filter((perm) => !granted.has(perm));
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       missingPermissions = [];
     }
 
@@ -12114,7 +12094,8 @@ app.get('/api/v1/social/facebook/targets', async (req: Request, res: Response) =
               .filter((g: any) => g.id)
           : [];
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       warnings.push('Facebook groups lookup failed');
     }
 
@@ -12150,7 +12131,7 @@ app.get('/api/v1/social/facebook/page-insights', async (req: Request, res: Respo
     const pageRow: any = pageResult.rows[0] || {};
     let pageToken = '';
     if (pageRow.access_token_encrypted) {
-      try { pageToken = decryptIntegrationSecret(String(pageRow.access_token_encrypted)); } catch { /* ignore */ }
+      try { pageToken = decryptIntegrationSecret(String(pageRow.access_token_encrypted)); } catch (_err) { /* ignore */ }
     }
     if (!pageToken) pageToken = String(pageRow.access_token || '').trim();
     if (!pageToken) {
@@ -12234,7 +12215,7 @@ app.get('/api/v1/social/facebook/post-insights', async (req: Request, res: Respo
       );
       const row: any = pr.rows[0] || {};
       if (row.access_token_encrypted) {
-        try { pageToken = decryptIntegrationSecret(String(row.access_token_encrypted)); } catch { /* ignore */ }
+        try { pageToken = decryptIntegrationSecret(String(row.access_token_encrypted)); } catch (_err) { /* ignore */ }
       }
       if (!pageToken) pageToken = String(row.access_token || '').trim();
     }
@@ -12517,7 +12498,8 @@ app.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
            ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
           [auth.userId, 'posts-automation-settings', JSON.stringify(next)]
         );
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         // ignore settings persistence failures
       }
     }
@@ -13255,7 +13237,7 @@ async function callAINonStreaming(
 }
 
 function decryptAIKey(encryptedKey: string): string {
-  try { return decryptIntegrationSecret(encryptedKey); } catch { return ''; }
+  try { return decryptIntegrationSecret(encryptedKey); } catch (_err) { return ''; }
 }
 
 function maskKey(raw: string): string {
@@ -13622,7 +13604,8 @@ function parseTextArray(raw: unknown): string[] {
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return uniqueStrings(parsed.map((value) => String(value)));
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       return raw.trim() ? [raw.trim()] : [];
     }
   }
@@ -13639,7 +13622,8 @@ function parseUsedInList(raw: unknown): string[] {
       if (Array.isArray(parsed)) {
         return uniqueStrings(parsed.map((value) => (typeof value === 'string' ? value : JSON.stringify(value))));
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       return raw.trim() ? [raw.trim()] : [];
     }
   }
@@ -13697,7 +13681,8 @@ function guessFileNameFromUrl(url: string, fallbackBase: string, fallbackType = 
     const parsed = new URL(normalized, getMediaServerBase());
     const candidate = path.posix.basename(parsed.pathname || '');
     if (candidate && candidate.includes('.')) return sanitizeFileName(candidate);
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // Ignore malformed URLs and fall back to a synthetic filename.
   }
 
@@ -14646,7 +14631,7 @@ app.get('/api/admin/db-audit', async (req: Request, res: Response) => {
         );
         if ((cnt.rows[0]?.c ?? 0) > 0)
           orphans.push({ child_table: fk.child_table, fk_column: fk.fk_column, parent_table: fk.parent_table, count: cnt.rows[0].c });
-      } catch { /* skip complex FKs */ }
+      } catch (_err) { /* skip complex FKs */ }
     }
 
     // ── Cache hit ratio ───────────────────────────────────────────────────
@@ -15011,7 +14996,8 @@ app.get('/api/link-metadata', async (req: Request, res: Response) => {
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(400).json({ error: 'Invalid URL' });
   }
 
@@ -15763,7 +15749,8 @@ async function incrementPlatformMonthlyCounter(platformId: string, limit: number
   } catch (err) {
     try {
       await pool.query('ROLLBACK');
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // ignore rollback failures
     }
     return { allowed: true, remaining: null, counter: null };
@@ -15864,7 +15851,8 @@ async function resolveLinkedInAuthorUrn(params: { userId: string; accessToken: s
        WHERE user_id = $1 AND LOWER(platform) = LOWER($2)`,
       [params.userId, 'linkedin', JSON.stringify({ sub: meId })]
     );
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // ignore persistence errors
   }
   return `urn:li:person:${meId}`;
@@ -15931,7 +15919,8 @@ function decodeStoredIntegrationSecret(value: string | null | undefined): string
   if (!raw) return '';
   try {
     return decryptIntegrationSecret(raw);
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return '';
   }
 }
@@ -16236,7 +16225,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
             token_expires_at: enrichedExpiry,
           };
         }
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         // Metadata hydration is best-effort; keep the token usable if LinkedIn inspection fails.
       }
     }
@@ -16355,7 +16345,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     } else if (platformId === 'tiktok') {
       refreshed = await refreshTikTokAccessToken(refreshToken);
     }
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     await markSocialAccountNeedsReapproval({
       platformId,
       userId,
@@ -16413,7 +16404,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
         status: 'success',
         response: { expiresAt: nextExpiresAt },
       });
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // ignore persistence issues; still return refreshed token for this request
     }
     return {
@@ -16850,7 +16842,8 @@ async function getUserSettingValue(userId: string, key: string): Promise<any | n
   try {
     const result = await pool.query('SELECT value FROM user_settings WHERE user_id = $1 AND key = $2', [userId, key]);
     return result.rows[0]?.value ?? null;
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return null;
   }
 }
@@ -16862,7 +16855,8 @@ function safeJsonObject(value: any): Record<string, any> {
     try {
       const parsed = JSON.parse(value);
       return parsed && typeof parsed === 'object' ? (parsed as Record<string, any>) : {};
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       return {};
     }
   }
@@ -17436,7 +17430,8 @@ async function resolveFacebookPageToken(params: {
       if (storedRow?.access_token_encrypted) {
         try {
           decrypted = decryptIntegrationSecret(String(storedRow.access_token_encrypted));
-        } catch {
+        } catch (err) {
+    logger.error('Unhandled error:', err);
           decrypted = '';
         }
       }
@@ -17446,7 +17441,8 @@ async function resolveFacebookPageToken(params: {
       if (pageId && pageToken) {
         return { pageId, pageToken, pageName: pageName || desiredName || undefined };
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       // ignore; fallback to /me/accounts lookup
     }
   }
@@ -17535,7 +17531,8 @@ async function publishToplatform(
         const row: any = u.rows[0] || {};
         author = String(row.full_name || row.username || '').trim();
       }
-    } catch {
+    } catch (err) {
+    logger.error('Unhandled error:', err);
       author = '';
     }
 
@@ -17650,7 +17647,8 @@ async function publishToplatform(
           const obj = safeJsonObject(defaultBoardSetting);
           const savedBoardId = String(obj?.id || obj?.board_id || '').trim();
           if (savedBoardId) boardId = savedBoardId;
-        } catch {
+        } catch (err) {
+    logger.error('Unhandled error:', err);
           // ignore
         }
       }
@@ -17698,7 +17696,8 @@ async function publishToplatform(
               }
             }
           }
-        } catch {
+        } catch (err) {
+    logger.error('Unhandled error:', err);
           // ignore
         }
       }
@@ -18102,7 +18101,8 @@ app.get('/api/distribution/connected', async (req: Request, res: Response) => {
     }
 
     return res.json({ success: true, platforms });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch connected platforms' });
   }
 });
@@ -18145,7 +18145,8 @@ app.post('/api/distribution/publish', async (req: Request, res: Response) => {
     }
 
     return res.json({ success: true, results });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ success: false, error: 'Distribution failed' });
   }
 });
@@ -18161,7 +18162,8 @@ app.get('/api/distribution/status/:postId', async (req: Request, res: Response) 
       [postId, auth.userId]
     );
     return res.json({ success: true, logs: rows });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch status' });
   }
 });
@@ -18178,7 +18180,8 @@ app.get('/api/automation/logs', async (req: Request, res: Response) => {
       [auth.userId]
     );
     return res.json({ success: true, logs: rows });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch logs' });
   }
 });
@@ -18207,7 +18210,8 @@ app.post('/api/automation/retry/:logId', async (req: Request, res: Response) => 
       [result.status, result.platformPostId || null, result.error || null, logId]
     );
     return res.json({ success: true, result });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ success: false, error: 'Retry failed' });
   }
 });
@@ -18464,11 +18468,13 @@ async function fireMailingAutomations(
            VALUES ($1, $2, NULL, $3, 'delivered', NOW())`,
           [randomUUID(), userId, data.contact_id || null]
         ).catch(() => undefined);
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         // Non-fatal
       }
     }
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // Non-fatal
   }
 }
@@ -18736,10 +18742,10 @@ app.get('/api/mailing/segments', async (req: Request, res: Response) => {
         const where = buildSegmentWhere(seg.rules as _SegRules, params);
         const { rows: cr } = await pool!.query(`SELECT COUNT(*) c FROM mailing_contacts mc WHERE mc.user_id=$1 AND ${where}`, params);
         return { ...seg, contact_count: parseInt(String(cr[0].c), 10) };
-      } catch { return { ...seg, contact_count: 0 }; }
+      } catch (_err) { return { ...seg, contact_count: 0 }; }
     }));
     return res.json({ success: true, segments });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch segments' }); }
+  } catch (err) { logger.error('Failed to fetch segments', err); return res.status(500).json({ success: false, error: 'Failed to fetch segments' }); }
 });
 
 // POST /api/mailing/segments/preview
@@ -18754,7 +18760,7 @@ app.post('/api/mailing/segments/preview', async (req: Request, res: Response) =>
       pool!.query(`SELECT email,first_name,last_name FROM mailing_contacts mc WHERE mc.user_id=$1 AND ${where} LIMIT 5`, params),
     ]);
     return res.json({ success: true, count: parseInt(String(cr[0].c), 10), sample: sr });
-  } catch { return res.status(500).json({ success: false, error: 'Preview failed' }); }
+  } catch (err) { logger.error('Preview failed', err); return res.status(500).json({ success: false, error: 'Preview failed' }); }
 });
 
 // POST /api/mailing/segments
@@ -18770,7 +18776,7 @@ app.post('/api/mailing/segments', async (req: Request, res: Response) => {
       [id, auth.userId, name, rulesJson]
     );
     return res.json({ success: true, segment: rows[0] });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to create segment' }); }
+  } catch (err) { logger.error('Failed to create segment', err); return res.status(500).json({ success: false, error: 'Failed to create segment' }); }
 });
 
 // PATCH /api/mailing/segments/:id
@@ -18786,7 +18792,7 @@ app.patch('/api/mailing/segments/:id', async (req: Request, res: Response) => {
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Segment not found' });
     return res.json({ success: true, segment: rows[0] });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to update segment' }); }
+  } catch (err) { logger.error('Failed to update segment', err); return res.status(500).json({ success: false, error: 'Failed to update segment' }); }
 });
 
 // DELETE /api/mailing/segments/:id
@@ -18845,7 +18851,7 @@ app.post('/api/mailing/contacts/bulk', async (req: Request, res: Response) => {
       }
     } else { return res.status(400).json({ success: false, error: 'Invalid action' }); }
     return res.json({ success: true });
-  } catch { return res.status(500).json({ success: false, error: 'Bulk action failed' }); }
+  } catch (err) { logger.error('Bulk action failed', err); return res.status(500).json({ success: false, error: 'Bulk action failed' }); }
 });
 
 // GET /api/mailing/campaigns
@@ -19047,7 +19053,8 @@ app.post('/api/mailing/campaigns/:id/send', async (req: Request, res: Response) 
           [randomUUID(), auth.userId, campaign.id, contact.id]
         ).catch(() => undefined);
         sentCount++;
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         failedCount++;
       }
     }
@@ -19072,219 +19079,17 @@ app.get('/api/mailing/unsubscribe/:token', async (req: Request, res: Response) =
     );
     if (!rows.length) return res.status(404).send('Invalid unsubscribe link.');
     return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>${rows[0].email} has been unsubscribed.</p></body></html>`);
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).send('Something went wrong.');
   }
 });
 
 // ─── End Mailing API Routes ───────────────────────────────────────────────────
 
-// ─── Surveys API Routes ───────────────────────────────────────────────────────
-
-// GET /api/surveys
-app.get('/api/surveys', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { rows } = await pool!.query(
-      `SELECT s.*, (SELECT COUNT(*) FROM survey_responses r WHERE r.survey_id=s.id) AS response_count,
-              (SELECT COUNT(*) FROM survey_questions q WHERE q.survey_id=s.id) AS question_count
-       FROM surveys s WHERE s.user_id=$1 ORDER BY s.created_at DESC`, [auth.userId]);
-    return res.json({ success: true, surveys: rows });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch surveys' }); }
-});
-
-// POST /api/surveys
-app.post('/api/surveys', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { title, description } = req.body;
-    if (!title?.trim()) return res.status(400).json({ success: false, error: 'Title required' });
-    const id = randomUUID();
-    const { rows } = await pool!.query(
-      `INSERT INTO surveys (id, user_id, title, description) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [id, auth.userId, title.trim(), description || null]);
-    return res.json({ success: true, survey: rows[0] });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to create survey' }); }
-});
-
-// GET /api/surveys/:id
-app.get('/api/surveys/:id', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    const { rows: qr } = await pool!.query('SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx ASC', [req.params.id]);
-    return res.json({ success: true, survey: { ...sr[0], questions: qr } });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch survey' }); }
-});
-
-// PATCH /api/surveys/:id
-app.patch('/api/surveys/:id', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { title, description, status, thank_you_message } = req.body;
-    const { rows } = await pool!.query(
-      `UPDATE surveys SET title=COALESCE($1,title), description=COALESCE($2,description),
-       status=COALESCE($3,status), thank_you_message=COALESCE($4,thank_you_message), updated_at=NOW()
-       WHERE id=$5 AND user_id=$6 RETURNING *`,
-      [title || null, description !== undefined ? (description || null) : null, status || null, thank_you_message || null, req.params.id, auth.userId]);
-    if (!rows.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    return res.json({ success: true, survey: rows[0] });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update survey' }); }
-});
-
-// DELETE /api/surveys/:id
-app.delete('/api/surveys/:id', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    await pool!.query('DELETE FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    return res.json({ success: true });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete survey' }); }
-});
-
-// POST /api/surveys/:id/questions
-app.post('/api/surveys/:id/questions', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { type, question, options, required, settings } = req.body;
-    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    const { rows: last } = await pool!.query('SELECT COALESCE(MAX(order_idx),0)+1 AS next FROM survey_questions WHERE survey_id=$1', [req.params.id]);
-    const id = randomUUID();
-    const { rows } = await pool!.query(
-      `INSERT INTO survey_questions (id, survey_id, type, question, options, required, order_idx, settings)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [id, req.params.id, type || 'radio', question || 'New question', JSON.stringify(options ?? []), !!required, last[0].next, JSON.stringify(settings ?? {})]);
-    return res.json({ success: true, question: rows[0] });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to add question' }); }
-});
-
-// PATCH /api/surveys/:id/questions/:qid
-app.patch('/api/surveys/:id/questions/:qid', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { question, options, required, settings, order_idx } = req.body;
-    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    const { rows } = await pool!.query(
-      `UPDATE survey_questions SET
-         question=COALESCE($1,question),
-         options=COALESCE($2::jsonb,options),
-         required=COALESCE($3,required),
-         settings=COALESCE($4::jsonb,settings),
-         order_idx=COALESCE($5,order_idx)
-       WHERE id=$6 AND survey_id=$7 RETURNING *`,
-      [question || null, options ? JSON.stringify(options) : null, required !== undefined ? !!required : null, settings ? JSON.stringify(settings) : null, order_idx ?? null, req.params.qid, req.params.id]);
-    if (!rows.length) return res.status(404).json({ success: false, error: 'Question not found' });
-    return res.json({ success: true, question: rows[0] });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to update question' }); }
-});
-
-// DELETE /api/surveys/:id/questions/:qid
-app.delete('/api/surveys/:id/questions/:qid', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    await pool!.query('DELETE FROM survey_questions WHERE id=$1 AND survey_id=$2', [req.params.qid, req.params.id]);
-    return res.json({ success: true });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to delete question' }); }
-});
-
-// GET /api/surveys/:id/responses
-app.get('/api/surveys/:id/responses', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { rows: sr } = await pool!.query('SELECT id FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    const { rows } = await pool!.query('SELECT * FROM survey_responses WHERE survey_id=$1 ORDER BY created_at DESC', [req.params.id]);
-    return res.json({ success: true, responses: rows });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch responses' }); }
-});
-
-// GET /api/surveys/:id/analytics
-app.get('/api/surveys/:id/analytics', async (req: Request, res: Response) => {
-  try {
-    const auth = requireAuth(req, res); if (!auth) return;
-    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found' });
-    const { rows: questions } = await pool!.query('SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx', [req.params.id]);
-    const { rows: responses } = await pool!.query('SELECT answers FROM survey_responses WHERE survey_id=$1', [req.params.id]);
-    const totalResponses = responses.length;
-    const questionsRecord: Record<string, unknown> = {};
-    for (const q of questions) {
-      const allAnswers = responses.map(r => {
-        const a = (r.answers as { question_id: string; value: unknown }[]).find(x => x.question_id === q.id);
-        return a?.value;
-      }).filter(v => v !== undefined && v !== null && v !== '');
-      const opts = (q.options || []) as string[];
-      if (q.type === 'radio') {
-        const counts: Record<string, number> = {};
-        opts.forEach(o => { counts[o] = 0; });
-        allAnswers.forEach(v => { if (typeof v === 'string' && counts[v] !== undefined) counts[v]++; });
-        questionsRecord[q.id] = { type: q.type, counts, total: allAnswers.length };
-      } else if (q.type === 'checkbox') {
-        const counts: Record<string, number> = {};
-        opts.forEach(o => { counts[o] = 0; });
-        allAnswers.forEach(v => { if (Array.isArray(v)) v.forEach((item: string) => { if (counts[item] !== undefined) counts[item]++; }); });
-        questionsRecord[q.id] = { type: q.type, counts, total: allAnswers.length };
-      } else if (q.type === 'rating') {
-        const dist: Record<string, number> = { '1':0,'2':0,'3':0,'4':0,'5':0 };
-        allAnswers.forEach(v => { const n = Number(v); if (n >= 1 && n <= 5) dist[String(n)]++; });
-        const avg = allAnswers.length ? allAnswers.reduce((s, v) => s + Number(v), 0) / allAnswers.length : 0;
-        questionsRecord[q.id] = { type: q.type, distribution: dist, average: Math.round(avg * 10) / 10, total: allAnswers.length };
-      } else if (q.type === 'nps' || q.type === 'range') {
-        const nums = allAnswers.map(v => Number(v)).filter(n => !isNaN(n) && n >= 0 && n <= 10);
-        const promoters = nums.filter(n => n >= 9).length;
-        const passives = nums.filter(n => n >= 7 && n <= 8).length;
-        const detractors = nums.filter(n => n <= 6).length;
-        const score = nums.length ? Math.round(((promoters - detractors) / nums.length) * 100) : 0;
-        questionsRecord[q.id] = { type: 'nps', score, promoters, passives, detractors, total: nums.length };
-      } else if (q.type === 'text') {
-        questionsRecord[q.id] = { type: q.type, responses: allAnswers.slice(0, 100).map(String), total: allAnswers.length };
-      } else {
-        questionsRecord[q.id] = { type: q.type, total: allAnswers.length };
-      }
-    }
-    return res.json({ success: true, total_responses: totalResponses, completion_rate: 100, questions: questionsRecord });
-  } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
-});
-
-// ── Public Survey Routes (no auth) ──────────────────────────────────────────
-
-// GET /api/public/surveys/:id — fetch published survey for display
-app.get('/api/public/surveys/:id', async (req: Request, res: Response) => {
-  try {
-    const { rows } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'active']);
-    if (!rows.length) return res.status(404).json({ success: false, error: 'Survey not found or not active' });
-    const { rows: questions } = await pool!.query('SELECT id, type, question, options, required, order_idx, settings FROM survey_questions WHERE survey_id=$1 ORDER BY order_idx ASC', [req.params.id]);
-    return res.json({ success: true, survey: { ...rows[0], questions } });
-  } catch (err) { return res.status(500).json({ success: false, error: 'Failed to fetch survey' }); }
-});
-
-// POST /api/public/surveys/:id/respond — submit a response
-app.post('/api/public/surveys/:id/respond', async (req: Request, res: Response) => {
-  try {
-    const { answers, email } = req.body as { answers: { question_id: string; value: unknown }[]; email?: string };
-    const { rows: sr } = await pool!.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'active']);
-    if (!sr.length) return res.status(404).json({ success: false, error: 'Survey not found or not active' });
-    const survey = sr[0];
-    // Find contact by email if provided
-    let contactId: string | null = null;
-    if (email) {
-      const { rows: cr } = await pool!.query('SELECT id FROM mailing_contacts WHERE user_id=$1 AND email=$2', [survey.user_id, email.toLowerCase().trim()]);
-      if (cr.length) contactId = cr[0].id;
-    }
-    const id = randomUUID();
-    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || null;
-    await pool!.query(
-      `INSERT INTO survey_responses (id, survey_id, contact_id, respondent_email, answers, ip_address) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [id, req.params.id, contactId, email?.toLowerCase().trim() || null, JSON.stringify(answers), ip]);
-    return res.json({ success: true, thank_you_message: survey.thank_you_message });
-  } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: 'Failed to submit response' }); }
-});
-
-// ─── End Surveys API Routes ───────────────────────────────────────────────────
+// ─── Surveys ──────────────────────────────────────────────────────────────────
+app.use('/api/surveys', registerSurveyRoutes({ requireAuth, pool: pool! }));
+app.use('/api/public/surveys', registerPublicSurveyRoutes({ pool: pool! }));
 
 // ─── Leads API Routes ─────────────────────────────────────────────────────────
 
@@ -19315,7 +19120,7 @@ app.get('/api/leads/groups', async (req: Request, res: Response) => {
        FROM lead_groups lg WHERE lg.user_id=$1 ORDER BY lg.created_at DESC`, [auth.userId]
     );
     return res.json({ success: true, groups: rows });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch lead groups' }); }
+  } catch (err) { logger.error('Failed to fetch lead groups', err); return res.status(500).json({ success: false, error: 'Failed to fetch lead groups' }); }
 });
 
 // POST /api/leads/groups
@@ -19328,7 +19133,7 @@ app.post('/api/leads/groups', async (req: Request, res: Response) => {
       `INSERT INTO lead_groups (user_id, name) VALUES ($1,$2) RETURNING *`, [auth.userId, name]
     );
     return res.json({ success: true, group: rows[0] });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to create group' }); }
+  } catch (err) { logger.error('Failed to create group', err); return res.status(500).json({ success: false, error: 'Failed to create group' }); }
 });
 
 // DELETE /api/leads/groups/:id
@@ -19337,7 +19142,7 @@ app.delete('/api/leads/groups/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     await pool!.query(`DELETE FROM lead_groups WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
     return res.json({ success: true });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to delete group' }); }
+  } catch (err) { logger.error('Failed to delete group', err); return res.status(500).json({ success: false, error: 'Failed to delete group' }); }
 });
 
 // GET /api/leads/groups/:id/leads
@@ -19348,7 +19153,7 @@ app.get('/api/leads/groups/:id/leads', async (req: Request, res: Response) => {
     if (!grp) return res.status(404).json({ success: false, error: 'Not found' });
     const { rows } = await pool!.query(`SELECT * FROM leads WHERE group_id=$1 ORDER BY created_at DESC`, [req.params.id]);
     return res.json({ success: true, group: grp, leads: rows });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to fetch leads' }); }
+  } catch (err) { logger.error('Failed to fetch leads', err); return res.status(500).json({ success: false, error: 'Failed to fetch leads' }); }
 });
 
 // POST /api/leads/groups/:id/leads — single lead
@@ -19366,7 +19171,7 @@ app.post('/api/leads/groups/:id/leads', async (req: Request, res: Response) => {
       [req.params.id, auth.userId, JSON.stringify(data)]
     );
     return res.json({ success: true, lead: rows[0] });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to add lead' }); }
+  } catch (err) { logger.error('Failed to add lead', err); return res.status(500).json({ success: false, error: 'Failed to add lead' }); }
 });
 
 // POST /api/leads/groups/:id/import — bulk CSV import (flexible fields)
@@ -19385,7 +19190,7 @@ app.post('/api/leads/groups/:id/import', async (req: Request, res: Response) => 
       imported++;
     }
     return res.json({ success: true, imported });
-  } catch { return res.status(500).json({ success: false, error: 'Import failed' }); }
+  } catch (err) { logger.error('Import failed', err); return res.status(500).json({ success: false, error: 'Import failed' }); }
 });
 
 // POST /api/leads/groups/:id/sync — re-upload sync: upsert by sync_key, add new rows
@@ -19412,7 +19217,7 @@ app.post('/api/leads/groups/:id/sync', async (req: Request, res: Response) => {
       added++;
     }
     return res.json({ success: true, updated, added });
-  } catch { return res.status(500).json({ success: false, error: 'Sync failed' }); }
+  } catch (err) { logger.error('Sync failed', err); return res.status(500).json({ success: false, error: 'Sync failed' }); }
 });
 
 // POST /api/leads/bulk-import — multi-sheet Excel import (creates groups)
@@ -19437,7 +19242,7 @@ app.post('/api/leads/bulk-import', async (req: Request, res: Response) => {
       results.push({ groupId: grp.id, name: grp.name, imported });
     }
     return res.json({ success: true, results });
-  } catch { return res.status(500).json({ success: false, error: 'Bulk import failed' }); }
+  } catch (err) { logger.error('Bulk import failed', err); return res.status(500).json({ success: false, error: 'Bulk import failed' }); }
 });
 
 // DELETE /api/leads/:id
@@ -19446,7 +19251,7 @@ app.delete('/api/leads/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     await pool!.query(`DELETE FROM leads WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
     return res.json({ success: true });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to delete lead' }); }
+  } catch (err) { logger.error('Failed to delete lead', err); return res.status(500).json({ success: false, error: 'Failed to delete lead' }); }
 });
 
 // ─── End Leads API Routes ─────────────────────────────────────────────────────
@@ -19493,7 +19298,7 @@ app.get('/api/google-sheets/connect', async (req: Request, res: Response) => {
       state,
     });
     return res.json({ success: true, url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to initiate OAuth' }); }
+  } catch (err) { logger.error('Failed to initiate OAuth', err); return res.status(500).json({ success: false, error: 'Failed to initiate OAuth' }); }
 });
 
 // GET /api/google-sheets/callback — OAuth redirect handler
@@ -19535,7 +19340,7 @@ app.get('/api/google-sheets/callback', async (req: Request, res: Response) => {
       [stored.userId, tok.access_token, tok.refresh_token, expiry, info.email || null]
     );
     return res.send(popupHtml('success', info.email || 'connected'));
-  } catch { return res.send(popupHtml('error', 'Server error. Please try again.')); }
+  } catch (_err) { return res.send(popupHtml('error', 'Server error. Please try again.')); }
 });
 
 // GET /api/google-sheets/status
@@ -19545,7 +19350,7 @@ app.get('/api/google-sheets/status', async (req: Request, res: Response) => {
     const { rows } = await pool!.query(`SELECT google_email, updated_at FROM google_sheets_tokens WHERE user_id=$1`, [auth.userId]);
     if (!rows.length) return res.json({ success: true, connected: false });
     return res.json({ success: true, connected: true, email: rows[0].google_email, connectedAt: rows[0].updated_at });
-  } catch { return res.status(500).json({ success: false, error: 'Failed' }); }
+  } catch (err) { logger.error('Failed', err); return res.status(500).json({ success: false, error: 'Failed' }); }
 });
 
 // DELETE /api/google-sheets/disconnect
@@ -19554,7 +19359,7 @@ app.delete('/api/google-sheets/disconnect', async (req: Request, res: Response) 
     const auth = requireAuth(req, res); if (!auth) return;
     await pool!.query(`DELETE FROM google_sheets_tokens WHERE user_id=$1`, [auth.userId]);
     return res.json({ success: true });
-  } catch { return res.status(500).json({ success: false, error: 'Failed' }); }
+  } catch (err) { logger.error('Failed', err); return res.status(500).json({ success: false, error: 'Failed' }); }
 });
 
 // GET /api/google-sheets/files — list user's spreadsheets
@@ -19590,7 +19395,7 @@ app.post('/api/leads/groups/:id/link-sheet', async (req: Request, res: Response)
       [sheetId, sheetTab, sheetName || sheetTab, keyField || null, req.params.id, auth.userId]
     );
     return res.json({ success: true });
-  } catch { return res.status(500).json({ success: false, error: 'Failed to link sheet' }); }
+  } catch (err) { logger.error('Failed to link sheet', err); return res.status(500).json({ success: false, error: 'Failed to link sheet' }); }
 });
 
 // POST /api/leads/groups/:id/sync-sheet — pull latest from linked Google Sheet
@@ -19955,7 +19760,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
       const platform = (acct.platform || '').toLowerCase();
       let token = '';
       if (acct.access_token_encrypted) {
-        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ }
       }
       if (!token) token = String(acct.access_token || '').trim();
       if (!token) continue;
@@ -20038,7 +19843,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                    post.created_time ? new Date(post.created_time).toISOString() : null]
                 );
                 synced++;
-              } catch { /* skip individual post errors */ }
+              } catch (_err) { /* skip individual post errors */ }
             }
           }
         } else if (platform === 'twitter' || platform === 'x') {
@@ -20270,7 +20075,7 @@ app.post('/api/blog/analytics/refresh', async (req: Request, res: Response) => {
                     validateStatus: () => true, timeout: 10000,
                   });
                   stats = statsResp.data || {};
-                } catch { /* optional */ }
+                } catch (_err) { /* optional */ }
                 const likeCount = stats.likesSummary?.totalLikes || 0;
                 const commentCount = stats.commentsSummary?.totalFirstLevelComments || 0;
                 await pool!.query(
@@ -20635,7 +20440,7 @@ app.post('/api/social/tiktok/sync', async (req: Request, res: Response) => {
     for (const acct of accountRes.rows as any[]) {
       let token = '';
       if (acct.access_token_encrypted) {
-        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ }
       }
       if (!token) token = String(acct.access_token || '').trim();
       if (!token) { errors.push('No access token available'); continue; }
@@ -20942,7 +20747,7 @@ app.post('/api/social/facebook/sync', async (req: Request, res: Response) => {
     for (const acct of accountRes.rows as any[]) {
       let token = '';
       if (acct.access_token_encrypted) {
-        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ }
       }
       if (!token) token = String(acct.access_token || '').trim();
       if (!token) { errors.push('No access token available'); continue; }
@@ -22455,7 +22260,7 @@ app.post('/api/social/linkedin/sync', async (req: Request, res: Response) => {
     for (const acct of accountRes.rows as any[]) {
       let token = '';
       if (acct.access_token_encrypted) {
-        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch { /* */ }
+        try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ }
       }
       if (!token) token = String(acct.access_token || '').trim();
       if (!token) { errors.push('No access token available'); continue; }
@@ -22985,7 +22790,8 @@ function buildUtmUrl(base: string, utm: { source: string; medium: string; campai
     if (utm.term) url.searchParams.set('utm_term', utm.term);
     if (utm.content) url.searchParams.set('utm_content', utm.content);
     return url.toString();
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return base;
   }
 }
@@ -23126,7 +22932,7 @@ app.post('/api/campaign/campaigns/create', async (req: Request, res: Response) =
       const u = new URL(String(target_url).startsWith('http') ? target_url : `https://${target_url}`);
       if (!['http:', 'https:'].includes(u.protocol)) validationErrors.push('target_url must be http or https.');
       else sanitizedTargetUrl = u.toString();
-    } catch { validationErrors.push('Invalid target_url.'); }
+    } catch (_err) { validationErrors.push('Invalid target_url.'); }
   }
 
   if (budget !== undefined && budget !== null && budget !== '') {
@@ -24624,7 +24430,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
         } else {
           userMemoryBlock = '## ABOUT THIS USER\nNo personalization data yet. Ask one focused question to understand their brand before drafting.';
         }
-      } catch { /* non-fatal */ }
+      } catch (_err) { /* non-fatal */ }
     }
 
     const saasContext = await getUserSaaSContext(auth.userId);
@@ -24787,9 +24593,10 @@ Rules:
       if (parsed.type === 'plan' && Array.isArray(parsed.agents) && parsed.agents.length >= 2) {
         return res.json(parsed);
       }
-    } catch { /* fall through */ }
+    } catch (_err) { /* fall through */ }
     return res.json({ type: 'direct' });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.json({ type: 'direct' });
   }
 });
@@ -24864,7 +24671,8 @@ app.post('/api/ai/execute-plan', async (req: Request, res: Response) => {
         const analysis = await callAINonStreaming(aiCfg.provider, apiKey, agentFastModel, agentSystem, lastUserMsg.slice(0, 1000), 350);
         agentResults.push({ key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, task: agent.task, analysis });
         send({ type: 'agent_done', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, analysis });
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         send({ type: 'agent_done', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, analysis: '' });
       }
     }));
@@ -25195,7 +25003,7 @@ app.post('/api/memory/scrape', async (req: Request, res: Response) => {
   try {
     const r = await dbQuery('SELECT * FROM apify_actors');
     savedActors = r.rows;
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
   if (savedActors.length === 0) return res.status(503).json({ error: 'No Apify actors set up — ask your admin to add actors in Admin → Integrations → Apify' });
 
   function buildActorInput(url: string, actorId: string): Record<string, unknown> {
@@ -25378,7 +25186,7 @@ app.post('/api/learn', async (req: Request, res: Response) => {
       });
       clearTimeout(timer);
       rawContent = (await jinaRes.text()).slice(0, 15000);
-    } catch { /* non-fatal */ }
+    } catch (_err) { /* non-fatal */ }
 
     const LEARN_EXTRACT_PROMPT = `You are an expert marketing analyst. Analyze this content FULLY and return ONLY a valid JSON object — no markdown, no explanation, no extra text.
 
@@ -25414,7 +25222,8 @@ JSON shape:
         const raw = result.response.text();
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
-      } catch {
+      } catch (err) {
+    logger.error('Unhandled error:', err);
         // fall through to text-based extraction
       }
     }
@@ -25435,7 +25244,7 @@ JSON shape:
         );
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
-      } catch { /* use defaults */ }
+      } catch (_err) { /* use defaults */ }
     }
 
     const finalCategory = category || extracted.category || 'General';
@@ -25509,7 +25318,7 @@ app.post('/api/learn/:id/analyze', async (req: Request, res: Response) => {
         });
         clearTimeout(timer);
         freshContent = (await jinaRes.text()).slice(0, 12000);
-      } catch { /* use stored content */ }
+      } catch (_err) { /* use stored content */ }
     }
 
     const analyzeJsonShape = `{
@@ -25533,7 +25342,7 @@ app.post('/api/learn/:id/analyze', async (req: Request, res: Response) => {
         const raw = result.response.text();
         const match = raw.match(/\{[\s\S]*\}/);
         if (match) parsed = JSON.parse(match[0]);
-      } catch { /* fall through to text */ }
+      } catch (_err) { /* fall through to text */ }
     }
 
     // Fallback: text-based analysis
@@ -25547,7 +25356,7 @@ app.post('/api/learn/:id/analyze', async (req: Request, res: Response) => {
         );
         const match = raw.match(/\{[\s\S]*\}/);
         if (match) parsed = JSON.parse(match[0]);
-      } catch { /* fallback */ }
+      } catch (_err) { /* fallback */ }
     }
 
     const newTitle = parsed.title || item.title;
@@ -25777,7 +25586,7 @@ async function getApifyToken(): Promise<string | null> {
       `SELECT config FROM platform_configs WHERE platform = 'apify' AND enabled = true LIMIT 1`
     );
     return r.rows[0]?.config?.apiKey ?? null;
-  } catch { return null; }
+  } catch (_err) { return null; }
 }
 
 // GET /api/admin/apify/status — check Apify connection
@@ -25801,7 +25610,8 @@ app.get('/api/admin/apify/status', async (req: Request, res: Response) => {
       plan: d.plan?.id ?? '',
       creditBalance: d.limits?.monthlyUsageUsd ?? null,
     });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.json({ connected: false });
   }
 });
@@ -25814,7 +25624,8 @@ app.get('/api/admin/apify/actors', async (req: Request, res: Response) => {
   try {
     const { rows } = await dbQuery(`SELECT * FROM apify_actors ORDER BY created_at DESC`);
     return res.json({ actors: rows });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to fetch actors' });
   }
 });
@@ -25835,7 +25646,8 @@ app.post('/api/admin/apify/actors', async (req: Request, res: Response) => {
       [actor_id.trim(), name.trim(), description.trim(), tag.trim()]
     );
     return res.json({ actor: rows[0] });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to save actor' });
   }
 });
@@ -25921,12 +25733,13 @@ app.get('/api/admin/apify/runs', async (req: Request, res: Response) => {
             run.dataset_id = d.defaultDatasetId ?? run.dataset_id;
             run.finished_at = d.finishedAt ?? run.finished_at;
           }
-        } catch { /* skip */ }
+        } catch (_err) { /* skip */ }
       }));
     }
 
     return res.json({ runs: rows });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to fetch runs' });
   }
 });
@@ -25947,7 +25760,7 @@ async function getHiggsfieldConfig(): Promise<HiggsfieldCfg | null> {
     const apiSecret = cfg?.apiSecret ?? '';
     if (!apiId || !apiSecret) return null;
     return { apiId, apiSecret, baseUrl: 'https://platform.higgsfield.ai' };
-  } catch { return null; }
+  } catch (_err) { return null; }
 }
 
 function higgsfieldHeaders(cfg: HiggsfieldCfg): Record<string, string> {
@@ -26153,7 +25966,8 @@ app.get('/api/admin/higgsfield/generations', async (req: Request, res: Response)
       `SELECT * FROM higgsfield_generations ORDER BY created_at DESC LIMIT 100`
     );
     return res.json({ generations: rows });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to fetch generations' });
   }
 });
@@ -26200,7 +26014,7 @@ async function getMagnificApiKey(): Promise<string> {
       `SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`
     );
     return cfg.rows[0]?.config?.apiKey ?? '';
-  } catch { return ''; }
+  } catch (_err) { return ''; }
 }
 
 function proxyHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -26699,7 +26513,7 @@ async function getKlingKeys(): Promise<{ ak: string; sk: string } | null> {
     const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='kling' LIMIT 1`);
     const cfg = r.rows[0]?.config;
     if (cfg?.accessKey && cfg?.secretKey) return { ak: cfg.accessKey, sk: cfg.secretKey };
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
   return null;
 }
 
@@ -27073,7 +26887,7 @@ async function getGoogleApiKey(): Promise<string | null> {
   try {
     const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
     return r.rows[0]?.config?.api_key ?? null;
-  } catch { return null; }
+  } catch (_err) { return null; }
 }
 
 // Upload base64 to imgbb (if key configured) or fall back to data URL
@@ -27374,7 +27188,7 @@ async function getOpenAIApiKey(): Promise<string | null> {
   try {
     const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['openai']);
     return r.rows[0]?.config?.api_key ?? null;
-  } catch { return null; }
+  } catch (_err) { return null; }
 }
 
 // Map aspect ratio + model → OpenAI image size string
@@ -28055,7 +27869,7 @@ async function logTaskActivity(
       `INSERT INTO task_activity (project_id, user_id, action, task_id, metadata) VALUES ($1,$2,$3,$4,$5)`,
       [projectId, userId, action, taskId ?? null, metadata ? JSON.stringify(metadata) : null]
     );
-  } catch { /* non-fatal */ }
+  } catch (_err) { /* non-fatal */ }
 }
 
 /**
@@ -28323,7 +28137,8 @@ app.patch('/api/projects/:projectId/tasks/reorder', async (req: Request, res: Re
       dbQuery(`UPDATE tasks SET status=$1, position=$2, updated_at=NOW() WHERE id=$3 AND project_id=$4`, [status, position, id, projectId])
     ));
     return res.json({ success: true });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to reorder tasks' });
   }
 });
@@ -28363,7 +28178,8 @@ app.get('/api/projects/:projectId/task-stats', async (req: Request, res: Respons
     const byStatus = Object.fromEntries(statusCounts.rows.map((r) => [r.status, r.count]));
     const total = statusCounts.rows.reduce((s, r) => s + r.count, 0);
     return res.json({ byStatus, total, overdue: overdue.rows[0]?.count ?? 0, memberLoad: memberLoad.rows, recentActivity: recent.rows });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to load stats' });
   }
 });
@@ -28532,7 +28348,8 @@ app.get('/api/tasks/:taskId/comments', async (req: Request, res: Response) => {
       replyMap[r.parent_id].push(r);
     }
     return res.json({ comments: comments.map((c) => ({ ...c, replies: replyMap[c.id] ?? [] })) });
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     return res.status(500).json({ error: 'Failed to load comments' });
   }
 });
@@ -28756,7 +28573,7 @@ async function getFreepikApiKey(): Promise<string> {
     const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'freepik' LIMIT 1`);
     const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
     if (dbKey) return dbKey;
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
   return getMagnificApiKey();
 }
 
@@ -28992,7 +28809,7 @@ async function gatherPlatformSnapshot(agentKey: string): Promise<Record<string, 
   const data: Record<string, any> = { snapshot_at: new Date().toUTCString() };
 
   const safe = async (label: string, fn: () => Promise<any>) => {
-    try { data[label] = await fn(); } catch { /* skip incomplete data */ }
+    try { data[label] = await fn(); } catch (_err) { /* skip incomplete data */ }
   };
 
   // Core user metrics — all agents
@@ -29243,7 +29060,7 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
           decisions: Array.isArray(j.decisions) ? j.decisions : [],
         };
       }
-    } catch { /* use raw text as summary */ }
+    } catch (_err) { /* use raw text as summary */ }
 
     // Execute decisions (Phase 3 — autonomous actions)
     let executedCount = 0;
@@ -29492,7 +29309,7 @@ app.put('/api/user/agent-tasks/:id', async (req: Request, res: Response) => {
           [auth.userId, task.agent_key, summary.slice(0, 1000)]
         );
       }
-    } catch { /* non-fatal */ }
+    } catch (_err) { /* non-fatal */ }
 
     // Phase 9 — Proposal Execution: materialise approved proposals into real artifacts
     let execution: Record<string, any> | null = null;
@@ -29522,7 +29339,7 @@ app.put('/api/user/agent-tasks/:id', async (req: Request, res: Response) => {
           );
           execution = { type: 'agent_draft', draft_id: dr[0]?.id };
         }
-      } catch { /* non-fatal */ }
+      } catch (_err) { /* non-fatal */ }
     }
 
     return res.json({ success: true, task, execution });
@@ -29631,7 +29448,7 @@ async function gatherUserContext(userId: string, agentKey: string): Promise<Reco
   if (!pool) return ctx;
 
   const safe = async (label: string, fn: () => Promise<any>) => {
-    try { ctx[label] = await fn(); } catch { /* skip on error */ }
+    try { ctx[label] = await fn(); } catch (_err) { /* skip on error */ }
   };
 
   // Brand profile
@@ -29776,7 +29593,7 @@ async function callAgentAndParse(
       const j = JSON.parse(match[0]);
       if (Array.isArray(j.proposals)) proposals = j.proposals;
     }
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
 
   if (proposals.length === 0) {
     proposals = [{
@@ -29841,7 +29658,7 @@ app.post('/api/user/agents/:key/run', async (req: Request, res: Response) => {
         return res.status(429).json({ success: false, error: `Agent ${key} was just run. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.` });
       }
     }
-  } catch { /* proceed */ }
+  } catch (_err) { /* proceed */ }
 
   try {
     const { encryptedKey } = await getAIConfig();
@@ -30106,9 +29923,9 @@ async function runScheduledAgents(): Promise<void> {
           `UPDATE user_agent_schedules SET last_scheduled_run_at = NOW(), updated_at = NOW() WHERE id = $1`,
           [sched.id]
         );
-      } catch { /* skip failing agent */ }
+      } catch (_err) { /* skip failing agent */ }
     }
-  } catch { /* non-fatal */ }
+  } catch (_err) { /* non-fatal */ }
 }
 
 // ── End User Agent Foundation Routes ─────────────────────────────────────────
@@ -30154,7 +29971,7 @@ ${samples.slice(0, 3000)}`,
     try {
       const match = raw.match(/\{[\s\S]*\}/);
       if (match) voice = JSON.parse(match[0]);
-    } catch { voice = { one_liner: raw.slice(0, 200) }; }
+    } catch (_err) { voice = { one_liner: raw.slice(0, 200) }; }
 
     // Save to agent memory so Daky + Nova pick it up automatically
     const summary = `Tone: ${voice.tone ?? ''}. Personality: ${(voice.personality ?? []).join(', ')}. Do: ${(voice.do_list ?? []).join('; ')}. Avoid: ${(voice.dont_list ?? []).join('; ')}.`;
@@ -30186,7 +30003,7 @@ function _extractJsonFromText(text: string): Record<string, any> | null {
     const candidate = codeBlock ? codeBlock[1] : text;
     const jsonMatch = candidate.match(/\{[\s\S]*\}/);
     if (jsonMatch) return JSON.parse(jsonMatch[0]);
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
   return null;
 }
 
@@ -30285,7 +30102,7 @@ Return ONLY valid JSON array (no markdown, no text outside the array):
           try {
             const arrMatch = rawContent.match(/\[[\s\S]*\]/);
             if (arrMatch) designs = JSON.parse(arrMatch[0]);
-          } catch { designs = []; }
+          } catch (_err) { designs = []; }
 
           stepResults[step.id] = { designs };
           send({ type: 'step_done', step_id: step.id });
@@ -30828,7 +30645,7 @@ async function getReplicateApiKey(): Promise<string> {
   try {
     const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'replicate' LIMIT 1`);
     return cfg.rows[0]?.config?.apiKey ?? '';
-  } catch { return ''; }
+  } catch (_err) { return ''; }
 }
 
 async function replicateGenerateImage(
@@ -31155,7 +30972,7 @@ Make each suggestion specific to this brand — reference their niche, audience,
     try {
       const arrMatch = raw.match(/\[[\s\S]*\]/);
       if (arrMatch) suggestions = JSON.parse(arrMatch[0]);
-    } catch { suggestions = []; }
+    } catch (_err) { suggestions = []; }
 
     return res.json({ success: true, has_memory: true, suggestions });
   } catch (e: any) {
@@ -31940,7 +31757,8 @@ async function fireWorkflowTriggers(
       if (!triggerNode) continue;
       void executeWorkflowOnce(userId, wf, triggerData).catch(() => undefined);
     }
-  } catch {
+  } catch (err) {
+    logger.error('Unhandled error:', err);
     // Non-fatal — workflow triggers must never break post operations
   }
 }

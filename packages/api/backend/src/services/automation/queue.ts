@@ -1,4 +1,5 @@
-import Queue from "bull";
+import Queue from "bull";import { prisma } from "../../utils/prisma";
+
 import {
   PrismaClient,
   PostPlatformStatus,
@@ -14,7 +15,6 @@ import { LinkedInAdapter } from "../platform-adapters/linkedin.adapter";
 import { PinterestAdapter } from "../platform-adapters/pinterest.adapter";
 import { WordPressAdapter } from "../platform-adapters/wordpress.adapter";
 
-const prisma = new PrismaClient();
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {

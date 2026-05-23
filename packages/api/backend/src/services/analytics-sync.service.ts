@@ -1,8 +1,7 @@
-﻿import { PrismaClient } from "@prisma/client";
+import { prisma } from "../utils/prisma";
 import { AnalyticsService } from "./analytics.service";
 import { logIntegrationEvent } from "../utils/integration-log";
 
-const prisma = new PrismaClient();
 
 export class AnalyticsSyncService {
   static async syncAllUserAnalytics(userId: string, agencyId: string) {

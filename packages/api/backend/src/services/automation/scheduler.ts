@@ -1,11 +1,11 @@
-import cron from "node-cron";
-import { PrismaClient, PostPlatformStatus, PostStatus } from "@prisma/client";
+import cron from "node-cron";import { prisma } from "../../utils/prisma";
+
+import { PostPlatformStatus, PostStatus } from "@prisma/client";
 import { addPostToQueue } from "./queue";
 import { logIntegrationEvent } from "../../utils/integration-log";
 import { AnalyticsSyncService } from "../analytics-sync.service";
 import { calculateNextRun } from "./post-automation.service";
 
-const prisma = new PrismaClient();
 
 const toTimeString = (date?: Date | null) => {
   if (!date) return undefined;

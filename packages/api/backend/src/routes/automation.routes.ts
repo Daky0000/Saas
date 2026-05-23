@@ -1,10 +1,10 @@
 import { Router, Response } from "express";
-import { PrismaClient, RecurringType } from "@prisma/client";
+import { RecurringType } from "@prisma/client";
 import { authMiddleware, AuthRequest } from "../middleware/auth.middleware";
 import { PostAutomationService } from "../services/automation/post-automation.service";
+import { prisma } from "../utils/prisma";
 
 const router = Router();
-const prisma = new PrismaClient();
 
 const parseDate = (value?: string) => {
   if (!value) return null;

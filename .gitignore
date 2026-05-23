@@ -49,6 +49,9 @@ copilot-messages.log
 .DS_Store
 .project/attachments/files/**
 
+# Committed SQLite dev database — must not be tracked
+packages/api/backend/database.sqlite
+
 # Temporary and disabled folders
 tmp_skills_disabled/
 tmp_skills/

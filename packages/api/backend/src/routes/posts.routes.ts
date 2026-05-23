@@ -1,7 +1,8 @@
 import { Router, Response } from "express";
-import { PrismaClient, PostPlatformStatus, PostStatus } from "@prisma/client";
+import { PostPlatformStatus, PostStatus } from "@prisma/client";
 import { authMiddleware, AuthRequest } from "../middleware/auth.middleware";
 import {
+import { prisma } from "../utils/prisma";
   addPostToQueue,
   removePostJobs,
   retryFailedPost,
@@ -11,7 +12,6 @@ import { logIntegrationEvent } from "../utils/integration-log";
 import { PostService } from "../services/post.service";
 
 const router = Router();
-const prisma = new PrismaClient();
 
 const parseDate = (value?: string) => {
   if (!value) return null;
