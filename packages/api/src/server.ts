@@ -4541,7 +4541,7 @@ function upsertInMemoryUser(input: {
   const passwordHash =
     existing && bcrypt.compareSync(input.password, existing.password_hash)
       ? existing.password_hash
-      : bcrypt.hashSync(input.password, 10);
+      : bcrypt.hashSync(input.password, 12);
 
   const nextUser: DbUserRow = {
     id,
@@ -4782,7 +4782,7 @@ async function createUser(
   password: string,
   options?: { role?: AdminDbRole; status?: AdminDbStatus; avatarUrl?: string | null; coverUrl?: string | null }
 ): Promise<DbUserRow> {
-  const hash = await bcrypt.hash(password, 10);
+  const hash = await bcrypt.hash(password, 12);
   const id = randomUUID();
   const normalizedEmail = normalizeEmail(email);
   const normalizedUsername = normalizeUsername(username);
@@ -5242,17 +5242,21 @@ async function checkTokenVersion(auth: { userId: string; tokenVersion: number | 
 async function requireAdmin(req: Request, res: Response): Promise<DbUserRow | null> {
   const auth = requireAuth(req, res);
   if (!auth) return null;
+  // Admin routes require DB access — fail-closed if DB is unavailable so a
+  // revoked session can't slip through when the DB is down.
+  if (!hasDatabase()) {
+    res.status(503).json({ success: false, error: 'Admin operations require a database connection.' });
+    return null;
+  }
   const user = await getUserById(auth.userId);
   if (!user || user.role !== 'admin') {
     res.status(403).json({ success: false, error: 'Admin access required' });
     return null;
   }
-  // Validate token_version for admin operations
-  if (auth.tokenVersion !== null && hasDatabase()) {
-    if (user.token_version !== auth.tokenVersion) {
-      res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
-      return null;
-    }
+  // Always validate token_version for admin operations.
+  if (auth.tokenVersion !== null && user.token_version !== auth.tokenVersion) {
+    res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
+    return null;
   }
   return user;
 }
@@ -5552,7 +5556,7 @@ app.post('/api/auth/change-password', passwordLimiter, async (req: Request, res:
     if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found' });
     const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
     if (!valid) return res.status(400).json({ success: false, error: 'Current password is incorrect' });
-    const newHash = await bcrypt.hash(newPassword, 10);
+    const newHash = await bcrypt.hash(newPassword, 12);
     await dbQuery('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, auth.userId]);
     return res.json({ success: true });
   } catch (e) {
@@ -5610,15 +5614,25 @@ async function sendEmailVerification(userId: string, email: string): Promise<voi
 
 // POST /api/auth/forgot-password
 app.post('/api/auth/forgot-password', authLimiter, async (req: Request, res: Response) => {
-  // Always return 200 regardless — don't reveal if email exists
+  // Always return 200 regardless — don't reveal if email exists.
+  // MIN_RESPONSE_MS pads every code path to the same wall-clock time so an
+  // attacker cannot enumerate registered emails via response timing.
   const SAFE_RESPONSE = { success: true, message: 'If that email exists, a reset link has been sent.' };
+  const MIN_RESPONSE_MS = 600;
+  const t0 = Date.now();
+  const safeReturn = async () => {
+    const elapsed = Date.now() - t0;
+    if (elapsed < MIN_RESPONSE_MS) await new Promise(r => setTimeout(r, MIN_RESPONSE_MS - elapsed));
+    return res.json(SAFE_RESPONSE);
+  };
+
   try {
     const email = String(req.body.email || '').trim().toLowerCase();
-    if (!email || !email.includes('@')) return res.json(SAFE_RESPONSE);
-    if (!hasDatabase()) return res.json(SAFE_RESPONSE);
+    if (!email || !email.includes('@')) return safeReturn();
+    if (!hasDatabase()) return safeReturn();
 
     const user = await findUserByEmail(email);
-    if (!user) return res.json(SAFE_RESPONSE);
+    if (!user) return safeReturn();
 
     // Invalidate existing unused tokens for this user
     await dbQuery(
@@ -5638,10 +5652,10 @@ app.post('/api/auth/forgot-password', authLimiter, async (req: Request, res: Res
     const resetUrl = `${appUrl}/reset-password#token=${rawToken}`;
     await sendPasswordResetEmail(user.email, resetUrl);
     logger.info({ userId: user.id }, 'password_reset_requested');
-    return res.json(SAFE_RESPONSE);
+    return safeReturn();
   } catch (error) {
     logger.error({ error }, 'forgot_password_failed');
-    return res.json(SAFE_RESPONSE); // still safe response on error
+    return safeReturn();
   }
 });
 
@@ -5673,7 +5687,7 @@ app.post('/api/auth/reset-password', authLimiter, async (req: Request, res: Resp
       return res.status(400).json({ success: false, error: 'Invalid or expired reset link' });
     }
 
-    const newHash = await bcrypt.hash(newPassword, 10);
+    const newHash = await bcrypt.hash(newPassword, 12);
     // Mark token used, update password, and bump token_version to invalidate all existing sessions
     await dbQuery(
       `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
@@ -11425,7 +11439,7 @@ app.get('/auth/:provider/callback', async (req: Request, res: Response, next) =>
         await dbQuery(
           `INSERT INTO users (id, name, username, email, password_hash, role, status, created_at, last_login_at)
            VALUES ($1, $2, $3, $4, $5, 'user', 'active', NOW(), NOW())`,
-          [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 10)],
+          [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 12)],
         );
       }
     } else {
@@ -11501,7 +11515,7 @@ app.post('/api/auth/facebook/token', async (req: Request, res: Response) => {
         await dbQuery(
           `INSERT INTO users (id, name, username, email, password_hash, role, status, created_at, last_login_at)
            VALUES ($1, $2, $3, $4, $5, 'user', 'active', NOW(), NOW())`,
-          [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 10)],
+          [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 12)],
         );
       }
     } else {
