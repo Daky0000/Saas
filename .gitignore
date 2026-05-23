@@ -67,15 +67,16 @@ node_modules/
 *.log
 .npm-cache/
 
-# Web build outputs — deployed via CI/CD, never committed
-# GitHub Actions builds packages/web/dist and uploads it directly to Pages.
+# Web build outputs — built inside Docker by Railway, never committed
 packages/web/dist/
-packages/web/index.html
-packages/web/404.html
 # Root-level Vite scratch output (not committed)
 /dist/
 /assets/
-# /docs/ is intentionally committed — GitHub Pages serves from master/docs
+/index.html
+/404.html
+/CNAME
+# docs/ — Railway now serves the frontend; not needed in git
+/docs/
 
 # Temporary export/deploy artifacts
 tmp_deploy_repo/

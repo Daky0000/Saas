@@ -1,5 +1,3 @@
-const PROD_API_URL = 'https://contentflow-api-production.up.railway.app';
-
 function resolveApiBase(): string {
   // 1. Explicit env var (set in .env or deployment config) — highest priority
   const envBase = ((import.meta.env.VITE_API_BASE_URL as string) || '').trim().replace(/\/$/, '');
@@ -10,13 +8,8 @@ function resolveApiBase(): string {
     return String((window as any).__API_BASE_URL__).trim().replace(/\/$/, '');
   }
 
-  // 3. Dev mode: empty string means relative paths → Vite proxy forwards to localhost:5000
-  if (import.meta.env.DEV) return '';
-
-  // 4. Production fallback: VITE_API_BASE_URL should always be set in deployed envs
-  // eslint-disable-next-line no-console
-  console.warn('[api] VITE_API_BASE_URL is not set — falling back to hardcoded production URL');
-  return PROD_API_URL;
+  // 3. Use relative paths — works for both dev (Vite proxy) and production (same-origin)
+  return '';
 }
 
 export const getApiBaseUrl = resolveApiBase;

@@ -127,7 +127,7 @@ app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
 // Serve static assets — no caching on any file so deploys take effect immediately
 if (config.serveStatic) {
   app.use(
-    express.static(path.join(__dirname, 'docs'), {
+    express.static(path.join(__dirname, 'public'), {
       setHeaders(res) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -32033,6 +32033,10 @@ app.delete('/api/automations/:id', async (req: Request, res: Response) => {
 });
 
 app.use((req: Request, res: Response) => {
+  if (config.serveStatic && !req.path.startsWith('/api/')) {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    return;
+  }
   res.status(404).json({ success: false, error: 'Not found' });
 });
 
