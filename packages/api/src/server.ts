@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Resend } from 'resend';
 import Stripe from 'stripe';
 import express from 'express';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import axios from 'axios';
@@ -90,13 +90,38 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Lightweight diagnostics to debug Railway DB/CORS issues (no secrets).
-app.get('/api/debug/db', (_req: Request, res: Response) => {
+// Diagnostics — admin-only so deployment internals aren't public.
+app.get('/api/debug/db', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
   res.json({
     hasDatabase: hasDatabase(),
     dbReady,
     databaseUrlConfigured: Boolean(DATABASE_URL && DATABASE_URL.trim()),
   });
+});
+
+// ── Global session-revocation guard ──────────────────────────────────────────
+// Every /api request carrying a JWT has its tokenVersion checked against the DB.
+// This makes logout-all-devices actually revoke access on all subsequent requests.
+// Skips if no auth header (public routes) or if DB is unavailable (fail-open).
+app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.headers.authorization) return next();
+  const auth = getAuthUser(req);
+  if (!auth || auth.tokenVersion === null || !hasDatabase()) return next();
+  try {
+    const { rows } = await dbQuery<{ token_version: number }>(
+      'SELECT token_version FROM users WHERE id = $1',
+      [auth.userId]
+    );
+    if (rows[0] && rows[0].token_version !== auth.tokenVersion) {
+      res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
+      return;
+    }
+  } catch {
+    // DB error — fail open so a transient hiccup doesn't lock everyone out
+  }
+  next();
 });
 
 // Serve static assets — no caching on any file so deploys take effect immediately
@@ -5570,7 +5595,7 @@ async function sendEmailVerification(userId: string, email: string): Promise<voi
   const { apiKey, fromEmail, fromName } = await getResendConfig();
   if (!apiKey) return;
   const appUrl = (process.env.VITE_APP_URL || 'https://marketing.dakyworld.com').replace(/\/$/, '');
-  const verifyUrl = `${appUrl}/verify-email?token=${rawToken}`;
+  const verifyUrl = `${appUrl}/verify-email#token=${rawToken}`;
   const resend = new Resend(apiKey);
   await resend.emails.send({
     from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
@@ -5610,7 +5635,7 @@ app.post('/api/auth/forgot-password', authLimiter, async (req: Request, res: Res
     );
 
     const appUrl = config.appUrl;
-    const resetUrl = `${appUrl}/reset-password?token=${rawToken}`;
+    const resetUrl = `${appUrl}/reset-password#token=${rawToken}`;
     await sendPasswordResetEmail(user.email, resetUrl);
     logger.info({ userId: user.id }, 'password_reset_requested');
     return res.json(SAFE_RESPONSE);

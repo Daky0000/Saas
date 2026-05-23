@@ -10,7 +10,9 @@ export default function ResetPassword() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    // Token is in the hash fragment (#token=...) so it's never sent to servers
+    // or recorded in access logs / Referer headers.
+    const params = new URLSearchParams(window.location.hash.slice(1));
     setToken(params.get('token') ?? '');
   }, []);
 

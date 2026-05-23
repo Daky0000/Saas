@@ -6,7 +6,9 @@ export default function VerifyEmail() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    // Token is in the hash fragment (#token=...) so it's never sent to servers
+    // or recorded in access logs / Referer headers.
+    const params = new URLSearchParams(window.location.hash.slice(1));
     const token = params.get('token');
     if (!token) {
       setStatus('error');
