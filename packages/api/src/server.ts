@@ -22,6 +22,7 @@ import {
   createHmac,
   timingSafeEqual,
 } from 'crypto';
+import { existsSync } from 'fs';
 import { FacebookPagesPlatform } from '../backend/platforms/facebook_pages.ts';
 import { InstagramBusinessPlatform } from '../backend/platforms/instagram_business.ts';
 import { LinkedInPlatform } from '../backend/platforms/linkedin.ts';
@@ -124,10 +125,12 @@ app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Serve static assets — no caching on any file so deploys take effect immediately
-if (config.serveStatic) {
+// Serve frontend static assets when built files are present (copied by Dockerfile)
+const publicDir = path.join(__dirname, 'public');
+const hasStaticFiles = existsSync(path.join(publicDir, 'index.html'));
+if (hasStaticFiles) {
   app.use(
-    express.static(path.join(__dirname, 'public'), {
+    express.static(publicDir, {
       setHeaders(res) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -18420,8 +18423,8 @@ app.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
-  if (config.serveStatic) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  if (hasStaticFiles) {
+    res.sendFile(path.join(publicDir, 'index.html'));
     return;
   }
   res.json({ message: 'OAuth Backend Server Running', version: '1.0.0' });
@@ -32037,8 +32040,8 @@ app.delete('/api/automations/:id', async (req: Request, res: Response) => {
 });
 
 app.use((req: Request, res: Response) => {
-  if (config.serveStatic && !req.path.startsWith('/api/')) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  if (hasStaticFiles && !req.path.startsWith('/api/')) {
+    res.sendFile(path.join(publicDir, 'index.html'));
     return;
   }
   res.status(404).json({ success: false, error: 'Not found' });
