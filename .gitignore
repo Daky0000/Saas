@@ -72,13 +72,10 @@ node_modules/
 packages/web/dist/
 packages/web/index.html
 packages/web/404.html
-# Root-level mirrors produced by sync-pages.mjs (CI-only, not for git)
+# Root-level Vite scratch output (not committed)
 /dist/
-/docs/
 /assets/
-/index.html
-/404.html
-/CNAME
+# /docs/ is intentionally committed — GitHub Pages serves from master/docs
 
 # Temporary export/deploy artifacts
 tmp_deploy_repo/
