@@ -199,5 +199,22 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
     }
   });
 
+  // GET /api/user-designs/:id/liked
+  router.get('/user-designs/:id/liked', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.json({ liked: false });
+    const { id } = req.params;
+    try {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM design_likes WHERE user_id = $1 AND design_id = $2 AND design_type = 'user'`,
+        [auth.userId, id]
+      );
+      return res.json({ liked: rows.length > 0 });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   return router;
 }
