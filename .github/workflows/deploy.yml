@@ -41,16 +41,13 @@ jobs:
           VITE_FACEBOOK_APP_ID: ${{ secrets.VITE_FACEBOOK_APP_ID || vars.VITE_FACEBOOK_APP_ID }}
           VITE_TIKTOK_CLIENT_ID: ${{ secrets.VITE_TIKTOK_CLIENT_ID || vars.VITE_TIKTOK_CLIENT_ID }}
 
-      - name: Add CNAME
-        run: cp CNAME dist/CNAME
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          path: ./packages/web/dist
 
   deploy:
     environment:
