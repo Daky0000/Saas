@@ -100,7 +100,7 @@ app.get('/api/debug/db', (_req: Request, res: Response) => {
 });
 
 // Serve static assets — no caching on any file so deploys take effect immediately
-if (process.env.SERVE_STATIC === 'true') {
+if (config.serveStatic) {
   app.use(
     express.static(path.join(__dirname, 'docs'), {
       setHeaders(res) {
@@ -113,9 +113,9 @@ if (process.env.SERVE_STATIC === 'true') {
 }
 const JWT_SECRET = config.jwtSecret;
 const DATABASE_URL = config.databaseUrl;
-const REDIS_URL = process.env.REDIS_URL || process.env.BULLMQ_REDIS_URL || '';
-const TWITTER_MONTHLY_WRITE_LIMIT = Number(process.env.TWITTER_MONTHLY_WRITE_LIMIT || process.env.X_MONTHLY_WRITE_LIMIT || 0);
-const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = Number(process.env.SOCIAL_TOKEN_SAFETY_MARGIN_DAYS || 10);
+const REDIS_URL = config.redisUrl;
+const TWITTER_MONTHLY_WRITE_LIMIT = config.twitterMonthlyWriteLimit;
+const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = config.socialTokenSafetyMarginDays;
 const X_API_BASE = 'https://api.x.com';
 const X_OAUTH_TOKEN_URL = `${X_API_BASE}/2/oauth2/token`;
 const X_USERS_ME_API = `${X_API_BASE}/2/users/me`;
@@ -323,13 +323,10 @@ async function recordAuditLog(userId: string, action: string, postIds: string[],
     logger.warn('Failed to record audit log:', err);
   }
 }
-const extraOrigins = (process.env.FRONTEND_ORIGINS || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const extraOrigins = config.frontendOrigins ?? [];
 
 const allowedOrigins = new Set([
-  process.env.VITE_APP_URL || 'http://localhost:3000',
+  config.appUrl || 'http://localhost:3000',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://127.0.0.1:3000',
@@ -445,6 +442,35 @@ async function ensureDatabase() {
     CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx
     ON users (LOWER(username))
     WHERE username IS NOT NULL;
+  `);
+
+  // token_version: increment to invalidate all sessions for a user (logout-all-devices)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;`);
+  // email_verified: set to true after the user confirms their email
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS pwd_reset_user_idx ON password_reset_tokens(user_id);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS email_verif_user_idx ON email_verification_tokens(user_id);
   `);
 
   await pool.query(`
@@ -3982,7 +4008,43 @@ app.use(
     credentials: true,
   })
 );
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(
+  helmet({
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        // Scripts: self + Google Fonts/Analytics + Facebook SDK + inline scripts used by Vite/React
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'", // Vite injects inline scripts; tighten after moving to nonce-based approach
+          'https://connect.facebook.net',
+          'https://www.googletagmanager.com',
+          'https://www.google-analytics.com',
+        ],
+        // Styles: self + Google Fonts + inline (Tailwind/styled-components)
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        // Images: self + data URIs + common CDNs
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        // Connections: self + API + common analytics
+        connectSrc: [
+          "'self'",
+          'https://contentflow-api-production.up.railway.app',
+          'https://www.google-analytics.com',
+        ],
+        // Frames: YouTube embeds (surveys), Facebook OAuth
+        frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.facebook.com'],
+        // Restrict object/embed/base
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        // Upgrade insecure requests in production
+        upgradeInsecureRequests: config.nodeEnv === 'production' ? [] : null,
+      },
+    },
+  })
+);
 app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -4100,7 +4162,7 @@ app.get('/webhooks/meta', (req: Request, res: Response) => {
   const mode = String(req.query['hub.mode'] || '').trim();
   const token = String(req.query['hub.verify_token'] || '').trim();
   const challenge = String(req.query['hub.challenge'] || '').trim();
-  const verifyToken = String(process.env.META_WEBHOOK_VERIFY_TOKEN || process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN || '').trim();
+  const verifyToken = config.metaWebhookVerifyToken;
 
   if (mode === 'subscribe' && verifyToken && token === verifyToken) {
     return res.status(200).send(challenge);
@@ -4113,7 +4175,7 @@ app.get('/api/v1/webhooks/facebook', (req: Request, res: Response) => {
   const mode = String(req.query['hub.mode'] || '').trim();
   const token = String(req.query['hub.verify_token'] || '').trim();
   const challenge = String(req.query['hub.challenge'] || '').trim();
-  const verifyToken = String(process.env.META_WEBHOOK_VERIFY_TOKEN || process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN || '').trim();
+  const verifyToken = config.metaWebhookVerifyToken;
 
   if (mode === 'subscribe' && verifyToken && token === verifyToken) {
     return res.status(200).send(challenge);
@@ -4126,7 +4188,7 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
   res.status(200).json({ ok: true });
 
   try {
-    const appSecret = String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '').trim();
+    const appSecret = config.facebookAppSecret;
     if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
       logger.warn('Meta webhook: invalid signature — discarding');
       return;
@@ -4236,7 +4298,7 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
 app.post('/api/v1/webhooks/facebook', async (req: Request, res: Response) => {
   res.status(200).json({ ok: true });
   try {
-    const appSecret = String(process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '').trim();
+    const appSecret = config.facebookAppSecret;
     if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
       logger.warn('Facebook v1 webhook: invalid signature — discarding');
       return;
@@ -4360,6 +4422,8 @@ type DbUserRow = {
   cover_url: string | null;
   last_login_at: string | null;
   password_hash: string;
+  token_version: number;
+  email_verified: boolean;
   created_at: string;
 };
 
@@ -4571,7 +4635,23 @@ function parseAdminStatus(status: string | undefined): AdminDbStatus {
   }
 }
 
-function userToAuthPayload(user: DbUserRow) {
+async function getUserPlanName(userId: string): Promise<string> {
+  if (!hasDatabase()) return 'Free';
+  try {
+    const { rows } = await dbQuery<{ name: string }>(
+      `SELECT pp.name FROM subscriptions s
+       JOIN pricing_plans pp ON pp.id = s.plan_id
+       WHERE s.user_id = $1 AND s.status IN ('active','trialing')
+       ORDER BY s.created_at DESC LIMIT 1`,
+      [userId]
+    );
+    return rows[0]?.name ?? 'Free';
+  } catch {
+    return 'Free';
+  }
+}
+
+function userToAuthPayload(user: DbUserRow, planName?: string) {
   return {
     id: user.id,
     email: user.email,
@@ -4583,6 +4663,8 @@ function userToAuthPayload(user: DbUserRow) {
     role: user.role === 'admin' ? 'admin' : 'user',
     avatar: user.avatar_url,
     cover: user.cover_url,
+    planName: planName ?? 'Free',
+    emailVerified: user.email_verified ?? false,
   };
 }
 
@@ -4603,16 +4685,29 @@ function userToManagedUser(user: DbUserRow) {
 
 const JWT_EXPIRES_IN = '7d';
 
-function signToken(userId: string, email: string) {
-  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+function signToken(userId: string, email: string, tokenVersion = 1) {
+  return jwt.sign({ userId, email, tokenVersion }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
 function getAuthUser(req: Request) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    return { userId: decoded.userId as string, email: decoded.email as string };
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (
+      typeof decoded !== 'object' ||
+      decoded === null ||
+      typeof (decoded as Record<string, unknown>).userId !== 'string' ||
+      !(decoded as Record<string, unknown>).userId
+    ) {
+      return null;
+    }
+    const payload = decoded as Record<string, unknown>;
+    return {
+      userId: payload.userId as string,
+      email: typeof payload.email === 'string' ? payload.email : '',
+      tokenVersion: typeof payload.tokenVersion === 'number' ? payload.tokenVersion : null,
+    };
   } catch {
     return null;
   }
@@ -5099,6 +5194,26 @@ function requireAuth(req: Request, res: Response): { userId: string; email?: str
   return auth;
 }
 
+// Validates that the token_version embedded in the JWT matches the DB.
+// Returns false and sends 401 if mismatched (user ran logout-all-devices).
+async function checkTokenVersion(auth: { userId: string; tokenVersion: number | null }, res: Response): Promise<boolean> {
+  if (auth.tokenVersion === null || !hasDatabase()) return true; // old tokens without version — allow through
+  try {
+    const { rows } = await dbQuery<{ token_version: number }>(
+      `SELECT token_version FROM users WHERE id = $1`,
+      [auth.userId]
+    );
+    if (!rows[0]) { res.status(401).json({ success: false, error: 'Unauthorized' }); return false; }
+    if (rows[0].token_version !== auth.tokenVersion) {
+      res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
+      return false;
+    }
+    return true;
+  } catch {
+    return true; // DB error — fail open to avoid blocking all requests
+  }
+}
+
 async function requireAdmin(req: Request, res: Response): Promise<DbUserRow | null> {
   const auth = requireAuth(req, res);
   if (!auth) return null;
@@ -5106,6 +5221,13 @@ async function requireAdmin(req: Request, res: Response): Promise<DbUserRow | nu
   if (!user || user.role !== 'admin') {
     res.status(403).json({ success: false, error: 'Admin access required' });
     return null;
+  }
+  // Validate token_version for admin operations
+  if (auth.tokenVersion !== null && hasDatabase()) {
+    if (user.token_version !== auth.tokenVersion) {
+      res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
+      return null;
+    }
   }
   return user;
 }
@@ -5217,7 +5339,7 @@ async function triggerAgentCompilation(userId: string): Promise<void> {
 
 const authRegisterSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  password: z.string().min(8).max(72),
   name: z.string().min(1).max(100),
   username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
 });
@@ -5271,7 +5393,8 @@ app.post('/api/auth/register', authLimiter, validateBody(authRegisterSchema), as
       'Your account is ready. Connect a social account and start chatting with Daky.',
       {},
     ).catch(() => undefined);
-    const token = signToken(user.id, user.email);
+    sendEmailVerification(user.id, user.email).catch(() => undefined);
+    const token = signToken(user.id, user.email, user.token_version ?? 1);
 
     return res.json({
       success: true,
@@ -5306,7 +5429,7 @@ app.post('/api/auth/login', authLimiter, validateBody(authLoginSchema), async (r
 
     await updateLastLogin(user.id);
     const refreshedUser = (await getUserById(user.id)) || user;
-    const token = signToken(user.id, user.email);
+    const token = signToken(user.id, user.email, refreshedUser.token_version ?? 1);
     return res.json({
       success: true,
       token,
@@ -5328,9 +5451,10 @@ app.get('/api/auth/me', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
+    const planName = await getUserPlanName(auth.userId);
     return res.json({
       success: true,
-      user: userToAuthPayload(user),
+      user: userToAuthPayload(user, planName),
     });
   } catch (error) {
     logger.error('Me error:', error);
@@ -5393,6 +5517,9 @@ app.post('/api/auth/change-password', passwordLimiter, async (req: Request, res:
   if (newPassword.length < 8) {
     return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
   }
+  if (newPassword.length > 72) {
+    return res.status(400).json({ success: false, error: 'New password must be at most 72 characters' });
+  }
   try {
     const { rows } = await dbQuery<{ password_hash: string }>(
       'SELECT password_hash FROM users WHERE id = $1', [auth.userId]
@@ -5406,6 +5533,199 @@ app.post('/api/auth/change-password', passwordLimiter, async (req: Request, res:
   } catch (e) {
     logger.error({ e }, 'change_password_failed');
     return res.status(500).json({ success: false, error: 'Failed to change password' });
+  }
+});
+
+// ── Password reset helpers ────────────────────────────────────────────────────
+
+async function sendPasswordResetEmail(email: string, resetUrl: string): Promise<void> {
+  const { apiKey, fromEmail, fromName } = await getResendConfig();
+  if (!apiKey) {
+    logger.warn('Resend not configured — password reset email not sent');
+    return;
+  }
+  const resend = new Resend(apiKey);
+  await resend.emails.send({
+    from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
+    to: email,
+    subject: 'Reset your password',
+    html: `
+      <p>You requested a password reset. Click the link below to set a new password. This link expires in 1 hour.</p>
+      <p><a href="${resetUrl}">${resetUrl}</a></p>
+      <p>If you did not request this, you can safely ignore this email.</p>
+    `,
+  });
+}
+
+async function sendEmailVerification(userId: string, email: string): Promise<void> {
+  if (!hasDatabase()) return;
+  const rawToken = randomBytes(32).toString('hex');
+  const tokenHash = createHmac('sha256', JWT_SECRET).update(rawToken).digest('hex');
+  await dbQuery(
+    `INSERT INTO email_verification_tokens (id, user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')
+     ON CONFLICT DO NOTHING`,
+    [randomUUID(), userId, tokenHash]
+  );
+  const { apiKey, fromEmail, fromName } = await getResendConfig();
+  if (!apiKey) return;
+  const appUrl = (process.env.VITE_APP_URL || 'https://marketing.dakyworld.com').replace(/\/$/, '');
+  const verifyUrl = `${appUrl}/verify-email?token=${rawToken}`;
+  const resend = new Resend(apiKey);
+  await resend.emails.send({
+    from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
+    to: email,
+    subject: 'Verify your email address',
+    html: `
+      <p>Thanks for signing up! Please verify your email address by clicking the link below. This link expires in 24 hours.</p>
+      <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+    `,
+  });
+}
+
+// POST /api/auth/forgot-password
+app.post('/api/auth/forgot-password', authLimiter, async (req: Request, res: Response) => {
+  // Always return 200 regardless — don't reveal if email exists
+  const SAFE_RESPONSE = { success: true, message: 'If that email exists, a reset link has been sent.' };
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return res.json(SAFE_RESPONSE);
+    if (!hasDatabase()) return res.json(SAFE_RESPONSE);
+
+    const user = await findUserByEmail(email);
+    if (!user) return res.json(SAFE_RESPONSE);
+
+    // Invalidate existing unused tokens for this user
+    await dbQuery(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`,
+      [user.id]
+    );
+
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = createHmac('sha256', JWT_SECRET).update(rawToken).digest('hex');
+    await dbQuery(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')`,
+      [randomUUID(), user.id, tokenHash]
+    );
+
+    const appUrl = config.appUrl;
+    const resetUrl = `${appUrl}/reset-password?token=${rawToken}`;
+    await sendPasswordResetEmail(user.email, resetUrl);
+    logger.info({ userId: user.id }, 'password_reset_requested');
+    return res.json(SAFE_RESPONSE);
+  } catch (error) {
+    logger.error({ error }, 'forgot_password_failed');
+    return res.json(SAFE_RESPONSE); // still safe response on error
+  }
+});
+
+// POST /api/auth/reset-password
+app.post('/api/auth/reset-password', authLimiter, async (req: Request, res: Response) => {
+  try {
+    const token = String(req.body.token || '').trim();
+    const newPassword = String(req.body.newPassword || '');
+    if (!token || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Token and newPassword are required' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters' });
+    }
+    if (newPassword.length > 72) {
+      return res.status(400).json({ success: false, error: 'Password must be at most 72 characters' });
+    }
+    if (!hasDatabase()) {
+      return res.status(503).json({ success: false, error: 'Service unavailable' });
+    }
+
+    const tokenHash = createHmac('sha256', JWT_SECRET).update(token).digest('hex');
+    const { rows } = await dbQuery<{ id: string; user_id: string; expires_at: string; used_at: string | null }>(
+      `SELECT id, user_id, expires_at, used_at FROM password_reset_tokens WHERE token_hash = $1`,
+      [tokenHash]
+    );
+    const record = rows[0];
+    if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
+      return res.status(400).json({ success: false, error: 'Invalid or expired reset link' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    // Mark token used, update password, and bump token_version to invalidate all existing sessions
+    await dbQuery(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
+      [record.id]
+    );
+    await dbQuery(
+      `UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE id = $2`,
+      [newHash, record.user_id]
+    );
+    logger.info({ userId: record.user_id }, 'password_reset_completed');
+    return res.json({ success: true, message: 'Password has been reset. Please log in with your new password.' });
+  } catch (error) {
+    logger.error({ error }, 'reset_password_failed');
+    return res.status(500).json({ success: false, error: 'Failed to reset password' });
+  }
+});
+
+// POST /api/auth/verify-email
+app.post('/api/auth/verify-email', async (req: Request, res: Response) => {
+  try {
+    const token = String(req.body.token || '').trim();
+    if (!token) return res.status(400).json({ success: false, error: 'Token is required' });
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Service unavailable' });
+
+    const tokenHash = createHmac('sha256', JWT_SECRET).update(token).digest('hex');
+    const { rows } = await dbQuery<{ id: string; user_id: string; expires_at: string; used_at: string | null }>(
+      `SELECT id, user_id, expires_at, used_at FROM email_verification_tokens WHERE token_hash = $1`,
+      [tokenHash]
+    );
+    const record = rows[0];
+    if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
+      return res.status(400).json({ success: false, error: 'Invalid or expired verification link' });
+    }
+
+    await dbQuery(`UPDATE email_verification_tokens SET used_at = NOW() WHERE id = $1`, [record.id]);
+    await dbQuery(`UPDATE users SET email_verified = true WHERE id = $1`, [record.user_id]);
+    logger.info({ userId: record.user_id }, 'email_verified');
+    return res.json({ success: true, message: 'Email verified successfully.' });
+  } catch (error) {
+    logger.error({ error }, 'verify_email_failed');
+    return res.status(500).json({ success: false, error: 'Failed to verify email' });
+  }
+});
+
+// POST /api/auth/resend-verification
+app.post('/api/auth/resend-verification', authLimiter, async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Service unavailable' });
+    const user = await getUserById(auth.userId);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    if (user.email_verified) return res.json({ success: true, message: 'Email already verified' });
+    await sendEmailVerification(user.id, user.email);
+    return res.json({ success: true, message: 'Verification email sent' });
+  } catch (error) {
+    logger.error({ error }, 'resend_verification_failed');
+    return res.status(500).json({ success: false, error: 'Failed to resend verification email' });
+  }
+});
+
+// POST /api/auth/logout-all-devices
+app.post('/api/auth/logout-all-devices', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!(await checkTokenVersion(auth, res))) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Service unavailable' });
+    await dbQuery(
+      `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1`,
+      [auth.userId]
+    );
+    logger.info({ userId: auth.userId }, 'logout_all_devices');
+    return res.json({ success: true, message: 'All sessions have been invalidated' });
+  } catch (error) {
+    logger.error({ error }, 'logout_all_devices_failed');
+    return res.status(500).json({ success: false, error: 'Failed to invalidate sessions' });
   }
 });
 
@@ -10828,7 +11148,8 @@ app.get('/api/oauth/:platform/configured', async (req: Request, res: Response) =
     const configured = Boolean(clientId && redirectUri && (!secretRequired || secretValue));
 
     return res.json({ success: true, configured });
-  } catch {
+  } catch (e) {
+    logger.warn({ e }, 'integration_config_check_failed');
     return res.json({ success: true, configured: false });
   }
 });
@@ -11547,8 +11868,8 @@ app.get('/api/v1/social/facebook/callback', async (req: Request, res: Response) 
             tokenData.expires_in = llData.expires_in || 60 * 24 * 3600;
           }
         }
-      } catch {
-        // best-effort; use short-lived token if exchange fails
+      } catch (e) {
+        logger.warn({ e }, 'linkedin_long_lived_token_exchange_failed — using short-lived token');
       }
     }
 
@@ -11594,7 +11915,8 @@ app.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => 
         );
         missingPermissions = requiredPermissions.filter((perm) => !granted.has(perm));
       }
-    } catch {
+    } catch (e) {
+      logger.warn({ e }, 'facebook_permissions_check_failed');
       missingPermissions = [];
     }
 

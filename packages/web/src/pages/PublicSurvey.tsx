@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import { Star, Mail } from 'lucide-react';
 import { surveysService, Survey, SurveyQuestion } from '../services/surveysService';
+
+function safeHtml(raw: string | undefined): string {
+  if (!raw) return '';
+  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+}
 
 function getYouTubeEmbedUrl(url: string): string | null {
   const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
@@ -104,7 +110,7 @@ function IntroductionDisplay({ q }: { q: SurveyQuestion }) {
         <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 underline">{videoUrl}</a>
       )}
       {richText && (
-        <div className="text-sm text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: richText }} />
+        <div className="text-sm text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: safeHtml(richText) }} />
       )}
       {imageUrl && (
         <img src={imageUrl} alt={imageAlt || ''} className="mt-3 w-full rounded-xl border border-gray-200 max-h-64 object-cover" />
@@ -119,7 +125,7 @@ function ContentDisplay({ q }: { q: SurveyQuestion }) {
   const imageAlt = q.settings.imageAlt as string | undefined;
   return (
     <div className="mb-6 pb-6 border-b border-gray-100">
-      {richText && <div className="text-sm text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: richText }} />}
+      {richText && <div className="text-sm text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: safeHtml(richText) }} />}
       {imageUrl && <img src={imageUrl} alt={imageAlt || ''} className="mt-3 w-full rounded-xl border border-gray-200 max-h-64 object-cover" />}
     </div>
   );

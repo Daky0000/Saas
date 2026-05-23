@@ -278,11 +278,12 @@ function CheckSvg() {
   return <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M1.5 4.5 L3.5 6.5 L7.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 
-function VisualPane({ mode }: { mode: 'login' | 'signup' }) {
-  const copy = {
+function VisualPane({ mode }: { mode: 'login' | 'signup' | 'forgot' }) {
+  const copy = ({
     signup: { eb: 'Welcome to Daky', h: <>Get access to your <em>AI content strategist</em> — always on, always learning.</> },
     login: { eb: 'Welcome back', h: <>Pick up where you left off — your <em>content brain</em> kept everything warm.</> },
-  }[mode];
+    forgot: { eb: 'Forgot password', h: <>Enter your email and we'll send you a <em>secure reset link</em>.</> },
+  } as const)[mode];
   return (
     <div className="da-visual">
       <div className="da-vp-mark"><AsteriskMark /></div>
@@ -312,9 +313,12 @@ function VisualPane({ mode }: { mode: 'login' | 'signup' }) {
 }
 
 function Auth({ onLogin }: AuthProps) {
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // Forgot-password state
+  const [forgotEmail, setForgotEmail] = useState('');
   const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
   const [fbReady, setFbReady] = useState(false);
   const [fbLoginLoading, setFbLoginLoading] = useState(false);
@@ -337,7 +341,7 @@ function Auth({ onLogin }: AuthProps) {
 
   const pwdStrength = useMemo(() => pwdScore(signupPassword), [signupPassword]);
 
-  const switchMode = (m: 'login' | 'signup') => { setMode(m); setErrorMessage(null); };
+  const switchMode = (m: 'login' | 'signup' | 'forgot') => { setMode(m); setErrorMessage(null); setSuccessMessage(null); };
 
   // ── Facebook SDK ────────────────────────────────────────────────────────────
   const exchangeFbToken = (accessToken: string) => {
@@ -464,6 +468,23 @@ function Auth({ onLogin }: AuthProps) {
     } finally { setIsSubmitting(false); }
   };
 
+  // ── Forgot password submit ──────────────────────────────────────────────────
+  const handleForgotSubmit = async (e: FormEvent) => {
+    e.preventDefault(); setErrorMessage(null); setSuccessMessage(null);
+    if (!forgotEmail.trim() || !forgotEmail.includes('@')) { setErrorMessage('Please enter a valid email address.'); return; }
+    setIsSubmitting(true);
+    try {
+      await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail.trim() }),
+      });
+      setSuccessMessage('If that email exists, a reset link has been sent. Check your inbox (and spam folder).');
+      setForgotEmail('');
+    } catch {
+      setSuccessMessage('If that email exists, a reset link has been sent.');
+    } finally { setIsSubmitting(false); }
+  };
+
   const hasOAuth = socialProviders.length > 0 || !!FB_APP_ID;
 
   return (
@@ -479,12 +500,14 @@ function Auth({ onLogin }: AuthProps) {
               Back to home
             </button>
 
-            <div className="da-tabs">
-              <button className={`da-tab ${mode === 'signup' ? 'active' : ''}`} onClick={() => switchMode('signup')}>Create account</button>
-              <button className={`da-tab ${mode === 'login' ? 'active' : ''}`} onClick={() => switchMode('login')}>Sign in</button>
-            </div>
+            {mode !== 'forgot' && (
+              <div className="da-tabs">
+                <button className={`da-tab ${mode === 'signup' ? 'active' : ''}`} onClick={() => switchMode('signup')}>Create account</button>
+                <button className={`da-tab ${mode === 'login' ? 'active' : ''}`} onClick={() => switchMode('login')}>Sign in</button>
+              </div>
+            )}
 
-            {mode === 'signup' ? (
+            {mode === 'signup' && (
               <form className="da-form-state" onSubmit={handleSignupSubmit} noValidate>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                   <span className="da-mark"><AsteriskMark color="var(--da-accent)" /></span>
@@ -568,7 +591,9 @@ function Auth({ onLogin }: AuthProps) {
                   <button type="button" onClick={() => switchMode('login')}>Sign in</button>
                 </div>
               </form>
-            ) : (
+            )}
+
+            {mode === 'login' && (
               <form className="da-form-state" onSubmit={handleLoginSubmit} noValidate>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                   <span className="da-mark"><AsteriskMark color="var(--da-accent)" /></span>
@@ -603,7 +628,7 @@ function Auth({ onLogin }: AuthProps) {
                       <span className="da-box"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5 L4 7 L8 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg></span>
                       <span>Keep me signed in</span>
                     </label>
-                    <a href="#" className="da-link">Forgot password?</a>
+                    <button type="button" className="da-link" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }} onClick={() => switchMode('forgot')}>Forgot password?</button>
                   </div>
                   <button type="submit" className="da-submit" disabled={isSubmitting} style={{ marginTop: 4 }}>
                     {isSubmitting ? <><span className="da-spinner" /> Signing in…</> : <>Sign in <span className="da-arrow">→</span></>}
@@ -640,6 +665,40 @@ function Auth({ onLogin }: AuthProps) {
                   Don't have an account?{' '}
                   <button type="button" onClick={() => switchMode('signup')}>Sign up</button>
                 </div>
+              </form>
+            )}
+
+            {mode === 'forgot' && (
+              <form className="da-form-state" onSubmit={handleForgotSubmit} noValidate>
+                <button type="button" className="da-link" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', marginBottom: 16, fontSize: 13 }} onClick={() => switchMode('login')}>← Back to sign in</button>
+                <h1 className="da-form-h">Reset your password</h1>
+                <p className="da-form-sub" style={{ marginTop: 8 }}>Enter the email you registered with and we'll send you a reset link.</p>
+
+                {errorMessage && (
+                  <div className="da-err" style={{ marginTop: 16 }}>
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor"/><path d="M7 4 V8 M7 10 V10.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                    {errorMessage}
+                  </div>
+                )}
+                {successMessage && (
+                  <div style={{ marginTop: 16, padding: '10px 14px', borderRadius: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontSize: 13, lineHeight: 1.5 }}>
+                    {successMessage}
+                  </div>
+                )}
+
+                {!successMessage && (
+                  <div className="da-field-group" style={{ marginTop: 20 }}>
+                    <div className="da-field">
+                      <label htmlFor="fp-email">Email address</label>
+                      <div className="da-input-wrap">
+                        <input id="fp-email" type="email" placeholder="you@company.com" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} autoComplete="email" autoFocus />
+                      </div>
+                    </div>
+                    <button type="submit" className="da-submit" disabled={isSubmitting} style={{ marginTop: 4 }}>
+                      {isSubmitting ? <><span className="da-spinner" /> Sending…</> : <>Send reset link <span className="da-arrow">→</span></>}
+                    </button>
+                  </div>
+                )}
               </form>
             )}
           </div>

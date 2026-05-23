@@ -53,6 +53,8 @@ const Tools = lazy(() => import('./pages/Tools'));
 const PublicPricing = lazy(() => import('./pages/PublicPricing'));
 const DataDeletion = lazy(() => import('./pages/DataDeletion'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const PostAutomation = lazy(() => import('./pages/PostAutomation'));
 const MarketingOverview = lazy(() => import('./pages/MarketingOverview'));
 const MarketingContacts = lazy(() => import('./pages/MarketingContacts'));
@@ -282,7 +284,7 @@ function AppSidebar({
     setCreatingProject(true);
     try {
       const token = localStorage.getItem('auth_token');
-      await fetch(`${(import.meta as any).env?.VITE_API_URL ?? ''}/api/organizations/${currentOrg.id}/projects`, {
+      await fetch(`${API_BASE_URL}/api/organizations/${currentOrg.id}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
         body: JSON.stringify({ name: newProjectName.trim(), color: '#6366f1' }),
@@ -300,7 +302,7 @@ function AppSidebar({
     setWorkspaceCreating(true);
     try {
       const token = localStorage.getItem('auth_token');
-      await fetch(`${(import.meta as any).env?.VITE_API_URL ?? ''}/api/organizations`, {
+      await fetch(`${API_BASE_URL}/api/organizations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
         body: JSON.stringify({ name: newWorkspaceName.trim() }),
@@ -351,7 +353,7 @@ function AppSidebar({
           <div className="min-w-0">
             <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{wsName}</p>
             <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{projName}</p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Free Plan</p>
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">{authUser?.planName ?? 'Free'} Plan</p>
           </div>
         </div>
       </div>
@@ -606,7 +608,7 @@ function AppSidebar({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold text-gray-900 truncate">{displayName}</p>
-                <p className="text-[10px] uppercase tracking-widest text-gray-400">Free Plan</p>
+                <p className="text-[10px] uppercase tracking-widest text-gray-400">{authUser?.planName ?? 'Free'} Plan</p>
               </div>
               <CheckCircle2 size={13} className="text-indigo-500 shrink-0" />
             </div>
@@ -812,7 +814,7 @@ function App() {
     }
 
     if (!loggedIn) {
-      const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion'];
+      const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion', '/reset-password', '/verify-email'];
       if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
         navigatePath('/login', true);
       }
@@ -848,7 +850,7 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion'];
+        const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion', '/reset-password', '/verify-email'];
         if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
           navigatePath('/login', true);
           setCurrentPathname('/login');
@@ -904,6 +906,8 @@ function App() {
   if (currentPathname === '/tools') return <Suspense fallback={<PageFallback />}><Tools onLoginClick={goToLogin} /></Suspense>;
   if (currentPathname === '/data-deletion') return <Suspense fallback={<PageFallback />}><DataDeletion /></Suspense>;
   if (currentPathname.startsWith('/auth/')) return <Suspense fallback={<PageFallback />}><OAuthCallback /></Suspense>;
+  if (currentPathname === '/reset-password') return <Suspense fallback={<PageFallback />}><ResetPassword /></Suspense>;
+  if (currentPathname === '/verify-email') return <Suspense fallback={<PageFallback />}><VerifyEmail /></Suspense>;
   if (currentPathname.startsWith('/invite/')) {
     const token = currentPathname.replace('/invite/', '');
     return <Suspense fallback={<PageFallback />}><AcceptInvite token={token} onLoginClick={goToLogin} /></Suspense>;
