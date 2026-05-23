@@ -352,15 +352,17 @@ const extraOrigins = config.frontendOrigins ?? [];
 
 const allowedOrigins = new Set([
   config.appUrl || 'http://localhost:3000',
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
   'https://marketing.dakyworld.com',
   'https://daky0000.github.io',
   'https://contentflow-api-production.up.railway.app',
   ...extraOrigins,
 ]);
+if (config.nodeEnv !== 'production') {
+  allowedOrigins.add('http://localhost:3000');
+  allowedOrigins.add('http://localhost:3001');
+  allowedOrigins.add('http://127.0.0.1:3000');
+  allowedOrigins.add('http://127.0.0.1:3001');
+}
 
 let pool: Pool | null = null;
 try {
@@ -434,7 +436,11 @@ const inMemoryDataDeletionRequests = new Map<string, DataDeletionRecord>();
 
 async function ensureDatabase() {
   if (!pool) {
-    logger.warn('DATABASE_URL is not set; running in in-memory mode.');
+    if (config.nodeEnv === 'production') {
+      logger.fatal({ event: 'db_missing_in_production' }, 'DATABASE_URL is not configured. Refusing to start in production without a database.');
+      process.exit(1);
+    }
+    logger.warn('DATABASE_URL is not set; running in in-memory mode (development only).');
     dbReady = false;
     seedInMemoryUsers();
     return;
@@ -473,6 +479,9 @@ async function ensureDatabase() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;`);
   // email_verified: set to true after the user confirms their email
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;`);
+  // account lockout: track consecutive failures and lock after threshold
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -4039,10 +4048,9 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        // Scripts: self + Google Fonts/Analytics + Facebook SDK + inline scripts used by Vite/React
+        // Scripts: self + Google Fonts/Analytics + Facebook SDK
         scriptSrc: [
           "'self'",
-          "'unsafe-inline'", // Vite injects inline scripts; tighten after moving to nonce-based approach
           'https://connect.facebook.net',
           'https://www.googletagmanager.com',
           'https://www.google-analytics.com',
@@ -4170,7 +4178,10 @@ app.post('/webhooks/stripe', async (req: Request, res: Response) => {
 });
 
 function verifyMetaWebhookSignature(req: Request, appSecret: string) {
-  if (!appSecret) return true;
+  if (!appSecret) {
+    // Require a configured secret in production; skip check only in dev/staging
+    return config.nodeEnv !== 'production';
+  }
   const signature = String(req.headers['x-hub-signature-256'] || req.headers['x-hub-signature'] || '').trim();
   if (!signature) return false;
   const raw = (req as any).rawBody as Buffer | undefined;
@@ -4214,8 +4225,8 @@ app.post('/webhooks/meta', async (req: Request, res: Response) => {
 
   try {
     const appSecret = config.facebookAppSecret;
-    if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
-      logger.warn('Meta webhook: invalid signature — discarding');
+    if (!verifyMetaWebhookSignature(req, appSecret)) {
+      logger.warn('Meta webhook: invalid or missing signature — discarding');
       return;
     }
 
@@ -4324,8 +4335,8 @@ app.post('/api/v1/webhooks/facebook', async (req: Request, res: Response) => {
   res.status(200).json({ ok: true });
   try {
     const appSecret = config.facebookAppSecret;
-    if (appSecret && !verifyMetaWebhookSignature(req, appSecret)) {
-      logger.warn('Facebook v1 webhook: invalid signature — discarding');
+    if (!verifyMetaWebhookSignature(req, appSecret)) {
+      logger.warn('Facebook v1 webhook: invalid or missing signature — discarding');
       return;
     }
     // Delegate processing — re-emit to the shared handler by forwarding the body
@@ -4449,6 +4460,8 @@ type DbUserRow = {
   password_hash: string;
   token_version: number;
   email_verified: boolean;
+  failed_login_attempts: number;
+  locked_until: string | null;
   created_at: string;
 };
 
@@ -4557,6 +4570,10 @@ function upsertInMemoryUser(input: {
     cover_url: existing?.cover_url || null,
     last_login_at: existing?.last_login_at || null,
     password_hash: passwordHash,
+    token_version: existing?.token_version ?? 1,
+    email_verified: existing?.email_verified ?? false,
+    failed_login_attempts: existing?.failed_login_attempts ?? 0,
+    locked_until: existing?.locked_until ?? null,
     created_at: existing?.created_at || new Date().toISOString(),
   };
 
@@ -4802,6 +4819,10 @@ async function createUser(
       cover_url: options?.coverUrl || null,
       last_login_at: null,
       password_hash: hash,
+      token_version: 1,
+      email_verified: false,
+      failed_login_attempts: 0,
+      locked_until: null,
       created_at: new Date().toISOString(),
     };
     inMemoryUsersById.set(id, user);
@@ -5451,12 +5472,37 @@ app.post('/api/auth/login', authLimiter, validateBody(authLoginSchema), async (r
       return res.status(400).json({ success: false, error: 'Invalid credentials' });
     }
 
+    // Check account lockout
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
+      return res.status(429).json({
+        success: false,
+        error: `Account temporarily locked due to too many failed attempts. Try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}.`,
+      });
+    }
+
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      if (hasDatabase()) {
+        const newAttempts = (user.failed_login_attempts || 0) + 1;
+        const lockUntil = newAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
+        await dbQuery(
+          'UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3',
+          [newAttempts, lockUntil, user.id]
+        );
+        if (lockUntil) {
+          logger.warn({ userId: user.id, ip: req.ip }, 'auth:account_locked');
+        }
+      }
       return res.status(400).json({ success: false, error: 'Invalid credentials' });
     }
 
+    // Reset lockout counters on successful login
+    if (hasDatabase()) {
+      await dbQuery('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+    }
     await updateLastLogin(user.id);
+    logger.info({ userId: user.id, ip: req.ip, ua: req.headers['user-agent'] }, 'auth:login');
     const refreshedUser = (await getUserById(user.id)) || user;
     const token = signToken(user.id, user.email, refreshedUser.token_version ?? 1);
     return res.json({
