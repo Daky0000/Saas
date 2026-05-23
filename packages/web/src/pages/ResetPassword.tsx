@@ -20,7 +20,7 @@ export default function ResetPassword() {
     e.preventDefault();
     setError(null);
     if (newPassword.length < 8) { setError('Password must be at least 8 characters.'); return; }
-    if (newPassword.length > 72) { setError('Password must be at most 72 characters.'); return; }
+    if (newPassword.length > 72) { setError('Password must be at most 72 characters (bcrypt limitation).'); return; }
     if (newPassword !== confirm) { setError('Passwords do not match.'); return; }
     if (!token) { setError('Invalid or missing reset token. Please request a new link.'); return; }
     setSubmitting(true);

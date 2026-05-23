@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { config } from '../config.ts';
 import { logger } from '../logger.ts';
 
 type HttpError = { type?: string; status?: number; statusCode?: number; message?: string };
@@ -15,6 +16,8 @@ function deriveStatus(err: unknown): number {
 function deriveMessage(err: unknown, status: number): string {
   if (status === 413) return 'Request too large';
   if (status === 400) return 'Invalid JSON payload';
+  // Never leak internal error messages to clients in production
+  if (status >= 500 && config.nodeEnv === 'production') return 'Internal server error';
   return err instanceof Error ? err.message : 'Internal server error';
 }
 
@@ -30,12 +33,14 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
         method: req.method,
         url: req.originalUrl,
         status,
-        message,
+        // Log the real message server-side even though we hide it from clients
+        internalMessage: err instanceof Error ? err.message : String(err),
         stack: err instanceof Error ? err.stack : undefined,
       },
       'request_error',
     );
   }
 
+  // Consistent error shape across all routes: { success: false, error: string }
   res.status(status).json({ success: false, error: message });
 }

@@ -67,10 +67,18 @@ node_modules/
 *.log
 .npm-cache/
 
-# Web build outputs (source of truth is synced to repo root/docs)
+# Web build outputs — deployed via CI/CD, never committed
+# GitHub Actions builds packages/web/dist and uploads it directly to Pages.
 packages/web/dist/
 packages/web/index.html
 packages/web/404.html
+# Root-level mirrors produced by sync-pages.mjs (CI-only, not for git)
+/dist/
+/docs/
+/assets/
+/index.html
+/404.html
+/CNAME
 
 # Temporary export/deploy artifacts
 tmp_deploy_repo/

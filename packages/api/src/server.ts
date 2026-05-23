@@ -351,11 +351,8 @@ async function recordAuditLog(userId: string, action: string, postIds: string[],
 const extraOrigins = config.frontendOrigins ?? [];
 
 const allowedOrigins = new Set([
-  config.appUrl || 'http://localhost:3000',
-  'https://marketing.dakyworld.com',
-  'https://daky0000.github.io',
-  'https://contentflow-api-production.up.railway.app',
-  ...extraOrigins,
+  config.appUrl,   // set VITE_APP_URL in env — defaults to https://marketing.dakyworld.com
+  ...extraOrigins, // set FRONTEND_ORIGINS (comma-separated) for additional frontend domains
 ]);
 if (config.nodeEnv !== 'production') {
   allowedOrigins.add('http://localhost:3000');
@@ -5389,7 +5386,7 @@ async function triggerAgentCompilation(userId: string): Promise<void> {
 
 const authRegisterSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8).max(72),
+  password: z.string().min(8).max(72, { message: 'Password must be at most 72 characters (bcrypt limitation)' }),
   name: z.string().min(1).max(100),
   username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
 });
@@ -5593,7 +5590,7 @@ app.post('/api/auth/change-password', passwordLimiter, async (req: Request, res:
     return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
   }
   if (newPassword.length > 72) {
-    return res.status(400).json({ success: false, error: 'New password must be at most 72 characters' });
+    return res.status(400).json({ success: false, error: 'New password must be at most 72 characters (bcrypt limitation)' });
   }
   try {
     const { rows } = await dbQuery<{ password_hash: string }>(
@@ -5717,7 +5714,7 @@ app.post('/api/auth/reset-password', authLimiter, async (req: Request, res: Resp
       return res.status(400).json({ success: false, error: 'Password must be at least 8 characters' });
     }
     if (newPassword.length > 72) {
-      return res.status(400).json({ success: false, error: 'Password must be at most 72 characters' });
+      return res.status(400).json({ success: false, error: 'Password must be at most 72 characters (bcrypt limitation)' });
     }
     if (!hasDatabase()) {
       return res.status(503).json({ success: false, error: 'Service unavailable' });
