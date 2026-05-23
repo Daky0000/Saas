@@ -18420,6 +18420,10 @@ app.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
+  if (config.serveStatic) {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    return;
+  }
   res.json({ message: 'OAuth Backend Server Running', version: '1.0.0' });
 });
 
