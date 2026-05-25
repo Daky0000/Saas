@@ -720,8 +720,197 @@ export function registerBlogRoutes({
     return res.json({ success: true, post: newRows[0] });
   });
 
-  // ── /api/v1/calendar and /api/v1/posts GET — registered on app (not on this router)
-  // These live outside the /api/v1/blog/ namespace and are managed in server.ts.
+  // ── /api/v1/calendar — schedule calendar view ────────────────────────────────
+  app.get('/api/v1/calendar', async (req: Request, res: Response) => {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const year = Number.parseInt(String(req.query.year || ''), 10);
+    const month = Number.parseInt(String(req.query.month || ''), 10);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+      return res.status(400).json({ success: false, error: 'Invalid year or month' });
+    }
+    if (!hasDatabase()) {
+      return res.json({ success: true, year, month, posts_by_date: {}, total_posts: 0 });
+    }
+    const cacheKey = `calendar:${user.userId}:${year}:${month}`;
+    const cached = getCalendarCache(cacheKey);
+    if (cached) return res.json({ success: true, ...cached });
+    try {
+      const start = new Date(Date.UTC(year, month - 1, 1));
+      const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+      const { rows } = await pool!.query(
+        `SELECT id, title, status, scheduled_at, published_at, created_at, updated_at,
+                COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) AS calendar_at
+         FROM blog_posts
+         WHERE user_id=$1
+           AND status IN ('draft','scheduled','published')
+           AND COALESCE(scheduled_at, CASE WHEN status = 'published' THEN published_at END, created_at) BETWEEN $2 AND $3
+         ORDER BY calendar_at ASC, updated_at DESC`,
+        [user.userId, start.toISOString(), end.toISOString()],
+      );
+      const postsByDate: Record<string, any[]> = {};
+      rows.forEach((post: any) => {
+        const calendarAt = post.calendar_at ? new Date(post.calendar_at) : null;
+        if (!calendarAt || Number.isNaN(calendarAt.getTime())) return;
+        const dateKey = calendarAt.toISOString().slice(0, 10);
+        if (!postsByDate[dateKey]) postsByDate[dateKey] = [];
+        postsByDate[dateKey].push(post);
+      });
+      const payload = { year, month, posts_by_date: postsByDate, total_posts: rows.length };
+      setCalendarCache(cacheKey, payload);
+      return res.json({ success: true, ...payload });
+    } catch (err) {
+      logger.error('calendar fetch error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load calendar' });
+    }
+  });
+
+  // ── /api/v1/posts — lightweight post list used by calendar sidebar ────────────
+  app.get('/api/v1/posts', async (req: Request, res: Response) => {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const rawStatus = String(req.query.status || 'draft').toLowerCase();
+    const allowed = new Set(['draft', 'scheduled', 'published']);
+    if (!allowed.has(rawStatus)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+    if (!hasDatabase()) return res.json({ success: true, posts: [] });
+    try {
+      let q = `SELECT id, title, status, scheduled_at, created_at, updated_at FROM blog_posts WHERE user_id=$1 AND status=$2`;
+      const params: (string | number)[] = [user.userId, rawStatus];
+      if (rawStatus === 'draft') q += ' AND scheduled_at IS NULL';
+      q += ' ORDER BY created_at DESC';
+      const { rows } = await pool!.query(q, params);
+      return res.json({ success: true, posts: rows });
+    } catch (err) {
+      logger.error('posts list error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load posts' });
+    }
+  });
+
+  app.post('/api/v1/posts', async (req: Request, res: Response) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { title, content = '', scheduled_at, status } = req.body as {
+      title?: string; content?: string; scheduled_at?: string | null; status?: string;
+    };
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, error: 'Title is required' });
+    }
+    let scheduledAt: string | null = null;
+    if (scheduled_at) {
+      const dt = new Date(scheduled_at);
+      if (Number.isNaN(dt.getTime())) {
+        return res.status(400).json({ success: false, error: 'Invalid scheduled_at value' });
+      }
+      if (dt.getTime() < Date.now()) {
+        return res.status(400).json({ success: false, error: 'Cannot schedule to a past date' });
+      }
+      scheduledAt = dt.toISOString();
+    }
+    const normalizedStatus = ['draft', 'scheduled', 'published'].includes(String(status || ''))
+      ? String(status).toLowerCase()
+      : scheduledAt ? 'scheduled' : 'draft';
+    const publishedAt = normalizedStatus === 'published' ? new Date().toISOString() : null;
+    const id = randomUUID();
+    const slug = slugify(title) || id;
+    try {
+      const { rows } = await pool!.query(
+        `INSERT INTO blog_posts (id, user_id, title, slug, content, status, scheduled_at, published_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [id, user.userId, title.trim(), slug, content || '', normalizedStatus, scheduledAt, publishedAt]
+      );
+      clearCalendarCacheForUser(user.userId);
+      return res.status(201).json({ success: true, post: rows[0] });
+    } catch (err) {
+      logger.error('post create error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to create post' });
+    }
+  });
+
+  app.put('/api/v1/posts/:id', async (req: Request, res: Response) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { id } = req.params;
+    const { title, content, scheduled_at, status } = req.body as {
+      title?: string; content?: string; scheduled_at?: string | null; status?: string;
+    };
+    try {
+      const existing = await pool!.query('SELECT * FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+      if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+      const current = existing.rows[0];
+
+      let scheduledAtValue: string | null | undefined = undefined;
+      if (scheduled_at !== undefined) {
+        if (scheduled_at === null || scheduled_at === '') {
+          scheduledAtValue = null;
+        } else {
+          const dt = new Date(scheduled_at);
+          if (Number.isNaN(dt.getTime())) {
+            return res.status(400).json({ success: false, error: 'Invalid scheduled_at value' });
+          }
+          if (dt.getTime() < Date.now()) {
+            return res.status(400).json({ success: false, error: 'Cannot schedule to a past date' });
+          }
+          scheduledAtValue = dt.toISOString();
+        }
+      }
+
+      let nextStatus = status ? String(status).toLowerCase() : String(current.status || '').toLowerCase();
+      if (scheduledAtValue !== undefined && !status) {
+        nextStatus = scheduledAtValue ? 'scheduled' : 'draft';
+      }
+      if (!['draft', 'scheduled', 'published'].includes(nextStatus)) {
+        return res.status(400).json({ success: false, error: 'Invalid status' });
+      }
+
+      const updates: string[] = [];
+      const params: (string | number | null)[] = [];
+      if (title !== undefined) { updates.push(`title = $${params.length + 1}`); params.push(title.trim()); }
+      if (content !== undefined) { updates.push(`content = $${params.length + 1}`); params.push(content ?? ''); }
+      if (scheduledAtValue !== undefined) { updates.push(`scheduled_at = $${params.length + 1}`); params.push(scheduledAtValue); }
+      updates.push(`status = $${params.length + 1}`);
+      params.push(nextStatus);
+
+      let publishedAtValue: string | null = current.published_at;
+      if (nextStatus === 'published' && !current.published_at) {
+        publishedAtValue = new Date().toISOString();
+      }
+      updates.push(`published_at = $${params.length + 1}`);
+      params.push(publishedAtValue);
+      updates.push('updated_at = NOW()');
+      params.push(id, user.userId);
+
+      const { rows } = await pool!.query(
+        `UPDATE blog_posts SET ${updates.join(', ')} WHERE id=$${params.length - 1} AND user_id=$${params.length} RETURNING *`,
+        params
+      );
+      clearCalendarCacheForUser(user.userId);
+      return res.json({ success: true, post: rows[0] });
+    } catch (err) {
+      logger.error('post update error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to update post' });
+    }
+  });
+
+  app.delete('/api/v1/posts/:id', async (req: Request, res: Response) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { id } = req.params;
+    try {
+      const existing = await pool!.query('SELECT id FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+      if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+      await pool!.query('DELETE FROM blog_posts WHERE id=$1 AND user_id=$2', [id, user.userId]);
+      clearCalendarCacheForUser(user.userId);
+      return res.json({ success: true });
+    } catch (err) {
+      logger.error('post delete error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to delete post' });
+    }
+  });
 
   return router;
 }
