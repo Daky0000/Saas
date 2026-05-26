@@ -51,7 +51,7 @@ export async function fetchApiJson<T = any>(
       const contentType = String(response.headers.get('content-type') || '');
       const html = looksLikeHtmlDocument(text, contentType);
 
-      if (!isLast && (html || response.status === 404 || response.status >= 500)) {
+      if (!isLast && html) {
         continue;
       }
 
