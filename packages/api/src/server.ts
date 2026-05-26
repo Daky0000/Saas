@@ -162,6 +162,15 @@ async function refreshStripe(): Promise<void> {
 
 const app = express();
 const PORT = config.port;
+
+// Registered BEFORE all other middleware so nothing can intercept it
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/api/health', (_req, res) => res.json({
+  status: 'ok',
+  timestamp: new Date().toISOString(),
+  db: { configured: Boolean(config.databaseUrl), ready: dbReady, error: dbInitError },
+}));
+
 app.use(requestIdMiddleware);
 
 // ── Security & parsing middleware — must be before ALL routes ─────────────────
@@ -210,21 +219,6 @@ app.use(
 app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-// Health check — registered first so Railway can reach it immediately on startup
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    db: {
-      configured: Boolean(config.databaseUrl),
-      ready: dbReady,
-      error: dbInitError,
-    },
-  });
-});
 
 // Diagnostics — admin-only so deployment internals aren't public.
 app.get('/api/debug/db', async (req: Request, res: Response) => {
