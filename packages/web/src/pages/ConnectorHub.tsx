@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 
 const API = '/api/connectors';
+const tok = () => localStorage.getItem('auth_token') ?? '';
+const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
 
 interface Domain {
   id: string;
@@ -90,7 +93,7 @@ export default function ConnectorHub({ onNavigateToSetup, onNavigateToSync }: {
   const loadOverview = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/overview`);
+      const r = await fetch(`${API}/overview`, { headers: authHeaders() });
       if (r.ok) setDomains(await r.json());
     } finally { setLoading(false); }
   }, []);
@@ -100,7 +103,7 @@ export default function ConnectorHub({ onNavigateToSetup, onNavigateToSync }: {
   const switchToNative = async (domainSlug: string) => {
     setSwitching(domainSlug);
     try {
-      await fetch(`${API}/prefs/${domainSlug}`, { method: 'DELETE' });
+      await fetch(`${API}/prefs/${domainSlug}`, { method: 'DELETE', headers: authHeaders() });
       loadOverview();
     } finally { setSwitching(null); }
   };
@@ -110,7 +113,7 @@ export default function ConnectorHub({ onNavigateToSetup, onNavigateToSync }: {
     try {
       const r = await fetch(`${API}/prefs/${domainSlug}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({ provider_slug: providerSlug }),
       });
       if (!r.ok) {
