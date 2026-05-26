@@ -1,0 +1,253 @@
+import { randomBytes, createCipheriv, createDecipheriv, scryptSync, randomUUID } from 'crypto';
+import axios from 'axios';
+import { config } from './config.ts';
+import { logger } from './logger.ts';
+import { pool, dbQuery } from './db.ts';
+
+const INTEGRATIONS_ENCRYPTION_KEY = scryptSync(config.integrationsEncryptionKey, 'integrations', 32);
+const WORDPRESS_ENCRYPTION_KEY = scryptSync(config.wordpressEncryptionKey, 'wordpress', 32);
+
+// --- Integrations: encryption + logs ---
+export function encryptIntegrationSecret(plain: string): string {
+  const iv = randomBytes(16);
+  const cipher = createCipheriv('aes-256-gcm', INTEGRATIONS_ENCRYPTION_KEY, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, enc]).toString('base64');
+}
+
+export function decryptIntegrationSecret(encrypted: string): string {
+  const buf = Buffer.from(String(encrypted || ''), 'base64');
+  const iv = buf.subarray(0, 16);
+  const authTag = buf.subarray(16, 32);
+  const data = buf.subarray(32);
+  const decipher = createDecipheriv('aes-256-gcm', INTEGRATIONS_ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  return decipher.update(data).toString('utf8') + decipher.final('utf8');
+}
+
+export async function getIntegrationRowBySlug(slug: string): Promise<{ id: number; slug: string; name: string | null; type: string | null } | null> {
+  if (!pool) return null;
+  const s = String(slug || '').trim().toLowerCase();
+  if (!s) return null;
+  const result = await dbQuery<{ id: number; slug: string; name: string | null; type: string | null }>(
+    `SELECT id, slug, name, type FROM integrations WHERE slug = $1 LIMIT 1`,
+    [s]
+  ).catch(() => ({ rows: [] } as any));
+  return result.rows[0] ?? null;
+}
+
+export async function logIntegrationEvent(params: {
+  userId: string | null;
+  integrationSlug: string | null;
+  eventType: string;
+  status: 'success' | 'failed' | 'info';
+  response?: any;
+}) {
+  if (!pool) return;
+  const integration = params.integrationSlug ? await getIntegrationRowBySlug(params.integrationSlug) : null;
+  await dbQuery(
+    `INSERT INTO integration_logs (id, user_id, integration_id, event_type, status, response, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())`,
+    [
+      randomUUID(),
+      params.userId,
+      integration?.id ?? null,
+      String(params.eventType || '').slice(0, 80),
+      params.status,
+      JSON.stringify(params.response ?? {}),
+    ]
+  ).catch(() => undefined);
+}
+
+export async function upsertUserIntegration(params: {
+  userId: string;
+  integrationSlug: string;
+  accessTokenEncrypted?: string | null;
+  refreshTokenEncrypted?: string | null;
+  tokenExpiry?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  status: 'connected' | 'disconnected' | 'error';
+}) {
+  if (!pool) return;
+  const integration = await getIntegrationRowBySlug(params.integrationSlug);
+  if (!integration) return;
+  await dbQuery(
+    `INSERT INTO user_integrations
+      (id, user_id, integration_id, access_token, refresh_token, token_expiry, account_id, account_name, status, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+     ON CONFLICT (user_id, integration_id) DO UPDATE
+       SET access_token = EXCLUDED.access_token,
+           refresh_token = EXCLUDED.refresh_token,
+           token_expiry = EXCLUDED.token_expiry,
+           account_id = EXCLUDED.account_id,
+           account_name = EXCLUDED.account_name,
+           status = EXCLUDED.status`,
+    [
+      randomUUID(),
+      params.userId,
+      integration.id,
+      params.accessTokenEncrypted ?? null,
+      params.refreshTokenEncrypted ?? null,
+      params.tokenExpiry ?? null,
+      params.accountId ?? null,
+      params.accountName ?? null,
+      params.status,
+    ]
+  ).catch(() => undefined);
+}
+
+// --- WordPress: encryption and storage (credentials never logged) ---
+export function encryptWordPressPassword(plain: string): string {
+  const iv = randomBytes(16);
+  const cipher = createCipheriv('aes-256-gcm', WORDPRESS_ENCRYPTION_KEY, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, enc]).toString('base64');
+}
+
+export function decryptWordPressPassword(encrypted: string): string {
+  const buf = Buffer.from(encrypted, 'base64');
+  const iv = buf.subarray(0, 16);
+  const authTag = buf.subarray(16, 32);
+  const data = buf.subarray(32);
+  const decipher = createDecipheriv('aes-256-gcm', WORDPRESS_ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  return decipher.update(data).toString('utf8') + decipher.final('utf8');
+}
+
+export function normalizeWordPressSiteUrl(url: string): string {
+  const u = url.trim().replace(/\/+$/, '');
+  return u.startsWith('http') ? u : `https://${u}`;
+}
+
+export interface WordPressConnection {
+  id: string;
+  userId: string;
+  siteUrl: string;
+  username: string;
+  appPasswordEncrypted: string;
+}
+
+export async function getWordPressConnection(userId: string): Promise<WordPressConnection | null> {
+  if (!pool) return null;
+  const result = await dbQuery<{
+    id: string;
+    user_id: string;
+    site_url: string;
+    username: string;
+    app_password_encrypted: string;
+  }>('SELECT id, user_id, site_url, username, app_password_encrypted FROM wordpress_connections WHERE user_id = $1', [
+    userId,
+  ]);
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    siteUrl: row.site_url,
+    username: row.username,
+    appPasswordEncrypted: row.app_password_encrypted,
+  };
+}
+
+// --- Make webhook connection (store webhook URL encrypted; never log URL) ---
+export async function getMakeWebhookConnection(userId: string): Promise<{ webhookUrlEncrypted: string } | null> {
+  if (!pool) return null;
+  const result = await dbQuery<{ webhook_url_encrypted: string }>(
+    'SELECT webhook_url_encrypted FROM make_webhook_connections WHERE user_id = $1',
+    [userId]
+  );
+  const row = result.rows[0];
+  return row ? { webhookUrlEncrypted: row.webhook_url_encrypted } : null;
+}
+
+export async function ensureWordPressSocialAccount(userId: string) {
+  if (!pool) return;
+  const conn = await getWordPressConnection(userId);
+  const webhookConn = await getMakeWebhookConnection(userId);
+  if (!conn && !webhookConn) return;
+
+  const accountId = conn?.siteUrl ? String(conn.siteUrl).trim() : 'wordpress';
+  const accountName = conn?.username ? String(conn.username).trim() : 'WordPress';
+
+  const updateRes = await dbQuery(
+    `UPDATE social_accounts
+     SET account_name = $3,
+         connected = true,
+         connected_at = NOW()
+     WHERE user_id = $1 AND platform = 'wordpress' AND account_type = 'site' AND account_id = $2`,
+    [userId, accountId, accountName]
+  );
+  if (updateRes.rowCount === 0) {
+    await dbQuery(
+      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, connected, connected_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,true,NOW(),NOW())`,
+      [randomUUID(), userId, 'wordpress', null, 'site', accountId, accountName]
+    );
+  }
+}
+
+export async function removeWordPressSocialAccount(userId: string) {
+  if (!pool) return;
+  await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND platform = $2', [userId, 'wordpress']);
+}
+
+export function isValidWebhookUrl(url: string): boolean {
+  const u = url.trim();
+  return u.startsWith('https://') || u.startsWith('http://');
+}
+
+export async function wpRequest(
+  siteUrl: string,
+  username: string,
+  appPassword: string,
+  method: string,
+  path: string,
+  options: { data?: any; formData?: FormData; responseType?: 'json' } = {}
+): Promise<{ data?: any; status: number; error?: string }> {
+  const base = normalizeWordPressSiteUrl(siteUrl);
+  const url = `${base.replace(/\/+$/, '')}/wp-json${path.startsWith('/') ? path : `/${path}`}`;
+  const auth = Buffer.from(`${username}:${appPassword}`, 'utf8').toString('base64');
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${auth}`,
+  };
+  if (options.formData) {
+    // Let axios set Content-Type for FormData
+    try {
+      const res = await axios.request({
+        method,
+        url,
+        data: options.formData,
+        headers: { ...headers, ...(options.formData.getHeaders?.() || {}) },
+        maxRedirects: 2,
+        validateStatus: () => true,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
+      return { data: res.data, status: res.status, error: res.status >= 400 ? (res.data?.message || res.statusText) : undefined };
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Request failed';
+      return { status: err?.response?.status || 500, error: msg };
+    }
+  }
+  if (options.data !== undefined) headers['Content-Type'] = 'application/json';
+  try {
+    const res = await axios.request({
+      method,
+      url,
+      data: options.data,
+      headers,
+      maxRedirects: 2,
+      validateStatus: () => true,
+    });
+    const error = res.status >= 400 ? (res.data?.message || res.data?.code || res.statusText) : undefined;
+    return { data: res.data, status: res.status, error };
+  } catch (err: any) {
+    const msg = err?.response?.data?.message || err?.message || 'Request failed';
+    return { status: err?.response?.status || 500, error: msg };
+  }
+}
+
+// POST /api/wordpress/connect 뿯붿?validate and store connection (tries Application Password first, then login password)

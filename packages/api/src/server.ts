@@ -93,17 +93,26 @@ import {
   updateUserProfile,
   requireAuth, checkTokenVersion, requireAdmin, requireOrgMembership,
 } from './user-auth.ts';
+import {
+  encryptIntegrationSecret, decryptIntegrationSecret, getIntegrationRowBySlug,
+  logIntegrationEvent, upsertUserIntegration,
+  encryptWordPressPassword, decryptWordPressPassword, normalizeWordPressSiteUrl,
+  getWordPressConnection, getMakeWebhookConnection,
+  ensureWordPressSocialAccount, removeWordPressSocialAccount, isValidWebhookUrl, wpRequest,
+} from './integration-helpers.ts';
+import {
+  LINKEDIN_DEFAULT_OAUTH_SCOPES, LINKEDIN_ORG_ADMIN_SCOPE_OPTIONS,
+  getLinkedInOAuthScopeString, parseLinkedInScopeList,
+  getLinkedInScopeSet, hasAnyLinkedInScope, hasAllLinkedInScopes,
+  getLinkedInOrganizationScopeError, shouldEnableLinkedInExtendedLogin,
+  computeIsoFromTtlSeconds,
+  createNotification, logTaskActivity, checkTaskActions,
+} from './social-helpers.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const WORDPRESS_ENCRYPTION_KEY = (() => {
-  return scryptSync(config.wordpressEncryptionKey, 'wordpress', 32);
-})();
 
-const INTEGRATIONS_ENCRYPTION_KEY = (() => {
-  return scryptSync(config.integrationsEncryptionKey, 'integrations', 32);
-})();
 
 // ── Stripe — initialized from DB platform_configs; env vars are fallback only ─
 let stripe: Stripe | null = process.env.STRIPE_SECRET_KEY
@@ -706,158 +715,6 @@ app.use('/api', registerSocialConnectRoutes({
   publishToplatform: (...a) => publishToplatform(...a),
 }));
 
-// ── LinkedIn scope helpers (also used by linkedinRoutes + platformConfigRoutes) ──
-
-const LINKEDIN_DEFAULT_OAUTH_SCOPES = [
-  'r_liteprofile', 'r_emailaddress', 'w_member_social',
-  'r_organization_admin', 'rw_organization_admin',
-  'r_organization_social', 'w_organization_social',
-];
-
-const LINKEDIN_ORG_ADMIN_SCOPE_OPTIONS = ['r_organization_admin', 'rw_organization_admin'];
-
-function getLinkedInOAuthScopeString(): string {
-  return String(process.env.LINKEDIN_OAUTH_SCOPES || LINKEDIN_DEFAULT_OAUTH_SCOPES.join(' ')).trim();
-}
-
-function parseLinkedInScopeList(value: unknown): string[] {
-  const raw = String(value || '').trim();
-  if (!raw) return [];
-  let decoded = raw;
-  try { decoded = decodeURIComponent(raw); } catch (err) { logger.error('Unhandled error:', err); decoded = raw; }
-  return Array.from(new Set(decoded.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean)));
-}
-
-function getLinkedInScopeSet(tokenData: any): Set<string> {
-  const fromString = parseLinkedInScopeList(tokenData?.scope);
-  const fromArray = Array.isArray(tokenData?.scopes)
-    ? tokenData.scopes.map((scope: unknown) => String(scope || '').trim()).filter(Boolean)
-    : [];
-  return new Set([...fromString, ...fromArray]);
-}
-
-function hasAnyLinkedInScope(tokenData: any, scopes: string[]): boolean {
-  const granted = getLinkedInScopeSet(tokenData);
-  return scopes.some((scope) => granted.has(scope));
-}
-
-function hasAllLinkedInScopes(tokenData: any, scopes: string[]): boolean {
-  const granted = getLinkedInScopeSet(tokenData);
-  return scopes.every((scope) => granted.has(scope));
-}
-
-function getLinkedInOrganizationScopeError(
-  tokenData: any,
-  options?: { requireSocialRead?: boolean; requireSocialWrite?: boolean },
-): string | null {
-  const granted = getLinkedInScopeSet(tokenData);
-  if (granted.size === 0) return null;
-  if (!LINKEDIN_ORG_ADMIN_SCOPE_OPTIONS.some((scope) => granted.has(scope))) {
-    return 'LinkedIn connection is missing organization admin scopes — reconnect LinkedIn and approve company page access';
-  }
-  if (options?.requireSocialRead && !granted.has('r_organization_social')) {
-    return 'LinkedIn connection is missing r_organization_social — reconnect LinkedIn to load company page analytics';
-  }
-  if (options?.requireSocialWrite && !granted.has('w_organization_social')) {
-    return 'LinkedIn connection is missing w_organization_social — reconnect LinkedIn to publish to company pages';
-  }
-  return null;
-}
-
-function shouldEnableLinkedInExtendedLogin(): boolean {
-  const raw = String(process.env.LINKEDIN_ENABLE_EXTENDED_LOGIN || 'true').trim().toLowerCase();
-  return raw !== '0' && raw !== 'false' && raw !== 'no' && raw !== 'off';
-}
-
-function computeIsoFromTtlSeconds(seconds: unknown): string | null {
-  const value = Number(seconds);
-  if (!Number.isFinite(value) || value <= 0) return null;
-  return new Date(Date.now() + value * 1000).toISOString();
-}
-
-// ── Notification & task helpers ────────────────────────────────────────────────
-
-async function createNotification(
-  userId: string,
-  type: string,
-  title: string,
-  message: string,
-  data: Record<string, any> = {},
-  pinned = false,
-): Promise<void> {
-  if (!pool) return;
-  try {
-    await dbQuery(
-      `INSERT INTO notifications (user_id, type, title, message, data, pinned) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [userId, type, title, message, data, pinned],
-    );
-  } catch (e) {
-    logger.error('createNotification error:', e);
-  }
-}
-
-async function logTaskActivity(
-  projectId: string, userId: string, action: string, taskId?: string, metadata?: Record<string, unknown>
-) {
-  try {
-    await dbQuery(
-      `INSERT INTO task_activity (project_id, user_id, action, task_id, metadata) VALUES ($1,$2,$3,$4,$5)`,
-      [projectId, userId, action, taskId ?? null, metadata ? JSON.stringify(metadata) : null]
-    );
-  } catch (_err) { /* non-fatal */ }
-}
-
-async function checkTaskActions(
-  userId: string,
-  actionType: string,
-): Promise<Array<{ task_id: string; title: string; new_status: string; progress: string }>> {
-  if (!hasDatabase()) return [];
-  const progressed: Array<{ task_id: string; title: string; new_status: string; progress: string }> = [];
-  try {
-    const { rows } = await dbQuery(
-      `SELECT DISTINCT ta.id, ta.current_count, ta.target_count, ta.task_id, t.project_id, t.status, t.title
-       FROM task_actions ta
-       JOIN tasks t ON t.id = ta.task_id
-       WHERE ta.action_type = $2
-         AND ta.current_count < ta.target_count
-         AND t.status != 'done'
-         AND (
-           EXISTS (SELECT 1 FROM task_assignees tass WHERE tass.task_id = t.id AND tass.user_id = $1)
-           OR t.supervisor_id = $1
-         )`,
-      [userId, actionType]
-    );
-    for (const row of rows) {
-      const r = row as any;
-      const newCount = r.current_count + 1;
-      await dbQuery(`UPDATE task_actions SET current_count = $1 WHERE id = $2`, [newCount, r.id]);
-      const { rows: totals } = await dbQuery(
-        `SELECT COALESCE(SUM(target_count),0) AS tgt, COALESCE(SUM(LEAST(current_count, target_count)),0) AS cur FROM task_actions WHERE task_id = $1`,
-        [r.task_id]
-      );
-      const t0 = totals[0] as any;
-      const isDone = Number(t0.cur) >= Number(t0.tgt);
-      if (isDone) {
-        await dbQuery(`UPDATE tasks SET status = 'done', updated_at = NOW() WHERE id = $1`, [r.task_id]);
-        void logTaskActivity(r.project_id, userId, 'status_changed', r.task_id, { from: r.status, to: 'done' });
-        createNotification(userId, 'agent_activity',
-          `Task completed: "${r.title}"`,
-          `Your action automatically completed the task "${r.title}".`,
-          { taskId: r.task_id },
-        ).catch(() => undefined);
-      }
-      progressed.push({
-        task_id: r.task_id,
-        title: r.title,
-        new_status: isDone ? 'done' : r.status,
-        progress: `${newCount}/${r.target_count}`,
-      });
-    }
-  } catch (err) {
-    logger.error('[checkTaskActions] error:', err);
-  }
-  return progressed;
-}
 
 async function getUserSaaSContext(userId: string): Promise<string> {
   if (!pool) return '';
@@ -969,250 +826,6 @@ async function getUserConnectedAccounts(userId: string): Promise<any[]> {
   return result.rows;
 }
 
-// --- Integrations: encryption + logs ---
-function encryptIntegrationSecret(plain: string): string {
-  const iv = randomBytes(16);
-  const cipher = createCipheriv('aes-256-gcm', INTEGRATIONS_ENCRYPTION_KEY, iv);
-  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, enc]).toString('base64');
-}
-
-function decryptIntegrationSecret(encrypted: string): string {
-  const buf = Buffer.from(String(encrypted || ''), 'base64');
-  const iv = buf.subarray(0, 16);
-  const authTag = buf.subarray(16, 32);
-  const data = buf.subarray(32);
-  const decipher = createDecipheriv('aes-256-gcm', INTEGRATIONS_ENCRYPTION_KEY, iv);
-  decipher.setAuthTag(authTag);
-  return decipher.update(data).toString('utf8') + decipher.final('utf8');
-}
-
-async function getIntegrationRowBySlug(slug: string): Promise<{ id: number; slug: string; name: string | null; type: string | null } | null> {
-  if (!pool) return null;
-  const s = String(slug || '').trim().toLowerCase();
-  if (!s) return null;
-  const result = await dbQuery<{ id: number; slug: string; name: string | null; type: string | null }>(
-    `SELECT id, slug, name, type FROM integrations WHERE slug = $1 LIMIT 1`,
-    [s]
-  ).catch(() => ({ rows: [] } as any));
-  return result.rows[0] ?? null;
-}
-
-async function logIntegrationEvent(params: {
-  userId: string | null;
-  integrationSlug: string | null;
-  eventType: string;
-  status: 'success' | 'failed' | 'info';
-  response?: any;
-}) {
-  if (!pool) return;
-  const integration = params.integrationSlug ? await getIntegrationRowBySlug(params.integrationSlug) : null;
-  await dbQuery(
-    `INSERT INTO integration_logs (id, user_id, integration_id, event_type, status, response, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())`,
-    [
-      randomUUID(),
-      params.userId,
-      integration?.id ?? null,
-      String(params.eventType || '').slice(0, 80),
-      params.status,
-      JSON.stringify(params.response ?? {}),
-    ]
-  ).catch(() => undefined);
-}
-
-async function upsertUserIntegration(params: {
-  userId: string;
-  integrationSlug: string;
-  accessTokenEncrypted?: string | null;
-  refreshTokenEncrypted?: string | null;
-  tokenExpiry?: string | null;
-  accountId?: string | null;
-  accountName?: string | null;
-  status: 'connected' | 'disconnected' | 'error';
-}) {
-  if (!pool) return;
-  const integration = await getIntegrationRowBySlug(params.integrationSlug);
-  if (!integration) return;
-  await dbQuery(
-    `INSERT INTO user_integrations
-      (id, user_id, integration_id, access_token, refresh_token, token_expiry, account_id, account_name, status, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
-     ON CONFLICT (user_id, integration_id) DO UPDATE
-       SET access_token = EXCLUDED.access_token,
-           refresh_token = EXCLUDED.refresh_token,
-           token_expiry = EXCLUDED.token_expiry,
-           account_id = EXCLUDED.account_id,
-           account_name = EXCLUDED.account_name,
-           status = EXCLUDED.status`,
-    [
-      randomUUID(),
-      params.userId,
-      integration.id,
-      params.accessTokenEncrypted ?? null,
-      params.refreshTokenEncrypted ?? null,
-      params.tokenExpiry ?? null,
-      params.accountId ?? null,
-      params.accountName ?? null,
-      params.status,
-    ]
-  ).catch(() => undefined);
-}
-
-// --- WordPress: encryption and storage (credentials never logged) ---
-function encryptWordPressPassword(plain: string): string {
-  const iv = randomBytes(16);
-  const cipher = createCipheriv('aes-256-gcm', WORDPRESS_ENCRYPTION_KEY, iv);
-  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, enc]).toString('base64');
-}
-
-function decryptWordPressPassword(encrypted: string): string {
-  const buf = Buffer.from(encrypted, 'base64');
-  const iv = buf.subarray(0, 16);
-  const authTag = buf.subarray(16, 32);
-  const data = buf.subarray(32);
-  const decipher = createDecipheriv('aes-256-gcm', WORDPRESS_ENCRYPTION_KEY, iv);
-  decipher.setAuthTag(authTag);
-  return decipher.update(data).toString('utf8') + decipher.final('utf8');
-}
-
-function normalizeWordPressSiteUrl(url: string): string {
-  const u = url.trim().replace(/\/+$/, '');
-  return u.startsWith('http') ? u : `https://${u}`;
-}
-
-interface WordPressConnection {
-  id: string;
-  userId: string;
-  siteUrl: string;
-  username: string;
-  appPasswordEncrypted: string;
-}
-
-async function getWordPressConnection(userId: string): Promise<WordPressConnection | null> {
-  if (!pool) return null;
-  const result = await dbQuery<{
-    id: string;
-    user_id: string;
-    site_url: string;
-    username: string;
-    app_password_encrypted: string;
-  }>('SELECT id, user_id, site_url, username, app_password_encrypted FROM wordpress_connections WHERE user_id = $1', [
-    userId,
-  ]);
-  const row = result.rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    siteUrl: row.site_url,
-    username: row.username,
-    appPasswordEncrypted: row.app_password_encrypted,
-  };
-}
-
-// --- Make webhook connection (store webhook URL encrypted; never log URL) ---
-async function getMakeWebhookConnection(userId: string): Promise<{ webhookUrlEncrypted: string } | null> {
-  if (!pool) return null;
-  const result = await dbQuery<{ webhook_url_encrypted: string }>(
-    'SELECT webhook_url_encrypted FROM make_webhook_connections WHERE user_id = $1',
-    [userId]
-  );
-  const row = result.rows[0];
-  return row ? { webhookUrlEncrypted: row.webhook_url_encrypted } : null;
-}
-
-async function ensureWordPressSocialAccount(userId: string) {
-  if (!pool) return;
-  const conn = await getWordPressConnection(userId);
-  const webhookConn = await getMakeWebhookConnection(userId);
-  if (!conn && !webhookConn) return;
-
-  const accountId = conn?.siteUrl ? String(conn.siteUrl).trim() : 'wordpress';
-  const accountName = conn?.username ? String(conn.username).trim() : 'WordPress';
-
-  const updateRes = await dbQuery(
-    `UPDATE social_accounts
-     SET account_name = $3,
-         connected = true,
-         connected_at = NOW()
-     WHERE user_id = $1 AND platform = 'wordpress' AND account_type = 'site' AND account_id = $2`,
-    [userId, accountId, accountName]
-  );
-  if (updateRes.rowCount === 0) {
-    await dbQuery(
-      `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, connected, connected_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,true,NOW(),NOW())`,
-      [randomUUID(), userId, 'wordpress', null, 'site', accountId, accountName]
-    );
-  }
-}
-
-async function removeWordPressSocialAccount(userId: string) {
-  if (!pool) return;
-  await dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND platform = $2', [userId, 'wordpress']);
-}
-
-function isValidWebhookUrl(url: string): boolean {
-  const u = url.trim();
-  return u.startsWith('https://') || u.startsWith('http://');
-}
-
-async function wpRequest(
-  siteUrl: string,
-  username: string,
-  appPassword: string,
-  method: string,
-  path: string,
-  options: { data?: any; formData?: FormData; responseType?: 'json' } = {}
-): Promise<{ data?: any; status: number; error?: string }> {
-  const base = normalizeWordPressSiteUrl(siteUrl);
-  const url = `${base.replace(/\/+$/, '')}/wp-json${path.startsWith('/') ? path : `/${path}`}`;
-  const auth = Buffer.from(`${username}:${appPassword}`, 'utf8').toString('base64');
-  const headers: Record<string, string> = {
-    Authorization: `Basic ${auth}`,
-  };
-  if (options.formData) {
-    // Let axios set Content-Type for FormData
-    try {
-      const res = await axios.request({
-        method,
-        url,
-        data: options.formData,
-        headers: { ...headers, ...(options.formData.getHeaders?.() || {}) },
-        maxRedirects: 2,
-        validateStatus: () => true,
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-      });
-      return { data: res.data, status: res.status, error: res.status >= 400 ? (res.data?.message || res.statusText) : undefined };
-    } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Request failed';
-      return { status: err?.response?.status || 500, error: msg };
-    }
-  }
-  if (options.data !== undefined) headers['Content-Type'] = 'application/json';
-  try {
-    const res = await axios.request({
-      method,
-      url,
-      data: options.data,
-      headers,
-      maxRedirects: 2,
-      validateStatus: () => true,
-    });
-    const error = res.status >= 400 ? (res.data?.message || res.data?.code || res.statusText) : undefined;
-    return { data: res.data, status: res.status, error };
-  } catch (err: any) {
-    const msg = err?.response?.data?.message || err?.message || 'Request failed';
-    return { status: err?.response?.status || 500, error: msg };
-  }
-}
-
-// POST /api/wordpress/connect 뿯붿?validate and store connection (tries Application Password first, then login password)
 // ─── WordPress Routes ────────────────────────────────────────────────────────
 app.use('/api', registerWordPressRoutes({
   requireAuth, hasDatabase, dbQuery, pool,
@@ -1238,8 +851,11 @@ app.use('/api', registerUserDesignRoutes({ requireAuth, hasDatabase, dbQuery, sy
 app.use('/api', registerHubtelRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, getPlatformConfig }));
 // ── Integration helpers ────────────────────────────────────────────────────────
 
-
-
+const META_BASE_SCOPES = ['public_profile', 'email', 'pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_metadata', 'read_insights'];
+const META_INSTAGRAM_SCOPES = ['instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'];
+function getMetaOAuthScopeString(extraScopes: string[] = []): string {
+  return Array.from(new Set([...META_BASE_SCOPES, ...META_INSTAGRAM_SCOPES, ...extraScopes])).join(',');
+}
 
 
 const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
