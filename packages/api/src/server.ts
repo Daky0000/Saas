@@ -8328,6 +8328,9 @@ const distModule = buildDistributionModule({
 });
 app.use('/api', distModule.router);
 const getPublishableSocialConnection = distModule.getPublishableSocialConnection;
+const markSocialAccountNeedsReapproval = distModule.markSocialAccountNeedsReapproval;
+const listLinkedInAdminOrganizations = distModule.listLinkedInAdminOrganizations;
+const fetchLinkedInOrganizationNetworkSize = distModule.fetchLinkedInOrganizationNetworkSize;
 startSocialAutomationProcessor = distModule.startSocialAutomationProcessor;
 startTokenHealthMonitor = distModule.startTokenHealthMonitor;
 

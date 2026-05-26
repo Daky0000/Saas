@@ -53,6 +53,9 @@ const REDIS_URL = config.redisUrl;
 export interface DistributionModule {
   router: Router;
   getPublishableSocialConnection: (userId: string, platformId: string) => Promise<PublishableSocialConnection | null>;
+  markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
+  listLinkedInAdminOrganizations: (accessToken: string, personId: string, options?: { allowedRoles?: string[] }) => Promise<{ organizations: Array<{ id: string; name: string; picture_url?: string | null; roles?: string[] }>; warning: string | null }>;
+  fetchLinkedInOrganizationNetworkSize: (accessToken: string, organizationUrn: string) => Promise<number | null>;
   startSocialAutomationProcessor: () => void;
   startTokenHealthMonitor: () => void;
   normalizePlatformId: (value: string) => string;
@@ -3164,6 +3167,9 @@ router.get('/', (req: Request, res: Response) => {
   return {
     router,
     getPublishableSocialConnection,
+    markSocialAccountNeedsReapproval,
+    listLinkedInAdminOrganizations,
+    fetchLinkedInOrganizationNetworkSize,
     startSocialAutomationProcessor,
     startTokenHealthMonitor,
     normalizePlatformId,
