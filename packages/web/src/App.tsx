@@ -62,6 +62,9 @@ const MarketingEmail = lazy(() => import('./pages/MarketingEmail'));
 const MarketingCampaigns = lazy(() => import('./pages/MarketingCampaigns'));
 const MarketingSurveys = lazy(() => import('./pages/MarketingSurveys'));
 const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
+const CRMCompanies = lazy(() => import('./pages/CRMCompanies'));
+const CRMPipeline = lazy(() => import('./pages/CRMPipeline'));
+const CRMLeadScoring = lazy(() => import('./pages/CRMLeadScoring'));
 const PublicSurvey = lazy(() => import('./pages/PublicSurvey'));
 const Workspace = lazy(() => import('./pages/Workspace'));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
@@ -109,6 +112,9 @@ export type PageType =
   | 'marketing-campaigns'
   | 'marketing-surveys'
   | 'marketing-automations'
+  | 'crm-companies'
+  | 'crm-pipeline'
+  | 'crm-scoring'
   | 'workspace'
   | 'billing'
   | 'pricing'
@@ -151,6 +157,9 @@ const PAGE_PATHS: Record<PageType, string> = {
   'marketing-campaigns': '/marketing/campaigns',
   'marketing-surveys': '/marketing/surveys',
   'marketing-automations': '/marketing/automations',
+  'crm-companies': '/crm/companies',
+  'crm-pipeline': '/crm/pipeline',
+  'crm-scoring': '/crm/scoring',
   workspace: '/workspace',
   billing: '/billing',
   tasks: '/tasks',
@@ -211,6 +220,8 @@ type AppSidebarProps = {
   setPostsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   marketingMenuOpen: boolean;
   setMarketingMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  crmMenuOpen: boolean;
+  setCrmMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   profileNeedsAttention: boolean;
   navigateToPage: (page: PageType, replace?: boolean) => void;
   handleLogout: () => void;
@@ -225,6 +236,8 @@ function AppSidebar({
   setPostsMenuOpen,
   marketingMenuOpen,
   setMarketingMenuOpen,
+  crmMenuOpen,
+  setCrmMenuOpen,
   profileNeedsAttention,
   navigateToPage,
   handleLogout,
@@ -527,6 +540,35 @@ function AppSidebar({
 
         {/* ── Bottom nav items ── */}
         <div className="mt-2 border-t border-gray-100 pt-2">
+
+          {/* CRM */}
+          <button
+            type="button"
+            onClick={() => { setCrmMenuOpen(p => !p); go('crm-pipeline'); }}
+            className={cls(
+              currentPage === 'crm-companies' ||
+              currentPage === 'crm-pipeline' ||
+              currentPage === 'crm-scoring'
+            )}
+          >
+            <Building2 size={15} className="shrink-0" />
+            <span className="flex-1 text-left">CRM</span>
+            <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {crmMenuOpen && (
+            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+              {([
+                { id: 'crm-pipeline' as PageType, label: 'Pipeline' },
+                { id: 'crm-companies' as PageType, label: 'Companies' },
+                { id: 'crm-scoring' as PageType, label: 'Lead Scoring' },
+              ] as { id: PageType; label: string }[]).map((c) => (
+                <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <button
             type="button"
             data-tour-id="nav-marketing"
@@ -665,6 +707,7 @@ function App() {
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
   const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
+  const [crmMenuOpen, setCrmMenuOpen] = useState(false);
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [pendingTour, setPendingTour] = useState(false);
@@ -720,6 +763,9 @@ function App() {
       }
       if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys' || page === 'marketing-automations') {
         setMarketingMenuOpen(true);
+      }
+      if (page === 'crm-companies' || page === 'crm-pipeline' || page === 'crm-scoring') {
+        setCrmMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
       if (window.location.pathname !== path || window.location.search) {
@@ -830,6 +876,8 @@ function App() {
       if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
       const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
       if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
+      const crmPages: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring'];
+      if (crmPages.includes(pageFromPath)) setCrmMenuOpen(true);
       return () => {
         canceled = true;
       };
@@ -959,6 +1007,9 @@ function App() {
       case 'marketing-campaigns': return <MarketingCampaigns />;
       case 'marketing-surveys': return <MarketingSurveys />;
       case 'marketing-automations': return <MarketingAutomations />;
+      case 'crm-companies': return <CRMCompanies />;
+      case 'crm-pipeline': return <CRMPipeline />;
+      case 'crm-scoring': return <CRMLeadScoring />;
       case 'workspace': return <Workspace />;
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;
@@ -980,6 +1031,8 @@ function App() {
     setPostsMenuOpen,
     marketingMenuOpen,
     setMarketingMenuOpen,
+    crmMenuOpen,
+    setCrmMenuOpen,
     profileNeedsAttention,
     navigateToPage,
     handleLogout,

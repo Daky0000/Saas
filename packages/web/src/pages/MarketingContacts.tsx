@@ -64,7 +64,7 @@ function ContactDetailView({
 }) {
   const [contact, setContact] = useState(initial);
   const [composing, setComposing] = useState(false);
-  const [tab, setTab] = useState<'overview' | 'insights' | 'notes' | 'settings'>('overview');
+  const [tab, setTab] = useState<'overview' | 'insights' | 'notes' | 'activity' | 'settings'>('overview');
   const [notes, setNotes] = useState(contact.custom_data?.__notes ?? '');
   const [tagInput, setTagInput] = useState('');
   const [showTagInput, setShowTagInput] = useState(false);
@@ -72,6 +72,36 @@ function ContactDetailView({
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ first_name: contact.first_name ?? '', last_name: contact.last_name ?? '', phone: contact.phone ?? '' });
+
+  // CRM activities
+  const [crmActivities, setCrmActivities] = useState<any[]>([]);
+  const [showActivityForm, setShowActivityForm] = useState(false);
+  const [activityForm, setActivityForm] = useState({ type: 'note', title: '', body: '' });
+  const [savingActivity, setSavingActivity] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/crm/activities?contact_id=${contact.id}&limit=30`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => setCrmActivities(Array.isArray(rows) ? rows : []));
+  }, [contact.id]);
+
+  const handleLogActivity = async () => {
+    if (!activityForm.body.trim() && !activityForm.title.trim()) return;
+    setSavingActivity(true);
+    try {
+      const r = await fetch('/api/crm/activities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...activityForm, contact_id: contact.id }),
+      });
+      if (r.ok) {
+        const newA = await r.json();
+        setCrmActivities(prev => [newA, ...prev]);
+        setActivityForm({ type: 'note', title: '', body: '' });
+        setShowActivityForm(false);
+      }
+    } finally { setSavingActivity(false); }
+  };
 
   if (composing) return <SendEmailView contact={contact} onBack={() => setComposing(false)} />;
 
@@ -267,7 +297,7 @@ function ContactDetailView({
         {/* ── Right content ── */}
         <div className="flex-1 min-w-0">
           <div className="flex border-b border-slate-200 mb-4">
-            {(['overview', 'insights', 'notes', 'settings'] as const).map(t => (
+            {(['overview', 'activity', 'insights', 'notes', 'settings'] as const).map(t => (
               <button key={t} type="button" onClick={() => setTab(t)}
                 className={`px-4 py-3 text-sm font-semibold capitalize border-b-2 -mb-px transition-colors ${tab === t ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                 {t}
@@ -342,6 +372,66 @@ function ContactDetailView({
                 ))}
               </div>
               <p className="text-center text-xs text-slate-400">Email open and click tracking is available at the campaign level.</p>
+            </div>
+          )}
+
+          {tab === 'activity' && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-slate-900">CRM Activity</h3>
+                <button type="button" onClick={() => setShowActivityForm(v => !v)}
+                  className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
+                  <Plus size={12} /> Log activity
+                </button>
+              </div>
+
+              {showActivityForm && (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 space-y-3">
+                  <div className="flex gap-2">
+                    {['note','call','email','meeting','task'].map(t => (
+                      <button key={t} type="button" onClick={() => setActivityForm(f => ({ ...f, type: t }))}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${activityForm.type === t ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}`}>{t}</button>
+                    ))}
+                  </div>
+                  <input value={activityForm.title} onChange={e => setActivityForm(f => ({ ...f, title: e.target.value }))}
+                    placeholder="Title (optional)"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-400 bg-white" />
+                  <textarea value={activityForm.body} onChange={e => setActivityForm(f => ({ ...f, body: e.target.value }))}
+                    placeholder="Add a note, call outcome, or meeting summary…"
+                    rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-400 resize-none bg-white" />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowActivityForm(false)} className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                    <button type="button" onClick={() => void handleLogActivity()} disabled={savingActivity}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50">
+                      {savingActivity ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {crmActivities.length === 0 ? (
+                <p className="text-center text-sm text-slate-400 py-6">No activities logged yet. Log a call, meeting, or note above.</p>
+              ) : (
+                <div className="space-y-3">
+                  {crmActivities.map((a: any) => {
+                    const icons: Record<string, string> = { note: '📝', call: '📞', email: '✉️', meeting: '🤝', task: '✅', whatsapp: '💬', sms: '📱' };
+                    return (
+                      <div key={a.id} className="flex gap-3">
+                        <span className="text-base leading-none mt-0.5">{icons[a.type] || '📝'}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-700 capitalize">{a.type}</span>
+                            {a.title && <span className="text-xs text-slate-500">— {a.title}</span>}
+                            <span className="text-xs text-slate-400 ml-auto">{new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                          </div>
+                          {a.body && <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">{a.body}</p>}
+                          {a.outcome && <p className="text-xs text-emerald-600 mt-0.5">Outcome: {a.outcome}</p>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

@@ -37,6 +37,9 @@ import { registerMailingRoutes } from './server/mailingRoutes.ts';
 import { registerNotificationRoutes } from './server/notificationsRoutes.ts';
 import { registerCampaignRoutes, registerTrackingRoutes, registerShortLinkRoutes } from './server/campaignRoutes.ts';
 import { registerOrgRoutes } from './server/orgRoutes.ts';
+import { registerCRMCompaniesRoutes } from './server/crmCompaniesRoutes.ts';
+import { registerCRMDealsRoutes } from './server/crmDealsRoutes.ts';
+import { registerCRMActivitiesRoutes } from './server/crmActivitiesRoutes.ts';
 import { registerCreditsRoutes } from './server/creditsRoutes.ts';
 import { registerApifyRoutes } from './server/apifyRoutes.ts';
 import { registerHiggsfieldRoutes } from './server/higgsfieldRoutes.ts';
@@ -673,6 +676,11 @@ app.use('/api', registerSocialRoutes({
 
 // ─── Mailing ────────────────────────────────────────────────────────────────
 app.use('/api/mailing', registerMailingRoutes({ requireAuth, pool: pool!, getResendConfig }));
+
+// ─── CRM ─────────────────────────────────────────────────────────────────────
+app.use('/api/crm', registerCRMCompaniesRoutes({ requireAuth, pool: pool! }));
+app.use('/api/crm', registerCRMDealsRoutes({ requireAuth, pool: pool! }));
+app.use('/api/crm', registerCRMActivitiesRoutes({ requireAuth, pool: pool! }));
 
 // ─── Surveys ──────────────────────────────────────────────────────────────────
 app.use('/api/surveys', registerSurveyRoutes({ requireAuth, pool: pool! }));

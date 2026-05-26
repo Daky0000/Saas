@@ -3582,4 +3582,117 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS workflow_runs_workflow_idx ON workflow_runs (workflow_id, started_at DESC);`).catch(() => undefined);
 // ── End Workflows ─────────────────────────────────────────────────────────────
+
+// ── CRM ───────────────────────────────────────────────────────────────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_companies (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    domain      TEXT,
+    industry    TEXT,
+    size        TEXT,
+    website     TEXT,
+    phone       TEXT,
+    email       TEXT,
+    address     TEXT,
+    city        TEXT,
+    country     TEXT,
+    description TEXT,
+    logo_url    TEXT,
+    custom_data JSONB DEFAULT '{}',
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_companies_user_idx ON crm_companies (user_id, created_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_companies_domain_idx ON crm_companies (user_id, domain);`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_contact_companies (
+    contact_id  TEXT NOT NULL REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+    company_id  TEXT NOT NULL REFERENCES crm_companies(id) ON DELETE CASCADE,
+    role        TEXT,
+    is_primary  BOOLEAN DEFAULT false,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (contact_id, company_id)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_contact_companies_company_idx ON crm_contact_companies (company_id);`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_pipeline_stages (
+    id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    color      TEXT NOT NULL DEFAULT '#6366f1',
+    position   INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_pipeline_stages_user_idx ON crm_pipeline_stages (user_id, position);`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_deals (
+    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    value        NUMERIC DEFAULT 0,
+    currency     TEXT DEFAULT 'USD',
+    stage_id     TEXT REFERENCES crm_pipeline_stages(id) ON DELETE SET NULL,
+    contact_id   TEXT REFERENCES mailing_contacts(id) ON DELETE SET NULL,
+    company_id   TEXT REFERENCES crm_companies(id) ON DELETE SET NULL,
+    close_date   DATE,
+    priority     TEXT DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+    status       TEXT DEFAULT 'open' CHECK (status IN ('open','won','lost')),
+    probability  INT DEFAULT 0 CHECK (probability >= 0 AND probability <= 100),
+    description  TEXT,
+    custom_data  JSONB DEFAULT '{}',
+    position     INT DEFAULT 0,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_deals_user_idx ON crm_deals (user_id, created_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_deals_stage_idx ON crm_deals (stage_id, position);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_deals_contact_idx ON crm_deals (contact_id);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_deals_company_idx ON crm_deals (company_id);`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_activities (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    contact_id  TEXT REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+    company_id  TEXT REFERENCES crm_companies(id) ON DELETE CASCADE,
+    deal_id     TEXT REFERENCES crm_deals(id) ON DELETE CASCADE,
+    type        TEXT NOT NULL CHECK (type IN ('note','call','email','meeting','task','whatsapp','sms')),
+    title       TEXT,
+    body        TEXT,
+    outcome     TEXT,
+    duration    INT,
+    scheduled_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_contact_idx ON crm_activities (contact_id, created_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_deal_idx ON crm_activities (deal_id, created_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_user_idx ON crm_activities (user_id, created_at DESC);`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_lead_scoring_rules (
+    id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    condition  JSONB NOT NULL,
+    points     INT NOT NULL DEFAULT 0,
+    active     BOOLEAN DEFAULT true,
+    position   INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_lead_scoring_rules_user_idx ON crm_lead_scoring_rules (user_id, position);`).catch(() => undefined);
+// ── End CRM ───────────────────────────────────────────────────────────────────
 }
