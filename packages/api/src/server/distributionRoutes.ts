@@ -56,6 +56,10 @@ export interface DistributionModule {
   markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
   listLinkedInAdminOrganizations: (accessToken: string, personId: string, options?: { allowedRoles?: string[] }) => Promise<{ organizations: Array<{ id: string; name: string; picture_url?: string | null; roles?: string[] }>; warning: string | null }>;
   fetchLinkedInOrganizationNetworkSize: (accessToken: string, organizationUrn: string) => Promise<number | null>;
+  refreshLinkedInAccessToken: (refreshToken: string, req?: Request) => Promise<any>;
+  fetchLinkedInSocialMetadataBatch: (accessToken: string, entityUrns: string[]) => Promise<Record<string, any>>;
+  fetchLinkedInShareStatisticsForPosts: (accessToken: string, authorUrn: string, postIds: string[]) => Promise<Map<string, any>>;
+  sumLinkedInReactionCounts: (metadata: any) => number;
   startSocialAutomationProcessor: () => void;
   startTokenHealthMonitor: () => void;
   normalizePlatformId: (value: string) => string;
@@ -3170,6 +3174,10 @@ router.get('/', (req: Request, res: Response) => {
     markSocialAccountNeedsReapproval,
     listLinkedInAdminOrganizations,
     fetchLinkedInOrganizationNetworkSize,
+    refreshLinkedInAccessToken,
+    fetchLinkedInSocialMetadataBatch,
+    fetchLinkedInShareStatisticsForPosts,
+    sumLinkedInReactionCounts,
     startSocialAutomationProcessor,
     startTokenHealthMonitor,
     normalizePlatformId,
