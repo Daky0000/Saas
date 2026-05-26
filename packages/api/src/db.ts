@@ -7,6 +7,9 @@ try {
   pool = config.databaseUrl
     ? new Pool({
         connectionString: config.databaseUrl,
+        ssl: config.databaseUrl.includes('localhost') || config.databaseUrl.includes('127.0.0.1')
+          ? false
+          : { rejectUnauthorized: false },
         max: 20,
         connectionTimeoutMillis: 5000,
         idleTimeoutMillis: 30000,
