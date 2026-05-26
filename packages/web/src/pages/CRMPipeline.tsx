@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Search, DollarSign, TrendingUp, Target, Award, MoreHorizontal, X, Edit2, Trash2, Calendar, User, Building2 } from 'lucide-react';
 
 const API = '/api/crm';
+const tok = () => localStorage.getItem('auth_token') ?? '';
+const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
 
 interface Stage {
   id: string;
@@ -149,9 +152,9 @@ export default function CRMPipeline() {
   const loadAll = useCallback(async () => {
     try {
       const [stagesRes, dealsRes, statsRes] = await Promise.all([
-        fetch(`${API}/pipeline/stages`),
-        fetch(`${API}/deals?limit=200`),
-        fetch(`${API}/pipeline/stats`),
+        fetch(`${API}/pipeline/stages`, { headers: authHeaders() }),
+        fetch(`${API}/deals?limit=200`, { headers: authHeaders() }),
+        fetch(`${API}/pipeline/stats`, { headers: authHeaders() }),
       ]);
       if (stagesRes.ok) setStages(await stagesRes.json());
       if (dealsRes.ok) setDeals(await dealsRes.json());
@@ -207,7 +210,7 @@ export default function CRMPipeline() {
       };
       const url = editingDeal ? `${API}/deals/${editingDeal.id}` : `${API}/deals`;
       const method = editingDeal ? 'PATCH' : 'POST';
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const r = await fetch(url, { method, headers: jsonHeaders(), body: JSON.stringify(payload) });
       if (!r.ok) { setFormError((await r.json()).error || 'Save failed'); return; }
       setShowDealForm(false);
       loadAll();
@@ -218,13 +221,13 @@ export default function CRMPipeline() {
 
   const deleteDeal = async (id: string) => {
     if (!confirm('Delete this deal?')) return;
-    await fetch(`${API}/deals/${id}`, { method: 'DELETE' });
+    await fetch(`${API}/deals/${id}`, { method: 'DELETE', headers: authHeaders() });
     setSelectedDeal(null);
     loadAll();
   };
 
   const updateDealStatus = async (id: string, status: 'open' | 'won' | 'lost') => {
-    await fetch(`${API}/deals/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    await fetch(`${API}/deals/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ status }) });
     setSelectedDeal(d => d ? { ...d, status } : null);
     loadAll();
   };
@@ -234,7 +237,7 @@ export default function CRMPipeline() {
     setDragOverStage(null);
     const dealId = e.dataTransfer.getData('dealId');
     if (!dealId) return;
-    await fetch(`${API}/deals/reorder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deal_id: dealId, stage_id: stageId }) });
+    await fetch(`${API}/deals/reorder`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ deal_id: dealId, stage_id: stageId }) });
     loadAll();
   };
 

@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 
 const API = '/api/connectors';
+const tok = () => localStorage.getItem('auth_token') ?? '';
+const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
 
 interface Domain {
   id: string;
@@ -199,14 +202,14 @@ export default function ConnectorProviderSetup({
   const loadFieldMaps = useCallback(async () => {
     setLoadingMaps(true);
     try {
-      const r = await fetch(`${API}/field-maps?domain_slug=${domain.slug}&provider_slug=${activeSlug}`);
+      const r = await fetch(`${API}/field-maps?domain_slug=${domain.slug}&provider_slug=${activeSlug}`, { headers: authHeaders() });
       if (r.ok) setFieldMaps(await r.json());
     } finally { setLoadingMaps(false); }
   }, [domain.slug, activeSlug]);
 
   const loadDefaults = useCallback(async () => {
     if (activeSlug === 'native') { setDefaults([]); return; }
-    const r = await fetch(`${API}/field-maps/defaults/${domain.slug}/${activeSlug}`);
+    const r = await fetch(`${API}/field-maps/defaults/${domain.slug}/${activeSlug}`, { headers: authHeaders() });
     if (r.ok) {
       const data = await r.json();
       setDefaults(data);
@@ -223,12 +226,12 @@ export default function ConnectorProviderSetup({
     setSwitching(true);
     try {
       if (providerSlug === 'native') {
-        await fetch(`${API}/prefs/${domain.slug}`, { method: 'DELETE' });
+        await fetch(`${API}/prefs/${domain.slug}`, { method: 'DELETE', headers: authHeaders() });
         setActiveSlug('native');
       } else {
         const r = await fetch(`${API}/prefs/${domain.slug}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: jsonHeaders(),
           body: JSON.stringify({ provider_slug: providerSlug }),
         });
         if (!r.ok) {
@@ -247,7 +250,7 @@ export default function ConnectorProviderSetup({
     try {
       const r = await fetch(`${API}/field-maps`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           domain_slug: domain.slug,
           provider_slug: activeSlug,
@@ -266,7 +269,7 @@ export default function ConnectorProviderSetup({
   };
 
   const deleteFieldMap = async (id: string) => {
-    await fetch(`${API}/field-maps/${id}`, { method: 'DELETE' });
+    await fetch(`${API}/field-maps/${id}`, { method: 'DELETE', headers: authHeaders() });
     setFieldMaps(prev => prev.filter(m => m.id !== id));
   };
 
@@ -276,7 +279,7 @@ export default function ConnectorProviderSetup({
       await Promise.all(defaults.map(d =>
         fetch(`${API}/field-maps`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: jsonHeaders(),
           body: JSON.stringify({
             domain_slug: domain.slug,
             provider_slug: activeSlug,

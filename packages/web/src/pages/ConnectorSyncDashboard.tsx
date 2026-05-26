@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 
 const API = '/api/connectors';
+const tok = () => localStorage.getItem('auth_token') ?? '';
+const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
 
 interface SyncJob {
   id: string;
@@ -155,9 +158,9 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
     setLoading(true);
     try {
       const [jobsR, runsR, statsR] = await Promise.all([
-        fetch(`${API}/sync/jobs`),
-        fetch(`${API}/sync/runs?limit=50`),
-        fetch(`${API}/sync/stats`),
+        fetch(`${API}/sync/jobs`, { headers: authHeaders() }),
+        fetch(`${API}/sync/runs?limit=50`, { headers: authHeaders() }),
+        fetch(`${API}/sync/stats`, { headers: authHeaders() }),
       ]);
       if (jobsR.ok) setJobs(await jobsR.json());
       if (runsR.ok) setRuns(await runsR.json());
@@ -170,7 +173,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
   const triggerRun = async (jobId: string) => {
     setTriggering(jobId);
     try {
-      const r = await fetch(`${API}/sync/jobs/${jobId}/run`, { method: 'POST' });
+      const r = await fetch(`${API}/sync/jobs/${jobId}/run`, { method: 'POST', headers: authHeaders() });
       if (r.ok) {
         setTimeout(loadAll, 800);
       }
@@ -180,7 +183,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
   const toggleJob = async (job: SyncJob) => {
     await fetch(`${API}/sync/jobs/${job.id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ active: !job.active }),
     });
     setJobs(prev => prev.map(j => j.id === job.id ? { ...j, active: !j.active } : j));
@@ -188,7 +191,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
 
   const deleteJob = async (id: string) => {
     if (!confirm('Delete this sync job?')) return;
-    await fetch(`${API}/sync/jobs/${id}`, { method: 'DELETE' });
+    await fetch(`${API}/sync/jobs/${id}`, { method: 'DELETE', headers: authHeaders() });
     setJobs(prev => prev.filter(j => j.id !== id));
   };
 
@@ -198,7 +201,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
     try {
       const r = await fetch(`${API}/sync/jobs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify(newJob),
       });
       if (r.ok) {

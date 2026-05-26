@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, Zap, X, Edit2, Trash2, ToggleLeft, ToggleRight, Info } from 'lucide-react';
 
 const API = '/api/crm';
+const tok = () => localStorage.getItem('auth_token') ?? '';
+const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
 
 interface ScoringRule {
   id: string;
@@ -73,7 +76,7 @@ export default function CRMLeadScoring() {
   const loadRules = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/scoring/rules`);
+      const r = await fetch(`${API}/scoring/rules`, { headers: authHeaders() });
       if (r.ok) setRules(await r.json());
     } finally { setLoading(false); }
   }, []);
@@ -113,7 +116,7 @@ export default function CRMLeadScoring() {
       };
       const url = editingRule ? `${API}/scoring/rules/${editingRule.id}` : `${API}/scoring/rules`;
       const method = editingRule ? 'PATCH' : 'POST';
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const r = await fetch(url, { method, headers: jsonHeaders(), body: JSON.stringify(payload) });
       if (!r.ok) { setFormError((await r.json()).error || 'Save failed'); return; }
       setShowForm(false);
       loadRules();
@@ -123,7 +126,7 @@ export default function CRMLeadScoring() {
   const toggleRule = async (rule: ScoringRule) => {
     await fetch(`${API}/scoring/rules/${rule.id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ active: !rule.active }),
     });
     setRules(prev => prev.map(r => r.id === rule.id ? { ...r, active: !r.active } : r));
@@ -131,7 +134,7 @@ export default function CRMLeadScoring() {
 
   const deleteRule = async (id: string) => {
     if (!confirm('Delete this scoring rule?')) return;
-    await fetch(`${API}/scoring/rules/${id}`, { method: 'DELETE' });
+    await fetch(`${API}/scoring/rules/${id}`, { method: 'DELETE', headers: authHeaders() });
     setRules(prev => prev.filter(r => r.id !== id));
   };
 

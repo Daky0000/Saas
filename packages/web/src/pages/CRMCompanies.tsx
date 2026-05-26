@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { Building2, Plus, Search, Globe, Phone, Mail, Users, TrendingUp, X, Edit2, Trash2, ChevronRight, DollarSign, Link } from 'lucide-react';
 
 const API = '/api/crm';
+const tok = () => localStorage.getItem('auth_token') ?? '';
+const authHeaders = () => ({ Authorization: `Bearer ${tok()}` });
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
 
 interface Company {
   id: string;
@@ -76,7 +79,7 @@ export default function CRMCompanies() {
     try {
       const params = new URLSearchParams({ limit: '50' });
       if (q) params.set('search', q);
-      const r = await fetch(`${API}/companies?${params}`);
+      const r = await fetch(`${API}/companies?${params}`, { headers: authHeaders() });
       const data = await r.json();
       setCompanies(data.companies || []);
       setTotal(data.total || 0);
@@ -94,7 +97,7 @@ export default function CRMCompanies() {
 
   const openDetail = async (company: Company) => {
     setSelected(company as any);
-    const r = await fetch(`${API}/companies/${company.id}`);
+    const r = await fetch(`${API}/companies/${company.id}`, { headers: authHeaders() });
     if (r.ok) setSelected(await r.json());
   };
 
@@ -129,7 +132,7 @@ export default function CRMCompanies() {
     try {
       const url = editingCompany ? `${API}/companies/${editingCompany.id}` : `${API}/companies`;
       const method = editingCompany ? 'PATCH' : 'POST';
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const r = await fetch(url, { method, headers: jsonHeaders(), body: JSON.stringify(form) });
       if (!r.ok) { setFormError((await r.json()).error || 'Save failed'); return; }
       setShowForm(false);
       load();
@@ -140,7 +143,7 @@ export default function CRMCompanies() {
 
   const deleteCompany = async (id: string) => {
     if (!confirm('Delete this company? This cannot be undone.')) return;
-    await fetch(`${API}/companies/${id}`, { method: 'DELETE' });
+    await fetch(`${API}/companies/${id}`, { method: 'DELETE', headers: authHeaders() });
     if (selected?.id === id) setSelected(null);
     load();
   };
