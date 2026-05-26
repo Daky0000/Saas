@@ -1,4 +1,4 @@
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { createHmac, randomBytes } from 'crypto';
 import { randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
