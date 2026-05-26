@@ -416,7 +416,7 @@ app.use('/api', registerAuthRoutes({
   createUser, updateUserProfile, updateLastLogin,
   getUserPlanName, signToken, userToAuthPayload, checkTokenVersion,
   provisionUserAgents, createNotification, getResendConfig,
-  jwtSecret: JWT_SECRET,
+  jwtSecret: config.jwtSecret,
   appUrl: config.appUrl,
   syncProfileMedia: syncProfileMediaFn,
 }));
@@ -555,7 +555,7 @@ app.use('/api', registerPlatformConfigRoutes({
 
 
 // ─── Social Auth: OAuth login + auth provider management ────────────────────
-app.use(registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, jwtSecret: JWT_SECRET, jwtExpiresIn: JWT_EXPIRES_IN }));
+app.use(registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, jwtSecret: config.jwtSecret, jwtExpiresIn: JWT_EXPIRES_IN }));
 
 
 
