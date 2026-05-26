@@ -1,6 +1,4 @@
-﻿import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Resend } from 'resend';
+﻿import { Resend } from 'resend';
 import Stripe from 'stripe';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
@@ -108,6 +106,13 @@ import {
   computeIsoFromTtlSeconds,
   createNotification, logTaskActivity, checkTaskActions,
 } from './social-helpers.ts';
+import {
+  AI_CONFIG_PLATFORM, GEMINI_MODELS, ANTHROPIC_TO_GEMINI,
+  getAIConfig, resolveActiveKey, callAINonStreaming, decryptAIKey,
+} from './ai-helpers.ts';
+import {
+  AGENT_DEFS, provisionUserAgents, compileAgentSkill, triggerAgentCompilation,
+} from './agent-helpers.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -593,89 +598,6 @@ async function getOrCreateStripeCustomer(userId: string, email: string, name: st
 // ── End Stripe helpers ─────────────────────────────────────────────────────────
 
 
-// ── Agent System Definitions & Helpers ───────────────────────────────────────
-
-const AGENT_DEFS: Record<string, { name: string; role: string; icon: string; color: string; memoryKeywords: string[] }> = {
-  daky:             { name: 'Daky',    role: 'Content Writer',        icon: '✦', color: '#5B6CF9', memoryKeywords: [] },
-  nova:             { name: 'Nova',    role: 'Creative Director',     icon: '◉', color: '#EC4899', memoryKeywords: ['brand','voice','visual','content','product','audience'] },
-  sage:             { name: 'Sage',    role: 'Strategy Analyst',      icon: '◈', color: '#10B981', memoryKeywords: ['goal','competit','strategy','industry','market','target','campaign'] },
-  aria:             { name: 'Aria',    role: 'Analytics & Perf.',     icon: '⊕', color: '#F59E0B', memoryKeywords: ['analytic','performance','kpi','metric','business'] },
-  flux:             { name: 'Flux',    role: 'Automation',            icon: '⟳', color: '#8B5CF6', memoryKeywords: ['automat','workflow','platform','social','schedule'] },
-  trend_research:   { name: 'Trend',   role: 'Trend Research',        icon: '◎', color: '#06B6D4', memoryKeywords: ['trend','viral','niche','topic','content','platform'] },
-  audience_research:{ name: 'Persona', role: 'Audience Research',    icon: '◑', color: '#7C3AED', memoryKeywords: ['audience','persona','pain','objection','customer','demographic'] },
-  seo_research:     { name: 'SEO',     role: 'SEO Keyword Research',  icon: '⊗', color: '#059669', memoryKeywords: ['seo','keyword','search','organic','traffic','content'] },
-  hook_writing:     { name: 'Hook',    role: 'Hook Writing',          icon: '⚡', color: '#D97706', memoryKeywords: ['hook','headline','attention','opening','subject','ad'] },
-  social_caption:   { name: 'Caption', role: 'Social Caption',        icon: '✎', color: '#DB2777', memoryKeywords: ['caption','social','instagram','tiktok','linkedin','hashtag'] },
-  video_script:     { name: 'Script',  role: 'Video Script',          icon: '▶', color: '#DC2626', memoryKeywords: ['video','script','youtube','reels','tiktok','short','long'] },
-  ad_copy:          { name: 'Ads',     role: 'Ad Copy',               icon: '◆', color: '#EA580C', memoryKeywords: ['ad','copy','meta','google','facebook','conversion','cta'] },
-  thumbnail_design: { name: 'Thumb',   role: 'Thumbnail Design',      icon: '▣', color: '#9333EA', memoryKeywords: ['thumbnail','youtube','visual','design','creative','click'] },
-  meta_ads:         { name: 'Meta',    role: 'Paid Social Manager',   icon: '⊛', color: '#1877F2', memoryKeywords: ['meta','facebook','instagram','paid','campaign','budget','roas'] },
-};
-
-async function provisionUserAgents(userId: string): Promise<void> {
-  if (!pool) return;
-  for (const key of Object.keys(AGENT_DEFS)) {
-    await dbQuery(
-      `INSERT INTO user_agents (user_id, agent_key, compiled_skill) VALUES ($1, $2, '') ON CONFLICT (user_id, agent_key) DO NOTHING`,
-      [userId, key]
-    ).catch(() => undefined);
-  }
-}
-
-async function compileAgentSkill(userId: string, agentKey: string): Promise<void> {
-  if (!pool) return;
-  const def = AGENT_DEFS[agentKey];
-  if (!def) return;
-  try {
-    const { encryptedKey } = await getAIConfig();
-    const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
-    if (!apiKey) return;
-
-    let memoryRows: any[] = [];
-    if (def.memoryKeywords.length > 0) {
-      const conditions = def.memoryKeywords.map((_, i) => `(category ILIKE $${i + 2} OR title ILIKE $${i + 2} OR content ILIKE $${i + 2})`).join(' OR ');
-      const { rows } = await dbQuery(
-        `SELECT category, title, content FROM user_memories WHERE user_id=$1 AND (${conditions}) ORDER BY category, sort_order, created_at LIMIT 30`,
-        [userId, ...def.memoryKeywords.map((k) => `%${k}%`)]
-      );
-      memoryRows = rows;
-    } else {
-      const { rows } = await dbQuery(
-        `SELECT category, title, content FROM user_memories WHERE user_id=$1 ORDER BY category, sort_order, created_at LIMIT 60`,
-        [userId]
-      );
-      memoryRows = rows;
-    }
-
-    if (memoryRows.length === 0) {
-      await dbQuery(`UPDATE user_agents SET compiled_skill='', last_compiled_at=NOW() WHERE user_id=$1 AND agent_key=$2`, [userId, agentKey]);
-      return;
-    }
-
-    const memText = memoryRows.map((r: any) => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
-    const aiCfgCompile = await getAIConfig();
-    const compileKey = resolveActiveKey(aiCfgCompile);
-    const compileFastModel = aiCfgCompile.provider === 'google'
-      ? (GEMINI_MODELS.includes(aiCfgCompile.model) ? aiCfgCompile.model : 'gemini-2.0-flash')
-      : 'claude-haiku-4-5-20251001';
-    const skill = await callAINonStreaming(
-      aiCfgCompile.provider, compileKey, compileFastModel,
-      `You are ${def.name} (${def.role}) on a marketing team.`,
-      `Below is the user's brand/business memory. Write a concise 3-5 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty. Be specific and useful — this will be injected into your system prompt.\n\nUser memory:\n${memText}\n\nSkill brief:`,
-      512
-    );
-    await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [skill, userId, agentKey]);
-  } catch (_err) { /* non-fatal */ }
-}
-
-async function triggerAgentCompilation(userId: string): Promise<void> {
-  for (const key of Object.keys(AGENT_DEFS)) {
-    compileAgentSkill(userId, key).catch(() => undefined);
-  }
-}
-
-// ── End Agent Helpers ─────────────────────────────────────────────────────────
-
 // ─── Auth Routes ─────────────────────────────────────────────────────────────
 app.use('/api', registerAuthRoutes({
   requireAuth, hasDatabase, dbQuery,
@@ -986,86 +908,6 @@ app.use('/api', registerPlatformConfigRoutes({
 app.use(registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, jwtSecret: JWT_SECRET, jwtExpiresIn: JWT_EXPIRES_IN }));
 
 
-
-const AI_CONFIG_PLATFORM = 'ai_assistant';
-
-// Gemini model names — used for model selection UI + provider-aware calls
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
-// Map from Anthropic model IDs → equivalent Gemini models for background/agent calls
-const ANTHROPIC_TO_GEMINI: Record<string, string> = {
-  'claude-haiku-4-5-20251001': 'gemini-2.0-flash',
-  'claude-sonnet-4-6': 'gemini-1.5-pro',
-  'claude-opus-4-7': 'gemini-2.5-pro',
-};
-
-async function getAIConfig(): Promise<{
-  model: string;
-  provider: 'anthropic' | 'google';
-  encryptedKey: string | null;
-  googleEncryptedKey: string | null;
-  systemPrompt: string | null;
-}> {
-  const cfg = await getPlatformConfig(AI_CONFIG_PLATFORM);
-  return {
-    model: String(cfg.model || 'claude-haiku-4-5-20251001'),
-    provider: (cfg.provider as 'anthropic' | 'google') || 'anthropic',
-    encryptedKey: cfg.apiKeyEncrypted ? String(cfg.apiKeyEncrypted) : null,
-    googleEncryptedKey: cfg.googleApiKeyEncrypted ? String(cfg.googleApiKeyEncrypted) : null,
-    systemPrompt: cfg.systemPrompt ? String(cfg.systemPrompt) : null,
-  };
-}
-
-function resolveActiveKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null }): string {
-  if (config.provider === 'google') {
-    return (config.googleEncryptedKey ? decryptAIKey(config.googleEncryptedKey) : null) || process.env.GOOGLE_AI_API_KEY || '';
-  }
-  return (config.encryptedKey ? decryptAIKey(config.encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
-}
-
-async function callAINonStreaming(
-  provider: 'anthropic' | 'google',
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  userMessage: string,
-  maxTokens = 400,
-): Promise<string> {
-  try {
-    if (provider === 'google') {
-      const effectiveModel = GEMINI_MODELS.includes(model) ? model : (ANTHROPIC_TO_GEMINI[model] ?? 'gemini-2.0-flash');
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: systemPrompt });
-      const result = await gModel.generateContent(userMessage);
-      return result.response.text();
-    } else {
-      const client = new Anthropic({ apiKey });
-      const resp = await client.messages.create({
-        model,
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      });
-      return resp.content[0]?.type === 'text' ? resp.content[0].text : '';
-    }
-  } catch (err: any) {
-    const msg: string = err?.message || String(err);
-    if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('too many requests')) {
-      if (provider === 'google') {
-        throw new Error('Google API quota exceeded. The free tier has a limit of 0 for this project — enable billing at aistudio.google.com to use Gemini.');
-      } else {
-        throw new Error('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.');
-      }
-    }
-    if (msg.includes('401') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('unauthorized')) {
-      throw new Error(`Invalid ${provider === 'google' ? 'Google' : 'Anthropic'} API key. Please check your key and try again.`);
-    }
-    throw err;
-  }
-}
-
-function decryptAIKey(encryptedKey: string): string {
-  try { return decryptIntegrationSecret(encryptedKey); } catch (_err) { return ''; }
-}
 
 // ─── AI Config Routes ─────────────────────────────────────────────────────────
 app.use('/api', registerAIConfigRoutes({
