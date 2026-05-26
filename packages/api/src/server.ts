@@ -416,7 +416,7 @@ app.use('/api', registerAuthRoutes({
   createUser, updateUserProfile, updateLastLogin,
   getUserPlanName, signToken, userToAuthPayload, checkTokenVersion,
   provisionUserAgents, createNotification, getResendConfig,
-  jwtSecret: JWT_SECRET,
+  jwtSecret: config.jwtSecret,
   appUrl: config.appUrl,
   syncProfileMedia: syncProfileMediaFn,
 }));
