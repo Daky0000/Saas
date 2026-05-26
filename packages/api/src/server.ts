@@ -4123,25 +4123,6 @@ app.use(registerWebhookRoutes({
 }));
 
 
-// Types
-interface OAuthState {
-  platform: string;
-  userId: string;
-  code: string;
-  state: string;
-}
-
-interface StoredConnection {
-  id: string;
-  userId: string;
-  platform: string;
-  handle: string;
-  followers: string;
-  connected: boolean;
-  connectedAt: string;
-  expiresAt?: string;
-}
-
 type DbUserRow = {
   id: string;
   email: string;
@@ -4332,52 +4313,6 @@ ensureDatabase()
     logger.error('Database initialization failed:', err);
   });
 
-function titleRole(role: string) {
-  switch (role) {
-    case 'admin':
-      return 'Admin';
-    default:
-      return 'User';
-  }
-}
-
-function titleStatus(status: string) {
-  switch (status) {
-    case 'active':
-      return 'Active';
-    case 'suspended':
-      return 'Suspended';
-    case 'pending':
-      return 'Pending';
-    case 'banned':
-      return 'Banned';
-    default:
-      return 'Active';
-  }
-}
-
-function parseAdminRole(role: string | undefined): AdminDbRole {
-  switch ((role || '').trim().toLowerCase()) {
-    case 'admin':
-      return 'admin';
-    default:
-      return 'user';
-  }
-}
-
-function parseAdminStatus(status: string | undefined): AdminDbStatus {
-  switch ((status || '').trim().toLowerCase()) {
-    case 'suspended':
-      return 'suspended';
-    case 'pending':
-      return 'pending';
-    case 'banned':
-      return 'banned';
-    default:
-      return 'active';
-  }
-}
-
 async function getUserPlanName(userId: string): Promise<string> {
   if (!hasDatabase()) return 'Free';
   try {
@@ -4409,21 +4344,6 @@ function userToAuthPayload(user: DbUserRow, planName?: string) {
     cover: user.cover_url,
     planName: planName ?? 'Free',
     emailVerified: user.email_verified ?? false,
-  };
-}
-
-function userToManagedUser(user: DbUserRow) {
-  return {
-    id: user.id,
-    name: user.full_name || user.username || user.email.split('@')[0],
-    email: user.email,
-    username: user.username || '',
-    role: titleRole(user.role),
-    status: titleStatus(user.status),
-    avatar: user.avatar_url || `https://ui-avatars.com/api/?background=eff6ff&color=1d4ed8&name=${encodeURIComponent(user.full_name || user.username || user.email)}`,
-    dateJoined: user.created_at ? new Date(user.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
-    lastLogin: user.last_login_at ? new Date(user.last_login_at).toISOString().slice(0, 16).replace('T', ' ') : 'Never',
-    recentActions: ['User record synced from database'],
   };
 }
 
