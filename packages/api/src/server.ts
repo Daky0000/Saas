@@ -82,7 +82,7 @@ import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
 import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
 import { runDatabaseMigrations } from './db-migrations.ts';
-import { pool, dbReady, setDbReady, hasDatabase, dbQuery, normalizeEmail, normalizeUsername } from './db.ts';
+import { pool, dbReady, setDbReady, setDbInitError, dbInitError, hasDatabase, dbQuery, normalizeEmail, normalizeUsername } from './db.ts';
 import {
   DbUserRow, AdminDbRole, AdminDbStatus, DbPricingPlan, DbCardTemplate, PlatformConfigRow,
   inMemoryUsersById, inMemoryUserIdByEmail, inMemoryUserIdByUsername,
@@ -215,7 +215,15 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    db: {
+      configured: Boolean(config.databaseUrl),
+      ready: dbReady,
+      error: dbInitError,
+    },
+  });
 });
 
 // Diagnostics — admin-only so deployment internals aren't public.
@@ -382,8 +390,7 @@ ensureDatabase()
   .then(() => startTokenHealthMonitor())
   .catch((err) => {
     setDbReady(false);
-    // Even when a Pool exists, schema init can fail (permissions, missing extensions, etc).
-    // Fall back to in-memory users so auth endpoints still work.
+    setDbInitError(err);
     seedInMemoryUsers();
     logger.error('Database initialization failed:', err);
   });

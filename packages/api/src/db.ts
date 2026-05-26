@@ -21,8 +21,12 @@ try {
 }
 
 export let dbReady = false;
+export let dbInitError: string | null = null;
 export function setDbReady(value: boolean) {
   dbReady = value;
+}
+export function setDbInitError(err: unknown) {
+  dbInitError = err instanceof Error ? err.message : String(err);
 }
 
 export function hasDatabase() {
