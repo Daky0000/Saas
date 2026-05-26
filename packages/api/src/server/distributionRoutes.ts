@@ -3187,5 +3187,6 @@ router.get('/', (req: Request, res: Response) => {
     loadSocialTemplateSettings,
     enqueueSocialAutomationTask,
     syncSocialAutomationForPost,
+    queueSocialAutomationForPublishedPost,
   };
 }

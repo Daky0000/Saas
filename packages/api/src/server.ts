@@ -622,31 +622,7 @@ function deprecatedApiPath(canonicalPath: string) {
   };
 }
 
-const { fireWorkflowTriggers, workflowRouter } = buildWorkflowEngine({ requireAuth, hasDatabase, dbQuery, enqueueSocialAutomationTask, getAIConfig, resolveActiveKey });
-
-const blogRouter = registerBlogRoutes({
-  app,
-  pool,
-  requireAuth,
-  hasDatabase,
-  slugify,
-  clearCalendarCacheForUser,
-  getCalendarCache,
-  setCalendarCache,
-  syncBlogPostMedia,
-  checkTaskActions,
-  fireWorkflowTriggers,
-  queueSocialAutomationForPublishedPost,
-  recordAuditLog,
-  getVisibleUserPlatformSlugs,
-  syncSocialAutomationForPost,
-});
-app.use('/api/v1/blog', blogRouter);
-app.use('/api/blog', deprecatedApiPath('/api/v1/blog'), blogRouter);
-
-// ── Distribution / Automation ────────────────────────────────────────────────
 // ── Distribution Module ─────────────────────────────────────────────────────
-
 const distModule = buildDistributionModule({
   requireAuth, pool, dbQuery,
   decryptIntegrationSecret, getIntegrationRowBySlug, logIntegrationEvent,
@@ -663,6 +639,28 @@ const fetchLinkedInShareStatisticsForPosts = distModule.fetchLinkedInShareStatis
 const sumLinkedInReactionCounts = distModule.sumLinkedInReactionCounts;
 startSocialAutomationProcessor = distModule.startSocialAutomationProcessor;
 startTokenHealthMonitor = distModule.startTokenHealthMonitor;
+
+const { fireWorkflowTriggers, workflowRouter } = buildWorkflowEngine({ requireAuth, hasDatabase, dbQuery, enqueueSocialAutomationTask: distModule.enqueueSocialAutomationTask, getAIConfig, resolveActiveKey });
+
+const blogRouter = registerBlogRoutes({
+  app,
+  pool,
+  requireAuth,
+  hasDatabase,
+  slugify,
+  clearCalendarCacheForUser,
+  getCalendarCache,
+  setCalendarCache,
+  syncBlogPostMedia,
+  checkTaskActions,
+  fireWorkflowTriggers,
+  queueSocialAutomationForPublishedPost: distModule.queueSocialAutomationForPublishedPost,
+  recordAuditLog,
+  getVisibleUserPlatformSlugs,
+  syncSocialAutomationForPost: distModule.syncSocialAutomationForPost,
+});
+app.use('/api/v1/blog', blogRouter);
+app.use('/api/blog', deprecatedApiPath('/api/v1/blog'), blogRouter);
 
 // ── Social Routes (automation + templates) ──────────────────────────────────
 app.use('/api', registerSocialRoutes({
