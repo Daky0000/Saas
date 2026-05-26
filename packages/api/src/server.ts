@@ -40,6 +40,9 @@ import { registerOrgRoutes } from './server/orgRoutes.ts';
 import { registerCRMCompaniesRoutes } from './server/crmCompaniesRoutes.ts';
 import { registerCRMDealsRoutes } from './server/crmDealsRoutes.ts';
 import { registerCRMActivitiesRoutes } from './server/crmActivitiesRoutes.ts';
+import { registerConnectorRegistryRoutes } from './server/connectorRegistryRoutes.ts';
+import { registerConnectorPreferencesRoutes } from './server/connectorPreferencesRoutes.ts';
+import { registerConnectorSyncRoutes } from './server/connectorSyncRoutes.ts';
 import { registerCreditsRoutes } from './server/creditsRoutes.ts';
 import { registerApifyRoutes } from './server/apifyRoutes.ts';
 import { registerHiggsfieldRoutes } from './server/higgsfieldRoutes.ts';
@@ -681,6 +684,11 @@ app.use('/api/mailing', registerMailingRoutes({ requireAuth, pool: pool!, getRes
 app.use('/api/crm', registerCRMCompaniesRoutes({ requireAuth, pool: pool! }));
 app.use('/api/crm', registerCRMDealsRoutes({ requireAuth, pool: pool! }));
 app.use('/api/crm', registerCRMActivitiesRoutes({ requireAuth, pool: pool! }));
+
+// ─── Connector Abstraction Layer ──────────────────────────────────────────────
+app.use('/api/connectors', registerConnectorRegistryRoutes({ requireAuth, pool: pool! }));
+app.use('/api/connectors', registerConnectorPreferencesRoutes({ requireAuth, pool: pool! }));
+app.use('/api/connectors', registerConnectorSyncRoutes({ requireAuth, pool: pool! }));
 
 // ─── Surveys ──────────────────────────────────────────────────────────────────
 app.use('/api/surveys', registerSurveyRoutes({ requireAuth, pool: pool! }));

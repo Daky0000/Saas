@@ -10,6 +10,7 @@ import {
   CreditCard,
   FileText,
   HelpCircle,
+  Layers,
   Loader2,
   LogOut,
   Megaphone,
@@ -65,6 +66,9 @@ const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
 const CRMCompanies = lazy(() => import('./pages/CRMCompanies'));
 const CRMPipeline = lazy(() => import('./pages/CRMPipeline'));
 const CRMLeadScoring = lazy(() => import('./pages/CRMLeadScoring'));
+const ConnectorHub = lazy(() => import('./pages/ConnectorHub'));
+const ConnectorProviderSetup = lazy(() => import('./pages/ConnectorProviderSetup'));
+const ConnectorSyncDashboard = lazy(() => import('./pages/ConnectorSyncDashboard'));
 const PublicSurvey = lazy(() => import('./pages/PublicSurvey'));
 const Workspace = lazy(() => import('./pages/Workspace'));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
@@ -115,6 +119,9 @@ export type PageType =
   | 'crm-companies'
   | 'crm-pipeline'
   | 'crm-scoring'
+  | 'connector-hub'
+  | 'connector-setup'
+  | 'connector-sync'
   | 'workspace'
   | 'billing'
   | 'pricing'
@@ -160,6 +167,9 @@ const PAGE_PATHS: Record<PageType, string> = {
   'crm-companies': '/crm/companies',
   'crm-pipeline': '/crm/pipeline',
   'crm-scoring': '/crm/scoring',
+  'connector-hub': '/connectors',
+  'connector-setup': '/connectors/setup',
+  'connector-sync': '/connectors/sync',
   workspace: '/workspace',
   billing: '/billing',
   tasks: '/tasks',
@@ -222,6 +232,8 @@ type AppSidebarProps = {
   setMarketingMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   crmMenuOpen: boolean;
   setCrmMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  connectorMenuOpen: boolean;
+  setConnectorMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   profileNeedsAttention: boolean;
   navigateToPage: (page: PageType, replace?: boolean) => void;
   handleLogout: () => void;
@@ -238,6 +250,8 @@ function AppSidebar({
   setMarketingMenuOpen,
   crmMenuOpen,
   setCrmMenuOpen,
+  connectorMenuOpen,
+  setConnectorMenuOpen,
   profileNeedsAttention,
   navigateToPage,
   handleLogout,
@@ -606,6 +620,33 @@ function AppSidebar({
             <Waypoints size={15} className="shrink-0" />
             <span className="flex-1 text-left">Integrations</span>
           </button>
+
+          {/* Connectors */}
+          <button
+            type="button"
+            onClick={() => { setConnectorMenuOpen(p => !p); go('connector-hub'); }}
+            className={cls(
+              currentPage === 'connector-hub' ||
+              currentPage === 'connector-setup' ||
+              currentPage === 'connector-sync'
+            )}
+          >
+            <Layers size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Connectors</span>
+            <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {connectorMenuOpen && (
+            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+              {([
+                { id: 'connector-hub' as PageType, label: 'Hub' },
+                { id: 'connector-sync' as PageType, label: 'Sync Dashboard' },
+              ] as { id: PageType; label: string }[]).map((c) => (
+                <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
           <button type="button" data-tour-id="nav-billing" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
             <CreditCard size={15} className="shrink-0" />
             <span className="flex-1 text-left">Billing</span>
@@ -708,6 +749,8 @@ function App() {
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
   const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
   const [crmMenuOpen, setCrmMenuOpen] = useState(false);
+  const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
+  const [connectorSetupDomain, setConnectorSetupDomain] = useState<any>(null);
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [pendingTour, setPendingTour] = useState(false);
@@ -766,6 +809,9 @@ function App() {
       }
       if (page === 'crm-companies' || page === 'crm-pipeline' || page === 'crm-scoring') {
         setCrmMenuOpen(true);
+      }
+      if (page === 'connector-hub' || page === 'connector-setup' || page === 'connector-sync') {
+        setConnectorMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
       if (window.location.pathname !== path || window.location.search) {
@@ -878,6 +924,8 @@ function App() {
       if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
       const crmPages: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring'];
       if (crmPages.includes(pageFromPath)) setCrmMenuOpen(true);
+      const connectorPages: PageType[] = ['connector-hub', 'connector-setup', 'connector-sync'];
+      if (connectorPages.includes(pageFromPath)) setConnectorMenuOpen(true);
       return () => {
         canceled = true;
       };
@@ -1010,6 +1058,19 @@ function App() {
       case 'crm-companies': return <CRMCompanies />;
       case 'crm-pipeline': return <CRMPipeline />;
       case 'crm-scoring': return <CRMLeadScoring />;
+      case 'connector-hub': return (
+        <ConnectorHub
+          onNavigateToSetup={(domain) => { setConnectorSetupDomain(domain); navigateToPage('connector-setup'); }}
+          onNavigateToSync={() => navigateToPage('connector-sync')}
+        />
+      );
+      case 'connector-setup': return connectorSetupDomain ? (
+        <ConnectorProviderSetup
+          domain={connectorSetupDomain}
+          onBack={() => navigateToPage('connector-hub')}
+        />
+      ) : <ConnectorHub onNavigateToSetup={(d) => { setConnectorSetupDomain(d); navigateToPage('connector-setup'); }} onNavigateToSync={() => navigateToPage('connector-sync')} />;
+      case 'connector-sync': return <ConnectorSyncDashboard onBack={() => navigateToPage('connector-hub')} />;
       case 'workspace': return <Workspace />;
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;
@@ -1033,6 +1094,8 @@ function App() {
     setMarketingMenuOpen,
     crmMenuOpen,
     setCrmMenuOpen,
+    connectorMenuOpen,
+    setConnectorMenuOpen,
     profileNeedsAttention,
     navigateToPage,
     handleLogout,

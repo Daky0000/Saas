@@ -3695,4 +3695,175 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS crm_lead_scoring_rules_user_idx ON crm_lead_scoring_rules (user_id, position);`).catch(() => undefined);
 // ── End CRM ───────────────────────────────────────────────────────────────────
+
+// ── Connector Abstraction Layer ───────────────────────────────────────────────
+
+// 1. Capability domains — the 6 provider categories
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS connector_domains (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    slug        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    icon        TEXT,
+    color       TEXT NOT NULL DEFAULT '#6366f1',
+    position    INT NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_domains_slug_idx ON connector_domains (slug);`).catch(() => undefined);
+
+// 2. Provider catalog — available providers per domain
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS connector_provider_catalog (
+    id                        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    domain_slug               TEXT NOT NULL REFERENCES connector_domains(slug) ON DELETE CASCADE,
+    slug                      TEXT NOT NULL,
+    name                      TEXT NOT NULL,
+    description               TEXT,
+    logo_url                  TEXT,
+    requires_integration_slug TEXT,
+    capabilities              JSONB NOT NULL DEFAULT '[]',
+    config_schema             JSONB NOT NULL DEFAULT '{}',
+    is_native                 BOOLEAN NOT NULL DEFAULT false,
+    available                 BOOLEAN NOT NULL DEFAULT true,
+    position                  INT NOT NULL DEFAULT 0,
+    created_at                TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(domain_slug, slug)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_provider_catalog_domain_idx ON connector_provider_catalog (domain_slug, position);`).catch(() => undefined);
+
+// 3. User provider preferences — per-user, per-domain active provider
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS connector_user_prefs (
+    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    domain_slug  TEXT NOT NULL REFERENCES connector_domains(slug) ON DELETE CASCADE,
+    provider_slug TEXT NOT NULL DEFAULT 'native',
+    config       JSONB NOT NULL DEFAULT '{}',
+    enabled      BOOLEAN NOT NULL DEFAULT true,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, domain_slug)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_user_prefs_user_idx ON connector_user_prefs (user_id, domain_slug);`).catch(() => undefined);
+
+// 4. Sync jobs — scheduled sync configuration per user+provider
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS connector_sync_jobs (
+    id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    domain_slug    TEXT NOT NULL REFERENCES connector_domains(slug) ON DELETE CASCADE,
+    provider_slug  TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    sync_type      TEXT NOT NULL,
+    direction      TEXT NOT NULL DEFAULT 'inbound' CHECK (direction IN ('inbound','outbound','bidirectional')),
+    frequency      TEXT NOT NULL DEFAULT 'manual' CHECK (frequency IN ('manual','hourly','6h','daily','weekly')),
+    filter_config  JSONB NOT NULL DEFAULT '{}',
+    active         BOOLEAN NOT NULL DEFAULT true,
+    last_run_at    TIMESTAMPTZ,
+    next_run_at    TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_sync_jobs_user_idx ON connector_sync_jobs (user_id, domain_slug);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_sync_jobs_next_run_idx ON connector_sync_jobs (next_run_at) WHERE active=true;`).catch(() => undefined);
+
+// 5. Sync runs — individual execution records
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS connector_sync_runs (
+    id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    job_id           TEXT REFERENCES connector_sync_jobs(id) ON DELETE CASCADE,
+    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    domain_slug      TEXT NOT NULL,
+    provider_slug    TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','completed','failed','cancelled')),
+    records_pulled   INT NOT NULL DEFAULT 0,
+    records_created  INT NOT NULL DEFAULT 0,
+    records_updated  INT NOT NULL DEFAULT 0,
+    records_skipped  INT NOT NULL DEFAULT 0,
+    records_failed   INT NOT NULL DEFAULT 0,
+    error_message    TEXT,
+    details          JSONB NOT NULL DEFAULT '{}',
+    started_at       TIMESTAMPTZ DEFAULT NOW(),
+    completed_at     TIMESTAMPTZ
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_sync_runs_job_idx ON connector_sync_runs (job_id, started_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_sync_runs_user_idx ON connector_sync_runs (user_id, started_at DESC);`).catch(() => undefined);
+
+// 6. Field maps — external ↔ native field mapping per user+provider
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS connector_field_maps (
+    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    domain_slug     TEXT NOT NULL REFERENCES connector_domains(slug) ON DELETE CASCADE,
+    provider_slug   TEXT NOT NULL,
+    external_field  TEXT NOT NULL,
+    native_field    TEXT NOT NULL,
+    transform       TEXT,
+    direction       TEXT NOT NULL DEFAULT 'inbound' CHECK (direction IN ('inbound','outbound','both')),
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, domain_slug, provider_slug, external_field, direction)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS connector_field_maps_user_idx ON connector_field_maps (user_id, domain_slug, provider_slug);`).catch(() => undefined);
+
+// ── Seed connector domains ────────────────────────────────────────────────────
+const DOMAINS = [
+  { slug: 'email',     name: 'Email',             description: 'Send campaigns, transactional emails, and automations',        icon: 'Mail',         color: '#6366f1', position: 0 },
+  { slug: 'crm',       name: 'CRM',               description: 'Contacts, deals, pipelines, and relationship tracking',        icon: 'Users',        color: '#8b5cf6', position: 1 },
+  { slug: 'social',    name: 'Social Scheduling',  description: 'Schedule and publish content across social platforms',         icon: 'Share2',       color: '#ec4899', position: 2 },
+  { slug: 'messaging', name: 'Team Messaging',     description: 'Notifications, alerts, and team communication channels',      icon: 'MessageSquare', color: '#f59e0b', position: 3 },
+  { slug: 'analytics', name: 'Analytics & Data',   description: 'Website traffic, campaign ROI, and audience insights',        icon: 'BarChart2',    color: '#10b981', position: 4 },
+  { slug: 'calendar',  name: 'Calendar',           description: 'Events, reminders, and scheduling across calendar providers', icon: 'Calendar',     color: '#ef4444', position: 5 },
+];
+for (const d of DOMAINS) {
+  await pool.query(
+    `INSERT INTO connector_domains (slug,name,description,icon,color,position)
+     VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (slug) DO UPDATE SET name=$2,description=$3,icon=$4,color=$5,position=$6`,
+    [d.slug, d.name, d.description, d.icon, d.color, d.position]
+  ).catch(() => undefined);
+}
+
+// ── Seed provider catalog ─────────────────────────────────────────────────────
+const PROVIDERS: { domain: string; slug: string; name: string; description: string; requiresSlug: string | null; caps: string[]; isNative: boolean; pos: number }[] = [
+  // EMAIL
+  { domain: 'email', slug: 'native',    name: 'Native Email',  description: 'Built-in email engine — works out of the box',             requiresSlug: null,         caps: ['send_email','send_campaign','track_opens','track_clicks','manage_contacts'], isNative: true,  pos: 0 },
+  { domain: 'email', slug: 'mailchimp', name: 'Mailchimp',     description: 'Route campaigns through your Mailchimp account',           requiresSlug: 'mailchimp',  caps: ['send_campaign','track_opens','track_clicks','manage_contacts','manage_lists'], isNative: false, pos: 1 },
+  { domain: 'email', slug: 'hubspot',   name: 'HubSpot Email', description: 'Send email via HubSpot marketing tools',                   requiresSlug: 'hubspot',    caps: ['send_email','send_campaign','track_opens','track_clicks'], isNative: false, pos: 2 },
+  { domain: 'email', slug: 'gmail',     name: 'Gmail',         description: 'Send from your own Gmail or Google Workspace address',     requiresSlug: 'google',     caps: ['send_email'], isNative: false, pos: 3 },
+  // CRM
+  { domain: 'crm',   slug: 'native',     name: 'Native CRM',    description: 'Built-in CRM — contacts, deals, pipeline, activities',     requiresSlug: null,         caps: ['create_contact','update_contact','create_deal','update_deal','log_activity','get_pipeline'], isNative: true,  pos: 0 },
+  { domain: 'crm',   slug: 'hubspot',    name: 'HubSpot CRM',   description: 'Read and write contacts and deals from HubSpot',           requiresSlug: 'hubspot',    caps: ['create_contact','update_contact','create_deal','update_deal','log_activity','get_pipeline','sync_contacts','sync_deals'], isNative: false, pos: 1 },
+  { domain: 'crm',   slug: 'salesforce', name: 'Salesforce',    description: 'Sync leads and opportunities with Salesforce',             requiresSlug: 'salesforce', caps: ['create_contact','update_contact','create_deal','update_deal','sync_contacts','sync_deals'], isNative: false, pos: 2 },
+  // SOCIAL
+  { domain: 'social', slug: 'native', name: 'Native Scheduler', description: 'Built-in scheduler across 7 social platforms',             requiresSlug: null,     caps: ['schedule_post','publish_now','get_analytics','manage_accounts'], isNative: true,  pos: 0 },
+  { domain: 'social', slug: 'buffer', name: 'Buffer',           description: 'Push scheduled content into your Buffer queue',            requiresSlug: 'buffer', caps: ['schedule_post','get_analytics'], isNative: false, pos: 1 },
+  // MESSAGING
+  { domain: 'messaging', slug: 'native',   name: 'In-App Notifications', description: 'Built-in notification centre and alerts',         requiresSlug: null,        caps: ['send_alert','send_notification'], isNative: true,  pos: 0 },
+  { domain: 'messaging', slug: 'slack',    name: 'Slack',                description: 'Send agent alerts and workflow updates to Slack',  requiresSlug: 'slack',     caps: ['send_message','send_alert','create_channel'], isNative: false, pos: 1 },
+  { domain: 'messaging', slug: 'whatsapp', name: 'WhatsApp Business',    description: 'Reach contacts via WhatsApp Business API',        requiresSlug: 'whatsapp',  caps: ['send_message'], isNative: false, pos: 2 },
+  { domain: 'messaging', slug: 'sms',      name: 'SMS (Hubtel)',          description: 'Send SMS notifications via Hubtel gateway',       requiresSlug: 'hubtel',    caps: ['send_message'], isNative: false, pos: 3 },
+  // ANALYTICS
+  { domain: 'analytics', slug: 'native',           name: 'Native Analytics',   description: 'Built-in social and campaign analytics',                 requiresSlug: null,              caps: ['get_social_analytics','get_campaign_analytics','get_post_analytics'], isNative: true,  pos: 0 },
+  { domain: 'analytics', slug: 'google_analytics',  name: 'Google Analytics 4', description: 'Pull website traffic and conversion data from GA4',     requiresSlug: 'google',          caps: ['get_website_traffic','get_conversion_data','get_audience_insights'], isNative: false, pos: 1 },
+  { domain: 'analytics', slug: 'hubspot_analytics', name: 'HubSpot Analytics',  description: 'Campaign ROI and contact attribution from HubSpot',    requiresSlug: 'hubspot',         caps: ['get_campaign_analytics','get_contact_attribution'], isNative: false, pos: 2 },
+  // CALENDAR
+  { domain: 'calendar', slug: 'native',          name: 'Native Calendar',    description: 'Built-in task scheduling and reminders',                  requiresSlug: null,     caps: ['create_event','get_events','update_event'], isNative: true,  pos: 0 },
+  { domain: 'calendar', slug: 'google_calendar', name: 'Google Calendar',    description: 'Create events and find availability in Google Calendar',  requiresSlug: 'google', caps: ['create_event','get_events','find_free_slot','update_event'], isNative: false, pos: 1 },
+  { domain: 'calendar', slug: 'outlook',         name: 'Outlook / Microsoft 365', description: 'Sync with Outlook calendar for enterprise teams',   requiresSlug: 'outlook', caps: ['create_event','get_events','update_event'], isNative: false, pos: 2 },
+];
+for (const p of PROVIDERS) {
+  await pool.query(
+    `INSERT INTO connector_provider_catalog (domain_slug,slug,name,description,requires_integration_slug,capabilities,is_native,position)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (domain_slug,slug) DO UPDATE SET name=$3,description=$4,requires_integration_slug=$5,capabilities=$6,is_native=$7,position=$8`,
+    [p.domain, p.slug, p.name, p.description, p.requiresSlug, JSON.stringify(p.caps), p.isNative, p.pos]
+  ).catch(() => undefined);
+}
+// ── End Connector Abstraction Layer ───────────────────────────────────────────
 }
