@@ -17,7 +17,7 @@ import {
   createHmac,
   timingSafeEqual,
 } from 'crypto';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { FacebookPagesPlatform } from '../backend/platforms/facebook_pages.ts';
 import { InstagramBusinessPlatform } from '../backend/platforms/instagram_business.ts';
 import { LinkedInPlatform } from '../backend/platforms/linkedin.ts';
@@ -260,6 +260,7 @@ app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
 const publicDir = path.join(__dirname, 'public');
 const indexHtmlPath = path.join(publicDir, 'index.html');
 const hasStaticFiles = existsSync(indexHtmlPath);
+const indexHtmlContent = hasStaticFiles ? readFileSync(indexHtmlPath, 'utf-8') : null;
 logger.info({ publicDir, hasStaticFiles }, 'static_files_check');
 app.use(
   express.static(publicDir, {
@@ -792,11 +793,11 @@ app.use((req: Request, res: Response) => {
     return res.status(404).json({ success: false, error: 'Not found' });
   }
   // Serve the SPA shell for all non-API paths (handles hard refresh / deep links)
-  res.sendFile(indexHtmlPath, (err) => {
-    if (err) {
-      res.status(404).json({ success: false, error: 'Not found' });
-    }
-  });
+  if (indexHtmlContent) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(indexHtmlContent);
+  }
+  res.status(404).json({ success: false, error: 'Not found' });
 });
 
 // Centralized error handling (must be last)
