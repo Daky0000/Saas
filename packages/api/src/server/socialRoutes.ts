@@ -3,6 +3,8 @@ import type { Request, Response } from 'express';
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { ensureWordPressSocialAccount } from '../integration-helpers.ts';
+import { getVisibleUserPlatformSlugs } from '../platform-helpers.ts';
 
 // ─── Deps ─────────────────────────────────────────────────────────────────────
 
