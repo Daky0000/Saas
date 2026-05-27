@@ -23,6 +23,33 @@ export interface SocialDeps {
   syncSocialAutomationForPost: (userId: string, postId: string) => Promise<void>;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getBackendPublicUrl(req?: Request): string {
+  const fromEnv = String(
+    process.env.BACKEND_PUBLIC_URL ||
+    process.env.PUBLIC_API_URL ||
+    process.env.API_PUBLIC_URL ||
+    process.env.VITE_API_BASE_URL ||
+    ''
+  ).trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  if (!req) return '';
+  const protoHeader = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = protoHeader || req.protocol || 'http';
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  return hostHeader ? `${proto}://${hostHeader}` : '';
+}
+
+function resolveBackendRedirectUri(uri: string | undefined, req?: Request): string {
+  const raw = String(uri || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  const base = getBackendPublicUrl(req);
+  if (!base) return raw.startsWith('/') ? raw : `/${raw}`;
+  return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
+}
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 export function registerSocialRoutes(deps: SocialDeps): Router {

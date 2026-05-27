@@ -4,11 +4,39 @@ import { pool, dbQuery } from './db.ts';
 import { getPlatformConfig } from './user-auth.ts';
 import { getLinkedInOAuthScopeString } from './social-helpers.ts';
 
-// normalizePlatformId and resolveBackendRedirectUri are defined in
-// distributionRoutes.ts / socialConnectRoutes.ts respectively and available
-// in the esbuild flat bundle scope without an explicit import.
-declare function normalizePlatformId(platform: string): string;
-declare function resolveBackendRedirectUri(raw: string, req?: Request): string;
+// normalizePlatformId is defined locally in platformConfigRoutes.ts.
+// resolveBackendRedirectUri is defined here to avoid the broken declare pattern.
+function normalizePlatformId(platform: string): string {
+  const raw = String(platform || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === 'twitter / x' || raw === 'twitter/x' || raw === 'x') return 'twitter';
+  return raw;
+}
+
+function getBackendPublicUrl(req?: Request): string {
+  const fromEnv = String(
+    process.env.BACKEND_PUBLIC_URL ||
+    process.env.PUBLIC_API_URL ||
+    process.env.API_PUBLIC_URL ||
+    process.env.VITE_API_BASE_URL ||
+    ''
+  ).trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  if (!req) return '';
+  const protoHeader = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = protoHeader || req.protocol || 'http';
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  return hostHeader ? `${proto}://${hostHeader}` : '';
+}
+
+function resolveBackendRedirectUri(raw: string, req?: Request): string {
+  const r = String(raw || '').trim();
+  if (!r) return '';
+  if (r.startsWith('http://') || r.startsWith('https://')) return r;
+  const base = getBackendPublicUrl(req);
+  if (!base) return r.startsWith('/') ? r : `/${r}`;
+  return r.startsWith('/') ? `${base}${r}` : `${base}/${r}`;
+}
 
 export async function getUserSaaSContext(userId: string): Promise<string> {
   if (!pool) return '';
