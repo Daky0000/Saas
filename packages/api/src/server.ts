@@ -164,7 +164,8 @@ const app = express();
 const PORT = config.port;
 
 // Registered BEFORE all other middleware so nothing can intercept it
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/ping', (_req, res) => res.send('pong'));
+app.get('/health', (_req, res) => res.send('ok'));
 app.get('/api/health', (_req, res) => res.json({
   status: 'ok',
   timestamp: new Date().toISOString(),
