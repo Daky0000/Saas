@@ -64,7 +64,7 @@ export function registerSocialRoutes(deps: SocialDeps): Router {
 
 
 // GET /api/v1/social/facebook/connect — start OAuth and redirect to Facebook
-router.get('/api/v1/social/facebook/connect', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/connect', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -85,7 +85,7 @@ router.get('/api/v1/social/facebook/connect', async (req: Request, res: Response
       [state, auth.userId, returnTo]
     );
 
-    const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
+    const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
     const scope = getMetaOAuthScopeString();
 
     const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
@@ -103,7 +103,7 @@ router.get('/api/v1/social/facebook/connect', async (req: Request, res: Response
 });
 
 // GET /api/v1/social/facebook/authorize-url — build OAuth URL (for SPAs using Bearer auth)
-router.get('/api/v1/social/facebook/authorize-url', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/authorize-url', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -124,7 +124,7 @@ router.get('/api/v1/social/facebook/authorize-url', async (req: Request, res: Re
       [state, auth.userId, returnTo]
     );
 
-    const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
+    const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
     const scope = [
       'public_profile',
       'email',
@@ -150,7 +150,7 @@ router.get('/api/v1/social/facebook/authorize-url', async (req: Request, res: Re
 });
 
 // GET /api/v1/social/facebook/callback — OAuth redirect URI
-router.get('/api/v1/social/facebook/callback', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/callback', async (req: Request, res: Response) => {
   const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
   const fallbackOk = `${FRONTEND_URL}/posts?view=automation&subtab=connections`;
   const fallbackErr = (msg: string) => `${FRONTEND_URL}/posts?view=automation&subtab=connections&error=${encodeURIComponent(msg)}`;
@@ -169,7 +169,7 @@ router.get('/api/v1/social/facebook/callback', async (req: Request, res: Respons
     if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
     if (String(stateRow.platform || '').trim().toLowerCase() !== 'facebook') return res.redirect(fallbackErr('State/platform mismatch'));
 
-    const redirectUri = resolveBackendRedirectUri('/api/v1/social/facebook/callback', req);
+    const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
     const tokenData = await exchangeFacebookCode(code, redirectUri);
 
     // Exchange short-lived user token for a long-lived one (~60 days)
@@ -215,7 +215,7 @@ router.get('/api/v1/social/facebook/callback', async (req: Request, res: Respons
 });
 
 // GET /api/v1/social/facebook/pages — list managed pages (Graph API /me/accounts)
-router.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/pages', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -281,7 +281,7 @@ router.get('/api/v1/social/facebook/pages', async (req: Request, res: Response) 
 });
 
 // GET /api/v1/social/facebook/targets — list Pages + Groups (best-effort)
-router.get('/api/v1/social/facebook/targets', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/targets', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -371,7 +371,7 @@ router.get('/api/v1/social/facebook/targets', async (req: Request, res: Response
 });
 
 // GET /api/v1/social/facebook/page-insights — page-level metrics for a specific date range
-router.get('/api/v1/social/facebook/page-insights', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/page-insights', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -455,7 +455,7 @@ router.get('/api/v1/social/facebook/page-insights', async (req: Request, res: Re
 });
 
 // GET /api/v1/social/facebook/post-insights — per-post metrics (reactions, reach, engagement)
-router.get('/api/v1/social/facebook/post-insights', async (req: Request, res: Response) => {
+router.get('/v1/social/facebook/post-insights', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -548,7 +548,7 @@ router.get('/api/v1/social/facebook/post-insights', async (req: Request, res: Re
 });
 
 // POST /api/v1/social/facebook/token-refresh — manually exchange token for a fresh long-lived one
-router.post('/api/v1/social/facebook/token-refresh', async (req: Request, res: Response) => {
+router.post('/v1/social/facebook/token-refresh', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -612,7 +612,7 @@ router.post('/api/v1/social/facebook/token-refresh', async (req: Request, res: R
 });
 
 // POST /api/v1/social/accounts — save an account target (page/profile/etc)
-router.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
+router.post('/v1/social/accounts', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -776,7 +776,7 @@ router.post('/api/v1/social/accounts', async (req: Request, res: Response) => {
 });
 
 // GET /api/v1/social/accounts — list saved accounts (only admin-enabled platforms)
-router.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
+router.get('/v1/social/accounts', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -807,7 +807,7 @@ router.get('/api/v1/social/accounts', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/v1/social/accounts/:id — delete a saved account
-router.delete('/api/v1/social/accounts/:id', async (req: Request, res: Response) => {
+router.delete('/v1/social/accounts/:id', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -824,7 +824,7 @@ router.delete('/api/v1/social/accounts/:id', async (req: Request, res: Response)
 });
 
 // POST /api/v1/posts/:postId/social-repost — queue an immediate repost (async worker)
-router.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Response) => {
+router.post('/v1/posts/:postId/social-repost', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -928,7 +928,7 @@ router.post('/api/v1/posts/:postId/social-repost', async (req: Request, res: Res
 });
 
 // POST /api/v1/posts/:postId/social-settings — save settings + targets
-router.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
+router.post('/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -1018,7 +1018,7 @@ router.post('/api/v1/posts/:postId/social-settings', async (req: Request, res: R
 });
 
 // GET /api/v1/posts/:postId/social-settings — fetch settings + targets
-router.get('/api/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
+router.get('/v1/posts/:postId/social-settings', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -1062,7 +1062,7 @@ router.get('/api/v1/posts/:postId/social-settings', async (req: Request, res: Re
 // ── Social Templates (Automation → Social Templates tab) ──────────────────────
 
 // GET /api/social-templates/:platform — fetch per-platform template settings for current user
-router.get('/api/social-templates/:platform', async (req: Request, res: Response) => {
+router.get('/social-templates/:platform', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -1093,7 +1093,7 @@ router.get('/api/social-templates/:platform', async (req: Request, res: Response
 });
 
 // PUT /api/social-templates/:platform — upsert per-platform template settings for current user
-router.put('/api/social-templates/:platform', async (req: Request, res: Response) => {
+router.put('/social-templates/:platform', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -1158,7 +1158,7 @@ router.put('/api/social-templates/:platform', async (req: Request, res: Response
 });
 
 // POST /api/social-templates/:platform/preview — preview rendered template for a post (uses unsaved draft settings if provided)
-router.post('/api/social-templates/:platform/preview', async (req: Request, res: Response) => {
+router.post('/social-templates/:platform/preview', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -1203,7 +1203,7 @@ router.post('/api/social-templates/:platform/preview', async (req: Request, res:
 });
 
 // DELETE /api/admin/platform-configs/:platform — reset config + disable (admin only)
-router.delete('/api/admin/platform-configs/:platform', async (req: Request, res: Response) => {
+router.delete('/admin/platform-configs/:platform', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -1278,7 +1278,7 @@ router.get('/auth/:platform/callback', async (req: Request, res: Response) => {
 });
 
 // PATCH /api/admin/platform-configs/:platform/toggle — toggle enabled without changing config
-router.patch('/api/admin/platform-configs/:platform/toggle', async (req: Request, res: Response) => {
+router.patch('/admin/platform-configs/:platform/toggle', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -1309,7 +1309,7 @@ router.patch('/api/admin/platform-configs/:platform/toggle', async (req: Request
 });
 
 // GET /api/admin/platform-configs/:platform/test — test/validate platform credentials
-router.get('/api/admin/platform-configs/:platform/test', async (req: Request, res: Response) => {
+router.get('/admin/platform-configs/:platform/test', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
