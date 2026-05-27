@@ -677,7 +677,7 @@ async function flagExpiringSocialAccounts() {
        AND COALESCE(token_expires_at, expires_at) IS NOT NULL
        AND COALESCE(token_expires_at, expires_at) <= $1`,
     [cutoff]
-  );
+  ).catch(() => ({ rows: [] as any[] }));
 
   for (const row of rows) {
     await markSocialAccountNeedsReapproval({
