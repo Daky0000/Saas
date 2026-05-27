@@ -34,7 +34,11 @@ export function hasDatabase() {
 }
 
 export async function dbQuery<T = any>(sql: string, params: any[] = []) {
-  if (!pool) throw new Error('DATABASE_URL is not configured. Please set it to enable persistence.');
+  if (!pool) {
+    throw new Error(
+      'Database is not configured. Set DATABASE_URL (preferred), or POSTGRES_URL/POSTGRES_URL_NON_POOLING, or PGHOST/PGUSER/PGPASSWORD/PGDATABASE to enable persistence.'
+    );
+  }
   return pool.query<T>(sql, params);
 }
 
