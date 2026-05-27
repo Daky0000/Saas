@@ -47,6 +47,9 @@ const linkedInPlatform = new LinkedInPlatform();
 const twitterXPlatform = new TwitterXPlatform();
 
 const REDIS_URL = config.redisUrl;
+function isBullMqEnabled() {
+  return Boolean(REDIS_URL && REDIS_URL.trim());
+}
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
