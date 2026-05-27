@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import type { Pool } from 'pg';
+import { randomBytes } from 'crypto';
 import { Resend } from 'resend';
 import { logger } from '../logger.ts';
 
@@ -452,6 +453,246 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
     } catch (error) {
       logger.error('Get integration catalog error:', error);
       return res.status(500).json({ success: false, error: 'Failed to fetch integrations' });
+    }
+  });
+
+  // ─── Frontend-compat integration adapter routes ───────────────────────────
+
+  const PLATFORM_NAMES: Record<string, string> = {
+    facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn',
+    twitter: 'X (Twitter)', pinterest: 'Pinterest', tiktok: 'TikTok',
+    threads: 'Threads', wordpress: 'WordPress', mailchimp: 'Mailchimp',
+  };
+
+  // GET /integrations — returns Integration[] (bare array for frontend hook compatibility)
+  router.get('/integrations', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+
+      const type = String(req.query.type || '').trim().toLowerCase() || null;
+
+      const all = [
+        { id: 'facebook', slug: 'facebook', name: 'Facebook', type: 'social' },
+        { id: 'instagram', slug: 'instagram', name: 'Instagram', type: 'social' },
+        { id: 'linkedin', slug: 'linkedin', name: 'LinkedIn', type: 'social' },
+        { id: 'twitter', slug: 'twitter', name: 'X (Twitter)', type: 'social' },
+        { id: 'pinterest', slug: 'pinterest', name: 'Pinterest', type: 'social' },
+        { id: 'tiktok', slug: 'tiktok', name: 'TikTok', type: 'social' },
+        { id: 'threads', slug: 'threads', name: 'Threads', type: 'social' },
+        { id: 'wordpress', slug: 'wordpress', name: 'WordPress', type: 'cms' },
+        { id: 'mailchimp', slug: 'mailchimp', name: 'Mailchimp', type: 'marketing' },
+      ];
+
+      if (hasDatabase()) {
+        try {
+          const result = await dbQuery('SELECT platform FROM platform_configs WHERE enabled = true');
+          const enabled = new Set((result.rows as any[]).map((r) => String(r.platform || '').toLowerCase()));
+          if (enabled.size > 0) {
+            const filtered = all.filter((i) => enabled.has(i.slug) || i.slug === 'wordpress' || i.slug === 'mailchimp');
+            return res.json(type ? filtered.filter((i) => i.type === type) : filtered);
+          }
+        } catch (_err) { /* fall through */ }
+      }
+
+      return res.json(type ? all.filter((i) => i.type === type) : all);
+    } catch (error) {
+      logger.error('Get integrations list error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to fetch integrations' });
+    }
+  });
+
+  // GET /my-integrations — returns UserIntegration[] (bare array for frontend hook compatibility)
+  router.get('/my-integrations', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.json([]);
+
+      const socialRes = await pool.query(
+        `SELECT id, platform, account_id, account_name, handle, connected, created_at FROM social_accounts WHERE user_id=$1`,
+        [auth.userId]
+      );
+
+      const uiRes = await pool.query(
+        `SELECT ui.id, i.slug, i.name, i.type, ui.account_id, ui.account_name, ui.status, ui.created_at
+         FROM user_integrations ui JOIN integrations i ON i.id = ui.integration_id WHERE ui.user_id=$1`,
+        [auth.userId]
+      ).catch(() => ({ rows: [] as any[] }));
+
+      const socialItems = (socialRes.rows as any[]).map((r) => ({
+        id: r.id,
+        integrationId: r.platform,
+        accountId: r.account_id || null,
+        accountName: r.account_name || r.handle || null,
+        accountEmail: null,
+        status: r.connected ? 'CONNECTED' : 'DISCONNECTED',
+        createdAt: r.created_at,
+        integration: { id: r.platform, name: PLATFORM_NAMES[r.platform] || r.platform, slug: r.platform, type: 'social' },
+      }));
+
+      const uiItems = (uiRes.rows as any[]).map((r) => ({
+        id: r.id,
+        integrationId: r.slug,
+        accountId: r.account_id || null,
+        accountName: r.account_name || null,
+        accountEmail: null,
+        status: String(r.status || '').toLowerCase() === 'connected' ? 'CONNECTED' : String(r.status || '').toLowerCase() === 'error' ? 'ERROR' : 'DISCONNECTED',
+        createdAt: r.created_at,
+        integration: { id: r.slug, name: r.name || PLATFORM_NAMES[r.slug] || r.slug, slug: r.slug, type: r.type || 'other' },
+      }));
+
+      return res.json([...socialItems, ...uiItems]);
+    } catch (error) {
+      logger.error('Get my-integrations error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to fetch user integrations' });
+    }
+  });
+
+  // GET /integrations/logs/:integrationId — must be registered before /:slug routes
+  router.get('/integrations/logs/:integrationId', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.json([]);
+
+      const { integrationId } = req.params;
+
+      const logsRes = await pool.query(
+        `SELECT il.id, il.event_type, il.status, il.created_at, il.response, il.error_message
+         FROM integration_logs il
+         JOIN integrations i ON i.id = il.integration_id
+         WHERE il.user_id=$1 AND (i.slug=$2 OR il.integration_id::text=$2)
+         ORDER BY il.created_at DESC LIMIT 20`,
+        [auth.userId, integrationId]
+      ).catch(() => ({ rows: [] as any[] }));
+
+      if (logsRes.rows.length > 0) {
+        return res.json((logsRes.rows as any[]).map((r) => ({
+          id: r.id, eventType: r.event_type, status: r.status,
+          createdAt: r.created_at, response: r.response, errorMessage: r.error_message,
+        })));
+      }
+
+      const pubRes = await pool.query(
+        `SELECT id, platform as event_type, status, created_at FROM publishing_logs
+         WHERE user_id=$1 AND (platform=$2 OR id=$2) ORDER BY created_at DESC LIMIT 20`,
+        [auth.userId, integrationId]
+      ).catch(() => ({ rows: [] as any[] }));
+
+      return res.json((pubRes.rows as any[]).map((r) => ({
+        id: r.id, eventType: r.event_type || 'publish', status: r.status, createdAt: r.created_at,
+      })));
+    } catch (error) {
+      logger.error('Get integration logs error:', error);
+      return res.json([]);
+    }
+  });
+
+  // GET /integrations/:slug/auth-url
+  router.get('/integrations/:slug/auth-url', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+
+      const slug = String(req.params.slug || '').trim().toLowerCase();
+      const meta = oauthAuthUrls[slug];
+      if (!meta) return res.status(404).json({ success: false, error: `Platform "${slug}" does not support OAuth` });
+
+      const cfg = await getPlatformConfig(slug).catch(() => ({} as Record<string, string>));
+      const clientId = String((cfg as any)[meta.idField] || '').trim();
+      if (!clientId) return res.status(400).json({ success: false, error: `${PLATFORM_NAMES[slug] || slug} is not configured by admin` });
+
+      const redirectUri = resolveOAuthRedirectUri(slug, String((cfg as any).redirectUri || ''), req);
+      const state = randomBytes(16).toString('hex');
+
+      if (pool) {
+        await pool.query(
+          `INSERT INTO oauth_states (state, user_id, platform, return_to, expires_at)
+           VALUES ($1, $2, $3, '/integrations', NOW() + INTERVAL '15 minutes')
+           ON CONFLICT (state) DO NOTHING`,
+          [state, auth.userId, slug]
+        ).catch(() => undefined);
+      }
+
+      const params = new URLSearchParams({ redirect_uri: redirectUri, scope: meta.scopes, state, response_type: 'code' });
+      if (slug === 'tiktok') {
+        params.set('client_key', clientId);
+      } else {
+        params.set('client_id', clientId);
+      }
+
+      return res.json({ authUrl: `${meta.authUrl}?${params.toString()}`, state });
+    } catch (error) {
+      logger.error('Get integration auth URL error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to generate auth URL' });
+    }
+  });
+
+  // POST /integrations/:integrationId/disconnect
+  router.post('/integrations/:integrationId/disconnect', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+      const { integrationId } = req.params;
+
+      const accountRes = await pool.query(
+        `SELECT id, platform FROM social_accounts WHERE user_id=$1 AND (id=$2 OR LOWER(platform)=LOWER($2)) LIMIT 1`,
+        [auth.userId, integrationId]
+      );
+
+      if (accountRes.rows.length > 0) {
+        const row = accountRes.rows[0] as any;
+        await pool.query(`DELETE FROM social_accounts WHERE user_id=$1 AND id=$2`, [auth.userId, row.id]);
+        await dbQuery(
+          `UPDATE user_integrations SET status='disconnected' WHERE user_id=$1 AND integration_id IN (SELECT id FROM integrations WHERE slug=$2)`,
+          [auth.userId, row.platform]
+        ).catch(() => undefined);
+        return res.json({ success: true });
+      }
+
+      await pool.query(
+        `UPDATE user_integrations SET status='disconnected' WHERE user_id=$1 AND id=$2`,
+        [auth.userId, integrationId]
+      ).catch(() => undefined);
+
+      return res.json({ success: true });
+    } catch (error) {
+      logger.error('Disconnect integration error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to disconnect' });
+    }
+  });
+
+  // GET /integrations/:integrationId/accounts
+  router.get('/integrations/:integrationId/accounts', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.json([]);
+
+      const { integrationId } = req.params;
+
+      const result = await pool.query(
+        `SELECT id, platform, account_id, account_name, handle, connected, created_at
+         FROM social_accounts WHERE user_id=$1 AND (LOWER(platform)=LOWER($2) OR id=$2)`,
+        [auth.userId, integrationId]
+      );
+
+      return res.json((result.rows as any[]).map((r) => ({
+        id: r.id,
+        integrationId: r.platform,
+        accountId: r.account_id || null,
+        accountName: r.account_name || r.handle || null,
+        accountEmail: null,
+        status: r.connected ? 'CONNECTED' : 'DISCONNECTED',
+        createdAt: r.created_at,
+        integration: { id: r.platform, name: PLATFORM_NAMES[r.platform] || r.platform, slug: r.platform, type: 'social' },
+      })));
+    } catch (error) {
+      logger.error('Get integration accounts error:', error);
+      return res.json([]);
     }
   });
 
