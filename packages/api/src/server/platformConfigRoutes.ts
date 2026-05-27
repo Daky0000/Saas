@@ -367,7 +367,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         return res.json({ success: true, integrations });
       }
 
-      const configRows = await pool.query('SELECT platform, config, enabled FROM platform_configs');
+      const configRows = await pool.query('SELECT platform, config, enabled FROM platform_configs').catch(() => ({ rows: [] as any[] }));
       const cfgMap = new Map<string, { config: Record<string, any>; enabled: boolean }>();
       for (const r of configRows.rows as any[]) {
         cfgMap.set(String(r.platform || '').toLowerCase(), { config: r.config || {}, enabled: Boolean(r.enabled) });
