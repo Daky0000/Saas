@@ -783,14 +783,14 @@ router.get('/v1/social/accounts', async (req: Request, res: Response) => {
     if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database not configured' });
 
     // Ensure WordPress is represented as a social account so it can be selected in the post automation flow.
-    await ensureWordPressSocialAccount(auth.userId);
-    const visiblePlatforms = await getVisibleUserPlatformSlugs();
+    await ensureWordPressSocialAccount(auth.userId).catch(() => undefined);
+    const visiblePlatforms = await getVisibleUserPlatformSlugs().catch(() => [] as string[]);
 
     let query = `SELECT id, platform, platform_id, account_type, account_id, account_name, profile_image, connected, created_at
        FROM social_accounts
        WHERE user_id=$1 AND connected=true`;
     const params: any[] = [auth.userId];
-    
+
     if (visiblePlatforms.length > 0) {
       query += ` AND LOWER(platform) = ANY($2)`;
       params.push(visiblePlatforms);
@@ -801,7 +801,7 @@ router.get('/v1/social/accounts', async (req: Request, res: Response) => {
     const { rows } = await pool!.query(query, params);
     return res.json({ success: true, accounts: rows });
   } catch (err) {
-    logger.error('v1 list social accounts error:', err);
+    logger.error({ err }, 'v1 list social accounts error');
     return res.status(500).json({ success: false, error: 'Failed to list accounts' });
   }
 });
