@@ -258,18 +258,18 @@ app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
 
 // Serve frontend static assets when built files are present (copied by Dockerfile)
 const publicDir = path.join(__dirname, 'public');
-const hasStaticFiles = existsSync(path.join(publicDir, 'index.html'));
-if (hasStaticFiles) {
-  app.use(
-    express.static(publicDir, {
-      setHeaders(res) {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      },
-    })
-  );
-}
+const indexHtmlPath = path.join(publicDir, 'index.html');
+const hasStaticFiles = existsSync(indexHtmlPath);
+logger.info({ publicDir, hasStaticFiles }, 'static_files_check');
+app.use(
+  express.static(publicDir, {
+    setHeaders(res) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    },
+  })
+);
 const REDIS_URL = config.redisUrl;
 const TWITTER_MONTHLY_WRITE_LIMIT = config.twitterMonthlyWriteLimit;
 const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = config.socialTokenSafetyMarginDays;
@@ -788,11 +788,15 @@ app.use('/api', workflowRouter);
 app.use('/api', registerAutomationRoutes({ requireAuth, pool: pool! }));
 
 app.use((req: Request, res: Response) => {
-  if (hasStaticFiles && !req.path.startsWith('/api/')) {
-    res.sendFile(path.join(publicDir, 'index.html'));
-    return;
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ success: false, error: 'Not found' });
   }
-  res.status(404).json({ success: false, error: 'Not found' });
+  // Serve the SPA shell for all non-API paths (handles hard refresh / deep links)
+  res.sendFile(indexHtmlPath, (err) => {
+    if (err) {
+      res.status(404).json({ success: false, error: 'Not found' });
+    }
+  });
 });
 
 // Centralized error handling (must be last)
