@@ -37,6 +37,7 @@ COPY packages/api/package*.json ./packages/api/
 RUN npm install --include=dev --no-audit --no-fund --workspace @contentflow/api
 
 COPY packages/api ./packages/api
+COPY scripts ./scripts
 
 RUN npm --workspace @contentflow/api run build
 
