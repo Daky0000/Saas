@@ -374,14 +374,14 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       }
       const facebookPlatformConfig = cfgMap.get('facebook')?.config || {};
 
-      const wpConnRows = await pool.query('SELECT site_url, username, created_at FROM wordpress_connections WHERE user_id=$1 LIMIT 1', [auth.userId]);
+      const wpConnRows = await pool.query('SELECT site_url, username, created_at FROM wordpress_connections WHERE user_id=$1 LIMIT 1', [auth.userId]).catch(() => ({ rows: [] as any[] }));
       const wpConn = wpConnRows.rows[0] || null;
 
       const socialRows = await pool.query(
         `SELECT platform, account_type, account_id, account_name, handle, connected, created_at
          FROM social_accounts WHERE user_id=$1 AND connected=true`,
         [auth.userId]
-      );
+      ).catch(() => ({ rows: [] as any[] }));
 
       const userIntegrationRows = await pool.query(
         `SELECT i.slug, ui.status, ui.account_id, ui.account_name, ui.created_at
@@ -389,7 +389,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
          JOIN integrations i ON i.id = ui.integration_id
          WHERE ui.user_id = $1`,
         [auth.userId]
-      );
+      ).catch(() => ({ rows: [] as any[] }));
       const userIntegrationMap = new Map<string, any>();
       for (const r of userIntegrationRows.rows as any[]) {
         userIntegrationMap.set(String(r.slug || '').toLowerCase(), r);
@@ -405,7 +405,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       };
 
       for (const slug of SUPPORTED_SLUGS) {
-        const registry = await getIntegrationRowBySlug(slug);
+        const registry = await getIntegrationRowBySlug(slug).catch(() => null);
         const name = registry?.name || (slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1));
         const type = (registry?.type as any) || (slug === 'wordpress' ? 'cms' : 'social');
         const cfg = cfgMap.get(slug)?.config || {};
