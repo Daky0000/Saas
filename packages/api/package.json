@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "start": "node .railway-build/server.mjs",
-    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --external:node:* --outfile=.railway-build/server.mjs",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --external:node:* --outfile=.railway-build/server.mjs && node ../../scripts/copy-web-dist-to-api-public.mjs",
     "test": "node --test --test-concurrency=1 --test-isolation=none"
   },
   "dependencies": {
