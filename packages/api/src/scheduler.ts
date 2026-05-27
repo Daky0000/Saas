@@ -1,11 +1,6 @@
 import { logger } from './logger.ts';
 import { pool, dbQuery, hasDatabase } from './db.ts';
 
-// queueSocialAutomationForPublishedPost and fireWorkflowTriggers are defined in
-// distributionRoutes.ts / workflowRoutes.ts and available via esbuild bundle scope.
-declare function queueSocialAutomationForPublishedPost(userId: string, post: any): Promise<void>;
-declare function fireWorkflowTriggers(userId: string, event: string, data: any): Promise<void>;
-
 // Runs every hour. Sends a notification to each assignee of tasks due in ~24h.
 export async function runDueDateAlerts() {
   try {
@@ -48,9 +43,14 @@ export async function runDueDateAlerts() {
   }
 }
 
+export interface PublishDuePostsDeps {
+  queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
+  fireWorkflowTriggers: (userId: string, event: string, data: any) => Promise<void>;
+}
+
 // Runs every 2 minutes. Finds posts whose scheduled_at has passed, promotes them
 // to published, fires social automation + workflow triggers for each.
-export async function publishDuePosts() {
+export async function publishDuePosts(deps?: Partial<PublishDuePostsDeps>) {
   if (!hasDatabase()) return;
   try {
     const { rows } = await pool!.query<{ id: string; user_id: string; title: string }>(
@@ -72,8 +72,8 @@ export async function publishDuePosts() {
       ).catch(() => ({ rows: [] }));
 
       if (full.length) {
-        await queueSocialAutomationForPublishedPost(post.user_id, full[0]).catch(() => undefined);
-        void fireWorkflowTriggers(post.user_id, 'post_published', full[0]);
+        await deps?.queueSocialAutomationForPublishedPost?.(post.user_id, full[0]).catch(() => undefined);
+        void deps?.fireWorkflowTriggers?.(post.user_id, 'post_published', full[0]);
       }
 
       await dbQuery(

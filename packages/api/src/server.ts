@@ -809,8 +809,9 @@ if (config.nodeEnv !== 'test') {
     void runScheduledAgents();
     setInterval(() => void runScheduledAgents(), 60 * 60 * 1000);
     // Publish due scheduled posts every 2 minutes
-    void publishDuePosts();
-    setInterval(() => void publishDuePosts(), 2 * 60 * 1000);
+    const schedulerDeps = { queueSocialAutomationForPublishedPost: distModule.queueSocialAutomationForPublishedPost, fireWorkflowTriggers };
+    void publishDuePosts(schedulerDeps);
+    setInterval(() => void publishDuePosts(schedulerDeps), 2 * 60 * 1000);
   });
 }
 
