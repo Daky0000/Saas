@@ -18,8 +18,9 @@ export type IntegrationCatalogItem = {
   connection: Record<string, any> | null;
 };
 
+const MESSAGING_SLUGS = new Set(['gmail', 'slack', 'whatsapp', 'zoom']);
 const isVisibleIntegration = (item: IntegrationCatalogItem) =>
-  item.adminEnabled && item.configured;
+  item.adminEnabled && (item.configured || MESSAGING_SLUGS.has(item.slug));
 
 const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationType }> = [
   { slug: 'wordpress', name: 'WordPress', type: 'cms' },
@@ -31,6 +32,10 @@ const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationTyp
   { slug: 'tiktok', name: 'TikTok', type: 'social' },
   { slug: 'threads', name: 'Threads', type: 'social' },
   { slug: 'mailchimp', name: 'Mailchimp', type: 'marketing' },
+  { slug: 'gmail', name: 'Gmail', type: 'messaging' },
+  { slug: 'slack', name: 'Slack', type: 'messaging' },
+  { slug: 'whatsapp', name: 'WhatsApp', type: 'messaging' },
+  { slug: 'zoom', name: 'Zoom', type: 'messaging' },
 ];
 
 const normalizePlatform = (value: string) => {

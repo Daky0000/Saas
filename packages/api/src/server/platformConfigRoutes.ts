@@ -410,7 +410,8 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         const type = (registry?.type as any) || (slug === 'wordpress' ? 'cms' : 'social');
         const cfg = cfgMap.get(slug)?.config || {};
         const manualSlug = slug === 'wordpress' || slug === 'mailchimp' || slug === 'whatsapp';
-        const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : manualSlug;
+        const messagingSlug = slug === 'gmail' || slug === 'slack' || slug === 'zoom' || slug === 'whatsapp';
+        const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : (manualSlug || messagingSlug);
 
         let configured = false;
         if (manualSlug) {
@@ -449,7 +450,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
             ? getUserIntegrationConnection(slug)
             : getPrimaryAccount(slug);
 
-        if (adminEnabled && configured) {
+        if (adminEnabled && (configured || messagingSlug)) {
           integrations.push({ slug, name, type, adminEnabled, configured, connected, connection });
         }
       }
