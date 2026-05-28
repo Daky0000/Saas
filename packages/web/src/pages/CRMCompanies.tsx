@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Building2, Plus, Search, Globe, Phone, Mail, Users, TrendingUp, X, Edit2, Trash2, ChevronRight, DollarSign, Link } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Building2, Plus, Search, Globe, Phone, Mail, Users, TrendingUp, X, Edit2, Trash2, ChevronRight, DollarSign, Link, MessageSquare, PhoneCall, Calendar, FileText, Clock, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 
 const API = '/api/crm';
 const tok = () => localStorage.getItem('auth_token') ?? '';
@@ -45,8 +45,80 @@ interface Deal {
   stage_color: string | null;
 }
 
+interface Activity {
+  id: string;
+  type: 'note' | 'call' | 'email' | 'meeting' | 'task' | 'whatsapp' | 'sms';
+  title: string | null;
+  body: string | null;
+  outcome: string | null;
+  duration: number | null;
+  scheduled_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  contact_email: string | null;
+  contact_first_name: string | null;
+  contact_last_name: string | null;
+  gmail_message_id: string | null;
+}
+
 const INDUSTRY_OPTIONS = ['Technology','Finance','Healthcare','Retail','Manufacturing','Education','Media','Real Estate','Consulting','Other'];
 const SIZE_OPTIONS = ['1-10','11-50','51-200','201-500','501-1000','1000+'];
+
+function ActivityIcon({ type }: { type: Activity['type'] }) {
+  const cfg: Record<Activity['type'], { icon: React.ReactNode; bg: string; color: string }> = {
+    email:    { icon: <Mail className="w-3.5 h-3.5" />,        bg: 'bg-blue-50',   color: 'text-blue-500' },
+    call:     { icon: <PhoneCall className="w-3.5 h-3.5" />,   bg: 'bg-green-50',  color: 'text-green-500' },
+    note:     { icon: <FileText className="w-3.5 h-3.5" />,    bg: 'bg-yellow-50', color: 'text-yellow-600' },
+    meeting:  { icon: <Calendar className="w-3.5 h-3.5" />,    bg: 'bg-purple-50', color: 'text-purple-500' },
+    task:     { icon: <Clock className="w-3.5 h-3.5" />,       bg: 'bg-gray-100',  color: 'text-gray-500' },
+    whatsapp: { icon: <MessageSquare className="w-3.5 h-3.5" />,bg: 'bg-emerald-50',color: 'text-emerald-500' },
+    sms:      { icon: <MessageSquare className="w-3.5 h-3.5" />,bg: 'bg-gray-100',  color: 'text-gray-500' },
+  };
+  const { icon, bg, color } = cfg[type] ?? cfg.note;
+  return <div className={`w-7 h-7 rounded-full ${bg} ${color} flex items-center justify-center flex-shrink-0`}>{icon}</div>;
+}
+
+function ActivityItem({ act }: { act: Activity }) {
+  const [expanded, setExpanded] = useState(false);
+  const isGmail = Boolean(act.gmail_message_id);
+  const isSent = act.title?.startsWith('Sent: ');
+  const displayTitle = act.title?.replace(/^(Sent|Received): /, '') ?? `${act.type.charAt(0).toUpperCase() + act.type.slice(1)} activity`;
+  const when = new Date(act.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const contactName = [act.contact_first_name, act.contact_last_name].filter(Boolean).join(' ') || act.contact_email || '';
+  return (
+    <div className="flex gap-3 group">
+      <ActivityIcon type={act.type} />
+      <div className="flex-1 min-w-0 pb-4 border-b border-gray-50 last:border-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-medium text-gray-800 truncate">{displayTitle}</span>
+              {isGmail && (
+                <span className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full font-medium ${isSent ? 'bg-indigo-50 text-indigo-600' : 'bg-sky-50 text-sky-600'}`}>
+                  {isSent ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownLeft className="w-3 h-3" />}
+                  {isSent ? 'Sent' : 'Received'}
+                </span>
+              )}
+            </div>
+            {contactName && <p className="text-xs text-gray-400 mt-0.5">{contactName}</p>}
+          </div>
+          <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5">{when}</span>
+        </div>
+        {act.body && (
+          <div className="mt-1">
+            <p className={`text-xs text-gray-500 ${!expanded ? 'line-clamp-2' : ''}`}>{act.body}</p>
+            {act.body.length > 120 && (
+              <button onClick={() => setExpanded(e => !e)} className="text-xs text-[#5b6cf9] mt-0.5 hover:underline">
+                {expanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </div>
+        )}
+        {act.outcome && <p className="text-xs text-gray-400 mt-1">Outcome: {act.outcome}</p>}
+      </div>
+    </div>
+  );
+}
 
 function CompanyInitials({ name }: { name: string }) {
   const parts = name.trim().split(' ');
@@ -67,7 +139,7 @@ export default function CRMCompanies() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Company & { contacts?: Contact[]; deals?: Deal[] } | null>(null);
+  const [selected, setSelected] = useState<Company & { contacts?: Contact[]; deals?: Deal[]; activities?: Activity[] } | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [saving, setSaving] = useState(false);
@@ -97,8 +169,13 @@ export default function CRMCompanies() {
 
   const openDetail = async (company: Company) => {
     setSelected(company as any);
-    const r = await fetch(`${API}/companies/${company.id}`, { headers: authHeaders() });
-    if (r.ok) setSelected(await r.json());
+    const [detailRes, activityRes] = await Promise.all([
+      fetch(`${API}/companies/${company.id}`, { headers: authHeaders() }),
+      fetch(`${API}/activities?company_id=${company.id}&limit=100`, { headers: authHeaders() }),
+    ]);
+    const detail = detailRes.ok ? await detailRes.json() : company;
+    const activities = activityRes.ok ? await activityRes.json() : [];
+    setSelected({ ...detail, activities });
   };
 
   const openCreate = () => {
@@ -325,6 +402,29 @@ export default function CRMCompanies() {
                 </div>
               </div>
             )}
+
+            {/* Activity Timeline */}
+            <div className="bg-white rounded-xl border border-gray-100 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-gray-900">
+                  Activity
+                  {(selected.activities?.length ?? 0) > 0 && <span className="ml-1.5 text-xs text-gray-400 font-normal">({selected.activities!.length})</span>}
+                </h3>
+                {(selected.activities?.filter(a => a.type === 'email').length ?? 0) > 0 && (
+                  <span className="text-xs text-gray-400 flex items-center gap-1">
+                    <Mail className="w-3 h-3" />
+                    {selected.activities!.filter(a => a.type === 'email').length} email{selected.activities!.filter(a => a.type === 'email').length !== 1 ? 's' : ''} from Gmail
+                  </span>
+                )}
+              </div>
+              {(selected.activities?.length ?? 0) === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">No activity yet. Sync your Gmail to see email history here.</p>
+              ) : (
+                <div className="space-y-0">
+                  {selected.activities!.map(act => <ActivityItem key={act.id} act={act} />)}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
