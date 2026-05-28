@@ -3876,10 +3876,14 @@ for (const p of PROVIDERS) {
 // ── End Connector Abstraction Layer ───────────────────────────────────────────
 
 // ── Gmail Inbox ───────────────────────────────────────────────────────────────
+// Drop old broken versions (were created with user_id INTEGER; users.id is TEXT)
+await pool.query(`DROP TABLE IF EXISTS gmail_messages CASCADE`).catch(() => undefined);
+await pool.query(`DROP TABLE IF EXISTS gmail_sync_state CASCADE`).catch(() => undefined);
+
 await pool.query(`
   CREATE TABLE IF NOT EXISTS gmail_messages (
-    id                SERIAL PRIMARY KEY,
-    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id                BIGSERIAL PRIMARY KEY,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     gmail_message_id  TEXT NOT NULL,
     gmail_thread_id   TEXT NOT NULL DEFAULT '',
     subject           TEXT NOT NULL DEFAULT '',
@@ -3894,20 +3898,24 @@ await pool.query(`
     synced_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, gmail_message_id)
   )
-`).catch(() => undefined);
+`);
 
-await pool.query(`CREATE INDEX IF NOT EXISTS idx_gmail_messages_user_from ON gmail_messages(user_id, from_email)`).catch(() => undefined);
-await pool.query(`CREATE INDEX IF NOT EXISTS idx_gmail_messages_user_date ON gmail_messages(user_id, date DESC NULLS LAST)`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS idx_gmail_messages_user_from ON gmail_messages(user_id, from_email)`);
+await pool.query(`CREATE INDEX IF NOT EXISTS idx_gmail_messages_user_date ON gmail_messages(user_id, date DESC NULLS LAST)`);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS gmail_sync_state (
-    user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     status          TEXT NOT NULL DEFAULT 'idle',
     total_fetched   INTEGER NOT NULL DEFAULT 0,
     last_synced_at  TIMESTAMPTZ,
     error_message   TEXT,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )
-`).catch(() => undefined);
+`);
 // ── End Gmail Inbox ───────────────────────────────────────────────────────────
+
+// ── CRM: track gmail source on activities ─────────────────────────────────────
+await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS gmail_message_id TEXT`).catch(() => undefined);
+await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS crm_activities_gmail_msg_idx ON crm_activities(gmail_message_id) WHERE gmail_message_id IS NOT NULL`).catch(() => undefined);
 }
