@@ -76,6 +76,7 @@ const Billing = lazy(() => import('./pages/Billing'));
 const Memory = lazy(() => import('./pages/Memory'));
 const AITeam = lazy(() => import('./pages/AITeam'));
 const Discover = lazy(() => import('./pages/Discover'));
+const GmailInbox = lazy(() => import('./pages/GmailInbox'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const TasksPage = lazy(() => import('./components/tasks/TasksPage'));
 const ProjectSettings = lazy(() => import('./pages/ProjectSettings'));
@@ -130,7 +131,8 @@ export type PageType =
   | 'settings'
   | 'workflow'
   | 'discover'
-  | 'ai-team';
+  | 'ai-team'
+  | 'gmail-inbox';
 
 type AuthMeResponse = {
   success: boolean;
@@ -178,6 +180,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   workflow: '/posts/workflow',
   discover: '/discover',
   'ai-team': '/ai-team',
+  'gmail-inbox': '/gmail-inbox',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -616,10 +619,17 @@ function AppSidebar({
               ))}
             </div>
           )}
-          <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
+          <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations' || currentPage === 'gmail-inbox')}>
             <Waypoints size={15} className="shrink-0" />
             <span className="flex-1 text-left">Integrations</span>
           </button>
+          {(currentPage === 'integrations' || currentPage === 'gmail-inbox') && (
+            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+              <button type="button" onClick={() => go('gmail-inbox')} className={subCls(currentPage === 'gmail-inbox')}>
+                Gmail Inbox
+              </button>
+            </div>
+          )}
 
           {/* Connectors */}
           <button
@@ -1049,6 +1059,7 @@ function App() {
       case 'profile': return <Profile currentUser={authUser} onUserUpdated={handleUserUpdated} />;
       case 'media': return <Media />;
       case 'integrations': return <Integrations />;
+      case 'gmail-inbox': return <GmailInbox />;
       case 'marketing': return <MarketingOverview navigateToPage={navigateToPage} />;
       case 'marketing-contacts': return <MarketingContacts />;
       case 'marketing-email': return <MarketingEmail />;

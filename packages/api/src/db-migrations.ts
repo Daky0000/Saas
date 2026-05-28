@@ -3874,4 +3874,40 @@ for (const p of PROVIDERS) {
   ).catch(() => undefined);
 }
 // ── End Connector Abstraction Layer ───────────────────────────────────────────
+
+// ── Gmail Inbox ───────────────────────────────────────────────────────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS gmail_messages (
+    id                SERIAL PRIMARY KEY,
+    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    gmail_message_id  TEXT NOT NULL,
+    gmail_thread_id   TEXT NOT NULL DEFAULT '',
+    subject           TEXT NOT NULL DEFAULT '',
+    snippet           TEXT NOT NULL DEFAULT '',
+    from_email        TEXT NOT NULL DEFAULT '',
+    from_name         TEXT NOT NULL DEFAULT '',
+    to_email          TEXT NOT NULL DEFAULT '',
+    date              TIMESTAMPTZ,
+    is_read           BOOLEAN NOT NULL DEFAULT false,
+    is_sent           BOOLEAN NOT NULL DEFAULT false,
+    body_text         TEXT,
+    synced_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, gmail_message_id)
+  )
+`).catch(() => undefined);
+
+await pool.query(`CREATE INDEX IF NOT EXISTS idx_gmail_messages_user_from ON gmail_messages(user_id, from_email)`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS idx_gmail_messages_user_date ON gmail_messages(user_id, date DESC NULLS LAST)`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS gmail_sync_state (
+    user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    status          TEXT NOT NULL DEFAULT 'idle',
+    total_fetched   INTEGER NOT NULL DEFAULT 0,
+    last_synced_at  TIMESTAMPTZ,
+    error_message   TEXT,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`).catch(() => undefined);
+// ── End Gmail Inbox ───────────────────────────────────────────────────────────
 }

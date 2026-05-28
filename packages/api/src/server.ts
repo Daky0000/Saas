@@ -47,6 +47,7 @@ import { registerCreditsRoutes } from './server/creditsRoutes.ts';
 import { registerApifyRoutes } from './server/apifyRoutes.ts';
 import { registerHiggsfieldRoutes } from './server/higgsfieldRoutes.ts';
 import { registerKlingRoutes } from './server/klingRoutes.ts';
+import { registerGmailInboxRoutes } from './server/gmailInboxRoutes.ts';
 import { registerGoogleRoutes } from './server/googleRoutes.ts';
 import { registerOpenAIRoutes } from './server/openaiRoutes.ts';
 import { registerAutomationRoutes } from './server/automationRoutes.ts';
@@ -773,6 +774,10 @@ app.use('/api', novaRouter);
 // ─── Kling AI Routes ───────────────────────────────────────────────────────────
 app.use('/api', registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, pool: pool! }));
 // ── End Kling AI Routes ────────────────────────────────────────────────────────
+
+// ─── Gmail Inbox Routes ────────────────────────────────────────────────────────
+app.use('/api', registerGmailInboxRoutes({ requireAuth, pool, getPlatformConfig }));
+// ── End Gmail Inbox Routes ────────────────────────────────────────────────────
 
 // ─── Google AI Routes ──────────────────────────────────────────────────────────
 app.use('/api', registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool: pool! }));
