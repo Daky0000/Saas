@@ -643,6 +643,7 @@ const distModule = buildDistributionModule({
 });
 app.use('/api', distModule.router);
 const getPublishableSocialConnection = distModule.getPublishableSocialConnection;
+const normalizePlatformId = distModule.normalizePlatformId;
 const markSocialAccountNeedsReapproval = distModule.markSocialAccountNeedsReapproval;
 const listLinkedInAdminOrganizations = distModule.listLinkedInAdminOrganizations;
 const fetchLinkedInOrganizationNetworkSize = distModule.fetchLinkedInOrganizationNetworkSize;
