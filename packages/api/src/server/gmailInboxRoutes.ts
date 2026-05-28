@@ -595,7 +595,7 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
       return res.json({ success: true, body: String(existing.rows[0].body_text), cached: true });
     }
 
-    const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig);
+    const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
     if (!token) return res.status(401).json({ success: false, error: 'Gmail not connected' });
 
     const resp = await axios.get(

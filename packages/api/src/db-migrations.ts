@@ -3876,9 +3876,24 @@ for (const p of PROVIDERS) {
 // ── End Connector Abstraction Layer ───────────────────────────────────────────
 
 // ── Gmail Inbox ───────────────────────────────────────────────────────────────
-// Drop old broken versions (were created with user_id INTEGER; users.id is TEXT)
-await pool.query(`DROP TABLE IF EXISTS gmail_messages CASCADE`).catch(() => undefined);
-await pool.query(`DROP TABLE IF EXISTS gmail_sync_state CASCADE`).catch(() => undefined);
+// One-time fix: drop old broken versions only if user_id column is INTEGER (type mismatch)
+await pool.query(`
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name='gmail_messages' AND column_name='user_id' AND data_type='integer'
+    ) THEN
+      DROP TABLE IF EXISTS gmail_messages CASCADE;
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name='gmail_sync_state' AND column_name='user_id' AND data_type='integer'
+    ) THEN
+      DROP TABLE IF EXISTS gmail_sync_state CASCADE;
+    END IF;
+  END $$;
+`).catch(() => undefined);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS gmail_messages (
