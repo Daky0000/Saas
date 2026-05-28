@@ -66,6 +66,7 @@ const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
 const CRMCompanies = lazy(() => import('./pages/CRMCompanies'));
 const CRMPipeline = lazy(() => import('./pages/CRMPipeline'));
 const CRMLeadScoring = lazy(() => import('./pages/CRMLeadScoring'));
+const GmailAgent = lazy(() => import('./pages/GmailAgent'));
 const ConnectorHub = lazy(() => import('./pages/ConnectorHub'));
 const ConnectorProviderSetup = lazy(() => import('./pages/ConnectorProviderSetup'));
 const ConnectorSyncDashboard = lazy(() => import('./pages/ConnectorSyncDashboard'));
@@ -119,6 +120,7 @@ export type PageType =
   | 'crm-companies'
   | 'crm-pipeline'
   | 'crm-scoring'
+  | 'gmail-agent'
   | 'connector-hub'
   | 'connector-setup'
   | 'connector-sync'
@@ -167,6 +169,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'crm-companies': '/crm/companies',
   'crm-pipeline': '/crm/pipeline',
   'crm-scoring': '/crm/scoring',
+  'gmail-agent': '/crm/gmail-agent',
   'connector-hub': '/connectors',
   'connector-setup': '/connectors/setup',
   'connector-sync': '/connectors/sync',
@@ -562,7 +565,8 @@ function AppSidebar({
             className={cls(
               currentPage === 'crm-companies' ||
               currentPage === 'crm-pipeline' ||
-              currentPage === 'crm-scoring'
+              currentPage === 'crm-scoring' ||
+              currentPage === 'gmail-agent'
             )}
           >
             <Building2 size={15} className="shrink-0" />
@@ -575,6 +579,7 @@ function AppSidebar({
                 { id: 'crm-pipeline' as PageType, label: 'Pipeline' },
                 { id: 'crm-companies' as PageType, label: 'Companies' },
                 { id: 'crm-scoring' as PageType, label: 'Lead Scoring' },
+                { id: 'gmail-agent' as PageType, label: 'Gmail Agent' },
               ] as { id: PageType; label: string }[]).map((c) => (
                 <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                   {c.label}
@@ -807,7 +812,7 @@ function App() {
       if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys' || page === 'marketing-automations') {
         setMarketingMenuOpen(true);
       }
-      if (page === 'crm-companies' || page === 'crm-pipeline' || page === 'crm-scoring') {
+      if (page === 'crm-companies' || page === 'crm-pipeline' || page === 'crm-scoring' || page === 'gmail-agent') {
         setCrmMenuOpen(true);
       }
       if (page === 'connector-hub' || page === 'connector-setup' || page === 'connector-sync') {
@@ -922,7 +927,7 @@ function App() {
       if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
       const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
       if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
-      const crmPages: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring'];
+      const crmPages: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring', 'gmail-agent'];
       if (crmPages.includes(pageFromPath)) setCrmMenuOpen(true);
       const connectorPages: PageType[] = ['connector-hub', 'connector-setup', 'connector-sync'];
       if (connectorPages.includes(pageFromPath)) setConnectorMenuOpen(true);
@@ -1058,6 +1063,7 @@ function App() {
       case 'crm-companies': return <CRMCompanies />;
       case 'crm-pipeline': return <CRMPipeline />;
       case 'crm-scoring': return <CRMLeadScoring />;
+      case 'gmail-agent': return <GmailAgent />;
       case 'connector-hub': return (
         <ConnectorHub
           onNavigateToSetup={(domain) => { setConnectorSetupDomain(domain); navigateToPage('connector-setup'); }}

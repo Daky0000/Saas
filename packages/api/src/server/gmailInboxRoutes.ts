@@ -751,6 +751,152 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     }
   });
 
+  // GET /gmail/company/:domain/messages — all messages involving a specific domain
+  router.get('/gmail/company/:domain/messages', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.json({ success: true, messages: [] });
+
+    const domain = decodeURIComponent(req.params.domain).toLowerCase().trim();
+    const result = await pool.query(
+      `SELECT gmail_message_id, gmail_thread_id, subject, snippet,
+              from_email, from_name, to_email, date, is_read, is_sent
+       FROM gmail_messages
+       WHERE user_id=$1
+         AND (
+           (NOT is_sent AND LOWER(SUBSTRING(from_email FROM POSITION('@' IN from_email) + 1)) = $2)
+           OR (is_sent AND LOWER(SUBSTRING(to_email FROM POSITION('@' IN to_email) + 1)) = $2)
+         )
+       ORDER BY date DESC NULLS LAST
+       LIMIT 500`,
+      [auth.userId, domain]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    return res.json({
+      success: true,
+      messages: (result.rows as any[]).map((r) => ({
+        id: String(r.gmail_message_id),
+        threadId: String(r.gmail_thread_id || ''),
+        subject: String(r.subject || ''),
+        snippet: String(r.snippet || ''),
+        fromEmail: String(r.from_email || ''),
+        fromName: String(r.from_name || ''),
+        toEmail: String(r.to_email || ''),
+        date: r.date ? String(r.date) : null,
+        isRead: Boolean(r.is_read),
+        isSent: Boolean(r.is_sent),
+      })),
+    });
+  });
+
+  // POST /gmail/company/:domain/ai-summary — AI summary for all emails from a domain
+  router.post('/gmail/company/:domain/ai-summary', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const domain = decodeURIComponent(req.params.domain).toLowerCase().trim();
+
+    const result = await pool.query(
+      `SELECT subject, snippet, from_name, from_email, to_email, date, is_sent
+       FROM gmail_messages
+       WHERE user_id=$1
+         AND (
+           (NOT is_sent AND LOWER(SUBSTRING(from_email FROM POSITION('@' IN from_email) + 1)) = $2)
+           OR (is_sent AND LOWER(SUBSTRING(to_email FROM POSITION('@' IN to_email) + 1)) = $2)
+         )
+       ORDER BY date DESC NULLS LAST
+       LIMIT 30`,
+      [auth.userId, domain]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    if (!result.rows.length) {
+      return res.json({ success: true, summary: 'No emails found for this company.' });
+    }
+
+    const aiCfg = await deps.getAIConfig().catch(() => null);
+    const key = aiCfg ? deps.resolveActiveKey(aiCfg) : null;
+    if (!key) return res.json({ success: true, summary: 'AI not configured — add an API key in Admin → AI Config.' });
+
+    const provider = String(aiCfg?.activeProvider || aiCfg?.provider || 'openai').toLowerCase();
+    const isGemini = deps.GEMINI_MODELS.some((m: string) => String(aiCfg?.model || '').includes(m)) || provider.includes('gemini');
+    const model = isGemini ? (aiCfg?.model || 'gemini-1.5-flash') : (aiCfg?.model || 'gpt-4o-mini');
+
+    const companyName = domainToCompany(domain);
+    const messagesText = (result.rows as any[]).reverse().map((m) => {
+      const direction = m.is_sent ? 'Sent' : 'Received';
+      const date = m.date ? new Date(m.date).toLocaleDateString() : 'Unknown date';
+      return `[${date}] ${direction} — Subject: "${m.subject}" — ${m.snippet}`;
+    }).join('\n');
+
+    const systemPrompt = `You are an AI assistant that summarizes email relationships to help sales and marketing professionals understand their relationship with a company. Be concise, professional, and highlight key topics, themes, and relationship status. Write 3-5 sentences max.`;
+    const userPrompt = `Summarize the email relationship with ${companyName} (${domain}) based on these emails:\n\n${messagesText}`;
+
+    try {
+      const summary = await deps.callAINonStreaming(provider, key, model, systemPrompt, userPrompt, 400);
+      return res.json({ success: true, summary: summary.trim() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'AI summary failed';
+      return res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  // GET /gmail/messages/:id/attachments — list attachments for a message (calls Gmail API)
+  router.get('/gmail/messages/:id/attachments', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
+    if (!token) return res.status(401).json({ success: false, error: 'Gmail not connected' });
+
+    const resp = await axios.get(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(req.params.id)}`,
+      { headers: { Authorization: `Bearer ${token}` }, params: { format: 'full' }, validateStatus: () => true, timeout: 15000 }
+    );
+
+    if (resp.status >= 400) return res.status(resp.status < 500 ? resp.status : 502).json({ success: false, error: 'Failed to fetch message' });
+
+    const attachments: Array<{ id: string; filename: string; mimeType: string; size: number }> = [];
+    function traverseParts(part: any): void {
+      if (!part) return;
+      if (part.filename && part.body?.attachmentId) {
+        attachments.push({ id: String(part.body.attachmentId), filename: String(part.filename), mimeType: String(part.mimeType || 'application/octet-stream'), size: Number(part.body.size || 0) });
+      }
+      if (Array.isArray(part.parts)) part.parts.forEach(traverseParts);
+    }
+    traverseParts((resp.data as any)?.payload);
+
+    return res.json({ success: true, attachments });
+  });
+
+  // GET /gmail/messages/:id/attachments/:attId — proxy-download an attachment
+  router.get('/gmail/messages/:id/attachments/:attId', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
+    if (!token) return res.status(401).json({ success: false, error: 'Gmail not connected' });
+
+    const resp = await axios.get(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(req.params.id)}/attachments/${encodeURIComponent(req.params.attId)}`,
+      { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true, timeout: 30000 }
+    );
+
+    if (resp.status >= 400) return res.status(resp.status < 500 ? resp.status : 502).json({ success: false, error: 'Failed to fetch attachment' });
+
+    const data = String((resp.data as any)?.data || '').replace(/-/g, '+').replace(/_/g, '/');
+    const buf = Buffer.from(data, 'base64');
+    const mimeType = String(req.query.mimeType || 'application/octet-stream');
+    const filename = String(req.query.filename || 'attachment');
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+    res.setHeader('Content-Length', buf.length);
+    return res.send(buf);
+  });
+
   // DELETE /gmail/messages — clear all synced data for the current user
   router.delete('/gmail/messages', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
