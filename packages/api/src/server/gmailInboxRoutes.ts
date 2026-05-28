@@ -9,6 +9,10 @@ export interface GmailInboxDeps {
   requireAuth: (req: Request, res: Response) => { userId: string; role: string } | null;
   pool: Pool | null;
   getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
+  getAIConfig: () => Promise<any>;
+  resolveActiveKey: (cfg: any) => string | null;
+  GEMINI_MODELS: string[];
+  callAINonStreaming: (provider: string, apiKey: string, model: string, system: string, user: string, maxTokens?: number) => Promise<string>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -278,6 +282,7 @@ async function runGmailSync(
 
 export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
   const { requireAuth, pool, getPlatformConfig } = deps;
+  // AI helpers referenced directly via `deps` inside the AI summary route
   const router = Router();
 
   // POST /gmail/sync — start background sync
@@ -453,6 +458,59 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     ).catch(() => undefined);
 
     return res.json({ success: true, body: bodyText, cached: false });
+  });
+
+  // POST /gmail/contacts/:email/ai-summary — generate AI summary of conversation
+  router.post('/gmail/contacts/:email/ai-summary', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    const contactEmail = decodeURIComponent(req.params.email).toLowerCase().trim();
+
+    // Fetch recent messages (up to 20 for context)
+    const result = await pool.query(
+      `SELECT subject, snippet, from_name, from_email, to_email, date, is_sent
+       FROM gmail_messages
+       WHERE user_id=$1
+         AND ((NOT is_sent AND LOWER(from_email)=$2) OR (is_sent AND LOWER(to_email)=$2))
+       ORDER BY date DESC NULLS LAST
+       LIMIT 20`,
+      [auth.userId, contactEmail]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    if (!result.rows.length) {
+      return res.json({ success: true, summary: 'No emails found for this contact.' });
+    }
+
+    const aiCfg = await deps.getAIConfig().catch(() => null);
+    const key = aiCfg ? deps.resolveActiveKey(aiCfg) : null;
+    if (!key) return res.json({ success: true, summary: 'AI not configured — add an OpenAI or Gemini API key in Admin → AI Config.' });
+
+    const provider = String(aiCfg?.activeProvider || aiCfg?.provider || 'openai').toLowerCase();
+    const isGemini = deps.GEMINI_MODELS.some((m: string) => String(aiCfg?.model || '').includes(m)) || provider.includes('gemini');
+    const model = isGemini ? (aiCfg?.model || 'gemini-1.5-flash') : (aiCfg?.model || 'gpt-4o-mini');
+
+    const messagesText = (result.rows as any[]).reverse().map((m) => {
+      const direction = m.is_sent ? 'Sent' : 'Received';
+      const date = m.date ? new Date(m.date).toLocaleDateString() : 'Unknown date';
+      return `[${date}] ${direction} — Subject: "${m.subject}" — ${m.snippet}`;
+    }).join('\n');
+
+    const contactName = (result.rows as any[]).find((r) => !r.is_sent)?.from_name || contactEmail.split('@')[0];
+    const domain = extractDomain(contactEmail);
+    const company = domainToCompany(domain);
+
+    const systemPrompt = `You are an AI assistant that summarizes email conversations to help sales and marketing professionals understand their relationship with a contact. Be concise, professional, and highlight key topics, action items, and relationship status. Write 2-4 sentences max.`;
+    const userPrompt = `Summarize the email conversation with ${contactName} from ${company} (${contactEmail}):\n\n${messagesText}`;
+
+    try {
+      const summary = await deps.callAINonStreaming(provider, key, model, systemPrompt, userPrompt, 300);
+      return res.json({ success: true, summary: summary.trim() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'AI summary failed';
+      return res.status(500).json({ success: false, error: msg });
+    }
   });
 
   // DELETE /gmail/messages — clear all synced data for the current user

@@ -776,7 +776,7 @@ app.use('/api', registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
 // ── End Kling AI Routes ────────────────────────────────────────────────────────
 
 // ─── Gmail Inbox Routes ────────────────────────────────────────────────────────
-app.use('/api', registerGmailInboxRoutes({ requireAuth, pool, getPlatformConfig }));
+app.use('/api', registerGmailInboxRoutes({ requireAuth, pool, getPlatformConfig, getAIConfig, resolveActiveKey, GEMINI_MODELS, callAINonStreaming }));
 // ── End Gmail Inbox Routes ────────────────────────────────────────────────────
 
 // ─── Google AI Routes ──────────────────────────────────────────────────────────

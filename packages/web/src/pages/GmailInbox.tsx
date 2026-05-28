@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronDown, ChevronUp, Loader2, Mail, RefreshCw, Trash2, X } from 'lucide-react';
+import {
+  ArrowLeft, ChevronDown, ChevronUp, Loader2, Mail, Phone,
+  RefreshCw, Sparkles, Trash2, X, ListFilter, Building2,
+} from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -11,7 +14,7 @@ type SyncStatus = {
   errorMessage: string | null;
 };
 
-type Chat = {
+type Contact = {
   email: string;
   name: string;
   company: string;
@@ -23,7 +26,7 @@ type Chat = {
   lastSubject: string;
 };
 
-type Message = {
+type EmailMessage = {
   id: string;
   threadId: string;
   subject: string;
@@ -37,7 +40,7 @@ type Message = {
   bodyText: string | null;
 };
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const authHeaders = (): Record<string, string> => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
@@ -53,171 +56,163 @@ function relativeTime(dateStr: string | null): string {
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
   if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m`;
-  if (hours < 24) return `${hours}h`;
-  if (days < 7) return `${days}d`;
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function formatFullDate(dateStr: string | null): string {
+function fullDate(dateStr: string | null): string {
   if (!dateStr) return '';
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return '';
   return date.toLocaleString(undefined, {
-    weekday: 'short', month: 'short', day: 'numeric',
+    month: 'short', day: 'numeric', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 }
 
-function domainInitial(domain: string): string {
-  if (!domain) return '?';
-  return domain.charAt(0).toUpperCase();
+function avatarInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
 }
 
-const DOMAIN_COLORS: Record<string, string> = {
-  'gmail.com': 'bg-red-100 text-red-700',
-  'yahoo.com': 'bg-purple-100 text-purple-700',
-  'outlook.com': 'bg-blue-100 text-blue-700',
-  'hotmail.com': 'bg-blue-100 text-blue-700',
-  'icloud.com': 'bg-slate-100 text-slate-700',
-};
-
-function domainColor(domain: string): string {
-  return DOMAIN_COLORS[domain] || 'bg-indigo-100 text-indigo-700';
+// Clearbit logo service — free, no auth required
+function companyLogoUrl(domain: string): string {
+  if (!domain || ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'me.com', 'live.com', 'msn.com', 'aol.com'].includes(domain)) {
+    return '';
+  }
+  return `https://logo.clearbit.com/${domain}`;
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+const AVATAR_COLORS = [
+  'bg-indigo-100 text-indigo-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+  'bg-sky-100 text-sky-700',
+  'bg-violet-100 text-violet-700',
+  'bg-teal-100 text-teal-700',
+  'bg-orange-100 text-orange-700',
+];
 
-function MessageBubble({ msg, onLoadBody }: {
-  msg: Message;
-  onLoadBody: (id: string) => void;
-}) {
+function contactColor(email: string): string {
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) hash = (hash * 31 + email.charCodeAt(i)) & 0xffffffff;
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+// ── Company Logo with fallback ─────────────────────────────────────────────────
+
+function CompanyLogo({ domain, name, size = 40 }: { domain: string; name: string; size?: number }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const logoUrl = companyLogoUrl(domain);
+
+  if (logoUrl && !imgFailed) {
+    return (
+      <img
+        src={logoUrl}
+        alt={name}
+        width={size}
+        height={size}
+        onError={() => setImgFailed(true)}
+        className="rounded-xl object-contain bg-white border border-slate-100"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <div
+      className={`flex items-center justify-center rounded-xl font-black text-sm ${contactColor(name)}`}
+      style={{ width: size, height: size }}
+    >
+      {avatarInitials(name)}
+    </div>
+  );
+}
+
+// ── Email activity item ───────────────────────────────────────────────────────
+
+function ActivityItem({ msg, onLoadBody }: { msg: EmailMessage; onLoadBody: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [loadingBody, setLoadingBody] = useState(false);
-  const isMine = msg.isSent;
+  const [loading, setLoading] = useState(false);
 
-  const handleExpand = async () => {
+  const handleToggle = async () => {
     if (!expanded && !msg.bodyText) {
-      setLoadingBody(true);
+      setLoading(true);
       await onLoadBody(msg.id);
-      setLoadingBody(false);
+      setLoading(false);
     }
     setExpanded((v) => !v);
   };
 
   return (
-    <div className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-          isMine
-            ? 'rounded-tr-sm bg-[#5b6cf9] text-white'
-            : 'rounded-tl-sm border border-slate-200 bg-white text-slate-900'
-        }`}
-      >
-        {/* Subject */}
-        {msg.subject && msg.subject !== '(No subject)' && (
-          <div className={`mb-1 text-[11px] font-bold uppercase tracking-wide ${isMine ? 'text-indigo-200' : 'text-slate-400'}`}>
-            {msg.subject}
-          </div>
-        )}
+    <div className="group relative pl-8">
+      {/* Timeline dot */}
+      <div className="absolute left-0 top-1.5 flex h-5 w-5 items-center justify-center">
+        <div className={`h-2.5 w-2.5 rounded-full border-2 border-white ring-1 ${msg.isSent ? 'bg-[#5b6cf9] ring-[#5b6cf9]' : 'bg-slate-300 ring-slate-300'}`} />
+      </div>
 
-        {/* Body or snippet */}
-        <div className="leading-relaxed">
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${msg.isSent ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                {msg.isSent ? 'Sent' : 'Received'}
+              </span>
+              {!msg.isRead && !msg.isSent && (
+                <span className="h-1.5 w-1.5 rounded-full bg-[#5b6cf9]" />
+              )}
+            </div>
+            <p className="mt-1 truncate text-sm font-semibold text-slate-900">
+              {msg.subject || '(No subject)'}
+            </p>
+          </div>
+          <span className="shrink-0 text-[11px] text-slate-400">{fullDate(msg.date)}</span>
+        </div>
+
+        {/* Snippet / expanded body */}
+        <div className="mt-2 text-sm text-slate-600 leading-relaxed">
           {expanded && msg.bodyText ? (
-            <pre className={`whitespace-pre-wrap font-sans text-sm ${isMine ? 'text-white' : 'text-slate-800'}`}>
-              {msg.bodyText.slice(0, 8000)}
-              {msg.bodyText.length > 8000 && '…'}
+            <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 max-h-64 overflow-y-auto">
+              {msg.bodyText.slice(0, 6000)}
+              {msg.bodyText.length > 6000 ? '\n…[truncated]' : ''}
             </pre>
           ) : (
-            <span className={isMine ? 'text-indigo-100' : 'text-slate-600'}>
-              {msg.snippet || '(empty)'}
-            </span>
+            <span>{msg.snippet || '—'}</span>
           )}
         </div>
 
-        {/* Expand/collapse toggle */}
+        {/* Toggle */}
         <button
           type="button"
-          onClick={handleExpand}
-          className={`mt-2 flex items-center gap-1 text-[11px] font-semibold ${isMine ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}
+          onClick={handleToggle}
+          className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-slate-700"
         >
-          {loadingBody ? (
-            <Loader2 size={11} className="animate-spin" />
-          ) : expanded ? (
-            <ChevronUp size={11} />
-          ) : (
-            <ChevronDown size={11} />
-          )}
-          {loadingBody ? 'Loading…' : expanded ? 'Collapse' : 'Read full message'}
+          {loading ? <Loader2 size={11} className="animate-spin" /> : expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          {loading ? 'Loading…' : expanded ? 'Collapse' : 'Read full email'}
         </button>
-
-        {/* Timestamp */}
-        <div className={`mt-1.5 text-right text-[10px] ${isMine ? 'text-indigo-300' : 'text-slate-400'}`}>
-          {formatFullDate(msg.date)}
-        </div>
       </div>
     </div>
   );
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ── Contact preview panel ─────────────────────────────────────────────────────
 
-export default function GmailInbox() {
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
-    status: 'idle', totalFetched: 0, lastSyncedAt: null, errorMessage: null,
-  });
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [filteredChats, setFilteredChats] = useState<Chat[]>([]);
-  const [search, setSearch] = useState('');
-  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(false);
-  const [loadingChats, setLoadingChats] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
-
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // ── API helpers ─────────────────────────────────────────────────────────────
-
-  const fetchSyncStatus = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/gmail/sync/status`, { headers: authHeaders() });
-      const data = await res.json().catch(() => ({}));
-      if (data.success !== false) setSyncStatus(data);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const fetchChats = useCallback(async () => {
-    setLoadingChats(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/gmail/chats`, { headers: authHeaders() });
-      const data = await res.json().catch(() => ({}));
-      if (Array.isArray(data.chats)) {
-        setChats(data.chats);
-        setFilteredChats(data.chats);
-      }
-    } finally {
-      setLoadingChats(false);
-    }
-  }, []);
-
-  const fetchMessages = useCallback(async (chat: Chat) => {
-    setLoadingMessages(true);
-    setMessages([]);
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/api/gmail/chats/${encodeURIComponent(chat.email)}/messages`,
-        { headers: authHeaders() }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (Array.isArray(data.messages)) setMessages(data.messages);
-    } finally {
-      setLoadingMessages(false);
-    }
-  }, []);
+function ContactPanel({
+  contact,
+  onClose,
+}: {
+  contact: Contact;
+  onClose: () => void;
+}) {
+  const [messages, setMessages] = useState<EmailMessage[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const loadBody = useCallback(async (id: string) => {
     try {
@@ -226,328 +221,447 @@ export default function GmailInbox() {
       });
       const data = await res.json().catch(() => ({}));
       if (data.success && data.body) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, bodyText: data.body } : m))
-        );
+        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, bodyText: data.body } : m)));
       }
+    } catch { /* ignore */ }
+  }, []);
+
+  const generateSummary = async () => {
+    setLoadingAI(true);
+    setAiError(null);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/gmail/contacts/${encodeURIComponent(contact.email)}/ai-summary`,
+        { method: 'POST', headers: authHeaders() }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (data.success) setAiSummary(data.summary || '');
+      else setAiError(data.error || 'Failed to generate summary');
     } catch {
-      // ignore
+      setAiError('Network error');
+    } finally {
+      setLoadingAI(false);
+    }
+  };
+
+  useEffect(() => {
+    setLoadingMessages(true);
+    setMessages([]);
+    setAiSummary(null);
+    fetch(
+      `${API_BASE_URL}/api/gmail/chats/${encodeURIComponent(contact.email)}/messages`,
+      { headers: authHeaders() }
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data.messages)) setMessages(data.messages);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoadingMessages(false));
+  }, [contact.email]);
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden border-l border-slate-200 bg-white">
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-3">
+        <button type="button" onClick={onClose} className="md:hidden flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900">
+          <ArrowLeft size={14} /> Back
+        </button>
+        <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Preview</span>
+        <button type="button" onClick={onClose} className="hidden md:flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">
+          <X size={13} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {/* Contact card */}
+        <div className="border-b border-slate-100 px-5 py-5">
+          <div className="flex items-center gap-3">
+            <CompanyLogo domain={contact.domain} name={contact.name} size={48} />
+            <div className="min-w-0">
+              <p className="truncate text-base font-black text-slate-950">{contact.name}</p>
+              <p className="flex items-center gap-1 truncate text-xs text-slate-400">
+                <Building2 size={11} className="shrink-0" />
+                {contact.company}
+              </p>
+            </div>
+          </div>
+
+          {/* Contact details */}
+          <div className="mt-4 space-y-1.5">
+            <div className="flex items-center gap-2 text-xs text-slate-600">
+              <Mail size={12} className="shrink-0 text-slate-400" />
+              <a href={`mailto:${contact.email}`} className="hover:underline truncate">{contact.email}</a>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <Phone size={12} className="shrink-0 text-slate-400" />
+              <span>—</span>
+            </div>
+          </div>
+
+          {/* Quick-action bar */}
+          <div className="mt-4 flex items-center gap-2">
+            {(['Note', 'Email', 'Call', 'Task', 'Meeting'] as const).map((action) => (
+              <button
+                key={action}
+                type="button"
+                className="flex flex-1 flex-col items-center gap-1 rounded-xl border border-slate-200 bg-white px-1 py-2 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                <span className="text-base leading-none">
+                  {action === 'Note' ? '📝' : action === 'Email' ? '✉️' : action === 'Call' ? '📞' : action === 'Task' ? '✅' : '📅'}
+                </span>
+                {action}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* AI Summary */}
+        <div className="border-b border-slate-100 px-5 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Sparkles size={13} className="text-indigo-500" />
+              <span className="text-xs font-bold text-slate-700">AI Record Summary</span>
+            </div>
+            <button
+              type="button"
+              onClick={generateSummary}
+              disabled={loadingAI}
+              className="flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-100 disabled:opacity-60"
+            >
+              {loadingAI ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+              {aiSummary ? 'Regenerate' : 'Generate'}
+            </button>
+          </div>
+
+          {aiError && <p className="mt-2 text-xs text-red-500">{aiError}</p>}
+
+          {aiSummary ? (
+            <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 text-xs leading-relaxed text-slate-700">
+              {aiSummary}
+              <p className="mt-2 text-[10px] text-slate-400">Generated by AI · {new Date().toLocaleDateString()}</p>
+            </div>
+          ) : !loadingAI && !aiError ? (
+            <p className="mt-2 text-xs text-slate-400">Click "Generate" for an AI summary of this conversation.</p>
+          ) : null}
+        </div>
+
+        {/* Activity timeline */}
+        <div className="px-5 py-4">
+          <p className="mb-4 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+            Activity ({messages.length})
+          </p>
+
+          {loadingMessages ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 size={18} className="animate-spin text-slate-300" />
+            </div>
+          ) : messages.length === 0 ? (
+            <p className="text-xs text-slate-400">No emails found</p>
+          ) : (
+            <div className="relative space-y-3">
+              {/* Vertical timeline line */}
+              <div className="absolute left-[9px] top-2 bottom-2 w-px bg-slate-100" />
+              {[...messages].reverse().map((msg) => (
+                <ActivityItem key={msg.id} msg={msg} onLoadBody={loadBody} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+
+export default function GmailInbox() {
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+    status: 'idle', totalFetched: 0, lastSyncedAt: null, errorMessage: null,
+  });
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [filtered, setFiltered] = useState<Contact[]>([]);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Contact | null>(null);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── API ──────────────────────────────────────────────────────────────────────
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/gmail/sync/status`, { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (data.success !== false) setSyncStatus(data);
+    } catch { /* ignore */ }
+  }, []);
+
+  const fetchContacts = useCallback(async () => {
+    setLoadingContacts(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/gmail/chats`, { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (Array.isArray(data.chats)) {
+        setContacts(data.chats);
+        setFiltered(data.chats);
+      }
+    } finally {
+      setLoadingContacts(false);
     }
   }, []);
 
   const startSync = async () => {
-    await fetch(`${API_BASE_URL}/api/gmail/sync`, {
-      method: 'POST',
-      headers: authHeaders(),
-    });
-    await fetchSyncStatus();
+    await fetch(`${API_BASE_URL}/api/gmail/sync`, { method: 'POST', headers: authHeaders() });
+    await fetchStatus();
   };
 
   const resetInbox = async () => {
-    await fetch(`${API_BASE_URL}/api/gmail/messages`, {
-      method: 'DELETE',
-      headers: authHeaders(),
-    });
-    setChats([]);
-    setFilteredChats([]);
-    setSelectedChat(null);
-    setMessages([]);
+    await fetch(`${API_BASE_URL}/api/gmail/messages`, { method: 'DELETE', headers: authHeaders() });
+    setContacts([]);
+    setFiltered([]);
+    setSelected(null);
     setSyncStatus({ status: 'idle', totalFetched: 0, lastSyncedAt: null, errorMessage: null });
     setConfirmReset(false);
   };
 
-  // ── Polling ─────────────────────────────────────────────────────────────────
+  // ── Polling ──────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    void fetchSyncStatus();
-  }, [fetchSyncStatus]);
+  useEffect(() => { void fetchStatus(); }, [fetchStatus]);
 
   useEffect(() => {
     if (syncStatus.status === 'running') {
-      pollRef.current = setTimeout(async () => {
-        await fetchSyncStatus();
-      }, 2000);
+      pollRef.current = setTimeout(() => void fetchStatus(), 2000);
     } else {
       if (pollRef.current) clearTimeout(pollRef.current);
-      if (syncStatus.status === 'done' && syncStatus.totalFetched > 0) {
-        void fetchChats();
+      if ((syncStatus.status === 'done' || syncStatus.totalFetched > 0) && contacts.length === 0) {
+        void fetchContacts();
       }
     }
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [syncStatus, fetchSyncStatus, fetchChats]);
+  }, [syncStatus, fetchStatus, fetchContacts, contacts.length]);
 
-  // Load chats on mount if already synced
-  useEffect(() => {
-    if (syncStatus.status === 'done') void fetchChats();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Search filter ────────────────────────────────────────────────────────────
+  // ── Search ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const q = search.toLowerCase().trim();
-    if (!q) { setFilteredChats(chats); return; }
-    setFilteredChats(
-      chats.filter(
-        (c) =>
-          c.email.toLowerCase().includes(q) ||
-          c.name.toLowerCase().includes(q) ||
-          c.company.toLowerCase().includes(q) ||
-          c.lastSubject.toLowerCase().includes(q)
-      )
-    );
-  }, [search, chats]);
+    if (!q) { setFiltered(contacts); return; }
+    setFiltered(contacts.filter(
+      (c) => c.email.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.company.toLowerCase().includes(q)
+    ));
+  }, [search, contacts]);
 
-  // ── Auto-scroll on new messages ──────────────────────────────────────────────
-
-  useEffect(() => {
-    if (messages.length) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages.length]);
-
-  // ── Chat selection ────────────────────────────────────────────────────────────
-
-  const openChat = (chat: Chat) => {
-    setSelectedChat(chat);
-    void fetchMessages(chat);
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   const isSyncing = syncStatus.status === 'running';
-  const hasSynced = syncStatus.status === 'done' || syncStatus.totalFetched > 0;
+  const hasSynced = syncStatus.totalFetched > 0;
+  const syncPct = Math.min(Math.round((syncStatus.totalFetched / 2000) * 100), 100);
 
   return (
-    <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden">
-      {/* ── Top bar ──────────────────────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-        <div className="flex items-center gap-3">
-          <Mail size={20} className="text-red-500" />
-          <div>
-            <h1 className="text-base font-black tracking-tight text-slate-950">Gmail Inbox</h1>
-            <p className="text-[11px] text-slate-400">
-              {syncStatus.status === 'running' && `Syncing… ${syncStatus.totalFetched} messages`}
-              {syncStatus.status === 'done' && `${syncStatus.totalFetched.toLocaleString()} messages synced`}
-              {syncStatus.status === 'error' && (
-                <span className="text-red-500">{syncStatus.errorMessage || 'Sync failed'}</span>
-              )}
-              {syncStatus.status === 'idle' && 'Not synced yet'}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {hasSynced && (
-            <button
-              type="button"
-              onClick={() => setConfirmReset(true)}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50"
-            >
-              <Trash2 size={12} />
-              Reset
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => void startSync()}
-            disabled={isSyncing}
-            className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-1.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {isSyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            {isSyncing ? 'Syncing…' : hasSynced ? 'Re-sync' : 'Sync Gmail'}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Progress bar during sync ─────────────────────────────────────────── */}
+    <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden bg-slate-50">
+      {/* ── Sync progress banner (HubSpot-style) ────────────────────────────── */}
       {isSyncing && (
-        <div className="h-0.5 shrink-0 bg-slate-100">
-          <div className="h-full animate-pulse bg-[#5b6cf9]" style={{ width: `${Math.min((syncStatus.totalFetched / 2000) * 100, 100)}%` }} />
+        <div className="shrink-0 border-b border-indigo-100 bg-indigo-50 px-6 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">
+                Syncing your emails ({syncPct}%)
+              </p>
+              <p className="text-xs text-slate-500">
+                {syncStatus.totalFetched.toLocaleString()} of 2,000 emails synced. We'll ignore spam and promotional emails.
+              </p>
+            </div>
+            <div className="h-1.5 w-32 rounded-full bg-indigo-100 overflow-hidden">
+              <div className="h-full rounded-full bg-[#5b6cf9] transition-all" style={{ width: `${syncPct}%` }} />
+            </div>
+          </div>
         </div>
       )}
 
-      {/* ── Body ─────────────────────────────────────────────────────────────── */}
-      {!hasSynced && !isSyncing ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-red-50">
-            <Mail size={32} className="text-red-400" />
-          </div>
-          <div>
-            <p className="text-lg font-black text-slate-900">Your Gmail inbox awaits</p>
-            <p className="mt-1 max-w-xs text-sm text-slate-500">
-              Click "Sync Gmail" to import up to 2,000 emails and group them by contact.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void startSync()}
-            className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-600"
-          >
-            <RefreshCw size={14} />
-            Sync Gmail Now
-          </button>
+      {/* Error banner */}
+      {syncStatus.status === 'error' && (
+        <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-3">
+          <p className="text-sm font-semibold text-red-700">Sync failed: {syncStatus.errorMessage}</p>
         </div>
-      ) : (
-        <div className="flex flex-1 overflow-hidden">
-          {/* ── Chat list (left panel) ─────────────────────────────────────── */}
-          <div className={`flex flex-col border-r border-slate-200 bg-white ${selectedChat ? 'hidden md:flex md:w-80 lg:w-96' : 'flex-1 md:w-80 lg:w-96'}`}>
-            {/* Search */}
-            <div className="border-b border-slate-100 px-3 py-2">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search contacts…"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400"
-              />
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* ── Contacts table / list ─────────────────────────────────────────── */}
+        <div className={`flex flex-col overflow-hidden bg-white ${selected ? 'hidden md:flex md:flex-1' : 'flex-1'}`}>
+          {/* Table toolbar */}
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-3 gap-3">
+            <div className="flex items-center gap-2 flex-1">
+              <h1 className="text-base font-black text-slate-950 whitespace-nowrap">Gmail Contacts</h1>
+              {hasSynced && (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                  {filtered.length.toLocaleString()}
+                </span>
+              )}
             </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto">
-              {loadingChats && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 size={20} className="animate-spin text-slate-400" />
-                </div>
-              )}
-              {!loadingChats && isSyncing && syncStatus.totalFetched === 0 && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 size={20} className="animate-spin text-slate-400" />
-                  <span className="ml-2 text-sm text-slate-400">Syncing…</span>
-                </div>
-              )}
-              {!loadingChats && filteredChats.length === 0 && !isSyncing && (
-                <div className="py-8 text-center text-sm text-slate-400">
-                  {search ? 'No matching contacts' : 'No emails synced yet'}
-                </div>
-              )}
-              {filteredChats.map((chat) => (
+            <div className="flex items-center gap-2">
+              {hasSynced && (
                 <button
-                  key={chat.email}
                   type="button"
-                  onClick={() => openChat(chat)}
-                  className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${
-                    selectedChat?.email === chat.email ? 'bg-indigo-50 hover:bg-indigo-50' : ''
-                  }`}
+                  onClick={() => setConfirmReset(true)}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50"
                 >
-                  {/* Avatar */}
-                  <div
-                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${domainColor(chat.domain)}`}
-                  >
-                    {domainInitial(chat.domain)}
-                  </div>
+                  <Trash2 size={12} />
+                  Reset
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void startSync()}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-1.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {isSyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                {isSyncing ? 'Syncing…' : hasSynced ? 'Re-sync' : 'Sync Gmail'}
+              </button>
+            </div>
+          </div>
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-1">
-                      <span className={`truncate text-sm font-semibold ${chat.unreadCount > 0 ? 'text-slate-950' : 'text-slate-700'}`}>
-                        {chat.name}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-slate-400">
-                        {relativeTime(chat.lastMessageAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="truncate text-xs text-slate-400">{chat.email}</span>
-                      {chat.unreadCount > 0 && (
-                        <span className="ml-1 flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-[#5b6cf9] px-1 text-[10px] font-bold text-white">
-                          {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+          {/* Search + filter row */}
+          {hasSynced && (
+            <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-slate-50 px-5 py-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Type / to search"
+                  className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-3 pr-3 text-sm outline-none focus:border-slate-400"
+                />
+              </div>
+              <button type="button" className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                <ListFilter size={12} />
+                Filter
+              </button>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!hasSynced && !isSyncing && (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center px-6">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50">
+                <Mail size={30} className="text-indigo-400" />
+              </div>
+              <div>
+                <p className="text-lg font-black text-slate-900">Sync your Gmail contacts</p>
+                <p className="mt-1 max-w-sm text-sm text-slate-500">
+                  Import up to 2,000 emails. Each unique sender becomes a contact with a full activity timeline and AI record summary.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void startSync()}
+                className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-6 py-2.5 text-sm font-bold text-white hover:bg-indigo-600"
+              >
+                <RefreshCw size={14} />
+                Sync Gmail Now
+              </button>
+            </div>
+          )}
+
+          {/* Contact list */}
+          {(hasSynced || isSyncing) && (
+            <div className="flex-1 overflow-y-auto">
+              {/* Column headers */}
+              <div className="sticky top-0 z-10 grid grid-cols-[2fr_2fr_1.5fr_1fr_80px] gap-3 border-b border-slate-100 bg-white px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                <span>Name</span>
+                <span>Email</span>
+                <span>Company</span>
+                <span>Last Activity</span>
+                <span className="text-right">Emails</span>
+              </div>
+
+              {loadingContacts && (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 size={20} className="animate-spin text-slate-300" />
+                </div>
+              )}
+
+              {!loadingContacts && filtered.length === 0 && (
+                <div className="py-10 text-center text-sm text-slate-400">
+                  {search ? 'No contacts match your search' : 'No contacts synced yet'}
+                </div>
+              )}
+
+              {filtered.map((contact) => (
+                <button
+                  key={contact.email}
+                  type="button"
+                  onClick={() => setSelected(contact)}
+                  className={`grid w-full grid-cols-[2fr_2fr_1.5fr_1fr_80px] gap-3 border-b border-slate-50 px-5 py-3 text-left transition-colors hover:bg-slate-50 ${selected?.email === contact.email ? 'bg-indigo-50/60 hover:bg-indigo-50/60' : ''}`}
+                >
+                  {/* Name + avatar */}
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <CompanyLogo domain={contact.domain} name={contact.name} size={32} />
+                    <div className="min-w-0">
+                      <p className={`truncate text-sm font-semibold ${contact.unreadCount > 0 ? 'text-slate-950' : 'text-slate-700'}`}>
+                        {contact.name}
+                      </p>
+                      {contact.unreadCount > 0 && (
+                        <span className="rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white">
+                          {contact.unreadCount} new
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">{chat.lastSnippet || chat.lastSubject}</p>
-                    <p className="mt-0.5 text-[10px] text-slate-400">
-                      {chat.company}{chat.messageCount > 1 ? ` · ${chat.messageCount} messages` : ''}
-                    </p>
+                  </div>
+
+                  {/* Email */}
+                  <div className="flex min-w-0 items-center">
+                    <span className="truncate text-xs text-slate-500">{contact.email}</span>
+                  </div>
+
+                  {/* Company */}
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-xs text-slate-600">{contact.company}</span>
+                  </div>
+
+                  {/* Last activity */}
+                  <div className="flex items-center">
+                    <span className="text-xs text-slate-400">{relativeTime(contact.lastMessageAt)}</span>
+                  </div>
+
+                  {/* Email count */}
+                  <div className="flex items-center justify-end">
+                    <span className="text-xs font-semibold text-slate-500">{contact.messageCount}</span>
                   </div>
                 </button>
               ))}
             </div>
-          </div>
-
-          {/* ── Conversation panel (right) ─────────────────────────────────── */}
-          {selectedChat ? (
-            <div className="flex flex-1 flex-col overflow-hidden">
-              {/* Chat header */}
-              <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
-                <button
-                  type="button"
-                  onClick={() => setSelectedChat(null)}
-                  className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white md:hidden"
-                >
-                  <ArrowLeft size={14} />
-                </button>
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${domainColor(selectedChat.domain)}`}
-                >
-                  {domainInitial(selectedChat.domain)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-black text-slate-950">{selectedChat.name}</p>
-                  <p className="truncate text-xs text-slate-400">
-                    {selectedChat.email} · {selectedChat.company}
-                    {selectedChat.messageCount > 1 && ` · ${selectedChat.messageCount} messages`}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedChat(null)}
-                  className="hidden h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white md:flex"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-
-              {/* Messages */}
-              <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-5 py-4">
-                {loadingMessages && (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 size={20} className="animate-spin text-slate-400" />
-                  </div>
-                )}
-                {!loadingMessages && messages.length === 0 && (
-                  <div className="py-12 text-center text-sm text-slate-400">No messages found</div>
-                )}
-                {messages.map((msg) => (
-                  <MessageBubble
-                    key={msg.id}
-                    msg={msg}
-                    onLoadBody={loadBody}
-                  />
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
-          ) : (
-            <div className="hidden flex-1 flex-col items-center justify-center gap-3 bg-slate-50 md:flex">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm">
-                <Mail size={24} className="text-slate-400" />
-              </div>
-              <p className="text-sm font-semibold text-slate-500">Select a contact to read the conversation</p>
-            </div>
           )}
         </div>
-      )}
 
-      {/* ── Reset confirmation modal ─────────────────────────────────────────── */}
+        {/* ── Contact preview panel ──────────────────────────────────────────── */}
+        {selected && (
+          <div className={`flex-1 overflow-hidden md:flex-none md:w-[420px] lg:w-[460px] ${selected ? 'flex' : 'hidden'}`}>
+            <ContactPanel
+              key={selected.email}
+              contact={selected}
+              onClose={() => setSelected(null)}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── Reset confirmation ───────────────────────────────────────────────── */}
       {confirmReset && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-black text-slate-950">Clear Gmail data?</h3>
             <p className="mt-2 text-sm text-slate-500">
-              This removes all {syncStatus.totalFetched.toLocaleString()} synced messages from ContentFlow.
-              Your actual Gmail account is not affected.
+              This removes all {syncStatus.totalFetched.toLocaleString()} synced messages from ContentFlow. Your actual Gmail is not affected.
             </p>
             <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                onClick={() => setConfirmReset(false)}
-                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
+              <button type="button" onClick={() => setConfirmReset(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={() => void resetInbox()}
-                className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700"
-              >
+              <button type="button" onClick={() => void resetInbox()}
+                className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700">
                 Clear All
               </button>
             </div>
