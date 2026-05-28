@@ -269,10 +269,24 @@ export default function CRMCompanies() {
               <h1 className="text-xl font-semibold text-gray-900">Companies</h1>
               <p className="text-sm text-gray-500 mt-0.5">{total} {total === 1 ? 'company' : 'companies'}</p>
             </div>
-            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
-              <Plus className="w-4 h-4" />
-              Add Company
-            </button>
+            <div className="flex items-center gap-2">
+              {gmailConnected && (
+                <button
+                  onClick={() => void triggerGmailSync()}
+                  disabled={gmailSyncing || gmailSync?.status === 'running'}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
+                >
+                  {(gmailSyncing || gmailSync?.status === 'running')
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing…</>
+                    : <><RefreshCw className="w-4 h-4" /> Sync Gmail</>
+                  }
+                </button>
+              )}
+              <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
+                <Plus className="w-4 h-4" />
+                Add Company
+              </button>
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -285,15 +299,12 @@ export default function CRMCompanies() {
           </div>
         </div>
 
-        {/* Gmail sync banner */}
-        {gmailConnected && (() => {
+        {/* Gmail sync progress / error banner */}
+        {gmailConnected && (gmailSyncing || gmailSync?.status === 'running' || gmailSync?.status === 'error') && (() => {
           const isRunning = gmailSyncing || gmailSync?.status === 'running';
-          const isDone = gmailSync?.status === 'done';
-          const isError = !isRunning && gmailSync?.status === 'error';
           const pct = Math.min(Math.round(((gmailSync?.totalFetched ?? 0) / 2000) * 100), 100);
-          if (!isRunning && isDone) return null;
           return (
-            <div className={`shrink-0 border-b px-5 py-3 ${isRunning ? 'bg-indigo-50 border-indigo-100' : isError ? 'bg-red-50 border-red-100' : 'bg-blue-50 border-blue-100'}`}>
+            <div className={`shrink-0 border-b px-5 py-3 ${isRunning ? 'bg-indigo-50 border-indigo-100' : 'bg-red-50 border-red-100'}`}>
               {isRunning ? (
                 <div className="flex items-center gap-3">
                   <Loader2 className="w-4 h-4 text-[#5b6cf9] animate-spin flex-shrink-0" />
@@ -310,19 +321,17 @@ export default function CRMCompanies() {
               ) : (
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Mail className={`w-4 h-4 flex-shrink-0 ${isError ? 'text-red-500' : 'text-blue-500'}`} />
+                    <Mail className="w-4 h-4 flex-shrink-0 text-red-500" />
                     <p className="text-sm text-gray-700 truncate">
-                      {isError
-                        ? <><span className="font-medium text-red-700">Sync failed</span><span className="text-red-600"> — {gmailSync?.errorMessage || 'unknown error'}</span></>
-                        : <><span className="font-medium">Gmail connected</span> — import your emails to auto-create companies &amp; contacts</>
-                      }
+                      <span className="font-medium text-red-700">Sync failed</span>
+                      <span className="text-red-600"> — {gmailSync?.errorMessage || 'unknown error'}</span>
                     </p>
                   </div>
                   <button
                     onClick={() => void triggerGmailSync()}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-white text-xs font-medium rounded-lg flex-shrink-0 transition-colors ${isError ? 'bg-red-500 hover:bg-red-600' : 'bg-[#5b6cf9] hover:bg-[#4a5be8]'}`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-white text-xs font-medium rounded-lg flex-shrink-0 bg-red-500 hover:bg-red-600 transition-colors"
                   >
-                    <RefreshCw className="w-3 h-3" /> {isError ? 'Retry' : 'Import from Gmail'}
+                    <RefreshCw className="w-3 h-3" /> Retry
                   </button>
                 </div>
               )}
