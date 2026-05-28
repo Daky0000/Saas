@@ -417,10 +417,15 @@ async function runGmailSync(
               from_email, from_name, to_email, date, is_read, is_sent, synced_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
            ON CONFLICT(user_id, gmail_message_id) DO UPDATE SET
-             snippet=EXCLUDED.snippet,
-             is_read=EXCLUDED.is_read,
-             is_sent=EXCLUDED.is_sent,
-             synced_at=NOW()`,
+             snippet     = EXCLUDED.snippet,
+             from_email  = CASE WHEN gmail_messages.from_email = '' THEN EXCLUDED.from_email ELSE gmail_messages.from_email END,
+             from_name   = CASE WHEN gmail_messages.from_name  = '' THEN EXCLUDED.from_name  ELSE gmail_messages.from_name  END,
+             to_email    = CASE WHEN gmail_messages.to_email   = '' THEN EXCLUDED.to_email   ELSE gmail_messages.to_email   END,
+             subject     = CASE WHEN gmail_messages.subject IN ('', '(No subject)') THEN EXCLUDED.subject ELSE gmail_messages.subject END,
+             date        = COALESCE(gmail_messages.date, EXCLUDED.date),
+             is_read     = EXCLUDED.is_read,
+             is_sent     = EXCLUDED.is_sent,
+             synced_at   = NOW()`,
           row
         ).catch(() => undefined);
         synced++;
@@ -524,6 +529,28 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
       errorMessage: row.error_message || null,
       messageCount,
     });
+  });
+
+  // GET /gmail/contacts — personal-domain senders (public email providers)
+  router.get('/gmail/contacts', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.json({ success: true, contacts: [] });
+
+    const result = await pool.query(
+      `SELECT mc.id, mc.email, mc.first_name, mc.last_name,
+              LOWER(SUBSTRING(mc.email FROM POSITION('@' IN mc.email) + 1)) AS domain
+       FROM mailing_contacts mc
+       WHERE mc.user_id=$1 AND mc.source='gmail'
+         AND NOT EXISTS (
+           SELECT 1 FROM crm_contact_companies cc WHERE cc.contact_id=mc.id
+         )
+       ORDER BY mc.first_name NULLS LAST, mc.email
+       LIMIT 1000`,
+      [auth.userId]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    return res.json({ success: true, contacts: result.rows });
   });
 
   // POST /gmail/sync/crm — rebuild CRM from already-stored emails (no Gmail API call)

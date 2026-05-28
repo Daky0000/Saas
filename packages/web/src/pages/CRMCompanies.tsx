@@ -120,14 +120,29 @@ function ActivityItem({ act }: { act: Activity }) {
   );
 }
 
-function CompanyInitials({ name }: { name: string }) {
+function CompanyInitials({ name, size = 'w-10 h-10', textSize = 'text-sm' }: { name: string; size?: string; textSize?: string }) {
   const parts = name.trim().split(' ');
   const initials = parts.length >= 2 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2);
   return (
-    <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
-      <span className="text-sm font-semibold text-indigo-600">{initials.toUpperCase()}</span>
+    <div className={`${size} rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0`}>
+      <span className={`${textSize} font-semibold text-indigo-600`}>{initials.toUpperCase()}</span>
     </div>
   );
+}
+
+function CompanyLogo({ name, logoUrl, size = 'w-10 h-10', textSize = 'text-sm' }: { name: string; logoUrl: string | null; size?: string; textSize?: string }) {
+  const [failed, setFailed] = React.useState(false);
+  if (logoUrl && !failed) {
+    return (
+      <img
+        src={logoUrl}
+        alt=""
+        className={`${size} rounded-lg object-contain bg-white border border-gray-100 flex-shrink-0 p-0.5`}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <CompanyInitials name={name} size={size} textSize={textSize} />;
 }
 
 function formatCurrency(value: number, currency = 'USD') {
@@ -145,6 +160,10 @@ export default function CRMCompanies() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [form, setForm] = useState({ name: '', domain: '', industry: '', size: '', website: '', phone: '', email: '', city: '', country: '', description: '' });
+
+  const [tab, setTab] = useState<'companies' | 'contacts'>('companies');
+  const [contacts, setContacts] = useState<{ id: string; email: string; first_name: string | null; last_name: string | null; domain: string }[]>([]);
+  const [loadingContacts, setLoadingContacts] = useState(false);
 
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailSync, setGmailSync] = useState<{ status: string; totalFetched: number; lastSyncedAt: string | null; errorMessage?: string | null; messageCount?: number } | null>(null);
@@ -192,6 +211,19 @@ export default function CRMCompanies() {
       setLoading(false);
     }
   }, [search]);
+
+  const loadContacts = useCallback(async () => {
+    setLoadingContacts(true);
+    try {
+      const r = await fetch('/api/gmail/contacts', { headers: authHeaders() });
+      const data = await r.json();
+      setContacts(data.contacts || []);
+    } finally {
+      setLoadingContacts(false);
+    }
+  }, []);
+
+  useEffect(() => { if (tab === 'contacts') void loadContacts(); }, [tab, loadContacts]);
 
   useEffect(() => { load(); }, []);
 
@@ -265,9 +297,13 @@ export default function CRMCompanies() {
         {/* Header */}
         <div className="px-6 py-5 border-b border-gray-100">
           <div className="flex items-center justify-between mb-4">
-            <div>
-              <h1 className="text-xl font-semibold text-gray-900">Companies</h1>
-              <p className="text-sm text-gray-500 mt-0.5">{total} {total === 1 ? 'company' : 'companies'}</p>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+              <button onClick={() => setTab('companies')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === 'companies' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                Companies <span className="ml-1 text-xs text-gray-400">{total}</span>
+              </button>
+              <button onClick={() => setTab('contacts')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === 'contacts' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                Contacts <span className="ml-1 text-xs text-gray-400">{contacts.length || ''}</span>
+              </button>
             </div>
             <div className="flex items-center gap-2">
               {gmailConnected && (
@@ -341,53 +377,82 @@ export default function CRMCompanies() {
 
         {/* List */}
         <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading...</div>
-          ) : companies.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-              <Building2 className="w-12 h-12 text-gray-200 mb-3" />
-              <p className="text-gray-500 font-medium">No companies yet</p>
-              <p className="text-gray-400 text-sm mt-1">Add your first company to start tracking deals and contacts</p>
-              <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Company</button>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {companies.map(company => (
-                <div
-                  key={company.id}
-                  onClick={() => openDetail(company)}
-                  className={`flex items-center gap-3 px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors ${selected?.id === company.id ? 'bg-indigo-50' : ''}`}
-                >
-                  {company.logo_url
-                    ? <img src={company.logo_url} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
-                    : <CompanyInitials name={company.name} />
-                  }
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900 text-sm truncate">{company.name}</span>
-                      {company.industry && <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{company.industry}</span>}
-                    </div>
-                    <div className="flex items-center gap-3 mt-0.5">
-                      {company.domain && <span className="text-xs text-gray-400 flex items-center gap-1"><Globe className="w-3 h-3" />{company.domain}</span>}
-                      {company.city && <span className="text-xs text-gray-400">{company.city}{company.country ? `, ${company.country}` : ''}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 flex-shrink-0 text-right">
-                    <div>
-                      <p className="text-xs text-gray-400">Contacts</p>
-                      <p className="text-sm font-medium text-gray-700">{company.contact_count}</p>
-                    </div>
-                    {company.open_deals_value > 0 && (
-                      <div>
-                        <p className="text-xs text-gray-400">Pipeline</p>
-                        <p className="text-sm font-medium text-emerald-600">{formatCurrency(company.open_deals_value)}</p>
+          {tab === 'companies' ? (
+            loading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading...</div>
+            ) : companies.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                <Building2 className="w-12 h-12 text-gray-200 mb-3" />
+                <p className="text-gray-500 font-medium">No companies yet</p>
+                <p className="text-gray-400 text-sm mt-1">Sync Gmail to auto-create companies from business email domains</p>
+                <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Company</button>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {companies.map(company => (
+                  <div
+                    key={company.id}
+                    onClick={() => openDetail(company)}
+                    className={`flex items-center gap-3 px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors ${selected?.id === company.id ? 'bg-indigo-50' : ''}`}
+                  >
+                    <CompanyLogo name={company.name} logoUrl={company.logo_url} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 text-sm truncate">{company.name}</span>
+                        {company.industry && <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{company.industry}</span>}
                       </div>
-                    )}
-                    <ChevronRight className="w-4 h-4 text-gray-300" />
+                      <div className="flex items-center gap-3 mt-0.5">
+                        {company.domain && <span className="text-xs text-gray-400 flex items-center gap-1"><Globe className="w-3 h-3" />{company.domain}</span>}
+                        {company.city && <span className="text-xs text-gray-400">{company.city}{company.country ? `, ${company.country}` : ''}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 flex-shrink-0 text-right">
+                      <div>
+                        <p className="text-xs text-gray-400">Contacts</p>
+                        <p className="text-sm font-medium text-gray-700">{company.contact_count}</p>
+                      </div>
+                      {company.open_deals_value > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-400">Pipeline</p>
+                          <p className="text-sm font-medium text-emerald-600">{formatCurrency(company.open_deals_value)}</p>
+                        </div>
+                      )}
+                      <ChevronRight className="w-4 h-4 text-gray-300" />
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )
+          ) : (
+            /* Contacts tab */
+            loadingContacts ? (
+              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading contacts…</div>
+            ) : contacts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                <Users className="w-12 h-12 text-gray-200 mb-3" />
+                <p className="text-gray-500 font-medium">No contacts yet</p>
+                <p className="text-gray-400 text-sm mt-1">Sync Gmail to import personal contacts (gmail.com, yahoo.com, etc.)</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {contacts.map(c => {
+                  const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email.split('@')[0];
+                  const initials = name.slice(0, 2).toUpperCase();
+                  return (
+                    <div key={c.id} className="flex items-center gap-3 px-6 py-4">
+                      <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-semibold text-slate-500">{initials}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
+                        <p className="text-xs text-gray-400 truncate">{c.email}</p>
+                      </div>
+                      <span className="text-[11px] text-gray-300 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-full">{c.domain}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )
           )}
         </div>
       </div>
@@ -398,10 +463,7 @@ export default function CRMCompanies() {
           <div className="px-8 py-6 border-b border-gray-100 bg-white">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-4">
-                {selected.logo_url
-                  ? <img src={selected.logo_url} alt="" className="w-14 h-14 rounded-xl object-cover" />
-                  : <div className="w-14 h-14 rounded-xl bg-indigo-100 flex items-center justify-center"><span className="text-lg font-bold text-indigo-600">{selected.name.slice(0,2).toUpperCase()}</span></div>
-                }
+                <CompanyLogo name={selected.name} logoUrl={selected.logo_url} size="w-14 h-14" textSize="text-lg" />
                 <div>
                   <h2 className="text-xl font-semibold text-gray-900">{selected.name}</h2>
                   <div className="flex items-center gap-3 mt-1 flex-wrap">
