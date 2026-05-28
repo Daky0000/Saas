@@ -22,18 +22,31 @@ export function registerCRMCompaniesRoutes({ requireAuth, pool }: Deps): Router 
     if (search) { params.push(`%${search}%`); where += ` AND (name ILIKE $${params.length} OR domain ILIKE $${params.length} OR email ILIKE $${params.length})`; }
     if (source === 'manual') { where += ` AND custom_data->>'source' = 'manual'`; }
     const { rows } = await pool.query(
-      `SELECT c.*,
-        (SELECT COUNT(*) FROM crm_contact_companies cc WHERE cc.company_id=c.id) AS contact_count,
-        (SELECT COUNT(*) FROM crm_deals d WHERE d.company_id=c.id AND d.status='open') AS open_deals_count,
-        (SELECT COALESCE(SUM(d.value),0) FROM crm_deals d WHERE d.company_id=c.id AND d.status='open') AS open_deals_value
-       FROM crm_companies c WHERE ${where}
-       ORDER BY c.created_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+      `SELECT * FROM (
+         SELECT DISTINCT ON (COALESCE(LOWER(c.domain), c.id))
+           c.*,
+           (SELECT COUNT(*) FROM crm_contact_companies cc WHERE cc.company_id=c.id) AS contact_count,
+           (SELECT COUNT(*) FROM crm_deals d WHERE d.company_id=c.id AND d.status='open') AS open_deals_count,
+           (SELECT COALESCE(SUM(d.value),0) FROM crm_deals d WHERE d.company_id=c.id AND d.status='open') AS open_deals_value
+         FROM crm_companies c WHERE ${where}
+         ORDER BY COALESCE(LOWER(c.domain), c.id),
+                  CASE WHEN c.custom_data->>'source' = 'manual' THEN 0 ELSE 1 END,
+                  c.created_at ASC
+       ) deduped
+       ORDER BY created_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
     const countWhere = source === 'manual'
       ? `user_id=$1 AND custom_data->>'source' = 'manual'`
       : 'user_id=$1';
-    const { rows: [{ count }] } = await pool.query(`SELECT COUNT(*) FROM crm_companies WHERE ${countWhere}`, [auth.userId]);
+    const { rows: [{ count }] } = await pool.query(
+      `SELECT COUNT(*) FROM (
+         SELECT DISTINCT ON (COALESCE(LOWER(domain), id)) id
+         FROM crm_companies WHERE ${countWhere}
+         ORDER BY COALESCE(LOWER(domain), id)
+       ) deduped`,
+      [auth.userId]
+    );
     res.json({ companies: rows, total: parseInt(count) });
   });
 
@@ -42,12 +55,26 @@ export function registerCRMCompaniesRoutes({ requireAuth, pool }: Deps): Router 
     const auth = requireAuth(req, res); if (!auth) return;
     const { rows } = await pool.query(`SELECT * FROM crm_companies WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
     if (!rows.length) return void res.status(404).json({ error: 'Not found' });
+    const companyDomain = (rows[0].domain || '').toLowerCase().trim();
     const { rows: contacts } = await pool.query(
-      `SELECT mc.id, mc.email, mc.first_name, mc.last_name, mc.phone, cc.role, cc.is_primary
-       FROM mailing_contacts mc
-       JOIN crm_contact_companies cc ON cc.contact_id=mc.id
-       WHERE cc.company_id=$1 ORDER BY cc.is_primary DESC, mc.first_name`,
-      [req.params.id]
+      `SELECT * FROM (
+         SELECT DISTINCT ON (mc.id)
+           mc.id, mc.email, mc.first_name, mc.last_name, mc.phone,
+           cc.role,
+           COALESCE(cc.is_primary, false) AS is_primary
+         FROM mailing_contacts mc
+         LEFT JOIN crm_contact_companies cc ON cc.contact_id=mc.id AND cc.company_id=$1
+         WHERE mc.user_id=$3 AND (
+           cc.company_id = $1
+           OR (
+             $2 <> '' AND POSITION('@' IN mc.email) > 0
+             AND LOWER(SUBSTRING(mc.email FROM POSITION('@' IN mc.email) + 1)) = $2
+           )
+         )
+         ORDER BY mc.id, (cc.is_primary IS TRUE) DESC NULLS LAST
+       ) c
+       ORDER BY (is_primary IS TRUE) DESC NULLS LAST, first_name, email`,
+      [req.params.id, companyDomain, auth.userId]
     );
     const { rows: deals } = await pool.query(
       `SELECT d.id, d.title, d.value, d.currency, d.status, d.priority, d.close_date, s.name AS stage_name, s.color AS stage_color

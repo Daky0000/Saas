@@ -199,15 +199,25 @@ async function syncToCRM(pool: Pool, userId: string): Promise<CRMSyncResult> {
     let companyId: string;
     try {
       const existing = await pool.query(
-        `SELECT id FROM crm_companies WHERE user_id=$1 AND LOWER(domain)=$2 LIMIT 1`,
-        [userId, domain]
+        `SELECT id FROM crm_companies
+         WHERE user_id=$1 AND (
+           LOWER(domain)=$2
+           OR (domain IS NULL AND LOWER(name)=$3)
+         )
+         ORDER BY CASE WHEN LOWER(domain)=$2 THEN 0 ELSE 1 END LIMIT 1`,
+        [userId, domain, companyName.toLowerCase()]
       );
 
       if (existing.rows.length) {
         companyId = String(existing.rows[0].id);
+        // Fill in domain if it was missing (e.g. manually created without domain)
         await pool.query(
-          `UPDATE crm_companies SET logo_url=COALESCE(logo_url,$1), updated_at=NOW() WHERE id=$2`,
-          [`https://logo.clearbit.com/${domain}`, companyId]
+          `UPDATE crm_companies SET
+             domain = COALESCE(NULLIF(domain,''), $1),
+             logo_url = COALESCE(logo_url, $2),
+             updated_at = NOW()
+           WHERE id=$3`,
+          [domain, `https://logo.clearbit.com/${domain}`, companyId]
         ).catch(() => undefined);
       } else {
         const ins = await pool.query(
