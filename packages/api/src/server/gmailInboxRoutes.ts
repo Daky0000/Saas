@@ -363,7 +363,7 @@ async function runGmailSync(
             headers: { Authorization: `Bearer ${token}` },
             params: {
               format: 'metadata',
-              metadataHeaders: 'From,To,Subject,Date',
+              metadataHeaders: ['From', 'To', 'Subject', 'Date'],
             },
             validateStatus: () => true,
             timeout: 10000,
