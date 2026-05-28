@@ -1,5 +1,5 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import { randomBytes, randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -81,19 +81,19 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
   });
 
   // GET /auth/:provider/callback — handle social login; pass-through integration callbacks to frontend SPA
-  router.get('/auth/:provider/callback', async (req: Request, res: Response) => {
+  router.get('/auth/:provider/callback', async (req: Request, res: Response, next) => {
     const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
     try {
       const { provider } = req.params as { provider: string };
       const providerKey = String(provider || '').trim().toLowerCase();
 
-      // Integration callbacks (LinkedIn/Twitter/Facebook/Instagram/Pinterest/Threads) belong to the frontend SPA path.
+      // Integration callbacks (Gmail/LinkedIn/Twitter/Facebook/etc.) belong to the SPA.
+      // Call next() so the SPA catch-all serves index.html — avoids a redirect loop when
+      // the frontend and backend share the same domain (e.g. marketing.dakyworld.com).
       if (!SOCIAL_PROVIDER_CONFIG[providerKey]) {
         const hasError = req.query['error'] || req.query['error_description'];
         if (hasError) logger.error(`OAuth callback error for ${providerKey}:`, req.query);
-        const query = new URLSearchParams(req.query as Record<string, string>).toString();
-        const target = `${FRONTEND_URL}/auth/${encodeURIComponent(providerKey)}/callback${query ? `?${query}` : ''}`;
-        return res.redirect(target);
+        return next();
       }
 
       const { code, state, error: oauthError } = req.query as Record<string, string>;
