@@ -136,7 +136,7 @@ async function getValidGmailToken(
   const newEncrypted = encryptIntegrationSecret(newToken);
   await pool.query(
     `UPDATE social_accounts
-     SET access_token_encrypted=$1, token_expires_at=$2, updated_at=NOW()
+     SET access_token_encrypted=$1, token_expires_at=$2
      WHERE user_id=$3 AND LOWER(platform)='gmail'`,
     [newEncrypted, new Date(Date.now() + ttl * 1000).toISOString(), userId]
   );
