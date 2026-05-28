@@ -766,7 +766,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       slug === 'linkedin'
                         ? '/integrations?liConnected=1'
                         : slug === 'gmail'
-                          ? '/gmail-inbox'
+                          ? '/crm/companies'
                           : '/integrations'
                     )
               }
