@@ -322,7 +322,8 @@ async function runGmailSync(
         timeout: 20000,
       });
 
-      if (listResp.status === 401) throw new Error('Gmail access token expired. Please reconnect Gmail.');
+      if (listResp.status === 401) throw new Error('Gmail token expired — please reconnect Gmail from Integrations.');
+      if (listResp.status === 403) throw new Error('Gmail read permission missing — disconnect Gmail in Integrations and reconnect to grant inbox access.');
       if (listResp.status >= 400) throw new Error(`Gmail API error ${listResp.status}`);
 
       const data = listResp.data as any;

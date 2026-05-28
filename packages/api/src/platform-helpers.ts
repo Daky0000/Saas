@@ -167,7 +167,7 @@ export const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; 
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,boards:write,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish,threads_manage_insights,threads_read_replies,threads_manage_replies,threads_location_tagging', idField: 'appId' },
-  gmail:     { authUrl: 'https://accounts.google.com/o/oauth2/v2/auth', scopes: 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile', idField: 'clientId' },
+  gmail:     { authUrl: 'https://accounts.google.com/o/oauth2/v2/auth', scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile', idField: 'clientId' },
   slack:     { authUrl: 'https://slack.com/oauth/v2/authorize', scopes: 'chat:write,channels:read,users:read,team:read', idField: 'clientId' },
   zoom:      { authUrl: 'https://zoom.us/oauth/authorize', scopes: 'meeting:read:list_meetings meeting:write:meeting user:read:user', idField: 'clientId' },
 };
