@@ -151,18 +151,30 @@ const PERSONAL_DOMAINS = new Set([
   'me.com', 'mac.com', 'aol.com', 'protonmail.com', 'pm.me',
 ]);
 
-async function syncToCRM(pool: Pool, userId: string): Promise<void> {
+type CRMSyncResult = {
+  receivedSenders: number;
+  businessDomains: number;
+  companiesCreated: number;
+  contactsCreated: number;
+  errors: string[];
+};
+
+async function syncToCRM(pool: Pool, userId: string): Promise<CRMSyncResult> {
+  const result: CRMSyncResult = { receivedSenders: 0, businessDomains: 0, companiesCreated: 0, contactsCreated: 0, errors: [] };
+
   // 1. Collect all unique senders (received only) grouped by company domain
   const sendersResult = await pool.query(
-    `SELECT DISTINCT ON (from_email)
-       from_email,
+    `SELECT DISTINCT ON (LOWER(from_email))
+       LOWER(from_email) AS from_email,
        from_name,
        LOWER(SUBSTRING(from_email FROM POSITION('@' IN from_email) + 1)) AS domain
      FROM gmail_messages
      WHERE user_id=$1 AND NOT is_sent AND from_email <> '' AND POSITION('@' IN from_email) > 0
-     ORDER BY from_email, date DESC`,
+     ORDER BY LOWER(from_email), date DESC NULLS LAST`,
     [userId]
   );
+
+  result.receivedSenders = sendersResult.rows.length;
 
   const byDomain = new Map<string, Array<{ email: string; name: string }>>();
   const personalContacts: Array<{ email: string; name: string }> = [];
@@ -178,38 +190,38 @@ async function syncToCRM(pool: Pool, userId: string): Promise<void> {
     }
   }
 
-  // 2. Upsert CRM company for each business domain
-  const companyIdByEmail = new Map<string, string>();
+  result.businessDomains = byDomain.size;
 
+  // 2. Upsert CRM company for each business domain
   for (const [domain, senders] of byDomain) {
     const companyName = domainToCompany(domain);
 
-    // Find or create company
-    const existing = await pool.query(
-      `SELECT id FROM crm_companies WHERE user_id=$1 AND LOWER(domain)=$2 LIMIT 1`,
-      [userId, domain]
-    );
-
     let companyId: string;
-    if (existing.rows.length) {
-      companyId = String(existing.rows[0].id);
-      // Update logo if missing
-      await pool.query(
-        `UPDATE crm_companies SET logo_url=COALESCE(logo_url,$1), updated_at=NOW() WHERE id=$2`,
-        [`https://logo.clearbit.com/${domain}`, companyId]
-      ).catch(() => undefined);
-    } else {
-      const ins = await pool.query(
-        `INSERT INTO crm_companies (id, user_id, name, domain, website, logo_url, custom_data, created_at, updated_at)
-         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, '{"source":"gmail_sync"}'::jsonb, NOW(), NOW())
-         RETURNING id`,
-        [userId, companyName, domain, `https://${domain}`, `https://logo.clearbit.com/${domain}`]
+    try {
+      const existing = await pool.query(
+        `SELECT id FROM crm_companies WHERE user_id=$1 AND LOWER(domain)=$2 LIMIT 1`,
+        [userId, domain]
       );
-      companyId = String(ins.rows[0].id);
-    }
 
-    for (const sender of senders) {
-      companyIdByEmail.set(sender.email.toLowerCase(), companyId);
+      if (existing.rows.length) {
+        companyId = String(existing.rows[0].id);
+        await pool.query(
+          `UPDATE crm_companies SET logo_url=COALESCE(logo_url,$1), updated_at=NOW() WHERE id=$2`,
+          [`https://logo.clearbit.com/${domain}`, companyId]
+        ).catch(() => undefined);
+      } else {
+        const ins = await pool.query(
+          `INSERT INTO crm_companies (id, user_id, name, domain, website, logo_url, custom_data, created_at, updated_at)
+           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, '{"source":"gmail_sync"}'::jsonb, NOW(), NOW())
+           RETURNING id`,
+          [userId, companyName, domain, `https://${domain}`, `https://logo.clearbit.com/${domain}`]
+        );
+        companyId = String(ins.rows[0].id);
+        result.companiesCreated++;
+      }
+    } catch (e) {
+      result.errors.push(`Company ${domain}: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
     }
 
     // 3. Upsert contacts for this company
@@ -218,52 +230,53 @@ async function syncToCRM(pool: Pool, userId: string): Promise<void> {
       const firstName = nameParts[0] || sender.email.split('@')[0];
       const lastName = nameParts.slice(1).join(' ');
 
-      const contactResult = await pool.query(
-        `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, created_at, updated_at)
-         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, NOW(), NOW())
-         ON CONFLICT (user_id, email) DO UPDATE SET
-           first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
-                              THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,
-           last_name  = CASE WHEN mailing_contacts.last_name IS NULL OR mailing_contacts.last_name = ''
-                              THEN EXCLUDED.last_name ELSE mailing_contacts.last_name END,
-           updated_at = NOW()
-         RETURNING id`,
-        [userId, sender.email.toLowerCase(), firstName, lastName]
-      );
+      try {
+        const contactResult = await pool.query(
+          `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, created_at, updated_at)
+           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, NOW(), NOW())
+           ON CONFLICT (user_id, email) DO UPDATE SET
+             first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
+                                THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,
+             last_name  = CASE WHEN mailing_contacts.last_name IS NULL OR mailing_contacts.last_name = ''
+                                THEN EXCLUDED.last_name ELSE mailing_contacts.last_name END,
+             updated_at = NOW()
+           RETURNING id`,
+          [userId, sender.email, firstName, lastName]
+        );
 
-      const contactId = String(contactResult.rows[0].id);
-
-      // Link contact → company
-      await pool.query(
-        `INSERT INTO crm_contact_companies (contact_id, company_id, is_primary, created_at)
-         VALUES ($1, $2, true, NOW())
-         ON CONFLICT (contact_id, company_id) DO NOTHING`,
-        [contactId, companyId]
-      ).catch(() => undefined);
-
-      // 4. Upsert email activities for this sender
-      const msgs = await pool.query(
-        `SELECT gmail_message_id, subject, snippet, date, is_sent
-         FROM gmail_messages
-         WHERE user_id=$1 AND (
-           (NOT is_sent AND LOWER(from_email)=$2) OR
-           (is_sent AND LOWER(to_email)=$2)
-         )`,
-        [userId, sender.email.toLowerCase()]
-      );
-
-      for (const msg of msgs.rows as any[]) {
-        const msgDate = msg.date ? new Date(msg.date) : new Date();
-        const title = String(msg.subject || '(No subject)');
-        const body = String(msg.snippet || '');
+        const contactId = String(contactResult.rows[0].id);
+        result.contactsCreated++;
 
         await pool.query(
-          `INSERT INTO crm_activities
-             (id, user_id, company_id, contact_id, type, title, body, gmail_message_id, created_at, updated_at)
-           VALUES (gen_random_uuid()::text, $1, $2, $3, 'email', $4, $5, $6, $7, NOW())
-           ON CONFLICT (gmail_message_id) WHERE gmail_message_id IS NOT NULL DO NOTHING`,
-          [userId, companyId, contactId, title, body, String(msg.gmail_message_id), msgDate]
+          `INSERT INTO crm_contact_companies (contact_id, company_id, is_primary, created_at)
+           VALUES ($1, $2, true, NOW())
+           ON CONFLICT (contact_id, company_id) DO NOTHING`,
+          [contactId, companyId]
         ).catch(() => undefined);
+
+        // 4. Upsert email activities for this sender
+        const msgs = await pool.query(
+          `SELECT gmail_message_id, subject, snippet, date, is_sent
+           FROM gmail_messages
+           WHERE user_id=$1 AND (
+             (NOT is_sent AND LOWER(from_email)=$2) OR
+             (is_sent AND LOWER(to_email)=$2)
+           )`,
+          [userId, sender.email]
+        );
+
+        for (const msg of msgs.rows as any[]) {
+          const msgDate = msg.date ? new Date(msg.date) : new Date();
+          await pool.query(
+            `INSERT INTO crm_activities
+               (id, user_id, company_id, contact_id, type, title, body, gmail_message_id, created_at, updated_at)
+             VALUES (gen_random_uuid()::text, $1, $2, $3, 'email', $4, $5, $6, $7, NOW())
+             ON CONFLICT (gmail_message_id) WHERE gmail_message_id IS NOT NULL DO NOTHING`,
+            [userId, companyId, contactId, String(msg.subject || '(No subject)'), String(msg.snippet || ''), String(msg.gmail_message_id), msgDate]
+          ).catch(() => undefined);
+        }
+      } catch (e) {
+        result.errors.push(`Contact ${sender.email}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
@@ -278,9 +291,11 @@ async function syncToCRM(pool: Pool, userId: string): Promise<void> {
          first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
                             THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,
          updated_at = NOW()`,
-      [userId, sender.email.toLowerCase(), nameParts[0] || sender.email.split('@')[0], nameParts.slice(1).join(' ')]
+      [userId, sender.email, nameParts[0] || sender.email.split('@')[0], nameParts.slice(1).join(' ')]
     ).catch(() => undefined);
   }
+
+  return result;
 }
 
 // ── Background sync ───────────────────────────────────────────────────────────
@@ -426,14 +441,18 @@ async function runGmailSync(
     );
 
     // Populate CRM companies/contacts/activities from synced emails
-    await syncToCRM(pool, userId).catch(async (e) => {
+    const crmResult = await syncToCRM(pool, userId).catch(async (e) => {
       const crmErr = e instanceof Error ? e.message : String(e);
       logger.warn({ userId, crmErr }, 'gmail_crm_sync_error');
       await pool.query(
         `UPDATE gmail_sync_state SET error_message=$1, updated_at=NOW() WHERE user_id=$2`,
         [`CRM sync failed: ${crmErr}`, userId]
       ).catch(() => undefined);
+      return null;
     });
+    if (crmResult?.errors?.length) {
+      logger.warn({ userId, errors: crmResult.errors }, 'gmail_crm_sync_partial_errors');
+    }
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Sync failed';
@@ -505,6 +524,21 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
       errorMessage: row.error_message || null,
       messageCount,
     });
+  });
+
+  // POST /gmail/sync/crm — rebuild CRM from already-stored emails (no Gmail API call)
+  router.post('/gmail/sync/crm', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+    try {
+      const result = await syncToCRM(pool, auth.userId);
+      return res.json({ success: true, ...result });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return res.status(500).json({ success: false, error: msg });
+    }
   });
 
   // GET /gmail/chats — list contacts grouped as chats

@@ -149,6 +149,13 @@ export default function CRMCompanies() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailSync, setGmailSync] = useState<{ status: string; totalFetched: number; lastSyncedAt: string | null; errorMessage?: string | null; messageCount?: number } | null>(null);
   const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [gmailCRMBuilding, setGmailCRMBuilding] = useState(false);
+  const [gmailCRMResult, setGmailCRMResult] = useState<{ receivedSenders: number; businessDomains: number; companiesCreated: number; contactsCreated: number; errors: string[]; error?: string } | null>(null);
+
+  const refreshGmailStatus = () =>
+    fetch('/api/gmail/sync/status', { headers: authHeaders() })
+      .then(r => r.json()).catch(() => null)
+      .then(data => { if (data && data.status) setGmailSync(data); });
 
   useEffect(() => {
     fetch('/api/accounts', { headers: authHeaders() })
@@ -157,13 +164,12 @@ export default function CRMCompanies() {
         const accounts: any[] = Array.isArray(data?.data) ? data.data : [];
         setGmailConnected(accounts.some((a: any) => a.platform === 'gmail' && a.connected));
       });
-    fetch('/api/gmail/sync/status', { headers: authHeaders() })
-      .then(r => r.json()).catch(() => null)
-      .then(data => { if (data && data.status) setGmailSync(data); });
+    void refreshGmailStatus();
   }, []);
 
   const triggerGmailSync = async () => {
     setGmailSyncing(true);
+    setGmailCRMResult(null);
     await fetch('/api/gmail/sync', { method: 'POST', headers: authHeaders() }).catch(() => {});
     const poll = async () => {
       const data = await fetch('/api/gmail/sync/status', { headers: authHeaders() }).then(r => r.json()).catch(() => null);
@@ -177,6 +183,16 @@ export default function CRMCompanies() {
       }
     };
     await poll();
+  };
+
+  const buildCRMFromGmail = async () => {
+    setGmailCRMBuilding(true);
+    setGmailCRMResult(null);
+    const data = await fetch('/api/gmail/sync/crm', { method: 'POST', headers: authHeaders() })
+      .then(r => r.json()).catch(() => ({ error: 'Network error' }));
+    setGmailCRMResult(data);
+    setGmailCRMBuilding(false);
+    if (data.success !== false) load();
   };
 
   const load = useCallback(async (q = search) => {
@@ -271,22 +287,46 @@ export default function CRMCompanies() {
             </div>
             <div className="flex items-center gap-2">
               {gmailConnected && (
-                <div className="flex flex-col items-end gap-0.5">
-                  <button
-                    onClick={() => void triggerGmailSync()}
-                    disabled={gmailSyncing || gmailSync?.status === 'running'}
-                    className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
-                  >
-                    {(gmailSyncing || gmailSync?.status === 'running')
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing…</>
-                      : <><RefreshCw className="w-4 h-4" /> Sync Gmail</>
-                    }
-                  </button>
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-2">
+                    {(gmailSync?.messageCount ?? 0) > 0 && (
+                      <button
+                        onClick={() => void buildCRMFromGmail()}
+                        disabled={gmailCRMBuilding}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-indigo-600 transition-colors disabled:opacity-60"
+                      >
+                        {gmailCRMBuilding
+                          ? <><Loader2 className="w-4 h-4 animate-spin" /> Building…</>
+                          : <><Building2 className="w-4 h-4" /> Build CRM from Gmail</>
+                        }
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void triggerGmailSync()}
+                      disabled={gmailSyncing || gmailSync?.status === 'running'}
+                      className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
+                    >
+                      {(gmailSyncing || gmailSync?.status === 'running')
+                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing…</>
+                        : <><RefreshCw className="w-4 h-4" /> Sync Gmail</>
+                      }
+                    </button>
+                  </div>
                   {gmailSync && (
                     <span className="text-[10px] text-gray-400">
                       {(gmailSync.messageCount ?? 0) > 0
                         ? `${(gmailSync.messageCount ?? 0).toLocaleString()} emails in DB`
                         : gmailSync.status === 'done' ? 'No emails stored — re-sync' : ''}
+                    </span>
+                  )}
+                  {gmailCRMResult && (
+                    <span className={`text-[10px] ${gmailCRMResult.error || gmailCRMResult.errors?.length ? 'text-red-500' : 'text-emerald-600'}`}>
+                      {gmailCRMResult.error
+                        ? `Error: ${gmailCRMResult.error}`
+                        : gmailCRMResult.errors?.length
+                          ? `${gmailCRMResult.companiesCreated} companies, ${gmailCRMResult.contactsCreated} contacts — errors: ${gmailCRMResult.errors.slice(0, 2).join('; ')}`
+                          : `✓ ${gmailCRMResult.companiesCreated} companies + ${gmailCRMResult.contactsCreated} contacts from ${gmailCRMResult.receivedSenders} senders (${gmailCRMResult.businessDomains} business domains)`
+                      }
                     </span>
                   )}
                 </div>
