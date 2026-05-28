@@ -36,6 +36,22 @@ function extractDomain(email: string): string {
   return at >= 0 ? email.slice(at + 1).toLowerCase() : '';
 }
 
+// Strip subdomains to get the registrable root domain.
+// E.g. updates.hostinger.com → hostinger.com, mail.google.com → google.com
+// Handles country SLDs: hostinger.co.uk → hostinger.co.uk (3 parts)
+const COUNTRY_SLDS = new Set(['co','com','org','net','gov','edu','ac','or','ne','me']);
+function rootDomain(domain: string): string {
+  if (!domain) return domain;
+  const parts = domain.toLowerCase().split('.');
+  if (parts.length <= 2) return domain;
+  const tld = parts[parts.length - 1];
+  const sld = parts[parts.length - 2];
+  if (tld.length === 2 && COUNTRY_SLDS.has(sld)) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.slice(-2).join('.');
+}
+
 function domainToCompany(domain: string): string {
   if (!domain) return '';
   const knownPersonal: Record<string, string> = {
@@ -180,9 +196,10 @@ async function syncToCRM(pool: Pool, userId: string): Promise<CRMSyncResult> {
   const personalContacts: Array<{ email: string; name: string }> = [];
 
   for (const row of sendersResult.rows as any[]) {
-    const domain = String(row.domain || '').trim();
-    if (!domain) continue;
-    if (PERSONAL_DOMAINS.has(domain)) {
+    const fullDomain = String(row.domain || '').trim();
+    if (!fullDomain) continue;
+    const domain = rootDomain(fullDomain); // collapse subdomains → root domain
+    if (PERSONAL_DOMAINS.has(domain) || PERSONAL_DOMAINS.has(fullDomain)) {
       personalContacts.push({ email: String(row.from_email), name: String(row.from_name || '') });
     } else {
       if (!byDomain.has(domain)) byDomain.set(domain, []);
