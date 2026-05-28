@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Building2, Plus, Search, Globe, Phone, Mail, Users, TrendingUp, X, Edit2, Trash2, ChevronRight, DollarSign, Link, MessageSquare, PhoneCall, Calendar, FileText, Clock, ArrowUpRight, ArrowDownLeft, RefreshCw, Loader2 } from 'lucide-react';
+import {
+  Building2, Plus, Search, Globe, Mail, Users, X, Trash2,
+  MessageSquare, PhoneCall, Calendar, FileText, Clock,
+  ArrowUpRight, ArrowDownLeft, RefreshCw, Loader2, MoreHorizontal,
+  ChevronDown, ChevronRight, StickyNote,
+} from 'lucide-react';
 
 const API = '/api/crm';
 const tok = () => localStorage.getItem('auth_token') ?? '';
@@ -64,15 +69,76 @@ interface Activity {
 const INDUSTRY_OPTIONS = ['Technology','Finance','Healthcare','Retail','Manufacturing','Education','Media','Real Estate','Consulting','Other'];
 const SIZE_OPTIONS = ['1-10','11-50','51-200','201-500','501-1000','1000+'];
 
+const AVATAR_PALETTE = [
+  { bg: 'bg-violet-100', text: 'text-violet-700' },
+  { bg: 'bg-sky-100',    text: 'text-sky-700'    },
+  { bg: 'bg-emerald-100',text: 'text-emerald-700' },
+  { bg: 'bg-amber-100',  text: 'text-amber-700'  },
+  { bg: 'bg-rose-100',   text: 'text-rose-700'   },
+  { bg: 'bg-indigo-100', text: 'text-indigo-700' },
+  { bg: 'bg-teal-100',   text: 'text-teal-700'   },
+  { bg: 'bg-orange-100', text: 'text-orange-700' },
+];
+
+function paletteFor(name: string) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+}
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return (parts.length >= 2 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2)).toUpperCase();
+}
+
+function Avatar({ name, round = false, size = 'w-9 h-9', textSize = 'text-sm' }: { name: string; round?: boolean; size?: string; textSize?: string }) {
+  const { bg, text } = paletteFor(name);
+  return (
+    <div className={`${size} ${round ? 'rounded-full' : 'rounded-lg'} ${bg} ${text} flex items-center justify-center flex-shrink-0 font-semibold ${textSize}`}>
+      {initials(name)}
+    </div>
+  );
+}
+
+function CompanyLogo({ name, domain, size = 'w-9 h-9', round = false }: { name: string; domain: string | null; size?: string; round?: boolean }) {
+  const [state, setState] = React.useState<'try' | 'ok' | 'fallback'>('try');
+  const url = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64` : null;
+
+  React.useEffect(() => { setState(url ? 'try' : 'fallback'); }, [url]);
+
+  if (!url || state === 'fallback') return <Avatar name={name} round={round} size={size} />;
+
+  return (
+    <>
+      <img
+        src={url}
+        alt=""
+        className={`${size} ${round ? 'rounded-full' : 'rounded-lg'} object-contain bg-white border border-gray-100 p-0.5 flex-shrink-0 ${state === 'ok' ? '' : 'hidden'}`}
+        onLoad={e => {
+          const img = e.currentTarget;
+          if (img.naturalWidth < 20) setState('fallback');
+          else setState('ok');
+        }}
+        onError={() => setState('fallback')}
+      />
+      {state === 'try' && <Avatar name={name} round={round} size={size} />}
+    </>
+  );
+}
+
+function formatCurrency(value: number, currency = 'USD') {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value);
+}
+
 function ActivityIcon({ type }: { type: Activity['type'] }) {
   const cfg: Record<Activity['type'], { icon: React.ReactNode; bg: string; color: string }> = {
-    email:    { icon: <Mail className="w-3.5 h-3.5" />,        bg: 'bg-blue-50',   color: 'text-blue-500' },
-    call:     { icon: <PhoneCall className="w-3.5 h-3.5" />,   bg: 'bg-green-50',  color: 'text-green-500' },
-    note:     { icon: <FileText className="w-3.5 h-3.5" />,    bg: 'bg-yellow-50', color: 'text-yellow-600' },
-    meeting:  { icon: <Calendar className="w-3.5 h-3.5" />,    bg: 'bg-purple-50', color: 'text-purple-500' },
-    task:     { icon: <Clock className="w-3.5 h-3.5" />,       bg: 'bg-gray-100',  color: 'text-gray-500' },
-    whatsapp: { icon: <MessageSquare className="w-3.5 h-3.5" />,bg: 'bg-emerald-50',color: 'text-emerald-500' },
-    sms:      { icon: <MessageSquare className="w-3.5 h-3.5" />,bg: 'bg-gray-100',  color: 'text-gray-500' },
+    email:    { icon: <Mail className="w-3.5 h-3.5" />,         bg: 'bg-blue-50',    color: 'text-blue-500'   },
+    call:     { icon: <PhoneCall className="w-3.5 h-3.5" />,    bg: 'bg-green-50',   color: 'text-green-500'  },
+    note:     { icon: <FileText className="w-3.5 h-3.5" />,     bg: 'bg-yellow-50',  color: 'text-yellow-600' },
+    meeting:  { icon: <Calendar className="w-3.5 h-3.5" />,     bg: 'bg-purple-50',  color: 'text-purple-500' },
+    task:     { icon: <Clock className="w-3.5 h-3.5" />,        bg: 'bg-gray-100',   color: 'text-gray-500'   },
+    whatsapp: { icon: <MessageSquare className="w-3.5 h-3.5" />,bg: 'bg-emerald-50', color: 'text-emerald-500'},
+    sms:      { icon: <MessageSquare className="w-3.5 h-3.5" />,bg: 'bg-gray-100',   color: 'text-gray-500'   },
   };
   const { icon, bg, color } = cfg[type] ?? cfg.note;
   return <div className={`w-7 h-7 rounded-full ${bg} ${color} flex items-center justify-center flex-shrink-0`}>{icon}</div>;
@@ -86,9 +152,9 @@ function ActivityItem({ act }: { act: Activity }) {
   const when = new Date(act.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const contactName = [act.contact_first_name, act.contact_last_name].filter(Boolean).join(' ') || act.contact_email || '';
   return (
-    <div className="flex gap-3 group">
+    <div className="flex gap-3 py-4 border-b border-gray-100 last:border-0">
       <ActivityIcon type={act.type} />
-      <div className="flex-1 min-w-0 pb-4 border-b border-gray-50 last:border-0">
+      <div className="flex-1 min-w-0">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -120,34 +186,16 @@ function ActivityItem({ act }: { act: Activity }) {
   );
 }
 
-function CompanyInitials({ name, size = 'w-10 h-10', textSize = 'text-sm' }: { name: string; size?: string; textSize?: string }) {
-  const parts = name.trim().split(' ');
-  const initials = parts.length >= 2 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2);
-  return (
-    <div className={`${size} rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0`}>
-      <span className={`${textSize} font-semibold text-indigo-600`}>{initials.toUpperCase()}</span>
-    </div>
-  );
-}
-
-function CompanyLogo({ name, logoUrl, size = 'w-10 h-10', textSize = 'text-sm' }: { name: string; logoUrl: string | null; size?: string; textSize?: string }) {
-  const [failed, setFailed] = React.useState(false);
-  if (logoUrl && !failed) {
-    return (
-      <img
-        src={logoUrl}
-        alt=""
-        className={`${size} rounded-lg object-contain bg-white border border-gray-100 flex-shrink-0 p-0.5`}
-        onError={() => setFailed(true)}
-      />
-    );
-  }
-  return <CompanyInitials name={name} size={size} textSize={textSize} />;
-}
-
-function formatCurrency(value: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value);
-}
+type ActivityTab = 'All activities' | 'Notes' | 'Emails' | 'Calls' | 'Tasks' | 'Meetings';
+const ACTIVITY_TABS: ActivityTab[] = ['All activities', 'Notes', 'Emails', 'Calls', 'Tasks', 'Meetings'];
+const ACTIVITY_TAB_TYPE: Record<ActivityTab, Activity['type'] | null> = {
+  'All activities': null,
+  'Notes': 'note',
+  'Emails': 'email',
+  'Calls': 'call',
+  'Tasks': 'task',
+  'Meetings': 'meeting',
+};
 
 export default function CRMCompanies() {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -168,6 +216,10 @@ export default function CRMCompanies() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailSync, setGmailSync] = useState<{ status: string; totalFetched: number; lastSyncedAt: string | null; errorMessage?: string | null; messageCount?: number } | null>(null);
   const [gmailSyncing, setGmailSyncing] = useState(false);
+
+  const [activityTab, setActivityTab] = useState<ActivityTab>('All activities');
+  const [contactsExpanded, setContactsExpanded] = useState(true);
+  const [dealsExpanded, setDealsExpanded] = useState(true);
 
   useEffect(() => {
     fetch('/api/accounts', { headers: authHeaders() })
@@ -224,9 +276,7 @@ export default function CRMCompanies() {
   }, []);
 
   useEffect(() => { if (tab === 'contacts') void loadContacts(); }, [tab, loadContacts]);
-
   useEffect(() => { load(); }, []);
-
   useEffect(() => {
     const t = setTimeout(() => load(search), 300);
     return () => clearTimeout(t);
@@ -234,6 +284,7 @@ export default function CRMCompanies() {
 
   const openDetail = async (company: Company) => {
     setSelected(company as any);
+    setActivityTab('All activities');
     const [detailRes, activityRes] = await Promise.all([
       fetch(`${API}/companies/${company.id}`, { headers: authHeaders() }),
       fetch(`${API}/activities?company_id=${company.id}&limit=100`, { headers: authHeaders() }),
@@ -290,295 +341,446 @@ export default function CRMCompanies() {
     load();
   };
 
+  const filteredActivities = (selected?.activities ?? []).filter(a => {
+    const t = ACTIVITY_TAB_TYPE[activityTab];
+    return t === null || a.type === t;
+  });
+
+  const isRunning = gmailSyncing || gmailSync?.status === 'running';
+  const pct = Math.min(Math.round(((gmailSync?.totalFetched ?? 0) / 2000) * 100), 100);
+
   return (
-    <div className="flex h-full bg-gray-50">
-      {/* Left: List */}
-      <div className={`flex flex-col ${selected ? 'w-[420px] border-r border-gray-200' : 'flex-1'} bg-white`}>
+    <div className="flex h-full bg-gray-50 overflow-hidden">
+
+      {/* ── Left panel: list ── */}
+      <div className={`flex flex-col ${selected ? 'w-[360px]' : 'flex-1'} bg-white border-r border-gray-100 flex-shrink-0`}>
+
         {/* Header */}
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-              <button onClick={() => setTab('companies')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === 'companies' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                Companies <span className="ml-1 text-xs text-gray-400">{total}</span>
+        <div className="px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            {/* Tab switcher */}
+            <div className="flex items-center gap-0 border border-gray-200 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setTab('companies')}
+                className={`px-3.5 py-1.5 text-sm font-medium transition-colors ${tab === 'companies' ? 'bg-[#5b6cf9] text-white' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+              >
+                Companies <span className={`ml-0.5 text-xs ${tab === 'companies' ? 'text-indigo-200' : 'text-gray-400'}`}>{total || ''}</span>
               </button>
-              <button onClick={() => setTab('contacts')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === 'contacts' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                Contacts <span className="ml-1 text-xs text-gray-400">{contacts.length || ''}</span>
+              <button
+                onClick={() => setTab('contacts')}
+                className={`px-3.5 py-1.5 text-sm font-medium border-l border-gray-200 transition-colors ${tab === 'contacts' ? 'bg-[#5b6cf9] text-white' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+              >
+                Contacts <span className={`ml-0.5 text-xs ${tab === 'contacts' ? 'text-indigo-200' : 'text-gray-400'}`}>{contacts.length || ''}</span>
               </button>
             </div>
-            <div className="flex items-center gap-2">
+
+            {/* Actions */}
+            <div className="flex items-center gap-1.5">
               {gmailConnected && (
                 <button
                   onClick={() => void triggerGmailSync()}
-                  disabled={gmailSyncing || gmailSync?.status === 'running'}
-                  className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
+                  disabled={isRunning}
+                  className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
                 >
-                  {(gmailSyncing || gmailSync?.status === 'running')
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing…</>
-                    : <><RefreshCw className="w-4 h-4" /> Sync Gmail</>
-                  }
+                  {isRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  {isRunning ? 'Syncing…' : 'Sync Gmail'}
                 </button>
               )}
-              <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
-                <Plus className="w-4 h-4" />
-                Add Company
+              <button
+                onClick={openCreate}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-[#5b6cf9] text-white rounded-lg text-xs font-medium hover:bg-[#4a5be8] transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add
               </button>
             </div>
           </div>
+
+          {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
             <input
-              className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
-              placeholder="Search companies..."
+              className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+              placeholder={tab === 'companies' ? 'Search companies…' : 'Search contacts…'}
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
         </div>
 
-        {/* Gmail sync progress / error banner */}
-        {gmailConnected && (gmailSyncing || gmailSync?.status === 'running' || gmailSync?.status === 'error') && (() => {
-          const isRunning = gmailSyncing || gmailSync?.status === 'running';
-          const pct = Math.min(Math.round(((gmailSync?.totalFetched ?? 0) / 2000) * 100), 100);
-          return (
-            <div className={`shrink-0 border-b px-5 py-3 ${isRunning ? 'bg-indigo-50 border-indigo-100' : 'bg-red-50 border-red-100'}`}>
-              {isRunning ? (
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-4 h-4 text-[#5b6cf9] animate-spin flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800">Scanning Gmail for companies…</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <div className="flex-1 h-1.5 rounded-full bg-indigo-100 overflow-hidden">
-                        <div className="h-full rounded-full bg-[#5b6cf9] transition-all" style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">{gmailSync?.totalFetched ?? 0} / 2,000</span>
+        {/* Gmail sync banner */}
+        {gmailConnected && (isRunning || gmailSync?.status === 'error') && (
+          <div className={`shrink-0 border-b px-4 py-2.5 ${isRunning ? 'bg-indigo-50 border-indigo-100' : 'bg-red-50 border-red-100'}`}>
+            {isRunning ? (
+              <div className="flex items-center gap-2.5">
+                <Loader2 className="w-3.5 h-3.5 text-[#5b6cf9] animate-spin flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-700">Scanning Gmail for companies…</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="flex-1 h-1 rounded-full bg-indigo-100 overflow-hidden">
+                      <div className="h-full rounded-full bg-[#5b6cf9] transition-all" style={{ width: `${pct}%` }} />
                     </div>
+                    <span className="text-[10px] text-gray-400 flex-shrink-0">{pct}%</span>
                   </div>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Mail className="w-4 h-4 flex-shrink-0 text-red-500" />
-                    <p className="text-sm text-gray-700 truncate">
-                      <span className="font-medium text-red-700">Sync failed</span>
-                      <span className="text-red-600"> — {gmailSync?.errorMessage || 'unknown error'}</span>
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => void triggerGmailSync()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-white text-xs font-medium rounded-lg flex-shrink-0 bg-red-500 hover:bg-red-600 transition-colors"
-                  >
-                    <RefreshCw className="w-3 h-3" /> Retry
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })()}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-red-600 font-medium truncate">Sync failed — {gmailSync?.errorMessage || 'unknown error'}</p>
+                <button onClick={() => void triggerGmailSync()} className="text-xs px-2 py-1 bg-red-500 text-white rounded-md flex-shrink-0 hover:bg-red-600">Retry</button>
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* List */}
+        {/* List body */}
         <div className="flex-1 overflow-y-auto">
           {tab === 'companies' ? (
-            loading ? (
-              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading...</div>
-            ) : companies.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-                <Building2 className="w-12 h-12 text-gray-200 mb-3" />
-                <p className="text-gray-500 font-medium">No companies yet</p>
-                <p className="text-gray-400 text-sm mt-1">Sync Gmail to auto-create companies from business email domains</p>
-                <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Company</button>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {companies.map(company => (
-                  <div
-                    key={company.id}
-                    onClick={() => openDetail(company)}
-                    className={`flex items-center gap-3 px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors ${selected?.id === company.id ? 'bg-indigo-50' : ''}`}
-                  >
-                    <CompanyLogo name={company.name} logoUrl={company.logo_url} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900 text-sm truncate">{company.name}</span>
-                        {company.industry && <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{company.industry}</span>}
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        {company.domain && <span className="text-xs text-gray-400 flex items-center gap-1"><Globe className="w-3 h-3" />{company.domain}</span>}
-                        {company.city && <span className="text-xs text-gray-400">{company.city}{company.country ? `, ${company.country}` : ''}</span>}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 flex-shrink-0 text-right">
-                      <div>
-                        <p className="text-xs text-gray-400">Contacts</p>
-                        <p className="text-sm font-medium text-gray-700">{company.contact_count}</p>
-                      </div>
-                      {company.open_deals_value > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-400">Pipeline</p>
-                          <p className="text-sm font-medium text-emerald-600">{formatCurrency(company.open_deals_value)}</p>
-                        </div>
-                      )}
-                      <ChevronRight className="w-4 h-4 text-gray-300" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          ) : (
-            /* Contacts tab */
-            loadingContacts ? (
-              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading contacts…</div>
-            ) : contacts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-                <Users className="w-12 h-12 text-gray-200 mb-3" />
-                <p className="text-gray-500 font-medium">No contacts yet</p>
-                <p className="text-gray-400 text-sm mt-1">Sync Gmail to import personal contacts (gmail.com, yahoo.com, etc.)</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {contacts.map(c => {
-                  const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email.split('@')[0];
-                  const initials = name.slice(0, 2).toUpperCase();
-                  return (
-                    <div key={c.id} className="flex items-center gap-3 px-6 py-4">
-                      <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
-                        <span className="text-sm font-semibold text-slate-500">{initials}</span>
-                      </div>
+            <>
+              {/* Table column headers (only when full-width) */}
+              {!selected && (
+                <div className="flex items-center px-5 py-2 border-b border-gray-100 bg-gray-50 sticky top-0 z-10">
+                  <div className="flex-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Name</div>
+                  <div className="w-32 text-[11px] font-semibold text-gray-400 uppercase tracking-wide hidden lg:block">Domain</div>
+                  <div className="w-24 text-[11px] font-semibold text-gray-400 uppercase tracking-wide hidden xl:block">City</div>
+                  <div className="w-20 text-[11px] font-semibold text-gray-400 uppercase tracking-wide text-right">Contacts</div>
+                  <div className="w-24 text-[11px] font-semibold text-gray-400 uppercase tracking-wide text-right hidden lg:block">Pipeline</div>
+                </div>
+              )}
+
+              {loading ? (
+                <div className="flex items-center justify-center py-16 text-gray-400 text-sm gap-2"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>
+              ) : companies.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                  <Building2 className="w-10 h-10 text-gray-200 mb-3" />
+                  <p className="text-gray-500 font-medium text-sm">No companies yet</p>
+                  <p className="text-gray-400 text-xs mt-1">Sync Gmail to auto-create companies from business email domains</p>
+                  <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Company</button>
+                </div>
+              ) : selected ? (
+                /* Narrow list when detail open */
+                <div className="divide-y divide-gray-50">
+                  {companies.map(company => (
+                    <div
+                      key={company.id}
+                      onClick={() => openDetail(company)}
+                      className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${selected?.id === company.id ? 'bg-indigo-50 border-r-2 border-[#5b6cf9]' : ''}`}
+                    >
+                      <CompanyLogo name={company.name} domain={company.domain} size="w-8 h-8" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
-                        <p className="text-xs text-gray-400 truncate">{c.email}</p>
+                        <p className="text-sm font-medium text-gray-900 truncate">{company.name}</p>
+                        <p className="text-xs text-gray-400 truncate">{company.domain || company.industry || '—'}</p>
                       </div>
-                      <span className="text-[11px] text-gray-300 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-full">{c.domain}</span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{company.contact_count}</span>
                     </div>
-                  );
-                })}
-              </div>
-            )
+                  ))}
+                </div>
+              ) : (
+                /* Full-width table rows */
+                <div className="divide-y divide-gray-50">
+                  {companies.map(company => (
+                    <div
+                      key={company.id}
+                      onClick={() => openDetail(company)}
+                      className="flex items-center px-5 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors group"
+                    >
+                      <div className="flex-1 flex items-center gap-3 min-w-0">
+                        <CompanyLogo name={company.name} domain={company.domain} size="w-8 h-8" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate group-hover:text-[#5b6cf9] transition-colors">{company.name}</p>
+                          {company.industry && <p className="text-xs text-gray-400 truncate">{company.industry}</p>}
+                        </div>
+                      </div>
+                      <div className="w-32 hidden lg:block">
+                        {company.domain && (
+                          <span className="text-xs text-gray-500 flex items-center gap-1 truncate">
+                            <Globe className="w-3 h-3 text-gray-300 flex-shrink-0" />{company.domain}
+                          </span>
+                        )}
+                      </div>
+                      <div className="w-24 hidden xl:block">
+                        <span className="text-xs text-gray-500 truncate">{company.city || '—'}</span>
+                      </div>
+                      <div className="w-20 text-right">
+                        <span className="text-sm text-gray-700 font-medium">{company.contact_count}</span>
+                      </div>
+                      <div className="w-24 text-right hidden lg:block">
+                        {company.open_deals_value > 0
+                          ? <span className="text-sm font-medium text-emerald-600">{formatCurrency(company.open_deals_value)}</span>
+                          : <span className="text-sm text-gray-300">—</span>
+                        }
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Footer */}
+              {companies.length > 0 && (
+                <div className="px-5 py-2 border-t border-gray-100 bg-gray-50 text-xs text-gray-400 sticky bottom-0">
+                  {total} {total === 1 ? 'company' : 'companies'} in view
+                </div>
+              )}
+            </>
+          ) : (
+            /* ── Contacts tab ── */
+            <>
+              {!selected && (
+                <div className="flex items-center px-5 py-2 border-b border-gray-100 bg-gray-50 sticky top-0 z-10">
+                  <div className="flex-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Name</div>
+                  <div className="w-48 text-[11px] font-semibold text-gray-400 uppercase tracking-wide hidden lg:block">Email</div>
+                  <div className="w-28 text-[11px] font-semibold text-gray-400 uppercase tracking-wide hidden xl:block">Domain</div>
+                </div>
+              )}
+              {loadingContacts ? (
+                <div className="flex items-center justify-center py-16 text-gray-400 text-sm gap-2"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>
+              ) : contacts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                  <Users className="w-10 h-10 text-gray-200 mb-3" />
+                  <p className="text-gray-500 font-medium text-sm">No contacts yet</p>
+                  <p className="text-gray-400 text-xs mt-1">Sync Gmail to import personal contacts</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {contacts.map(c => {
+                    const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email.split('@')[0];
+                    const { bg, text } = paletteFor(c.email);
+                    const ini = initials(name);
+                    return (
+                      <div key={c.id} className={`flex items-center px-5 py-3.5 hover:bg-gray-50 transition-colors ${selected ? 'gap-3' : 'gap-3'}`}>
+                        <div className={`w-8 h-8 rounded-full ${bg} ${text} flex items-center justify-center flex-shrink-0 font-semibold text-xs`}>{ini}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
+                          {selected && <p className="text-xs text-gray-400 truncate">{c.email}</p>}
+                        </div>
+                        {!selected && (
+                          <>
+                            <div className="w-48 hidden lg:block">
+                              <p className="text-xs text-gray-500 truncate">{c.email}</p>
+                            </div>
+                            <div className="w-28 hidden xl:block">
+                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{c.domain}</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {contacts.length > 0 && (
+                <div className="px-5 py-2 border-t border-gray-100 bg-gray-50 text-xs text-gray-400 sticky bottom-0">
+                  {contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'} in view
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {/* Right: Detail panel */}
+      {/* ── Right: HubSpot-style 3-column detail ── */}
       {selected && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="px-8 py-6 border-b border-gray-100 bg-white">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-4">
-                <CompanyLogo name={selected.name} logoUrl={selected.logo_url} size="w-14 h-14" textSize="text-lg" />
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900">{selected.name}</h2>
-                  <div className="flex items-center gap-3 mt-1 flex-wrap">
-                    {selected.industry && <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium">{selected.industry}</span>}
-                    {selected.size && <span className="text-xs text-gray-500">{selected.size} employees</span>}
-                    {selected.city && <span className="text-xs text-gray-500">{selected.city}{selected.country ? `, ${selected.country}` : ''}</span>}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => openEdit(selected)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"><Edit2 className="w-4 h-4" /></button>
-                <button onClick={() => deleteCompany(selected.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 className="w-4 h-4" /></button>
-                <button onClick={() => setSelected(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-4 h-4" /></button>
-              </div>
-            </div>
+        <div className="flex-1 flex overflow-hidden min-w-0">
 
-            {/* Stats row */}
-            <div className="grid grid-cols-3 gap-4 mt-6">
-              {[
-                { icon: Users, label: 'Contacts', value: selected.contact_count || 0, color: 'text-blue-600 bg-blue-50' },
-                { icon: TrendingUp, label: 'Open Deals', value: selected.open_deals_count || 0, color: 'text-violet-600 bg-violet-50' },
-                { icon: DollarSign, label: 'Pipeline Value', value: formatCurrency(selected.open_deals_value || 0), color: 'text-emerald-600 bg-emerald-50' },
-              ].map(({ icon: Icon, label, value, color }) => (
-                <div key={label} className="bg-gray-50 rounded-xl p-4">
-                  <div className={`w-8 h-8 rounded-lg ${color} flex items-center justify-center mb-2`}><Icon className="w-4 h-4" /></div>
-                  <p className="text-xl font-semibold text-gray-900">{value}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+          {/* Left sidebar */}
+          <div className="w-64 flex-shrink-0 border-r border-gray-100 overflow-y-auto bg-white">
+            <div className="p-5 space-y-5">
+              {/* Logo + name + website */}
+              <div className="flex flex-col items-center text-center">
+                <CompanyLogo name={selected.name} domain={selected.domain} size="w-16 h-16" />
+                <h2 className="mt-3 text-base font-semibold text-gray-900 leading-snug">{selected.name}</h2>
+                {selected.website && (
+                  <a href={selected.website} target="_blank" rel="noreferrer" className="text-xs text-[#5b6cf9] hover:underline mt-0.5 truncate max-w-full">
+                    {selected.domain || selected.website}
+                  </a>
+                )}
+                {!selected.website && selected.domain && (
+                  <span className="text-xs text-gray-400 mt-0.5">{selected.domain}</span>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              <div className="grid grid-cols-3 gap-1">
+                {[
+                  { icon: StickyNote, label: 'Note' },
+                  { icon: Mail,       label: 'Email' },
+                  { icon: PhoneCall,  label: 'Call' },
+                  { icon: Clock,      label: 'Task' },
+                  { icon: Calendar,   label: 'Meeting' },
+                  { icon: MoreHorizontal, label: 'More' },
+                ].map(({ icon: Icon, label }) => (
+                  <button key={label} className="flex flex-col items-center gap-1 py-2 px-1 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors">
+                    <div className="w-8 h-8 rounded-full border border-gray-200 bg-white flex items-center justify-center">
+                      <Icon className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[10px] font-medium">{label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Key Information */}
+              <div className="border-t border-gray-100 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Key Information</p>
+                  <button onClick={() => openEdit(selected)} className="text-[11px] text-[#5b6cf9] hover:underline">Edit</button>
                 </div>
-              ))}
+                {[
+                  { label: 'Industry',      value: selected.industry  },
+                  { label: 'Company size',  value: selected.size ? `${selected.size} employees` : null },
+                  { label: 'City',          value: selected.city      },
+                  { label: 'Country',       value: selected.country   },
+                  { label: 'Phone',         value: selected.phone     },
+                  { label: 'Email',         value: selected.email     },
+                  { label: 'Domain',        value: selected.domain    },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <p className="text-[11px] text-gray-400">{label}</p>
+                    <p className="text-xs text-gray-700 mt-0.5 truncate">{value || <span className="text-gray-300">—</span>}</p>
+                  </div>
+                ))}
+                {selected.description && (
+                  <div>
+                    <p className="text-[11px] text-gray-400">Description</p>
+                    <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{selected.description}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Delete */}
+              <div className="border-t border-gray-100 pt-4 flex gap-2">
+                <button
+                  onClick={() => deleteCompany(selected.id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 border border-gray-200 text-red-400 text-xs font-medium rounded-lg hover:bg-red-50 hover:border-red-200 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+                <button
+                  onClick={() => setSelected(null)}
+                  className="p-1.5 border border-gray-200 text-gray-400 rounded-lg hover:bg-gray-50"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-8 space-y-6">
-            {/* Contact info */}
-            <div className="bg-white rounded-xl border border-gray-100 p-5">
-              <h3 className="text-sm font-semibold text-gray-900 mb-4">Contact Information</h3>
-              <div className="grid grid-cols-2 gap-4">
-                {selected.website && <a href={selected.website} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-[#5b6cf9] hover:underline"><Globe className="w-4 h-4" />{selected.website}</a>}
-                {selected.email && <a href={`mailto:${selected.email}`} className="flex items-center gap-2 text-sm text-gray-600"><Mail className="w-4 h-4" />{selected.email}</a>}
-                {selected.phone && <span className="flex items-center gap-2 text-sm text-gray-600"><Phone className="w-4 h-4" />{selected.phone}</span>}
-                {selected.domain && <span className="flex items-center gap-2 text-sm text-gray-600"><Link className="w-4 h-4" />{selected.domain}</span>}
+          {/* Center: Activity timeline */}
+          <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 min-w-0">
+            {/* Activity tabs */}
+            <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 overflow-x-auto">
+              <div className="flex">
+                {ACTIVITY_TABS.map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setActivityTab(t)}
+                    className={`px-3 py-3.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${activityTab === t ? 'border-[#5b6cf9] text-[#5b6cf9]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                  >
+                    {t}
+                    {t !== 'All activities' && (() => {
+                      const typeKey = ACTIVITY_TAB_TYPE[t];
+                      const cnt = typeKey ? (selected.activities?.filter(a => a.type === typeKey).length ?? 0) : 0;
+                      return cnt > 0 ? <span className="ml-1 text-xs text-gray-400">({cnt})</span> : null;
+                    })()}
+                  </button>
+                ))}
               </div>
-              {selected.description && <p className="text-sm text-gray-500 mt-4 border-t border-gray-50 pt-4">{selected.description}</p>}
             </div>
 
-            {/* Contacts */}
-            {(selected.contacts?.length ?? 0) > 0 && (
-              <div className="bg-white rounded-xl border border-gray-100 p-5">
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">People ({selected.contacts!.length})</h3>
-                <div className="space-y-2">
-                  {selected.contacts!.map(c => (
-                    <div key={c.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                      <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-medium text-gray-600">{(c.first_name?.[0] || c.email[0]).toUpperCase()}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800">{[c.first_name, c.last_name].filter(Boolean).join(' ') || c.email}</p>
-                        <p className="text-xs text-gray-400">{c.email}{c.role ? ` · ${c.role}` : ''}</p>
-                      </div>
-                      {c.is_primary && <span className="text-xs bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">Primary</span>}
-                    </div>
-                  ))}
+            {/* Activity list */}
+            <div className="flex-1 overflow-y-auto px-6 py-2">
+              {filteredActivities.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                    <Clock className="w-5 h-5 text-gray-300" />
+                  </div>
+                  <p className="text-sm text-gray-400">No {activityTab === 'All activities' ? 'activity' : activityTab.toLowerCase()} yet</p>
+                  {activityTab === 'All activities' && (
+                    <p className="text-xs text-gray-300 mt-1">Sync Gmail to see email history here</p>
+                  )}
                 </div>
-              </div>
-            )}
-
-            {/* Deals */}
-            {(selected.deals?.length ?? 0) > 0 && (
-              <div className="bg-white rounded-xl border border-gray-100 p-5">
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">Deals ({selected.deals!.length})</h3>
-                <div className="space-y-2">
-                  {selected.deals!.map(d => (
-                    <div key={d.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                      {d.stage_color && <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.stage_color }} />}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800">{d.title}</p>
-                        {d.stage_name && <p className="text-xs text-gray-400">{d.stage_name}</p>}
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-sm font-medium text-gray-800">{formatCurrency(d.value, d.currency)}</p>
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${d.status === 'won' ? 'bg-emerald-50 text-emerald-600' : d.status === 'lost' ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-gray-500'}`}>{d.status}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Activity Timeline */}
-            <div className="bg-white rounded-xl border border-gray-100 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-gray-900">
-                  Activity
-                  {(selected.activities?.length ?? 0) > 0 && <span className="ml-1.5 text-xs text-gray-400 font-normal">({selected.activities!.length})</span>}
-                </h3>
-                {(selected.activities?.filter(a => a.type === 'email').length ?? 0) > 0 && (
-                  <span className="text-xs text-gray-400 flex items-center gap-1">
-                    <Mail className="w-3 h-3" />
-                    {selected.activities!.filter(a => a.type === 'email').length} email{selected.activities!.filter(a => a.type === 'email').length !== 1 ? 's' : ''} from Gmail
-                  </span>
-                )}
-              </div>
-              {(selected.activities?.length ?? 0) === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">No activity yet. Sync your Gmail to see email history here.</p>
               ) : (
-                <div className="space-y-0">
-                  {selected.activities!.map(act => <ActivityItem key={act.id} act={act} />)}
+                <div>
+                  {filteredActivities.map(act => <ActivityItem key={act.id} act={act} />)}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Right panel: Contacts, Deals, etc. */}
+          <div className="w-56 flex-shrink-0 border-l border-gray-100 overflow-y-auto bg-white">
+            {/* Contacts */}
+            <div className="border-b border-gray-100">
+              <button
+                onClick={() => setContactsExpanded(e => !e)}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <span>Contacts ({selected.contacts?.length ?? selected.contact_count ?? 0})</span>
+                {contactsExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+              </button>
+              {contactsExpanded && (
+                <div className="px-4 pb-3 space-y-2">
+                  {(selected.contacts?.length ?? 0) === 0 ? (
+                    <p className="text-xs text-gray-400 py-1">No contacts yet</p>
+                  ) : selected.contacts!.map(c => {
+                    const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email;
+                    const ini = (c.first_name?.[0] || c.email[0]).toUpperCase();
+                    const { bg, text } = paletteFor(c.email);
+                    return (
+                      <div key={c.id} className="flex items-center gap-2 py-1">
+                        <div className={`w-7 h-7 rounded-full ${bg} ${text} flex items-center justify-center text-xs font-semibold flex-shrink-0`}>{ini}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-800 truncate">{name}</p>
+                          {c.role && <p className="text-[10px] text-gray-400 truncate">{c.role}</p>}
+                          {c.is_primary && <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1 py-0.5 rounded">Primary</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Deals */}
+            <div className="border-b border-gray-100">
+              <button
+                onClick={() => setDealsExpanded(e => !e)}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <span>Deals ({selected.deals?.length ?? selected.open_deals_count ?? 0})</span>
+                {dealsExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+              </button>
+              {dealsExpanded && (
+                <div className="px-4 pb-3">
+                  {(selected.deals?.length ?? 0) === 0 ? (
+                    <p className="text-xs text-gray-400 py-1">No deals yet</p>
+                  ) : selected.deals!.map(d => (
+                    <div key={d.id} className="flex items-center gap-2 py-1.5">
+                      {d.stage_color && <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: d.stage_color }} />}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-800 truncate">{d.title}</p>
+                        <p className="text-[10px] text-gray-400">{formatCurrency(d.value, d.currency)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Tickets */}
+            <div className="border-b border-gray-100 px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-700">Tickets (0)</span>
+              <span className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</span>
+            </div>
+
+            {/* Attachments */}
+            <div className="border-b border-gray-100 px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-700">Attachments (0)</span>
+              <span className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* Create / Edit modal */}
+      {/* ── Create / Edit modal ── */}
       {showForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -606,14 +808,14 @@ export default function CRMCompanies() {
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">Industry</label>
                   <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white" value={form.industry} onChange={e => setForm(f => ({ ...f, industry: e.target.value }))}>
-                    <option value="">Select...</option>
+                    <option value="">Select…</option>
                     {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">Company Size</label>
                   <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white" value={form.size} onChange={e => setForm(f => ({ ...f, size: e.target.value }))}>
-                    <option value="">Select...</option>
+                    <option value="">Select…</option>
                     {SIZE_OPTIONS.map(s => <option key={s} value={s}>{s} employees</option>)}
                   </select>
                 </div>
@@ -640,13 +842,13 @@ export default function CRMCompanies() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">Description</label>
-                <textarea className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] resize-none" rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Brief description..." />
+                <textarea className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] resize-none" rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Brief description…" />
               </div>
             </div>
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
               <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
               <button onClick={saveCompany} disabled={saving} className="px-5 py-2 bg-[#5b6cf9] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors">
-                {saving ? 'Saving...' : editingCompany ? 'Update Company' : 'Create Company'}
+                {saving ? 'Saving…' : editingCompany ? 'Update Company' : 'Create Company'}
               </button>
             </div>
           </div>
