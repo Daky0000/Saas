@@ -18,9 +18,8 @@ export type IntegrationCatalogItem = {
   connection: Record<string, any> | null;
 };
 
-const MESSAGING_SLUGS = new Set(['gmail', 'slack', 'whatsapp', 'zoom']);
 const isVisibleIntegration = (item: IntegrationCatalogItem) =>
-  item.adminEnabled && (item.configured || MESSAGING_SLUGS.has(item.slug));
+  item.adminEnabled && item.configured;
 
 const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationType }> = [
   { slug: 'wordpress', name: 'WordPress', type: 'cms' },
