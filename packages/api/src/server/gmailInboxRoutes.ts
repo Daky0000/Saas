@@ -749,12 +749,11 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     }
 
     const aiCfg = await deps.getAIConfig().catch(() => null);
-    const key = aiCfg ? deps.resolveActiveKey(aiCfg) : null;
-    if (!key) return res.json({ success: true, summary: 'AI not configured — add an OpenAI or Gemini API key in Admin → AI Config.' });
-
-    const provider = String(aiCfg?.activeProvider || aiCfg?.provider || 'openai').toLowerCase();
-    const isGemini = deps.GEMINI_MODELS.some((m: string) => String(aiCfg?.model || '').includes(m)) || provider.includes('gemini');
-    const model = isGemini ? (aiCfg?.model || 'gemini-1.5-flash') : (aiCfg?.model || 'gpt-4o-mini');
+    // Gmail Agent always uses Gemini — resolve the Google API key specifically
+    const geminiKey = aiCfg
+      ? deps.resolveActiveKey({ ...aiCfg, provider: 'google' })
+      : (process.env.GOOGLE_AI_API_KEY || null);
+    if (!geminiKey) return res.json({ success: true, summary: 'Gemini not configured — add a Google AI (Gemini) API key in Admin → AI Config.' });
 
     const messagesText = (result.rows as any[]).reverse().map((m) => {
       const direction = m.is_sent ? 'Sent' : 'Received';
@@ -770,7 +769,7 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     const userPrompt = `Summarize the email conversation with ${contactName} from ${company} (${contactEmail}):\n\n${messagesText}`;
 
     try {
-      const summary = await deps.callAINonStreaming(provider, key, model, systemPrompt, userPrompt, 300);
+      const summary = await deps.callAINonStreaming('google', geminiKey, 'gemini-2.5-flash', systemPrompt, userPrompt, 300);
       return res.json({ success: true, summary: summary.trim() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'AI summary failed';
@@ -842,12 +841,11 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     }
 
     const aiCfg = await deps.getAIConfig().catch(() => null);
-    const key = aiCfg ? deps.resolveActiveKey(aiCfg) : null;
-    if (!key) return res.json({ success: true, summary: 'AI not configured — add an API key in Admin → AI Config.' });
-
-    const provider = String(aiCfg?.activeProvider || aiCfg?.provider || 'openai').toLowerCase();
-    const isGemini = deps.GEMINI_MODELS.some((m: string) => String(aiCfg?.model || '').includes(m)) || provider.includes('gemini');
-    const model = isGemini ? (aiCfg?.model || 'gemini-1.5-flash') : (aiCfg?.model || 'gpt-4o-mini');
+    // Gmail Agent always uses Gemini — resolve the Google API key specifically
+    const geminiKey = aiCfg
+      ? deps.resolveActiveKey({ ...aiCfg, provider: 'google' })
+      : (process.env.GOOGLE_AI_API_KEY || null);
+    if (!geminiKey) return res.json({ success: true, summary: 'Gemini not configured — add a Google AI (Gemini) API key in Admin → AI Config.' });
 
     const companyName = domainToCompany(domain);
     const messagesText = (result.rows as any[]).reverse().map((m) => {
@@ -860,7 +858,7 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     const userPrompt = `Summarize the email relationship with ${companyName} (${domain}) based on these emails:\n\n${messagesText}`;
 
     try {
-      const summary = await deps.callAINonStreaming(provider, key, model, systemPrompt, userPrompt, 400);
+      const summary = await deps.callAINonStreaming('google', geminiKey, 'gemini-2.5-flash', systemPrompt, userPrompt, 400);
       return res.json({ success: true, summary: summary.trim() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'AI summary failed';

@@ -6,7 +6,7 @@ import { decryptIntegrationSecret } from './integration-helpers.ts';
 export const AI_CONFIG_PLATFORM = 'ai_assistant';
 
 // Gemini model names — used for model selection UI + provider-aware calls
-export const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
+export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
 // Map from Anthropic model IDs → equivalent Gemini models for background/agent calls
 export const ANTHROPIC_TO_GEMINI: Record<string, string> = {
   'claude-haiku-4-5-20251001': 'gemini-2.0-flash',
