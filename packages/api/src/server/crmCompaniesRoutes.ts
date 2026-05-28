@@ -16,10 +16,11 @@ export function registerCRMCompaniesRoutes({ requireAuth, pool }: Deps): Router 
   // ── List companies ────────────────────────────────────────────────────────────
   router.get('/companies', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
-    const { search, limit = '50', offset = '0' } = req.query as Record<string, string>;
+    const { search, source, limit = '50', offset = '0' } = req.query as Record<string, string>;
     const params: unknown[] = [auth.userId];
     let where = 'user_id=$1';
     if (search) { params.push(`%${search}%`); where += ` AND (name ILIKE $${params.length} OR domain ILIKE $${params.length} OR email ILIKE $${params.length})`; }
+    if (source === 'manual') { where += ` AND custom_data->>'source' = 'manual'`; }
     const { rows } = await pool.query(
       `SELECT c.*,
         (SELECT COUNT(*) FROM crm_contact_companies cc WHERE cc.company_id=c.id) AS contact_count,
@@ -29,7 +30,10 @@ export function registerCRMCompaniesRoutes({ requireAuth, pool }: Deps): Router 
        ORDER BY c.created_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
-    const { rows: [{ count }] } = await pool.query(`SELECT COUNT(*) FROM crm_companies WHERE user_id=$1`, [auth.userId]);
+    const countWhere = source === 'manual'
+      ? `user_id=$1 AND custom_data->>'source' = 'manual'`
+      : 'user_id=$1';
+    const { rows: [{ count }] } = await pool.query(`SELECT COUNT(*) FROM crm_companies WHERE ${countWhere}`, [auth.userId]);
     res.json({ companies: rows, total: parseInt(count) });
   });
 
@@ -60,10 +64,11 @@ export function registerCRMCompaniesRoutes({ requireAuth, pool }: Deps): Router 
     const { name, domain, industry, size, website, phone, email, address, city, country, description, logo_url, custom_data } = req.body;
     if (!name?.trim()) return void res.status(400).json({ error: 'name required' });
     const id = randomUUID();
+    const mergedData = { ...(custom_data || {}), source: 'manual' };
     const { rows } = await pool.query(
       `INSERT INTO crm_companies (id,user_id,name,domain,industry,size,website,phone,email,address,city,country,description,logo_url,custom_data)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-      [id, auth.userId, name.trim(), domain||null, industry||null, size||null, website||null, phone||null, email||null, address||null, city||null, country||null, description||null, logo_url||null, JSON.stringify(custom_data||{})]
+      [id, auth.userId, name.trim(), domain||null, industry||null, size||null, website||null, phone||null, email||null, address||null, city||null, country||null, description||null, logo_url||null, JSON.stringify(mergedData)]
     );
     res.status(201).json(rows[0]);
   });
