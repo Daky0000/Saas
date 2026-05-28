@@ -345,7 +345,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const auth = requireAuth(req, res);
       if (!auth) return;
 
-      const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp', 'tiktok', 'threads'] as const;
+      const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp', 'tiktok', 'threads', 'gmail', 'slack', 'whatsapp', 'zoom'] as const;
       const integrations: Array<{
         slug: string; name: string; type: 'cms' | 'social' | 'marketing' | 'other';
         adminEnabled: boolean; configured: boolean; connected: boolean; connection: Record<string, any> | null;
@@ -409,10 +409,11 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         const name = registry?.name || (slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1));
         const type = (registry?.type as any) || (slug === 'wordpress' ? 'cms' : 'social');
         const cfg = cfgMap.get(slug)?.config || {};
-        const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : slug === 'wordpress' || slug === 'mailchimp';
+        const manualSlug = slug === 'wordpress' || slug === 'mailchimp' || slug === 'whatsapp';
+        const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : manualSlug;
 
         let configured = false;
-        if (slug === 'wordpress' || slug === 'mailchimp') {
+        if (manualSlug) {
           configured = true;
         } else if (slug === 'instagram') {
           const metaConfig = Object.keys(cfg || {}).length > 0 ? cfg : facebookPlatformConfig;
@@ -431,17 +432,21 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
           }
         }
 
+        const isUserIntegrationSlug = (s: string) => s === 'mailchimp' || s === 'whatsapp';
         const connected = slug === 'wordpress' ? Boolean(wpConn)
-          : slug === 'mailchimp' ? String(userIntegrationMap.get('mailchimp')?.status || '').toLowerCase() === 'connected'
+          : isUserIntegrationSlug(slug) ? String(userIntegrationMap.get(slug)?.status || '').toLowerCase() === 'connected'
           : slug === 'instagram' ? Boolean(getPrimaryAccount('instagram'))
           : hasPlatformProfile(slug);
 
+        const getUserIntegrationConnection = (s: string) => {
+          const row = userIntegrationMap.get(s);
+          return row ? { accountId: row.account_id ?? null, accountName: row.account_name ?? null, connectedAt: row.created_at ?? null } : null;
+        };
+
         const connection = slug === 'wordpress'
           ? (wpConn ? { siteUrl: wpConn.site_url, username: wpConn.username, connectedAt: wpConn.created_at } : null)
-          : slug === 'mailchimp'
-            ? (userIntegrationMap.get('mailchimp')
-              ? { accountId: userIntegrationMap.get('mailchimp')?.account_id ?? null, accountName: userIntegrationMap.get('mailchimp')?.account_name ?? null, connectedAt: userIntegrationMap.get('mailchimp')?.created_at ?? null }
-              : null)
+          : isUserIntegrationSlug(slug)
+            ? getUserIntegrationConnection(slug)
             : getPrimaryAccount(slug);
 
         if (adminEnabled && configured) {

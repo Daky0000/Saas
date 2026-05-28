@@ -812,6 +812,138 @@ async function exchangeTikTokCode(
   return tokenData;
 }
 
+async function exchangeGmailCode(
+  getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
+  resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
+  code: string,
+  req?: Request,
+) {
+  const cfg = await getPlatformConfig('gmail');
+  const clientId = String(cfg.clientId || '').trim();
+  const clientSecret = String(cfg.clientSecret || '').trim();
+  const redirectUri = resolveOAuthRedirectUri('gmail', cfg.redirectUri, req);
+  if (!clientId || !clientSecret) throw new Error('Gmail client credentials not configured');
+
+  const data = new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code' });
+  const resp = await axios.post('https://oauth2.googleapis.com/token', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400) {
+    const msg = (resp.data as any)?.error_description || (resp.data as any)?.error || `Gmail token exchange failed (${resp.status})`;
+    throw new Error(msg);
+  }
+  const tokenData: any = resp.data || {};
+
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      if (meResp.status < 400) {
+        const me: any = meResp.data || {};
+        if (me?.id) tokenData.user_id = String(me.id);
+        if (me?.email) { tokenData.email = String(me.email); tokenData.username = String(me.email); }
+        if (me?.name) tokenData.name = String(me.name);
+        if (me?.picture) tokenData.avatar_url = String(me.picture);
+      }
+    } catch (err) {
+      logger.error('Gmail userinfo error:', err);
+    }
+  }
+
+  return tokenData;
+}
+
+async function exchangeSlackCode(
+  getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
+  resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
+  code: string,
+  req?: Request,
+) {
+  const cfg = await getPlatformConfig('slack');
+  const clientId = String(cfg.clientId || '').trim();
+  const clientSecret = String(cfg.clientSecret || '').trim();
+  const redirectUri = resolveOAuthRedirectUri('slack', cfg.redirectUri, req);
+  if (!clientId || !clientSecret) throw new Error('Slack client credentials not configured');
+
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  const data = new URLSearchParams({ code, redirect_uri: redirectUri, grant_type: 'authorization_code' });
+  const resp = await axios.post('https://slack.com/api/oauth.v2.access', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400 || (resp.data as any)?.ok === false) {
+    const msg = (resp.data as any)?.error || `Slack token exchange failed (${resp.status})`;
+    throw new Error(msg);
+  }
+  const tokenData: any = resp.data || {};
+
+  const teamId = String(tokenData?.team?.id || '').trim();
+  const teamName = String(tokenData?.team?.name || '').trim();
+  const userId = String(tokenData?.authed_user?.id || '').trim();
+  if (teamId) tokenData.user_id = teamId;
+  if (teamName) tokenData.name = teamName;
+  if (userId) tokenData.authed_user_id = userId;
+  tokenData.username = teamName || teamId;
+
+  return tokenData;
+}
+
+async function exchangeZoomCode(
+  getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
+  resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
+  code: string,
+  req?: Request,
+) {
+  const cfg = await getPlatformConfig('zoom');
+  const clientId = String(cfg.clientId || '').trim();
+  const clientSecret = String(cfg.clientSecret || '').trim();
+  const redirectUri = resolveOAuthRedirectUri('zoom', cfg.redirectUri, req);
+  if (!clientId || !clientSecret) throw new Error('Zoom client credentials not configured');
+
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  const data = new URLSearchParams({ code, redirect_uri: redirectUri, grant_type: 'authorization_code' });
+  const resp = await axios.post('https://zoom.us/oauth/token', data.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  if (resp.status >= 400) {
+    const msg = (resp.data as any)?.reason || (resp.data as any)?.error || `Zoom token exchange failed (${resp.status})`;
+    throw new Error(msg);
+  }
+  const tokenData: any = resp.data || {};
+
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (accessToken) {
+    try {
+      const meResp = await axios.get('https://api.zoom.us/v2/users/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      if (meResp.status < 400) {
+        const me: any = meResp.data || {};
+        if (me?.id) tokenData.user_id = String(me.id);
+        if (me?.email) { tokenData.email = String(me.email); tokenData.username = String(me.email); }
+        const fullName = [String(me?.first_name || ''), String(me?.last_name || '')].filter(Boolean).join(' ').trim();
+        if (fullName) tokenData.name = fullName;
+        if (me?.pic_url) tokenData.avatar_url = String(me.pic_url);
+      }
+    } catch (err) {
+      logger.error('Zoom userinfo error:', err);
+    }
+  }
+
+  return tokenData;
+}
+
 async function exchangeOAuthCode(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
@@ -837,6 +969,12 @@ async function exchangeOAuthCode(
       return exchangeThreadsCode(getPlatformConfig, resolveOAuthRedirectUri, code);
     case 'tiktok':
       return exchangeTikTokCode(getPlatformConfig, resolveOAuthRedirectUri, code, codeVerifier);
+    case 'gmail':
+      return exchangeGmailCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
+    case 'slack':
+      return exchangeSlackCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
+    case 'zoom':
+      return exchangeZoomCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
     default:
       throw new Error('Unsupported platform');
   }
@@ -1394,6 +1532,60 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
     } catch (error) {
       logger.error('Mailchimp disconnect error:', error);
       return res.status(500).json({ success: false, error: 'Failed to disconnect Mailchimp' });
+    }
+  });
+
+  // POST /api/integrations/whatsapp/connect — manual WhatsApp Business Cloud API connection
+  router.post('/integrations/whatsapp/connect', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+      const { phoneNumberId, accessToken, displayName } = req.body as { phoneNumberId?: string; accessToken?: string; displayName?: string };
+      const pid = String(phoneNumberId || '').trim();
+      const tok = String(accessToken || '').trim();
+      if (!pid || !tok) return res.status(400).json({ success: false, error: 'phoneNumberId and accessToken are required' });
+
+      const verifyResp = await axios.get(`https://graph.facebook.com/v19.0/${pid}?fields=id,display_phone_number,verified_name`, {
+        headers: { Authorization: `Bearer ${tok}` },
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+      if (verifyResp.status >= 400) {
+        const msg = (verifyResp.data as any)?.error?.message || `WhatsApp API error (${verifyResp.status}). Check phone number ID and access token.`;
+        return res.status(400).json({ success: false, error: msg });
+      }
+      const waData: any = verifyResp.data || {};
+      const verifiedName = String(waData?.verified_name || displayName || 'WhatsApp Business').trim();
+      const phoneDisplay = String(waData?.display_phone_number || pid).trim();
+
+      const tokenEncrypted = encryptIntegrationSecret(JSON.stringify({ phoneNumberId: pid, accessToken: tok }));
+      await upsertUserIntegration({ userId: auth.userId, integrationSlug: 'whatsapp', accessTokenEncrypted: tokenEncrypted, refreshTokenEncrypted: null, tokenExpiry: null, accountId: pid, accountName: `${verifiedName} (${phoneDisplay})`, status: 'connected' });
+      await logIntegrationEvent({ userId: auth.userId, integrationSlug: 'whatsapp', eventType: 'connection_attempt', status: 'success', response: { phoneNumberId: pid, verifiedName } });
+
+      return res.json({ success: true, accountName: `${verifiedName} (${phoneDisplay})` });
+    } catch (error) {
+      logger.error('WhatsApp connect error:', error);
+      await logIntegrationEvent({ userId: null, integrationSlug: 'whatsapp', eventType: 'connection_attempt', status: 'failed', response: { error: error instanceof Error ? error.message : 'Connect failed' } });
+      return res.status(500).json({ success: false, error: 'Failed to connect WhatsApp' });
+    }
+  });
+
+  // DELETE /api/integrations/whatsapp/disconnect
+  router.delete('/integrations/whatsapp/disconnect', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.json({ success: true });
+
+      await upsertUserIntegration({ userId: auth.userId, integrationSlug: 'whatsapp', accessTokenEncrypted: null, refreshTokenEncrypted: null, tokenExpiry: null, accountId: null, accountName: null, status: 'disconnected' });
+      await logIntegrationEvent({ userId: auth.userId, integrationSlug: 'whatsapp', eventType: 'disconnect', status: 'info', response: {} });
+
+      return res.json({ success: true });
+    } catch (error) {
+      logger.error('WhatsApp disconnect error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to disconnect WhatsApp' });
     }
   });
 

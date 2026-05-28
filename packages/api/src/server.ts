@@ -531,6 +531,11 @@ app.use('/api', registerHubtelRoutes({ requireAuth, requireAdmin, hasDatabase, d
       params.set('enable_extended_login', 'true');
     }
 
+    if (platform === 'gmail') {
+      params.set('access_type', 'offline');
+      params.set('prompt', 'consent');
+    }
+
     if (platform === 'tiktok') {
       const { code_challenge, code_challenge_method } = req.query as { code_challenge?: string; code_challenge_method?: string };
       const challenge = String(code_challenge || '').trim();

@@ -477,7 +477,11 @@ await pool.query(
     ('linkedin','LinkedIn','linkedin','social', true),
     ('twitter','X (Twitter)','twitter','social', true),
     ('pinterest','Pinterest','pinterest','social', true),
-    ('mailchimp','Mailchimp','mailchimp','marketing', true)
+    ('mailchimp','Mailchimp','mailchimp','marketing', true),
+    ('gmail','Gmail','gmail','messaging', true),
+    ('slack','Slack','slack','messaging', true),
+    ('whatsapp','WhatsApp','whatsapp','messaging', true),
+    ('zoom','Zoom','zoom','messaging', true)
    ON CONFLICT (slug) DO UPDATE
     SET name = EXCLUDED.name, provider = EXCLUDED.provider, type = EXCLUDED.type;`
 ).catch(() => undefined);
@@ -3820,6 +3824,7 @@ const DOMAINS = [
   { slug: 'messaging', name: 'Team Messaging',     description: 'Notifications, alerts, and team communication channels',      icon: 'MessageSquare', color: '#f59e0b', position: 3 },
   { slug: 'analytics', name: 'Analytics & Data',   description: 'Website traffic, campaign ROI, and audience insights',        icon: 'BarChart2',    color: '#10b981', position: 4 },
   { slug: 'calendar',  name: 'Calendar',           description: 'Events, reminders, and scheduling across calendar providers', icon: 'Calendar',     color: '#ef4444', position: 5 },
+  { slug: 'video',     name: 'Video Conferencing', description: 'Create and manage video meetings and webinars',                icon: 'Video',        color: '#0ea5e9', position: 6 },
 ];
 for (const d of DOMAINS) {
   await pool.query(
@@ -3835,7 +3840,7 @@ const PROVIDERS: { domain: string; slug: string; name: string; description: stri
   { domain: 'email', slug: 'native',    name: 'Native Email',  description: 'Built-in email engine — works out of the box',             requiresSlug: null,         caps: ['send_email','send_campaign','track_opens','track_clicks','manage_contacts'], isNative: true,  pos: 0 },
   { domain: 'email', slug: 'mailchimp', name: 'Mailchimp',     description: 'Route campaigns through your Mailchimp account',           requiresSlug: 'mailchimp',  caps: ['send_campaign','track_opens','track_clicks','manage_contacts','manage_lists'], isNative: false, pos: 1 },
   { domain: 'email', slug: 'hubspot',   name: 'HubSpot Email', description: 'Send email via HubSpot marketing tools',                   requiresSlug: 'hubspot',    caps: ['send_email','send_campaign','track_opens','track_clicks'], isNative: false, pos: 2 },
-  { domain: 'email', slug: 'gmail',     name: 'Gmail',         description: 'Send from your own Gmail or Google Workspace address',     requiresSlug: 'google',     caps: ['send_email'], isNative: false, pos: 3 },
+  { domain: 'email', slug: 'gmail',     name: 'Gmail',         description: 'Send from your own Gmail or Google Workspace address',     requiresSlug: 'gmail',     caps: ['send_email'], isNative: false, pos: 3 },
   // CRM
   { domain: 'crm',   slug: 'native',     name: 'Native CRM',    description: 'Built-in CRM — contacts, deals, pipeline, activities',     requiresSlug: null,         caps: ['create_contact','update_contact','create_deal','update_deal','log_activity','get_pipeline'], isNative: true,  pos: 0 },
   { domain: 'crm',   slug: 'hubspot',    name: 'HubSpot CRM',   description: 'Read and write contacts and deals from HubSpot',           requiresSlug: 'hubspot',    caps: ['create_contact','update_contact','create_deal','update_deal','log_activity','get_pipeline','sync_contacts','sync_deals'], isNative: false, pos: 1 },
@@ -3856,6 +3861,9 @@ const PROVIDERS: { domain: string; slug: string; name: string; description: stri
   { domain: 'calendar', slug: 'native',          name: 'Native Calendar',    description: 'Built-in task scheduling and reminders',                  requiresSlug: null,     caps: ['create_event','get_events','update_event'], isNative: true,  pos: 0 },
   { domain: 'calendar', slug: 'google_calendar', name: 'Google Calendar',    description: 'Create events and find availability in Google Calendar',  requiresSlug: 'google', caps: ['create_event','get_events','find_free_slot','update_event'], isNative: false, pos: 1 },
   { domain: 'calendar', slug: 'outlook',         name: 'Outlook / Microsoft 365', description: 'Sync with Outlook calendar for enterprise teams',   requiresSlug: 'outlook', caps: ['create_event','get_events','update_event'], isNative: false, pos: 2 },
+  // VIDEO
+  { domain: 'video',    slug: 'native',          name: 'Native Video',       description: 'Basic meeting links and scheduling',                      requiresSlug: null,     caps: ['create_meeting','get_meetings'], isNative: true,  pos: 0 },
+  { domain: 'video',    slug: 'zoom',            name: 'Zoom',               description: 'Create Zoom meetings and manage your video sessions',     requiresSlug: 'zoom',   caps: ['create_meeting','get_meetings','update_meeting','delete_meeting'], isNative: false, pos: 1 },
 ];
 for (const p of PROVIDERS) {
   await pool.query(

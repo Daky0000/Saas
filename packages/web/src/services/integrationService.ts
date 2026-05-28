@@ -6,7 +6,7 @@ const authHeaders = (): Record<string, string> => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-export type IntegrationType = 'cms' | 'social' | 'marketing' | 'other';
+export type IntegrationType = 'cms' | 'social' | 'marketing' | 'messaging' | 'other';
 
 export type IntegrationCatalogItem = {
   slug: string;
@@ -438,6 +438,30 @@ export const integrationService = {
       'Failed to connect LinkedIn company page'
     );
     if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to connect LinkedIn company page') };
+    return { success: true };
+  },
+
+  async connectWhatsApp(phoneNumberId: string, accessToken: string, displayName?: string): Promise<{ success: boolean; accountName?: string; error?: string }> {
+    const response = await fetchApiJson<{ success: boolean; accountName?: string }>(
+      '/api/integrations/whatsapp/connect',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ phoneNumberId, accessToken, displayName }),
+      },
+      'Failed to connect WhatsApp'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to connect WhatsApp') };
+    return { success: true, accountName: response.payload?.accountName };
+  },
+
+  async disconnectWhatsApp(): Promise<{ success: boolean; error?: string }> {
+    const response = await fetchApiJson(
+      '/api/integrations/whatsapp/disconnect',
+      { method: 'DELETE', headers: authHeaders() },
+      'Failed to disconnect WhatsApp'
+    );
+    if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to disconnect WhatsApp') };
     return { success: true };
   },
 };

@@ -9,6 +9,9 @@ const SUPPORTED_PLATFORMS = new Set([
   'pinterest',
   'tiktok',
   'threads',
+  'gmail',
+  'slack',
+  'zoom',
 ]);
 
 type Status = 'connecting' | 'success' | 'error';

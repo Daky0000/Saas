@@ -19,7 +19,8 @@ type ModalState =
   | { type: 'instagram' }
   | { type: 'linkedin' }
   | { type: 'linkedin-select' }
-  | { type: 'mailchimp' };
+  | { type: 'mailchimp' }
+  | { type: 'whatsapp' };
 
 const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   connected: { bg: 'bg-emerald-50', text: 'text-emerald-700' },
@@ -88,7 +89,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [redirectError, setRedirectError] = useState<string | null>(null);
 
   const [modal, setModal] = useState<ModalState>({ type: 'none' });
-  const [activeTab, setActiveTab] = useState<'cms' | 'social' | 'marketing'>('cms');
+  const [activeTab, setActiveTab] = useState<'cms' | 'social' | 'marketing' | 'messaging'>('cms');
   const [tabInitialized, setTabInitialized] = useState(false);
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -148,6 +149,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [mcApiKey, setMcApiKey] = useState('');
   const [mcServerPrefix, setMcServerPrefix] = useState('');
 
+  // WhatsApp
+  const [waPhoneNumberId, setWaPhoneNumberId] = useState('');
+  const [waAccessToken, setWaAccessToken] = useState('');
+
   // Google Sheets
   const [gsStatus, setGsStatus] = useState<{ connected: boolean; email?: string; connectedAt?: string } | null>(null);
   const [gsLoading, setGsLoading] = useState(false);
@@ -194,6 +199,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const cms = useMemo(() => items.filter((i) => i.type === 'cms'), [items]);
   const social = useMemo(() => items.filter((i) => i.type === 'social'), [items]);
   const marketing = useMemo(() => items.filter((i) => i.type === 'marketing'), [items]);
+  const messaging = useMemo(() => items.filter((i) => i.type === 'messaging'), [items]);
   const connectedCount = useMemo(() => items.filter((i) => i.connected).length, [items]);
   const totalCount = items.length;
   const facebookConnected = useMemo(
@@ -214,16 +220,17 @@ export default function Integrations({ onNavigateSettings }: Props) {
       { id: 'cms' as const, label: 'CMS', count: cms.length, title: 'CMS Platforms', subtitle: `${cms.length} apps available`, empty: 'No CMS integrations enabled.' },
       { id: 'social' as const, label: 'Social', count: social.length, title: 'Social Media Platforms', subtitle: `${social.length} channels supported`, empty: 'No social integrations enabled.' },
       { id: 'marketing' as const, label: 'Marketing', count: marketing.length, title: 'Marketing Platforms', subtitle: `${marketing.length} tools ready`, empty: 'No marketing integrations enabled.' },
+      { id: 'messaging' as const, label: 'Messaging', count: messaging.length, title: 'Messaging & Productivity', subtitle: `${messaging.length} integrations available`, empty: 'No messaging integrations enabled.' },
     ],
-    [cms.length, social.length, marketing.length],
+    [cms.length, social.length, marketing.length, messaging.length],
   );
 
   useEffect(() => {
     if (tabInitialized || loading) return;
-    const firstAvailable = cms.length ? 'cms' : social.length ? 'social' : marketing.length ? 'marketing' : 'cms';
+    const firstAvailable = cms.length ? 'cms' : social.length ? 'social' : marketing.length ? 'marketing' : messaging.length ? 'messaging' : 'cms';
     setActiveTab(firstAvailable);
     setTabInitialized(true);
-  }, [cms.length, social.length, marketing.length, loading, tabInitialized]);
+  }, [cms.length, social.length, marketing.length, messaging.length, loading, tabInitialized]);
 
   const startOAuth = async (slug: string, returnTo = '/integrations') => {
     setBusy(slug);
@@ -504,9 +511,39 @@ export default function Integrations({ onNavigateSettings }: Props) {
     }
   };
 
+  const connectWhatsApp = async () => {
+    setBusy('whatsapp');
+    try {
+      const res = await integrationService.connectWhatsApp(waPhoneNumberId, waAccessToken);
+      if (!res.success) throw new Error(res.error || 'WhatsApp connection failed');
+      await load();
+      setModal({ type: 'none' });
+      setWaPhoneNumberId('');
+      setWaAccessToken('');
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'WhatsApp connection failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disconnectWhatsApp = async () => {
+    if (!confirm('Disconnect WhatsApp?')) return;
+    setBusy('whatsapp');
+    try {
+      const res = await integrationService.disconnectWhatsApp();
+      if (!res.success) throw new Error(res.error || 'Failed to disconnect');
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to disconnect');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const renderActions = (item: IntegrationCatalogItem) => {
     const slug = item.slug;
-    const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest', 'tiktok', 'threads'].includes(slug);
+    const isOauth = ['facebook', 'linkedin', 'twitter', 'pinterest', 'tiktok', 'threads', 'gmail', 'slack', 'zoom'].includes(slug);
     const connectedAt = item.connection?.connectedAt || item.connection?.createdAt || null;
     const connectedLabel = item.connection?.accountName || item.connection?.username || item.connection?.siteUrl || item.connection?.handle || '';
     const connectedMeta = item.connected
@@ -565,6 +602,34 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 className={SECONDARY_ACTION}
               >
                 <Settings2 size={16} /> Manage
+              </button>
+            </>
+          )}
+        </Card>
+      );
+    }
+
+    if (slug === 'whatsapp') {
+      return (
+        <Card
+          title="WhatsApp Business"
+          description="Send messages and notifications via WhatsApp Business Cloud API using your phone number ID and access token."
+          statusLabel={item.connected ? 'Connected' : 'Disconnected'}
+          statusTone={item.connected ? 'connected' : 'disconnected'}
+          icon={<PlatformLogo platform="whatsapp" size={48} />}
+          meta={item.connection?.accountName ? `Connected: ${item.connection.accountName}` : null}
+        >
+          {!item.connected ? (
+            <button type="button" onClick={() => setModal({ type: 'whatsapp' })} className={PRIMARY_ACTION}>
+              <Plug size={16} /> Connect
+            </button>
+          ) : (
+            <>
+              <button type="button" onClick={() => setModal({ type: 'whatsapp' })} className={SECONDARY_ACTION}>
+                <Settings2 size={16} /> Manage
+              </button>
+              <button type="button" onClick={() => void disconnectWhatsApp()} disabled={busy === 'whatsapp'} className={SECONDARY_ACTION}>
+                {busy === 'whatsapp' ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
               </button>
             </>
           )}
@@ -649,7 +714,13 @@ export default function Integrations({ onNavigateSettings }: Props) {
                     ? 'Publish Pins and pull profile + board performance analytics.'
                     : slug === 'threads'
                       ? 'Publish posts to Threads and sync post insights analytics.'
-                    : 'Connect using OAuth.'
+                      : slug === 'gmail'
+                        ? 'Send emails from your Gmail or Google Workspace address via the Gmail API.'
+                        : slug === 'slack'
+                          ? 'Send workflow notifications and agent alerts to Slack channels.'
+                          : slug === 'zoom'
+                            ? 'Create Zoom meetings and manage video sessions from your content workflow.'
+                            : 'Connect using OAuth.'
         }
         statusLabel={statusLabel}
         statusTone={statusTone}
@@ -834,7 +905,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
         <>
           {(() => {
             const activeConfig = tabs.find((tab) => tab.id === activeTab) || tabs[0];
-            const activeItems = activeTab === 'cms' ? cms : activeTab === 'social' ? social : marketing;
+            const activeItems = activeTab === 'cms' ? cms : activeTab === 'social' ? social : activeTab === 'marketing' ? marketing : messaging;
             return (
               <section
                 data-tour-id="integrations-cards"
@@ -900,7 +971,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       )}
                     </Card>
                   )}
-                  {!activeItems.length && activeTab !== 'marketing' && (
+                  {!activeItems.length && activeTab !== 'marketing' && activeTab !== 'messaging' && (
+                    <div className="text-sm text-slate-400">{activeConfig.empty}</div>
+                  )}
+                  {!activeItems.length && activeTab === 'messaging' && (
                     <div className="text-sm text-slate-400">{activeConfig.empty}</div>
                   )}
                 </div>
@@ -942,7 +1016,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       ? 'Select LinkedIn Company Pages'
                       : modal.type === 'mailchimp'
                         ? 'Mailchimp'
-                        : 'Integration'}
+                        : modal.type === 'whatsapp'
+                          ? 'WhatsApp Business'
+                          : 'Integration'}
               </div>
               <button
                 type="button"
@@ -1522,6 +1598,48 @@ export default function Integrations({ onNavigateSettings }: Props) {
                   </button>
 
                   <p className="text-xs text-slate-500">We validate the key server-side and store it encrypted.</p>
+                </div>
+              ) : null}
+
+              {modal.type === 'whatsapp' ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-500">
+                    Enter your WhatsApp Business Cloud API credentials from the Meta Developer Console. Your phone number ID and a permanent system user access token are required.
+                  </p>
+                  <div className="grid gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-600">Phone Number ID</label>
+                      <input
+                        value={waPhoneNumberId}
+                        onChange={(e) => setWaPhoneNumberId(e.target.value)}
+                        placeholder="1234567890123456"
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-600">Access Token</label>
+                      <input
+                        type="password"
+                        value={waAccessToken}
+                        onChange={(e) => setWaAccessToken(e.target.value)}
+                        placeholder="EAAxxxxxxx..."
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void connectWhatsApp()}
+                      disabled={busy === 'whatsapp' || !waPhoneNumberId.trim() || !waAccessToken.trim()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {busy === 'whatsapp' ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} Save & Verify
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Find your Phone Number ID in Meta Developer Console → WhatsApp → API Setup. Use a system user permanent token for production.
+                  </p>
                 </div>
               ) : null}
             </div>

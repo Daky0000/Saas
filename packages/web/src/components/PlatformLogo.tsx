@@ -144,6 +144,52 @@ function HubtelLogo({ size }: { size: number }) {
   );
 }
 
+function GmailLogo({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="10" fill="#ffffff" />
+      <rect x="6" y="10" width="28" height="20" rx="2" fill="#EA4335" />
+      <path d="M6 12 20 22 34 12" stroke="white" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+      <rect x="6" y="10" width="28" height="20" rx="2" fill="none" stroke="#d93025" strokeWidth="0.5" />
+      <path d="M6 12l14 10 14-10V28a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V12z" fill="#EA4335" />
+      <path d="M6 12l14 10 14-10" stroke="white" strokeWidth="2" fill="none" />
+    </svg>
+  );
+}
+
+function SlackLogo({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="10" fill="#4A154B" />
+      <g transform="translate(8,8)">
+        <path fill="#E01E5A" d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.52H2.52A2.528 2.528 0 0 1 0 15.165a2.528 2.528 0 0 1 2.52-2.52h2.522v2.52zM6.313 15.165a2.528 2.528 0 0 1 2.521-2.52 2.528 2.528 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313z" />
+        <path fill="#36C5F0" d="M8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312z" />
+        <path fill="#2EB67D" d="M18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.528 2.528 0 0 1-2.52-2.521V2.522A2.528 2.528 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312z" />
+        <path fill="#ECB22E" d="M15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.528 2.528 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.528 2.528 0 0 1-2.52-2.523 2.528 2.528 0 0 1 2.52-2.52h6.313A2.528 2.528 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z" />
+      </g>
+    </svg>
+  );
+}
+
+function ZoomLogo({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="10" fill="#2D8CFF" />
+      <path d="M6 14a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3V14z" fill="white" />
+      <path d="M26 17.5l7-4.5v14l-7-4.5V17.5z" fill="white" />
+    </svg>
+  );
+}
+
+function WhatsAppLogo({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="10" fill="#25d366" />
+      <path d="M20 6C12.27 6 6 12.27 6 20c0 2.42.65 4.68 1.77 6.63L6 34l7.54-1.74A13.93 13.93 0 0 0 20 34c7.73 0 14-6.27 14-14S27.73 6 20 6zm7.13 19.74c-.33.93-1.87 1.74-2.63 1.85-.68.1-1.54.14-2.48-.16-.57-.18-1.3-.42-2.24-.82-3.93-1.7-6.5-5.65-6.69-5.91-.19-.26-1.6-2.06-1.6-4.06s1.01-2.88 1.37-3.27c.35-.39.77-.49 1.03-.49h.75c.24.01.56-.1.88.67.33.78 1.11 2.72 1.21 2.91.1.19.16.42.03.68-.13.26-.19.43-.39.65-.19.23-.41.51-.58.68-.19.19-.39.4-.17.79.23.39 1.01 1.66 2.16 2.68 1.48 1.32 2.73 1.72 3.12 1.92.39.19.62.16.84-.1.23-.26.97-1.13 1.23-1.52.26-.38.52-.32.88-.19.36.12 2.27 1.06 2.66 1.26.39.19.65.29.74.45.1.15.1.94-.22 1.85z" fill="white" />
+    </svg>
+  );
+}
+
 const LOGOS: Record<string, (size: number) => React.ReactElement> = {
   facebook: (s) => <FacebookLogo size={s} />,
   instagram: (s) => <InstagramLogo size={s} />,
@@ -158,6 +204,10 @@ const LOGOS: Record<string, (size: number) => React.ReactElement> = {
   stripe: (s) => <StripeLogo size={s} />,
   mailchimp: (s) => <MailchimpLogo size={s} />,
   hubtel: (s) => <HubtelLogo size={s} />,
+  gmail: (s) => <GmailLogo size={s} />,
+  slack: (s) => <SlackLogo size={s} />,
+  zoom: (s) => <ZoomLogo size={s} />,
+  whatsapp: (s) => <WhatsAppLogo size={s} />,
 };
 
 /**
