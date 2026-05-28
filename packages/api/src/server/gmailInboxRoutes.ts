@@ -9,6 +9,8 @@ export interface GmailInboxDeps {
   requireAuth: (req: Request, res: Response) => { userId: string; role: string } | null;
   pool: Pool | null;
   getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
+  encryptIntegrationSecret: (plain: string) => string;
+  decryptIntegrationSecret: (encrypted: string) => string;
   getAIConfig: () => Promise<any>;
   resolveActiveKey: (cfg: any) => string | null;
   GEMINI_MODELS: string[];
@@ -77,10 +79,14 @@ function extractBodyText(payload: any, depth = 0): string {
 async function getValidGmailToken(
   pool: Pool,
   userId: string,
-  getPlatformConfig: (p: string) => Promise<Record<string, string>>
+  getPlatformConfig: (p: string) => Promise<Record<string, string>>,
+  encryptIntegrationSecret: (plain: string) => string,
+  decryptIntegrationSecret: (enc: string) => string
 ): Promise<string | null> {
   const res = await pool.query(
-    `SELECT access_token, refresh_token, token_expires_at
+    `SELECT access_token, refresh_token,
+            access_token_encrypted, refresh_token_encrypted,
+            token_expires_at
      FROM social_accounts
      WHERE user_id=$1 AND LOWER(platform)='gmail' AND connected=true
      LIMIT 1`,
@@ -89,8 +95,15 @@ async function getValidGmailToken(
   if (!res.rows.length) return null;
 
   const row = res.rows[0] as any;
-  const accessToken = String(row.access_token || '').trim();
-  const refreshToken = String(row.refresh_token || '').trim();
+
+  // Tokens are stored encrypted; fall back to plain column for legacy rows
+  const decrypt = (enc: string | null, plain: string | null): string => {
+    if (enc) { try { return decryptIntegrationSecret(enc).trim(); } catch { /* fall through */ } }
+    return String(plain || '').trim();
+  };
+
+  const accessToken = decrypt(row.access_token_encrypted, row.access_token);
+  const refreshToken = decrypt(row.refresh_token_encrypted, row.refresh_token);
   const expiresAt = row.token_expires_at ? new Date(row.token_expires_at) : null;
 
   const needsRefresh = !expiresAt || expiresAt.getTime() < Date.now() + 5 * 60 * 1000;
@@ -120,12 +133,154 @@ async function getValidGmailToken(
   if (!newToken) return accessToken || null;
 
   const ttl = Number((resp.data as any)?.expires_in || 3600);
+  const newEncrypted = encryptIntegrationSecret(newToken);
   await pool.query(
-    `UPDATE social_accounts SET access_token=$1, token_expires_at=$2
+    `UPDATE social_accounts
+     SET access_token_encrypted=$1, token_expires_at=$2, updated_at=NOW()
      WHERE user_id=$3 AND LOWER(platform)='gmail'`,
-    [newToken, new Date(Date.now() + ttl * 1000).toISOString(), userId]
+    [newEncrypted, new Date(Date.now() + ttl * 1000).toISOString(), userId]
   );
   return newToken;
+}
+
+// ── CRM population ────────────────────────────────────────────────────────────
+
+const PERSONAL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'hotmail.com',
+  'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com', 'icloud.com',
+  'me.com', 'mac.com', 'aol.com', 'protonmail.com', 'pm.me',
+]);
+
+async function syncToCRM(pool: Pool, userId: string): Promise<void> {
+  // 1. Collect all unique senders (received only) grouped by company domain
+  const sendersResult = await pool.query(
+    `SELECT DISTINCT ON (from_email)
+       from_email,
+       from_name,
+       LOWER(SUBSTRING(from_email FROM POSITION('@' IN from_email) + 1)) AS domain
+     FROM gmail_messages
+     WHERE user_id=$1 AND NOT is_sent AND from_email <> '' AND POSITION('@' IN from_email) > 0
+     ORDER BY from_email, date DESC`,
+    [userId]
+  );
+
+  const byDomain = new Map<string, Array<{ email: string; name: string }>>();
+  const personalContacts: Array<{ email: string; name: string }> = [];
+
+  for (const row of sendersResult.rows as any[]) {
+    const domain = String(row.domain || '').trim();
+    if (!domain) continue;
+    if (PERSONAL_DOMAINS.has(domain)) {
+      personalContacts.push({ email: String(row.from_email), name: String(row.from_name || '') });
+    } else {
+      if (!byDomain.has(domain)) byDomain.set(domain, []);
+      byDomain.get(domain)!.push({ email: String(row.from_email), name: String(row.from_name || '') });
+    }
+  }
+
+  // 2. Upsert CRM company for each business domain
+  const companyIdByEmail = new Map<string, string>();
+
+  for (const [domain, senders] of byDomain) {
+    const companyName = domainToCompany(domain);
+
+    // Find or create company
+    const existing = await pool.query(
+      `SELECT id FROM crm_companies WHERE user_id=$1 AND LOWER(domain)=$2 LIMIT 1`,
+      [userId, domain]
+    );
+
+    let companyId: string;
+    if (existing.rows.length) {
+      companyId = String(existing.rows[0].id);
+      // Update logo if missing
+      await pool.query(
+        `UPDATE crm_companies SET logo_url=COALESCE(logo_url,$1), updated_at=NOW() WHERE id=$2`,
+        [`https://logo.clearbit.com/${domain}`, companyId]
+      ).catch(() => undefined);
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO crm_companies (id, user_id, name, domain, website, logo_url, custom_data, created_at, updated_at)
+         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, '{"source":"gmail_sync"}'::jsonb, NOW(), NOW())
+         RETURNING id`,
+        [userId, companyName, domain, `https://${domain}`, `https://logo.clearbit.com/${domain}`]
+      );
+      companyId = String(ins.rows[0].id);
+    }
+
+    for (const sender of senders) {
+      companyIdByEmail.set(sender.email.toLowerCase(), companyId);
+    }
+
+    // 3. Upsert contacts for this company
+    for (const sender of senders) {
+      const nameParts = sender.name.trim().split(/\s+/).filter(Boolean);
+      const firstName = nameParts[0] || sender.email.split('@')[0];
+      const lastName = nameParts.slice(1).join(' ');
+
+      const contactResult = await pool.query(
+        `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, created_at, updated_at)
+         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, NOW(), NOW())
+         ON CONFLICT (user_id, email) DO UPDATE SET
+           first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
+                              THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,
+           last_name  = CASE WHEN mailing_contacts.last_name IS NULL OR mailing_contacts.last_name = ''
+                              THEN EXCLUDED.last_name ELSE mailing_contacts.last_name END,
+           updated_at = NOW()
+         RETURNING id`,
+        [userId, sender.email.toLowerCase(), firstName, lastName]
+      );
+
+      const contactId = String(contactResult.rows[0].id);
+
+      // Link contact → company
+      await pool.query(
+        `INSERT INTO crm_contact_companies (contact_id, company_id, is_primary, created_at)
+         VALUES ($1, $2, true, NOW())
+         ON CONFLICT (contact_id, company_id) DO NOTHING`,
+        [contactId, companyId]
+      ).catch(() => undefined);
+
+      // 4. Upsert email activities for this sender
+      const msgs = await pool.query(
+        `SELECT gmail_message_id, subject, snippet, date, is_sent
+         FROM gmail_messages
+         WHERE user_id=$1 AND (
+           (NOT is_sent AND LOWER(from_email)=$2) OR
+           (is_sent AND LOWER(to_email)=$2)
+         )`,
+        [userId, sender.email.toLowerCase()]
+      );
+
+      for (const msg of msgs.rows as any[]) {
+        const msgDate = msg.date ? new Date(msg.date) : new Date();
+        const title = String(msg.subject || '(No subject)');
+        const body = String(msg.snippet || '');
+
+        await pool.query(
+          `INSERT INTO crm_activities
+             (id, user_id, company_id, contact_id, type, title, body, gmail_message_id, created_at, updated_at)
+           VALUES (gen_random_uuid()::text, $1, $2, $3, 'email', $4, $5, $6, $7, NOW())
+           ON CONFLICT (gmail_message_id) WHERE gmail_message_id IS NOT NULL DO NOTHING`,
+          [userId, companyId, contactId, title, body, String(msg.gmail_message_id), msgDate]
+        ).catch(() => undefined);
+      }
+    }
+  }
+
+  // 5. Create contacts for personal-domain senders (no company link)
+  for (const sender of personalContacts) {
+    const nameParts = sender.name.trim().split(/\s+/).filter(Boolean);
+    await pool.query(
+      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, created_at, updated_at)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, NOW(), NOW())
+       ON CONFLICT (user_id, email) DO UPDATE SET
+         first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
+                            THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,
+         updated_at = NOW()`,
+      [userId, sender.email.toLowerCase(), nameParts[0] || sender.email.split('@')[0], nameParts.slice(1).join(' ')]
+    ).catch(() => undefined);
+  }
 }
 
 // ── Background sync ───────────────────────────────────────────────────────────
@@ -133,7 +288,9 @@ async function getValidGmailToken(
 async function runGmailSync(
   pool: Pool,
   userId: string,
-  getPlatformConfig: (p: string) => Promise<Record<string, string>>
+  getPlatformConfig: (p: string) => Promise<Record<string, string>>,
+  encryptIntegrationSecret: (plain: string) => string,
+  decryptIntegrationSecret: (enc: string) => string
 ): Promise<void> {
   const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
   const MAX_MESSAGES = 2000;
@@ -147,7 +304,7 @@ async function runGmailSync(
       [userId]
     );
 
-    const token = await getValidGmailToken(pool, userId, getPlatformConfig);
+    const token = await getValidGmailToken(pool, userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
     if (!token) throw new Error('Gmail not connected or token expired. Please reconnect Gmail.');
 
     // ── Collect up to MAX_MESSAGES message IDs ─────────────────────────────
@@ -266,6 +423,10 @@ async function runGmailSync(
        WHERE user_id=$2`,
       [synced, userId]
     );
+
+    // Populate CRM companies/contacts/activities from synced emails
+    await syncToCRM(pool, userId).catch((e) => logger.warn({ e }, 'gmail_crm_sync_error'));
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Sync failed';
     logger.error({ userId, err }, 'gmail_sync_error');
@@ -281,7 +442,7 @@ async function runGmailSync(
 // ── Router ─────────────────────────────────────────────────────────────────────
 
 export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
-  const { requireAuth, pool, getPlatformConfig } = deps;
+  const { requireAuth, pool, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret } = deps;
   // AI helpers referenced directly via `deps` inside the AI summary route
   const router = Router();
 
@@ -301,7 +462,7 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     }
 
     // Fire-and-forget
-    void runGmailSync(pool, auth.userId, getPlatformConfig);
+    void runGmailSync(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
     return res.json({ success: true, message: 'Sync started' });
   });
 
