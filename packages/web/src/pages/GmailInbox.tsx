@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, ChevronDown, ChevronUp, Loader2, Mail, Phone,
+  ArrowLeft, ChevronDown, ChevronUp, ExternalLink, Loader2, Mail, Phone,
   RefreshCw, Sparkles, Trash2, X, ListFilter, Building2,
 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
@@ -375,7 +375,7 @@ function ContactPanel({
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
-export default function GmailInbox() {
+export default function GmailInbox({ onNavigateToCRM }: { onNavigateToCRM?: () => void } = {}) {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     status: 'idle', totalFetched: 0, lastSyncedAt: null, errorMessage: null,
   });
@@ -428,6 +428,8 @@ export default function GmailInbox() {
 
   // ── Polling ──────────────────────────────────────────────────────────────────
 
+  const autoSyncTriggered = useRef(false);
+
   useEffect(() => { void fetchStatus(); }, [fetchStatus]);
 
   useEffect(() => {
@@ -435,6 +437,12 @@ export default function GmailInbox() {
       pollRef.current = setTimeout(() => void fetchStatus(), 2000);
     } else {
       if (pollRef.current) clearTimeout(pollRef.current);
+      // Auto-start on first visit when Gmail was just connected (status idle + never synced)
+      if (syncStatus.status === 'idle' && syncStatus.totalFetched === 0 && !autoSyncTriggered.current) {
+        autoSyncTriggered.current = true;
+        void startSync();
+        return;
+      }
       if ((syncStatus.status === 'done' || syncStatus.totalFetched > 0) && contacts.length === 0) {
         void fetchContacts();
       }
@@ -500,6 +508,16 @@ export default function GmailInbox() {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {hasSynced && onNavigateToCRM && (
+                <button
+                  type="button"
+                  onClick={onNavigateToCRM}
+                  className="flex items-center gap-1.5 rounded-xl border border-[#5b6cf9] bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                >
+                  <ExternalLink size={12} />
+                  View in CRM
+                </button>
+              )}
               {hasSynced && (
                 <button
                   type="button"
@@ -550,7 +568,7 @@ export default function GmailInbox() {
               <div>
                 <p className="text-lg font-black text-slate-900">Sync your Gmail contacts</p>
                 <p className="mt-1 max-w-sm text-sm text-slate-500">
-                  Import up to 2,000 emails. Each unique sender becomes a contact with a full activity timeline and AI record summary.
+                  Import up to 2,000 emails. Each business domain creates a <strong>CRM Company</strong>, each sender becomes a <strong>CRM Contact</strong>, and all emails appear on their activity timeline.
                 </p>
               </div>
               <button

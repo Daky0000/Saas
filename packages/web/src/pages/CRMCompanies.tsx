@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Building2, Plus, Search, Globe, Phone, Mail, Users, TrendingUp, X, Edit2, Trash2, ChevronRight, DollarSign, Link, MessageSquare, PhoneCall, Calendar, FileText, Clock, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { Building2, Plus, Search, Globe, Phone, Mail, Users, TrendingUp, X, Edit2, Trash2, ChevronRight, DollarSign, Link, MessageSquare, PhoneCall, Calendar, FileText, Clock, ArrowUpRight, ArrowDownLeft, RefreshCw, Loader2 } from 'lucide-react';
 
 const API = '/api/crm';
 const tok = () => localStorage.getItem('auth_token') ?? '';
@@ -146,6 +146,39 @@ export default function CRMCompanies() {
   const [formError, setFormError] = useState('');
   const [form, setForm] = useState({ name: '', domain: '', industry: '', size: '', website: '', phone: '', email: '', city: '', country: '', description: '' });
 
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailSync, setGmailSync] = useState<{ status: string; totalFetched: number; lastSyncedAt: string | null } | null>(null);
+  const [gmailSyncing, setGmailSyncing] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/accounts', { headers: authHeaders() })
+      .then(r => r.json()).catch(() => ({ data: [] }))
+      .then(data => {
+        const accounts: any[] = Array.isArray(data?.data) ? data.data : [];
+        setGmailConnected(accounts.some((a: any) => a.platform === 'gmail' && a.connected));
+      });
+    fetch('/api/gmail/sync/status', { headers: authHeaders() })
+      .then(r => r.json()).catch(() => null)
+      .then(data => { if (data && data.status) setGmailSync(data); });
+  }, []);
+
+  const triggerGmailSync = async () => {
+    setGmailSyncing(true);
+    await fetch('/api/gmail/sync', { method: 'POST', headers: authHeaders() }).catch(() => {});
+    const poll = async () => {
+      const data = await fetch('/api/gmail/sync/status', { headers: authHeaders() }).then(r => r.json()).catch(() => null);
+      if (!data) { setGmailSyncing(false); return; }
+      setGmailSync(data);
+      if (data.status === 'running') {
+        setTimeout(poll, 2500);
+      } else {
+        setGmailSyncing(false);
+        if (data.status === 'done') load();
+      }
+    };
+    await poll();
+  };
+
   const load = useCallback(async (q = search) => {
     setLoading(true);
     try {
@@ -251,6 +284,47 @@ export default function CRMCompanies() {
             />
           </div>
         </div>
+
+        {/* Gmail sync banner */}
+        {gmailConnected && (() => {
+          const isRunning = gmailSyncing || gmailSync?.status === 'running';
+          const isDone = gmailSync?.status === 'done';
+          const pct = Math.min(Math.round(((gmailSync?.totalFetched ?? 0) / 2000) * 100), 100);
+          if (!isRunning && isDone) return null;
+          return (
+            <div className={`shrink-0 border-b px-5 py-3 ${isRunning ? 'bg-indigo-50 border-indigo-100' : 'bg-blue-50 border-blue-100'}`}>
+              {isRunning ? (
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-4 h-4 text-[#5b6cf9] animate-spin flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">Scanning Gmail for companies…</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="flex-1 h-1.5 rounded-full bg-indigo-100 overflow-hidden">
+                        <div className="h-full rounded-full bg-[#5b6cf9] transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{gmailSync?.totalFetched ?? 0} / 2,000</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    <p className="text-sm text-gray-700">
+                      <span className="font-medium">Gmail connected</span> — import your emails to auto-create companies &amp; contacts
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void triggerGmailSync()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5b6cf9] text-white text-xs font-medium rounded-lg hover:bg-[#4a5be8] flex-shrink-0 transition-colors"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Import from Gmail
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* List */}
         <div className="flex-1 overflow-y-auto">

@@ -765,7 +765,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       slug,
                       slug === 'linkedin'
                         ? '/integrations?liConnected=1'
-                        : '/integrations'
+                        : slug === 'gmail'
+                          ? '/gmail-inbox'
+                          : '/integrations'
                     )
               }
               disabled={!canConnect || busy === slug}
