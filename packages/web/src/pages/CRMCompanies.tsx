@@ -147,7 +147,7 @@ export default function CRMCompanies() {
   const [form, setForm] = useState({ name: '', domain: '', industry: '', size: '', website: '', phone: '', email: '', city: '', country: '', description: '' });
 
   const [gmailConnected, setGmailConnected] = useState(false);
-  const [gmailSync, setGmailSync] = useState<{ status: string; totalFetched: number; lastSyncedAt: string | null; errorMessage?: string | null } | null>(null);
+  const [gmailSync, setGmailSync] = useState<{ status: string; totalFetched: number; lastSyncedAt: string | null; errorMessage?: string | null; messageCount?: number } | null>(null);
   const [gmailSyncing, setGmailSyncing] = useState(false);
 
   useEffect(() => {
@@ -271,16 +271,25 @@ export default function CRMCompanies() {
             </div>
             <div className="flex items-center gap-2">
               {gmailConnected && (
-                <button
-                  onClick={() => void triggerGmailSync()}
-                  disabled={gmailSyncing || gmailSync?.status === 'running'}
-                  className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
-                >
-                  {(gmailSyncing || gmailSync?.status === 'running')
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing…</>
-                    : <><RefreshCw className="w-4 h-4" /> Sync Gmail</>
-                  }
-                </button>
+                <div className="flex flex-col items-end gap-0.5">
+                  <button
+                    onClick={() => void triggerGmailSync()}
+                    disabled={gmailSyncing || gmailSync?.status === 'running'}
+                    className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-60"
+                  >
+                    {(gmailSyncing || gmailSync?.status === 'running')
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing…</>
+                      : <><RefreshCw className="w-4 h-4" /> Sync Gmail</>
+                    }
+                  </button>
+                  {gmailSync && (
+                    <span className="text-[10px] text-gray-400">
+                      {(gmailSync.messageCount ?? 0) > 0
+                        ? `${(gmailSync.messageCount ?? 0).toLocaleString()} emails in DB`
+                        : gmailSync.status === 'done' ? 'No emails stored — re-sync' : ''}
+                    </span>
+                  )}
+                </div>
               )}
               <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
                 <Plus className="w-4 h-4" />

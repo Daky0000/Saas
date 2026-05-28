@@ -426,7 +426,14 @@ async function runGmailSync(
     );
 
     // Populate CRM companies/contacts/activities from synced emails
-    await syncToCRM(pool, userId).catch((e) => logger.warn({ e }, 'gmail_crm_sync_error'));
+    await syncToCRM(pool, userId).catch(async (e) => {
+      const crmErr = e instanceof Error ? e.message : String(e);
+      logger.warn({ userId, crmErr }, 'gmail_crm_sync_error');
+      await pool.query(
+        `UPDATE gmail_sync_state SET error_message=$1, updated_at=NOW() WHERE user_id=$2`,
+        [`CRM sync failed: ${crmErr}`, userId]
+      ).catch(() => undefined);
+    });
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Sync failed';
@@ -471,24 +478,32 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
   router.get('/gmail/sync/status', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!pool) return res.json({ success: true, status: 'idle', totalFetched: 0 });
+    if (!pool) return res.json({ success: true, status: 'idle', totalFetched: 0, messageCount: 0 });
 
-    const result = await pool.query(
-      `SELECT status, total_fetched, last_synced_at, error_message
-       FROM gmail_sync_state WHERE user_id=$1`,
-      [auth.userId]
-    ).catch(() => ({ rows: [] as any[] }));
+    const [stateRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT status, total_fetched, last_synced_at, error_message FROM gmail_sync_state WHERE user_id=$1`,
+        [auth.userId]
+      ).catch(() => ({ rows: [] as any[] })),
+      pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM gmail_messages WHERE user_id=$1`,
+        [auth.userId]
+      ).catch(() => ({ rows: [{ cnt: 0 }] as any[] })),
+    ]);
 
-    if (!result.rows.length) {
-      return res.json({ success: true, status: 'idle', totalFetched: 0, lastSyncedAt: null, errorMessage: null });
+    const messageCount = Number(countRes.rows[0]?.cnt ?? 0);
+
+    if (!stateRes.rows.length) {
+      return res.json({ success: true, status: 'idle', totalFetched: 0, lastSyncedAt: null, errorMessage: null, messageCount });
     }
-    const row = result.rows[0] as any;
+    const row = stateRes.rows[0] as any;
     return res.json({
       success: true,
       status: String(row.status || 'idle'),
       totalFetched: Number(row.total_fetched || 0),
       lastSyncedAt: row.last_synced_at || null,
       errorMessage: row.error_message || null,
+      messageCount,
     });
   });
 
