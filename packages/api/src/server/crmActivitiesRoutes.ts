@@ -28,7 +28,7 @@ export function registerCRMActivitiesRoutes({ requireAuth, pool }: Deps): Router
         mc.email AS contact_email, mc.first_name AS contact_first_name, mc.last_name AS contact_last_name,
         d.title AS deal_title,
         cc.name AS company_name,
-        u.name AS author_name
+        u.full_name AS author_name
        FROM crm_activities a
        LEFT JOIN mailing_contacts mc ON mc.id=a.contact_id
        LEFT JOIN crm_deals d ON d.id=a.deal_id
