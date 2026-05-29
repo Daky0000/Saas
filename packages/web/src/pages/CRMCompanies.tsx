@@ -156,9 +156,14 @@ function ActivityItem({ act }: { act: Activity }) {
   const [expanded, setExpanded] = useState(false);
   const isGmail = Boolean(act.gmail_message_id);
   const isSent = act.title?.startsWith('Sent: ');
-  const displayTitle = act.title?.replace(/^(Sent|Received): /, '') ?? `${act.type.charAt(0).toUpperCase() + act.type.slice(1)} activity`;
+  const isNote = act.type === 'note';
+  const displayTitle = isNote
+    ? `Note by ${act.author_name ?? 'You'}`
+    : (act.title?.replace(/^(Sent|Received): /, '') ?? `${act.type.charAt(0).toUpperCase() + act.type.slice(1)} activity`);
   const when = new Date(act.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const contactName = [act.contact_first_name, act.contact_last_name].filter(Boolean).join(' ') || act.contact_email || '';
+  // For notes, strip HTML for the collapsed preview
+  const bodyPlain = isNote && act.body ? stripHtml(act.body) : act.body;
   return (
     <div className="flex gap-3 py-4 border-b border-gray-100 last:border-0">
       <ActivityIcon type={act.type} />
@@ -180,8 +185,11 @@ function ActivityItem({ act }: { act: Activity }) {
         </div>
         {act.body && (
           <div className="mt-1">
-            <p className={`text-xs text-gray-500 ${!expanded ? 'line-clamp-2' : ''}`}>{act.body}</p>
-            {act.body.length > 120 && (
+            {isNote && expanded
+              ? <div className="text-xs text-gray-500 prose prose-xs max-w-none" dangerouslySetInnerHTML={{ __html: act.body }} />
+              : <p className={`text-xs text-gray-500 ${!expanded ? 'line-clamp-2' : ''}`}>{bodyPlain}</p>
+            }
+            {(bodyPlain?.length ?? 0) > 120 && (
               <button onClick={() => setExpanded(e => !e)} className="text-xs text-[#5b6cf9] mt-0.5 hover:underline">
                 {expanded ? 'Show less' : 'Show more'}
               </button>

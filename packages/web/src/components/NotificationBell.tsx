@@ -10,6 +10,7 @@ import {
   FileText,
   Mail,
   Megaphone,
+  PenLine,
   Pin,
   Plug,
   RefreshCw,
@@ -63,6 +64,8 @@ const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: st
   marketing_alert:   { icon: Star,        color: 'text-amber-600',  bg: 'bg-amber-50' },
   email_sent:        { icon: Send,        color: 'text-emerald-600',bg: 'bg-emerald-50' },
   automation_fired:  { icon: Zap,         color: 'text-purple-600', bg: 'bg-purple-50' },
+  note_edited:       { icon: PenLine,     color: 'text-amber-600',  bg: 'bg-amber-50'  },
+  note_deleted:      { icon: Trash2,      color: 'text-red-500',    bg: 'bg-red-50'    },
 };
 
 function getMeta(type: string) {

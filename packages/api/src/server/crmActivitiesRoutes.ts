@@ -69,13 +69,53 @@ export function registerCRMActivitiesRoutes({ requireAuth, pool }: Deps): Router
     sets.push(`updated_at=NOW()`);
     const { rows } = await pool.query(`UPDATE crm_activities SET ${sets.join(',')} WHERE id=$1 AND user_id=$2 RETURNING *`, params);
     if (!rows.length) return void res.status(404).json({ error: 'Not found' });
+
+    // Notify commenters (excluding the editor)
+    if (rows[0].type === 'note') {
+      const preview = (rows[0].body ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+      const { rows: commenters } = await pool.query(
+        `SELECT DISTINCT user_id FROM crm_note_comments WHERE note_id=$1 AND user_id != $2`,
+        [req.params.id, auth.userId]
+      ).catch(() => ({ rows: [] }));
+      for (const { user_id } of commenters) {
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, message, data) VALUES ($1,'note_edited','Note updated',$2,$3)`,
+          [user_id, `A note you commented on was updated${preview ? `: "${preview}"` : '.'}`, JSON.stringify({ note_id: req.params.id })]
+        ).catch(() => undefined);
+      }
+    }
+
     res.json(rows[0]);
   });
 
   // ── Delete activity ────────────────────────────────────────────────────────
   router.delete('/activities/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
+
+    // Gather commenters + note preview BEFORE the cascade delete wipes crm_note_comments
+    const { rows: noteRows } = await pool.query(
+      `SELECT type, body FROM crm_activities WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]
+    ).catch(() => ({ rows: [] }));
+    const isNote = noteRows[0]?.type === 'note';
+    const { rows: commenters } = isNote
+      ? await pool.query(
+          `SELECT DISTINCT user_id FROM crm_note_comments WHERE note_id=$1 AND user_id != $2`,
+          [req.params.id, auth.userId]
+        ).catch(() => ({ rows: [] }))
+      : { rows: [] };
+
     await pool.query(`DELETE FROM crm_activities WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+
+    if (isNote) {
+      const preview = (noteRows[0].body ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+      for (const { user_id } of commenters) {
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, message, data) VALUES ($1,'note_deleted','Note deleted',$2,$3)`,
+          [user_id, `A note you commented on was deleted${preview ? `: "${preview}"` : '.'}`, JSON.stringify({})]
+        ).catch(() => undefined);
+      }
+    }
+
     res.json({ ok: true });
   });
 
