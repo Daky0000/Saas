@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Plus, Trash2, Building2 } from 'lucide-react';
+import CalendarPicker from './CalendarPicker';
 import { Task, TaskStatus, TaskPriority, TaskLabel, TaskType, ReminderOption, ACTION_TYPES, TASK_TYPE_OPTIONS, REMINDER_OPTIONS, reminderToTimestamp } from './taskTypes';
 import { apiFetch } from './TasksPage';
 import { ColorPickerPopover } from '../cards/builder/ColorPicker';
@@ -224,27 +225,8 @@ export default function CreateTaskModal({
                 {REMINDER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
 
-              {/* Custom date picker — opens native calendar */}
-              {reminder === 'custom' && (
-                <input
-                  type="datetime-local"
-                  value={customReminderDate}
-                  onChange={e => setCustomReminderDate(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-indigo-300 bg-indigo-50 px-2 py-1.5 text-[12px] text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                  autoFocus
-                />
-              )}
-
-              {/* "Fires at" label */}
-              {(() => {
-                if (reminder === 'none') return null;
-                if (reminder === 'custom') {
-                  if (!customReminderDate) return (
-                    <p className="mt-1 text-[10px] text-amber-500">Pick a date above for the reminder</p>
-                  );
-                  const label = new Date(customReminderDate).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-                  return <p className="mt-1 text-[10px] text-indigo-500 font-medium">Fires at {label}</p>;
-                }
+              {/* "Fires at" label (relative reminders) */}
+              {reminder !== 'none' && reminder !== 'custom' && (() => {
                 if (!dueDate) return (
                   <p className="mt-1 text-[10px] text-amber-500">Set a due date to enable this reminder</p>
                 );
@@ -253,8 +235,32 @@ export default function CreateTaskModal({
                 const label = new Date(firesAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
                 return <p className="mt-1 text-[10px] text-indigo-500 font-medium">Fires at {label}</p>;
               })()}
+
+              {/* Custom date: summary + change/clear controls */}
+              {reminder === 'custom' && customReminderDate && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <p className="text-[10px] text-indigo-500 font-medium flex-1">
+                    Fires at {new Date(customReminderDate).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  </p>
+                  <button
+                    onClick={() => setCustomReminderDate('')}
+                    className="text-[10px] text-[#5b6cf9] hover:underline font-semibold"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Calendar picker — shown when Custom date reminder is selected */}
+          {reminder === 'custom' && !customReminderDate && (
+            <CalendarPicker
+              value={customReminderDate}
+              onChange={val => setCustomReminderDate(val)}
+              onCancel={() => setReminder('none')}
+            />
+          )}
 
           {/* Assignees */}
           {members.length > 0 && (
