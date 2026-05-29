@@ -217,10 +217,19 @@ export default function CreateTaskModal({
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Send Reminder</label>
               <select value={reminder} onChange={e => setReminder(e.target.value as ReminderOption)}
-                disabled={!dueDate}
-                className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50">
+                className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300">
                 {REMINDER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
+              {(() => {
+                if (reminder === 'none') return null;
+                if (!dueDate) return (
+                  <p className="mt-1 text-[10px] text-amber-500">Set a due date to enable this reminder</p>
+                );
+                const firesAt = reminderToTimestamp(dueDate, reminder);
+                if (!firesAt) return null;
+                const label = new Date(firesAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                return <p className="mt-1 text-[10px] text-indigo-500 font-medium">Fires at {label}</p>;
+              })()}
             </div>
           </div>
 

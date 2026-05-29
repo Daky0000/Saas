@@ -55,6 +55,7 @@ const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: st
   member_joined:     { icon: Mail,      color: 'text-teal-600',    bg: 'bg-teal-50' },
   invite_declined:   { icon: X,        color: 'text-red-500',     bg: 'bg-red-50' },
   task_due_soon:     { icon: Clock,       color: 'text-amber-600',  bg: 'bg-amber-50' },
+  task_reminder:     { icon: Clock,       color: 'text-orange-600', bg: 'bg-orange-50' },
   campaign_launched: { icon: Megaphone,   color: 'text-indigo-600', bg: 'bg-indigo-50' },
   campaign_alert:    { icon: Target,      color: 'text-violet-600', bg: 'bg-violet-50' },
   survey_response:   { icon: FileText,    color: 'text-teal-600',   bg: 'bg-teal-50' },
@@ -95,6 +96,9 @@ export default function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [toastQueue, setToastQueue] = useState<Notification[]>([]);
+  const seenIds = useRef<Set<string>>(new Set());
+  const isFirstLoad = useRef(true);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -107,6 +111,21 @@ export default function NotificationBell() {
       if (d.success) {
         setNotifications(d.notifications);
         setUnreadCount(d.unreadCount);
+
+        if (isFirstLoad.current) {
+          // Seed seen IDs on first load — don't toast for existing reminders
+          (d.notifications as Notification[]).forEach(n => seenIds.current.add(n.id));
+          isFirstLoad.current = false;
+        } else {
+          // On subsequent polls, toast any new task_reminder notifications
+          const incoming = (d.notifications as Notification[]).filter(
+            n => n.type === 'task_reminder' && !seenIds.current.has(n.id)
+          );
+          (d.notifications as Notification[]).forEach(n => seenIds.current.add(n.id));
+          if (incoming.length > 0) {
+            setToastQueue(q => [...q, ...incoming]);
+          }
+        }
       }
     } catch { /* silent */ }
   }, []);
@@ -198,6 +217,15 @@ export default function NotificationBell() {
 
   const nonPinnedCount = notifications.filter((n) => !n.pinned).length;
 
+  const dismissToast = (id: string) => setToastQueue(q => q.filter(n => n.id !== id));
+
+  // Auto-dismiss toasts after 8 s
+  useEffect(() => {
+    if (toastQueue.length === 0) return;
+    const t = setTimeout(() => setToastQueue(q => q.slice(1)), 8000);
+    return () => clearTimeout(t);
+  }, [toastQueue]);
+
   return (
     <div className="relative">
       <button
@@ -217,6 +245,29 @@ export default function NotificationBell() {
           </span>
         )}
       </button>
+
+      {/* Reminder toast stack — fixed top-right, outside the bell's relative container */}
+      {toastQueue.length > 0 && (
+        <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+          {toastQueue.map(n => (
+            <div key={n.id}
+              className="pointer-events-auto flex items-start gap-3 w-80 rounded-2xl bg-white border border-orange-200 shadow-2xl px-4 py-3 animate-in slide-in-from-right-4 fade-in duration-300"
+            >
+              <div className="mt-0.5 shrink-0 flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50">
+                <Clock size={15} className="text-orange-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-gray-900 leading-snug">{n.title}</p>
+                <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{n.message}</p>
+              </div>
+              <button onClick={() => dismissToast(n.id)}
+                className="shrink-0 mt-0.5 text-gray-300 hover:text-gray-600 transition-colors">
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {open && (
         <div
