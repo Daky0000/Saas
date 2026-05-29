@@ -576,8 +576,8 @@ function AppSidebar({
           {crmMenuOpen && (
             <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
               {([
-                { id: 'crm-pipeline' as PageType, label: 'Pipeline' },
                 { id: 'crm-companies' as PageType, label: 'Companies' },
+                { id: 'crm-pipeline' as PageType, label: 'Deals' },
                 { id: 'crm-scoring' as PageType, label: 'Lead Scoring' },
                 { id: 'gmail-agent' as PageType, label: 'Gmail Agent' },
               ] as { id: PageType; label: string }[]).map((c) => (

@@ -3938,6 +3938,31 @@ await pool.query(`
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS gmail_message_id TEXT`).catch(() => undefined);
 await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS crm_activities_gmail_msg_idx ON crm_activities(gmail_message_id) WHERE gmail_message_id IS NOT NULL`).catch(() => undefined);
 
+// ── CRM: pipelines (multi-pipeline support) ───────────────────────────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_pipelines (
+    id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_pipelines_user_idx ON crm_pipelines (user_id)`).catch(() => undefined);
+await pool.query(`ALTER TABLE crm_pipeline_stages ADD COLUMN IF NOT EXISTS pipeline_id TEXT REFERENCES crm_pipelines(id) ON DELETE CASCADE`).catch(() => undefined);
+await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS close_reason TEXT`).catch(() => undefined);
+// Migrate existing stages: one default pipeline per user
+await pool.query(`
+  INSERT INTO crm_pipelines (id, user_id, name)
+  SELECT gen_random_uuid()::text, user_id, 'Sales Pipeline'
+  FROM (SELECT DISTINCT user_id FROM crm_pipeline_stages WHERE pipeline_id IS NULL) u
+`).catch(() => undefined);
+await pool.query(`
+  UPDATE crm_pipeline_stages s
+  SET pipeline_id = (SELECT id FROM crm_pipelines p WHERE p.user_id = s.user_id ORDER BY created_at LIMIT 1)
+  WHERE s.pipeline_id IS NULL
+`).catch(() => undefined);
+
 // ── CRM: note comments ────────────────────────────────────────────────────────
 await pool.query(`
   CREATE TABLE IF NOT EXISTS crm_note_comments (
