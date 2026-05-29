@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, Building2 } from 'lucide-react';
 import CalendarPicker from './CalendarPicker';
 import { Task, TaskStatus, TaskPriority, TaskLabel, TaskType, ReminderOption, ACTION_TYPES, TASK_TYPE_OPTIONS, REMINDER_OPTIONS, reminderToTimestamp } from './taskTypes';
@@ -68,7 +69,9 @@ export default function CreateTaskModal({
   const [newLabelColor, setNewLabelColor] = useState('#6366f1');
   const [actions, setActions]         = useState<ActionDraft[]>([]);
   const [saving, setSaving]           = useState(false);
-  const titleRef = useRef<HTMLInputElement>(null);
+  const titleRef      = useRef<HTMLInputElement>(null);
+  const reminderRef   = useRef<HTMLDivElement>(null);
+  const [calPos, setCalPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => { titleRef.current?.focus(); }, []);
 
@@ -87,6 +90,25 @@ export default function CreateTaskModal({
 
   const members = propMembers ?? loadedMembers;
   const labels  = propLabels  ?? availableLabels;
+
+  const showCalendar = reminder === 'custom' && !customReminderDate;
+
+  useEffect(() => {
+    if (showCalendar && reminderRef.current) {
+      const rect = reminderRef.current.getBoundingClientRect();
+      const CAL_W = 288; // w-72
+      const CAL_H = 420;
+      const GAP   = 8;
+      let top  = rect.bottom + GAP;
+      let left = rect.left;
+      if (left + CAL_W > window.innerWidth - 8) left = window.innerWidth - CAL_W - 8;
+      if (left < 8) left = 8;
+      if (top + CAL_H > window.innerHeight - 8) top = Math.max(8, rect.top - CAL_H - GAP);
+      setCalPos({ top, left });
+    } else {
+      setCalPos(null);
+    }
+  }, [showCalendar]);
 
   const toggleAssignee = (id: string) =>
     setAssigneeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -218,7 +240,7 @@ export default function CreateTaskModal({
               <input type="datetime-local" value={dueDate} onChange={e => setDueDate(e.target.value)}
                 className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300" />
             </div>
-            <div>
+            <div ref={reminderRef}>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Send Reminder</label>
               <select value={reminder} onChange={e => { setReminder(e.target.value as ReminderOption); setCustomReminderDate(''); }}
                 className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300">
@@ -252,15 +274,6 @@ export default function CreateTaskModal({
               )}
             </div>
           </div>
-
-          {/* Calendar picker — shown when Custom date reminder is selected */}
-          {reminder === 'custom' && !customReminderDate && (
-            <CalendarPicker
-              value={customReminderDate}
-              onChange={val => setCustomReminderDate(val)}
-              onCancel={() => setReminder('none')}
-            />
-          )}
 
           {/* Assignees */}
           {members.length > 0 && (
@@ -371,6 +384,24 @@ export default function CreateTaskModal({
           </button>
         </div>
       </div>
+
+      {/* Calendar portal — floats above the modal */}
+      {showCalendar && calPos && createPortal(
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+            onClick={() => setReminder('none')}
+          />
+          <div style={{ position: 'fixed', top: calPos.top, left: calPos.left, zIndex: 9999 }}>
+            <CalendarPicker
+              value={customReminderDate}
+              onChange={val => setCustomReminderDate(val)}
+              onCancel={() => setReminder('none')}
+            />
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }
