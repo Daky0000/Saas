@@ -522,8 +522,8 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
     const { projectId } = req.params;
     const access = await requireProjectAccess(req, res, projectId);
     if (!access) return;
-    const { title, description = '', status = 'todo', priority = 'medium', due_date, supervisor_id, assignee_ids = [], label_ids = [], actions = [] } =
-      req.body as { title: string; description?: string; status?: string; priority?: string; due_date?: string; supervisor_id?: string; assignee_ids?: string[]; label_ids?: string[]; actions?: { action_type: string; label: string; target_count: number }[] };
+    const { title, description = '', status = 'todo', priority = 'medium', due_date, supervisor_id, assignee_ids = [], label_ids = [], actions = [], task_type = 'todo', reminder_at, crm_company_id } =
+      req.body as { title: string; description?: string; status?: string; priority?: string; due_date?: string; supervisor_id?: string; assignee_ids?: string[]; label_ids?: string[]; actions?: { action_type: string; label: string; target_count: number }[]; task_type?: string; reminder_at?: string; crm_company_id?: string };
     if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
     try {
       const { rows: pos } = await dbQuery(
@@ -531,9 +531,9 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
         [projectId, status]
       );
       const { rows } = await dbQuery(
-        `INSERT INTO tasks (project_id, title, description, status, priority, position, due_date, supervisor_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [projectId, title.trim(), description, status, priority, (pos[0] as any).next, due_date || null, supervisor_id || null, access.userId]
+        `INSERT INTO tasks (project_id, title, description, status, priority, position, due_date, supervisor_id, created_by, task_type, reminder_at, crm_company_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [projectId, title.trim(), description, status, priority, (pos[0] as any).next, due_date || null, supervisor_id || null, access.userId, task_type || 'todo', reminder_at || null, crm_company_id || null]
       );
       const task = rows[0] as any;
       await Promise.all([

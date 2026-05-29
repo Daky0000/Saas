@@ -3449,6 +3449,10 @@ await pool.query(`
 await pool.query(`CREATE INDEX IF NOT EXISTS tasks_project_status_idx ON tasks (project_id, status, position);`).catch(() => undefined);
 // Migrate due_date from DATE to TIMESTAMPTZ to support time-of-day
 await pool.query(`ALTER TABLE tasks ALTER COLUMN due_date TYPE TIMESTAMPTZ USING due_date::TIMESTAMPTZ;`).catch(() => undefined);
+// Task type, reminder, and CRM company linkage
+await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type TEXT NOT NULL DEFAULT 'todo';`).catch(() => undefined);
+await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reminder_at TIMESTAMPTZ;`).catch(() => undefined);
+await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS crm_company_id UUID REFERENCES crm_companies(id) ON DELETE SET NULL;`).catch(() => undefined);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS task_assignees (

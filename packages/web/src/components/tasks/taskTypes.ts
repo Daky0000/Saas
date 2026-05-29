@@ -52,6 +52,33 @@ export type TaskAttachment = {
   created_at: string;
 };
 
+export type TaskType = 'todo' | 'call' | 'email';
+
+export const TASK_TYPE_OPTIONS: { value: TaskType; label: string }[] = [
+  { value: 'todo',  label: 'To-do' },
+  { value: 'call',  label: 'Call'  },
+  { value: 'email', label: 'Email' },
+];
+
+export type ReminderOption = 'none' | 'at_due' | '30min' | '1hour' | '1day' | '1week';
+
+export const REMINDER_OPTIONS: { value: ReminderOption; label: string }[] = [
+  { value: 'none',   label: 'No reminder'       },
+  { value: 'at_due', label: 'At task due time'  },
+  { value: '30min',  label: '30 minutes before' },
+  { value: '1hour',  label: '1 hour before'     },
+  { value: '1day',   label: '1 day before'      },
+  { value: '1week',  label: '1 week before'     },
+];
+
+export function reminderToTimestamp(dueDateIso: string, reminder: ReminderOption): string | null {
+  if (reminder === 'none' || !dueDateIso) return null;
+  const d = new Date(dueDateIso);
+  const offsets: Record<ReminderOption, number> = { none: 0, at_due: 0, '30min': 30, '1hour': 60, '1day': 60*24, '1week': 60*24*7 };
+  d.setMinutes(d.getMinutes() - offsets[reminder]);
+  return d.toISOString();
+}
+
 export type Task = {
   id: string;
   project_id: string;
@@ -59,6 +86,9 @@ export type Task = {
   description: string;
   status: TaskStatus;
   priority: TaskPriority;
+  task_type: TaskType;
+  reminder_at: string | null;
+  crm_company_id: string | null;
   position: number;
   due_date: string | null;
   supervisor_id: string | null;
