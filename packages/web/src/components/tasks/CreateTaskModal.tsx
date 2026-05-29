@@ -57,6 +57,7 @@ export default function CreateTaskModal({
   const [priority, setPriority]       = useState<TaskPriority>('medium');
   const [taskType, setTaskType]       = useState<TaskType>('todo');
   const [reminder, setReminder]       = useState<ReminderOption>('none');
+  const [customReminderDate, setCustomReminderDate] = useState('');
   const [dueDate, setDueDate]         = useState('');
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [labelIds, setLabelIds]       = useState<string[]>([]);
@@ -100,7 +101,9 @@ export default function CreateTaskModal({
     if (!title.trim() || !resolvedProjectId) return;
     setSaving(true);
     try {
-      const reminderAt = dueDate ? reminderToTimestamp(dueDate, reminder) : null;
+      const reminderAt = reminder === 'custom'
+        ? (customReminderDate ? new Date(customReminderDate).toISOString() : null)
+        : (dueDate ? reminderToTimestamp(dueDate, reminder) : null);
       const data = await apiFetch<{ task: Task }>(`/api/projects/${resolvedProjectId}/tasks`, {
         method: 'POST',
         body: JSON.stringify({
@@ -216,12 +219,32 @@ export default function CreateTaskModal({
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Send Reminder</label>
-              <select value={reminder} onChange={e => setReminder(e.target.value as ReminderOption)}
+              <select value={reminder} onChange={e => { setReminder(e.target.value as ReminderOption); setCustomReminderDate(''); }}
                 className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-300">
                 {REMINDER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
+
+              {/* Custom date picker — opens native calendar */}
+              {reminder === 'custom' && (
+                <input
+                  type="datetime-local"
+                  value={customReminderDate}
+                  onChange={e => setCustomReminderDate(e.target.value)}
+                  className="mt-1.5 w-full rounded-lg border border-indigo-300 bg-indigo-50 px-2 py-1.5 text-[12px] text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  autoFocus
+                />
+              )}
+
+              {/* "Fires at" label */}
               {(() => {
                 if (reminder === 'none') return null;
+                if (reminder === 'custom') {
+                  if (!customReminderDate) return (
+                    <p className="mt-1 text-[10px] text-amber-500">Pick a date above for the reminder</p>
+                  );
+                  const label = new Date(customReminderDate).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                  return <p className="mt-1 text-[10px] text-indigo-500 font-medium">Fires at {label}</p>;
+                }
                 if (!dueDate) return (
                   <p className="mt-1 text-[10px] text-amber-500">Set a due date to enable this reminder</p>
                 );
