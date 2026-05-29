@@ -69,6 +69,232 @@ interface Activity {
 const INDUSTRY_OPTIONS = ['Technology','Finance','Healthcare','Retail','Manufacturing','Education','Media','Real Estate','Consulting','Other'];
 const SIZE_OPTIONS = ['1-10','11-50','51-200','201-500','501-1000','1000+'];
 
+const CRM_TASK_TYPES = [
+  { value: 'task',  label: 'To-do' },
+  { value: 'call',  label: 'Call'  },
+  { value: 'email', label: 'Email' },
+] as const;
+
+const CRM_PRIORITY_OPTS = [
+  { value: 'none',   label: 'None',   dot: ''                },
+  { value: 'low',    label: 'Low',    dot: 'bg-green-500'    },
+  { value: 'medium', label: 'Medium', dot: 'bg-yellow-400'   },
+  { value: 'high',   label: 'High',   dot: 'bg-red-500'      },
+] as const;
+
+const CRM_REMINDER_OPTS = [
+  { value: 'none',   label: 'No reminder'        },
+  { value: 'at_due', label: 'At task due time'   },
+  { value: '30min',  label: '30 minutes before'  },
+  { value: '1hour',  label: '1 hour before'      },
+  { value: '1day',   label: '1 day before'       },
+  { value: '1week',  label: '1 week before'      },
+  { value: 'custom', label: 'Custom Date'        },
+] as const;
+
+function addBizDays(date: Date, n: number) {
+  const d = new Date(date);
+  let added = 0;
+  while (added < n) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) added++; }
+  return d;
+}
+
+function dueDateLabel(dateStr: string) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(dateStr + 'T00:00:00');
+  const diff = Math.round((target.getTime() - today.getTime()) / 86400000);
+  const dayName = target.toLocaleDateString('en-US', { weekday: 'long' });
+  if (diff === 0) return `Today (${dayName})`;
+  if (diff === 1) return `Tomorrow (${dayName})`;
+  if (diff < 0) return `${Math.abs(diff)} day${Math.abs(diff)!==1?'s':''} ago`;
+  return `In ${diff} day${diff!==1?'s':''} (${dayName})`;
+}
+
+type CRMTaskType = typeof CRM_TASK_TYPES[number]['value'];
+type CRMPriority = typeof CRM_PRIORITY_OPTS[number]['value'];
+type CRMReminder = typeof CRM_REMINDER_OPTS[number]['value'];
+
+function CRMCreateTaskModal({ companyId, companyName, onCreated, onClose }: {
+  companyId: string; companyName: string;
+  onCreated: (act: Activity) => void; onClose: () => void;
+}) {
+  const defaultDate = addBizDays(new Date(), 3).toISOString().slice(0, 10);
+  const [title, setTitle]       = useState('');
+  const [taskType, setTaskType] = useState<CRMTaskType>('task');
+  const [priority, setPriority] = useState<CRMPriority>('none');
+  const [reminder, setReminder] = useState<CRMReminder>('none');
+  const [dueDate, setDueDate]   = useState(defaultDate);
+  const [dueTime, setDueTime]   = useState('08:00');
+  const [notes, setNotes]       = useState('');
+  const [saving, setSaving]     = useState(false);
+  const [openMenu, setOpenMenu] = useState<'reminder'|'type'|'priority'|null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { titleRef.current?.focus(); }, []);
+
+  const reminderLabel = CRM_REMINDER_OPTS.find(r => r.value === reminder)!.label;
+  const typeLabel     = CRM_TASK_TYPES.find(t => t.value === taskType)!.label;
+  const priorityOpt  = CRM_PRIORITY_OPTS.find(p => p.value === priority)!;
+
+  const handleCreate = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    try {
+      const scheduledAt = dueDate ? `${dueDate}T${dueTime}:00` : null;
+      const r = await fetch('/api/crm/activities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({
+          type: taskType,
+          title: title.trim(),
+          body: notes.trim() || null,
+          outcome: priority !== 'none' ? priority : null,
+          scheduled_at: scheduledAt,
+          company_id: companyId,
+        }),
+      });
+      if (r.ok) { const act = await r.json(); onCreated(act); onClose(); }
+    } finally { setSaving(false); }
+  };
+
+  const toggle = (menu: typeof openMenu) => setOpenMenu(m => m === menu ? null : menu);
+  const close  = () => setOpenMenu(null);
+
+  const DropMenu = ({ name, children }: { name: typeof openMenu; children: React.ReactNode }) =>
+    openMenu === name ? (
+      <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-20 min-w-[180px] py-1 overflow-hidden">
+        {children}
+      </div>
+    ) : null;
+
+  const MenuItem = ({ label, active, dot, onClick }: { label: string; active: boolean; dot?: string; onClick: () => void }) => (
+    <button onClick={onClick} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 transition-colors ${active ? 'text-[#5b6cf9] font-semibold bg-indigo-50' : 'text-gray-700'}`}>
+      {dot !== undefined && (
+        dot ? <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} /> : <span className="w-2 h-2 rounded-full border border-gray-300 flex-shrink-0" />
+      )}
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-16 px-4" onClick={e => { if (e.target === e.currentTarget) onClose(); close(); }}>
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-visible" onClick={close}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+          <span className="text-sm font-bold text-gray-800">Task</span>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4 overflow-visible">
+          {/* Title */}
+          <input
+            ref={titleRef}
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) void handleCreate(); }}
+            placeholder="Enter your task"
+            className="w-full text-sm text-gray-800 placeholder-gray-300 border-0 focus:outline-none focus:ring-0 py-0.5"
+          />
+
+          {/* Activity date */}
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Activity date</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="text-sm font-bold text-gray-800 cursor-pointer hover:text-[#5b6cf9] transition-colors relative">
+                {dueDateLabel(dueDate)}
+                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="absolute inset-0 opacity-0 w-full cursor-pointer" />
+              </label>
+              <div className="flex items-center gap-1.5 text-gray-600">
+                <Clock className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} className="text-sm font-medium text-gray-700 border-0 focus:outline-none bg-transparent" />
+              </div>
+            </div>
+          </div>
+
+          {/* Send reminder */}
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Send reminder</p>
+            <div className="relative" onClick={e => e.stopPropagation()}>
+              <button onClick={() => toggle('reminder')} className="flex items-center gap-1 text-sm font-bold text-gray-800 hover:text-[#5b6cf9] transition-colors">
+                {reminderLabel} <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+              </button>
+              <DropMenu name="reminder">
+                {CRM_REMINDER_OPTS.map(opt => (
+                  <MenuItem key={opt.value} label={opt.label} active={reminder === opt.value} onClick={() => { setReminder(opt.value); close(); }} />
+                ))}
+              </DropMenu>
+            </div>
+          </div>
+
+          {/* Type + Priority */}
+          <div className="border-t border-gray-100 pt-4 grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Task Type</p>
+              <div className="relative" onClick={e => e.stopPropagation()}>
+                <button onClick={() => toggle('type')} className="text-sm font-bold text-gray-800 hover:text-[#5b6cf9] transition-colors">
+                  {typeLabel}
+                </button>
+                <DropMenu name="type">
+                  {CRM_TASK_TYPES.map(opt => (
+                    <MenuItem key={opt.value} label={opt.label} active={taskType === opt.value} onClick={() => { setTaskType(opt.value); close(); }} />
+                  ))}
+                </DropMenu>
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Priority</p>
+              <div className="relative" onClick={e => e.stopPropagation()}>
+                <button onClick={() => toggle('priority')} className="flex items-center gap-1.5 text-sm font-bold text-gray-800 hover:text-[#5b6cf9] transition-colors">
+                  {priorityOpt.dot
+                    ? <span className={`w-2 h-2 rounded-full ${priorityOpt.dot}`} />
+                    : <span className="w-2 h-2 rounded-full border border-gray-300" />}
+                  {priorityOpt.label}
+                </button>
+                <DropMenu name="priority">
+                  {CRM_PRIORITY_OPTS.map(opt => (
+                    <MenuItem key={opt.value} label={opt.label} active={priority === opt.value} dot={opt.dot} onClick={() => { setPriority(opt.value); close(); }} />
+                  ))}
+                </DropMenu>
+              </div>
+            </div>
+          </div>
+
+          {/* Assigned to */}
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Activity assigned to</p>
+            <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              {companyName}
+            </p>
+          </div>
+
+          {/* Notes */}
+          <div className="border-t border-gray-100 pt-4">
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Notes…"
+              rows={3}
+              className="w-full text-sm text-gray-700 placeholder-gray-300 border-0 focus:outline-none resize-none"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+          <button
+            onClick={() => void handleCreate()}
+            disabled={saving || !title.trim()}
+            className="px-5 py-2 bg-[#5b6cf9] text-white text-sm font-semibold rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const PALETTE = [
   { bg: 'bg-violet-100', text: 'text-violet-700' },
   { bg: 'bg-sky-100',    text: 'text-sky-700'    },
@@ -342,6 +568,7 @@ export default function CRMCompanies() {
   const [activitySubTab, setActivitySubTab] = useState<ActivitySubTab>('All activities');
   const [contactsExpanded, setContactsExpanded] = useState(true);
   const [dealsExpanded, setDealsExpanded] = useState(true);
+  const [showTaskModal, setShowTaskModal] = useState(false);
 
   // refs so load() can always read latest values without stale closure
   const searchRef = useRef('');
@@ -575,15 +802,15 @@ export default function CRMCompanies() {
 
               {/* Action buttons */}
               <div className="grid grid-cols-3 gap-1 pb-1">
-                {[
-                  { icon: StickyNote, label: 'Note' },
-                  { icon: Mail,       label: 'Email' },
-                  { icon: PhoneCall,  label: 'Call' },
-                  { icon: Clock,      label: 'Task' },
-                  { icon: Calendar,   label: 'Meeti...' },
-                  { icon: MoreHorizontal, label: 'More' },
-                ].map(({ icon: Icon, label }) => (
-                  <button key={label} className="flex flex-col items-center gap-1 py-2.5 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors">
+                {([
+                  { icon: StickyNote,      label: 'Note',    action: undefined         },
+                  { icon: Mail,            label: 'Email',   action: undefined         },
+                  { icon: PhoneCall,       label: 'Call',    action: undefined         },
+                  { icon: Clock,           label: 'Task',    action: () => setShowTaskModal(true) },
+                  { icon: Calendar,        label: 'Meeti...',action: undefined         },
+                  { icon: MoreHorizontal,  label: 'More',    action: undefined         },
+                ] as { icon: React.ComponentType<{className?:string}>; label: string; action?: () => void }[]).map(({ icon: Icon, label, action }) => (
+                  <button key={label} onClick={action} className="flex flex-col items-center gap-1 py-2.5 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors">
                     <div className="w-9 h-9 rounded-full border border-gray-200 bg-white flex items-center justify-center shadow-sm">
                       <Icon className="w-4 h-4" />
                     </div>
@@ -813,6 +1040,18 @@ export default function CRMCompanies() {
         </div>
       </div>
       {companyFormModal}
+      {showTaskModal && selected && (
+        <CRMCreateTaskModal
+          companyId={selected.id}
+          companyName={selected.name}
+          onCreated={(act) => {
+            setSelected(s => s ? { ...s, activities: [act, ...(s.activities ?? [])] } : s);
+            setDetailTab('activities');
+            setActivitySubTab('Tasks');
+          }}
+          onClose={() => setShowTaskModal(false)}
+        />
+      )}
       </>
     );
   }
