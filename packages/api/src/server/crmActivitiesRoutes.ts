@@ -27,11 +27,13 @@ export function registerCRMActivitiesRoutes({ requireAuth, pool }: Deps): Router
       `SELECT a.*,
         mc.email AS contact_email, mc.first_name AS contact_first_name, mc.last_name AS contact_last_name,
         d.title AS deal_title,
-        cc.name AS company_name
+        cc.name AS company_name,
+        u.name AS author_name
        FROM crm_activities a
        LEFT JOIN mailing_contacts mc ON mc.id=a.contact_id
        LEFT JOIN crm_deals d ON d.id=a.deal_id
        LEFT JOIN crm_companies cc ON cc.id=a.company_id
+       LEFT JOIN users u ON u.id=a.user_id
        WHERE ${wheres.join(' AND ')}
        ORDER BY a.created_at DESC
        LIMIT $${params.length+1} OFFSET $${params.length+2}`,

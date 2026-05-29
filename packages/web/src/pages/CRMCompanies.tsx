@@ -4,8 +4,10 @@ import {
   MessageSquare, PhoneCall, Calendar, FileText, Clock,
   ArrowUpRight, ArrowDownLeft, RefreshCw, Loader2, MoreHorizontal,
   ChevronDown, ChevronRight, StickyNote, ChevronLeft, Sparkles,
+  PenLine,
 } from 'lucide-react';
 import CreateTaskModal from '../components/tasks/CreateTaskModal';
+import RichTextEditor from '../components/RichTextEditor';
 
 const API = '/api/crm';
 const tok = () => localStorage.getItem('auth_token') ?? '';
@@ -65,6 +67,7 @@ interface Activity {
   contact_first_name: string | null;
   contact_last_name: string | null;
   gmail_message_id: string | null;
+  author_name: string | null;
 }
 
 const INDUSTRY_OPTIONS = ['Technology','Finance','Healthcare','Retail','Manufacturing','Education','Media','Real Estate','Consulting','Other'];
@@ -187,6 +190,217 @@ function ActivityItem({ act }: { act: Activity }) {
         )}
         {act.outcome && <p className="text-xs text-gray-400 mt-1">Outcome: {act.outcome}</p>}
       </div>
+    </div>
+  );
+}
+
+function stripHtml(html: string) {
+  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function groupNotesByMonth(notes: Activity[]) {
+  const groups: { label: string; notes: Activity[] }[] = [];
+  const map = new Map<string, Activity[]>();
+  for (const n of notes) {
+    const key = new Date(n.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    if (!map.has(key)) { map.set(key, []); groups.push({ label: key, notes: map.get(key)! }); }
+    map.get(key)!.push(n);
+  }
+  return groups;
+}
+
+function NoteItem({ note, onDelete }: { note: Activity; onDelete: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const plain = note.body ? stripHtml(note.body) : '';
+  const when = new Date(note.created_at).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        className="w-full flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <ChevronRight className={`w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-gray-800">
+              Note by <span className="text-[#5b6cf9]">{note.author_name ?? 'You'}</span>
+            </span>
+            <span className="text-xs text-gray-400 flex-shrink-0">{when}</span>
+          </div>
+          {!expanded && plain && (
+            <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{plain}</p>
+          )}
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 border-t border-gray-50">
+          {note.body ? (
+            <div
+              className="prose prose-sm max-w-none text-gray-700 pt-3"
+              dangerouslySetInnerHTML={{ __html: note.body }}
+            />
+          ) : (
+            <p className="text-xs text-gray-400 pt-3 italic">No content</p>
+          )}
+          <div className="flex justify-end mt-3">
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(note.id); }}
+              className="text-xs text-red-400 hover:text-red-600 hover:underline transition-colors"
+            >
+              Delete note
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateNoteModal({ companyId, companyName, onCreated, onClose }: {
+  companyId: string;
+  companyName: string;
+  onCreated: (note: Activity) => void;
+  onClose: () => void;
+}) {
+  const [body, setBody] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleCreate = async () => {
+    const plain = stripHtml(body).trim();
+    if (!plain) return;
+    setSaving(true);
+    try {
+      const r = await fetch('/api/crm/activities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token') ?? ''}` },
+        body: JSON.stringify({ type: 'note', body, company_id: companyId }),
+      });
+      if (!r.ok) return;
+      const note = await r.json();
+      onCreated(note);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-[15px] font-bold text-gray-900 flex items-center gap-2">
+            <PenLine size={15} className="text-[#5b6cf9]" /> Note
+          </h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X size={16} /></button>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          {/* "For" badge */}
+          <div className="flex items-center gap-2 text-[12px] text-gray-500">
+            <span>For</span>
+            <span className="px-2.5 py-0.5 rounded-full border border-gray-300 text-gray-700 font-medium text-[11px]">
+              {companyName}
+            </span>
+          </div>
+
+          {/* Rich text editor */}
+          <RichTextEditor value={body} onChange={setBody} />
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+          <button onClick={onClose} className="rounded-xl border border-gray-200 px-4 py-2 text-[13px] text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button
+            onClick={() => void handleCreate()}
+            disabled={saving || !stripHtml(body).trim()}
+            className="rounded-xl bg-[#5b6cf9] px-5 py-2 text-[13px] font-bold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors"
+          >
+            {saving ? 'Saving…' : 'Create note'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotesView({ notes, companyId, companyName, onNoteCreated, onNoteDeleted }: {
+  notes: Activity[];
+  companyId: string;
+  companyName: string;
+  onNoteCreated: (note: Activity) => void;
+  onNoteDeleted: (id: string) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [showModal, setShowModal] = useState(false);
+
+  const filtered = search.trim()
+    ? notes.filter(n => stripHtml(n.body ?? '').toLowerCase().includes(search.toLowerCase()))
+    : notes;
+
+  const groups = groupNotesByMonth(filtered);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 py-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search notes…"
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-gray-200 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          />
+        </div>
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#5b6cf9] text-white text-[12px] font-semibold hover:bg-[#4a5be8] transition-colors flex-shrink-0"
+        >
+          <PenLine size={13} /> Create a note
+        </button>
+      </div>
+
+      {/* Notes list */}
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center flex-1">
+          <div className="w-10 h-10 rounded-full bg-yellow-50 flex items-center justify-center mb-3">
+            <FileText className="w-5 h-5 text-yellow-400" />
+          </div>
+          <p className="text-sm text-gray-400">{search ? 'No notes match your search' : 'No notes yet'}</p>
+          {!search && (
+            <button onClick={() => setShowModal(true)} className="mt-3 text-xs text-[#5b6cf9] hover:underline">
+              Create the first note
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-5 pb-6">
+          {groups.map(({ label, notes: groupNotes }) => (
+            <div key={label}>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+              <div className="space-y-2">
+                {groupNotes.map(n => (
+                  <NoteItem key={n.id} note={n} onDelete={onNoteDeleted} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <CreateNoteModal
+          companyId={companyId}
+          companyName={companyName}
+          onCreated={note => { onNoteCreated(note); setShowModal(false); }}
+          onClose={() => setShowModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -695,7 +909,18 @@ export default function CRMCompanies() {
 
                 {/* Activity list */}
                 <div className="flex-1 overflow-y-auto px-6 py-2">
-                  {filteredActivities.length === 0 ? (
+                  {activitySubTab === 'Notes' ? (
+                    <NotesView
+                      notes={(selected.activities ?? []).filter(a => a.type === 'note')}
+                      companyId={selected.id}
+                      companyName={selected.name}
+                      onNoteCreated={note => setSelected(s => s ? { ...s, activities: [note, ...(s.activities ?? [])] } : s)}
+                      onNoteDeleted={id => {
+                        fetch(`/api/crm/activities/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {});
+                        setSelected(s => s ? { ...s, activities: (s.activities ?? []).filter(a => a.id !== id) } : s);
+                      }}
+                    />
+                  ) : filteredActivities.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mb-3">
                         <Clock className="w-5 h-5 text-gray-300" />
