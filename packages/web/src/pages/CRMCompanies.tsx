@@ -559,6 +559,7 @@ export default function CRMCompanies() {
   const [contactsExpanded, setContactsExpanded] = useState(true);
   const [dealsExpanded, setDealsExpanded] = useState(true);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showNoteModal, setShowNoteModal] = useState(false);
 
   // refs so load() can always read latest values without stale closure
   const searchRef = useRef('');
@@ -793,7 +794,7 @@ export default function CRMCompanies() {
               {/* Action buttons */}
               <div className="grid grid-cols-3 gap-1 pb-1">
                 {([
-                  { icon: StickyNote,      label: 'Note',    action: undefined         },
+                  { icon: StickyNote,      label: 'Note',    action: () => setShowNoteModal(true) },
                   { icon: Mail,            label: 'Email',   action: undefined         },
                   { icon: PhoneCall,       label: 'Call',    action: undefined         },
                   { icon: Clock,           label: 'Task',    action: () => setShowTaskModal(true) },
@@ -1047,6 +1048,17 @@ export default function CRMCompanies() {
           crmCompanyName={selected.name}
           onCreated={() => { /* task lives in project task board */ }}
           onClose={() => setShowTaskModal(false)}
+        />
+      )}
+      {showNoteModal && selected && (
+        <CreateNoteModal
+          companyId={selected.id}
+          companyName={selected.name}
+          onCreated={note => {
+            setSelected(s => s ? { ...s, activities: [note, ...(s.activities ?? [])] } : s);
+            setShowNoteModal(false);
+          }}
+          onClose={() => setShowNoteModal(false)}
         />
       )}
       </>
