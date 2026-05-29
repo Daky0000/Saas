@@ -79,6 +79,39 @@ export function registerCRMActivitiesRoutes({ requireAuth, pool }: Deps): Router
     res.json({ ok: true });
   });
 
+  // ── Note comments ──────────────────────────────────────────────────────────
+  router.get('/activities/:id/comments', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { rows } = await pool.query(
+      `SELECT nc.*, u.full_name AS author_name
+       FROM crm_note_comments nc
+       LEFT JOIN users u ON u.id = nc.user_id
+       WHERE nc.note_id = $1
+       ORDER BY nc.created_at ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  });
+
+  router.post('/activities/:id/comments', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const { body } = req.body;
+    if (!body?.trim()) return void res.status(400).json({ error: 'body required' });
+    const id = randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO crm_note_comments (id, note_id, user_id, body) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [id, req.params.id, auth.userId, body.trim()]
+    );
+    const { rows: u } = await pool.query(`SELECT full_name FROM users WHERE id=$1`, [auth.userId]);
+    res.status(201).json({ ...rows[0], author_name: u[0]?.full_name ?? null });
+  });
+
+  router.delete('/activities/:id/comments/:commentId', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    await pool.query(`DELETE FROM crm_note_comments WHERE id=$1 AND user_id=$2`, [req.params.commentId, auth.userId]);
+    res.json({ ok: true });
+  });
+
   // ── Lead scoring rules ─────────────────────────────────────────────────────
   router.get('/scoring/rules', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;

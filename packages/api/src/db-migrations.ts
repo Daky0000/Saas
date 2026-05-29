@@ -3937,4 +3937,17 @@ await pool.query(`
 // ── CRM: track gmail source on activities ─────────────────────────────────────
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS gmail_message_id TEXT`).catch(() => undefined);
 await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS crm_activities_gmail_msg_idx ON crm_activities(gmail_message_id) WHERE gmail_message_id IS NOT NULL`).catch(() => undefined);
+
+// ── CRM: note comments ────────────────────────────────────────────────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS crm_note_comments (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    note_id     TEXT NOT NULL REFERENCES crm_activities(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_note_comments_note_idx ON crm_note_comments (note_id, created_at ASC)`).catch(() => undefined);
 }

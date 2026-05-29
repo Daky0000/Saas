@@ -194,6 +194,17 @@ function ActivityItem({ act }: { act: Activity }) {
   );
 }
 
+interface NoteComment {
+  id: string;
+  note_id: string;
+  user_id: string;
+  author_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+const crmHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('auth_token') ?? ''}` });
+
 function stripHtml(html: string) {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -209,17 +220,70 @@ function groupNotesByMonth(notes: Activity[]) {
   return groups;
 }
 
-function NoteItem({ note, onDelete }: { note: Activity; onDelete: (id: string) => void }) {
+function NoteItem({ note, onUpdate, onDelete }: {
+  note: Activity;
+  onUpdate: (id: string, body: string) => void;
+  onDelete: (id: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const plain = note.body ? stripHtml(note.body) : '';
+  const [editing, setEditing] = useState(false);
+  const [currentBody, setCurrentBody] = useState(note.body ?? '');
+  const [editBody, setEditBody] = useState(note.body ?? '');
+  const [saving, setSaving] = useState(false);
+  const [comments, setComments] = useState<NoteComment[]>([]);
+  const [commentsLoaded, setCommentsLoaded] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [sendingComment, setSendingComment] = useState(false);
+
+  useEffect(() => {
+    if (expanded && !commentsLoaded) {
+      fetch(`/api/crm/activities/${note.id}/comments`, { headers: { Authorization: `Bearer ${localStorage.getItem('auth_token') ?? ''}` } })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => { setComments(Array.isArray(data) ? data : []); setCommentsLoaded(true); })
+        .catch(() => setCommentsLoaded(true));
+    }
+  }, [expanded, commentsLoaded, note.id]);
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/crm/activities/${note.id}`, {
+        method: 'PATCH', headers: crmHeaders(), body: JSON.stringify({ body: editBody }),
+      });
+      if (r.ok) { setCurrentBody(editBody); onUpdate(note.id, editBody); setEditing(false); }
+    } finally { setSaving(false); }
+  };
+
+  const handleAddComment = async () => {
+    if (!newComment.trim() || sendingComment) return;
+    setSendingComment(true);
+    try {
+      const r = await fetch(`/api/crm/activities/${note.id}/comments`, {
+        method: 'POST', headers: crmHeaders(), body: JSON.stringify({ body: newComment.trim() }),
+      });
+      if (r.ok) { const c = await r.json(); setComments(p => [...p, c]); setNewComment(''); }
+    } finally { setSendingComment(false); }
+  };
+
+  const handleDeleteComment = async (cid: string) => {
+    await fetch(`/api/crm/activities/${note.id}/comments/${cid}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('auth_token') ?? ''}` },
+    }).catch(() => {});
+    setComments(p => p.filter(c => c.id !== cid));
+  };
+
+  const plain = currentBody ? stripHtml(currentBody) : '';
   const when = new Date(note.created_at).toLocaleString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
   });
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      {/* Header row */}
       <button
         className="w-full flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => { setExpanded(e => !e); if (editing) { setEditing(false); setEditBody(currentBody); } }}
       >
         <ChevronRight className={`w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
         <div className="flex-1 min-w-0">
@@ -229,29 +293,90 @@ function NoteItem({ note, onDelete }: { note: Activity; onDelete: (id: string) =
             </span>
             <span className="text-xs text-gray-400 flex-shrink-0">{when}</span>
           </div>
-          {!expanded && plain && (
-            <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{plain}</p>
-          )}
+          {!expanded && plain && <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{plain}</p>}
         </div>
       </button>
+
       {expanded && (
-        <div className="px-4 pb-4 border-t border-gray-50">
-          {note.body ? (
-            <div
-              className="prose prose-sm max-w-none text-gray-700 pt-3"
-              dangerouslySetInnerHTML={{ __html: note.body }}
-            />
-          ) : (
-            <p className="text-xs text-gray-400 pt-3 italic">No content</p>
-          )}
-          <div className="flex justify-end mt-3">
-            <button
-              onClick={e => { e.stopPropagation(); onDelete(note.id); }}
-              className="text-xs text-red-400 hover:text-red-600 hover:underline transition-colors"
-            >
-              Delete note
-            </button>
+        <div className="border-t border-gray-100">
+          {/* Note body / edit */}
+          <div className="px-4 pt-3 pb-2">
+            {editing ? (
+              <div className="space-y-2">
+                <RichTextEditor value={editBody} onChange={setEditBody} />
+                <div className="flex justify-end gap-2 pt-1">
+                  <button onClick={() => { setEditing(false); setEditBody(currentBody); }}
+                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={() => void handleSave()} disabled={saving || !stripHtml(editBody).trim()}
+                    className="px-3 py-1.5 rounded-lg bg-[#5b6cf9] text-xs font-semibold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors">
+                    {saving ? 'Saving…' : 'Save changes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {currentBody
+                  ? <div className="prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: currentBody }} />
+                  : <p className="text-xs text-gray-400 italic">No content</p>}
+                <div className="flex items-center gap-3 mt-2.5">
+                  <button onClick={e => { e.stopPropagation(); setEditBody(currentBody); setEditing(true); }}
+                    className="text-xs text-[#5b6cf9] hover:underline font-medium">Edit</button>
+                  <button onClick={e => { e.stopPropagation(); onDelete(note.id); }}
+                    className="text-xs text-red-400 hover:text-red-600 hover:underline">Delete</button>
+                </div>
+              </>
+            )}
           </div>
+
+          {/* Comments */}
+          {!editing && (
+            <div className="px-4 pb-4 pt-3 border-t border-gray-100">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
+                Comments{comments.length > 0 ? ` (${comments.length})` : ''}
+              </p>
+
+              {comments.length > 0 && (
+                <div className="space-y-3 mb-3">
+                  {comments.map(c => (
+                    <div key={c.id} className="flex gap-2 group">
+                      <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
+                        {(c.author_name ?? 'Y')[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="text-[11px] font-semibold text-gray-700">{c.author_name ?? 'You'}</span>
+                          <span className="text-[10px] text-gray-400">
+                            {new Date(c.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-gray-600 leading-relaxed">{c.body}</p>
+                      </div>
+                      <button onClick={() => void handleDeleteComment(c.id)}
+                        className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all flex-shrink-0 mt-0.5">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  value={newComment}
+                  onChange={e => setNewComment(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleAddComment(); } }}
+                  placeholder="Add a comment…"
+                  className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+                <button onClick={() => void handleAddComment()} disabled={!newComment.trim() || sendingComment}
+                  className="px-3 py-1.5 rounded-lg bg-[#5b6cf9] text-[11px] font-bold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors flex-shrink-0">
+                  Send
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -328,11 +453,12 @@ function CreateNoteModal({ companyId, companyName, onCreated, onClose }: {
   );
 }
 
-function NotesView({ notes, companyId, companyName, onNoteCreated, onNoteDeleted }: {
+function NotesView({ notes, companyId, companyName, onNoteCreated, onNoteUpdated, onNoteDeleted }: {
   notes: Activity[];
   companyId: string;
   companyName: string;
   onNoteCreated: (note: Activity) => void;
+  onNoteUpdated: (id: string, body: string) => void;
   onNoteDeleted: (id: string) => void;
 }) {
   const [search, setSearch] = useState('');
@@ -385,7 +511,7 @@ function NotesView({ notes, companyId, companyName, onNoteCreated, onNoteDeleted
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
               <div className="space-y-2">
                 {groupNotes.map(n => (
-                  <NoteItem key={n.id} note={n} onDelete={onNoteDeleted} />
+                  <NoteItem key={n.id} note={n} onUpdate={onNoteUpdated} onDelete={onNoteDeleted} />
                 ))}
               </div>
             </div>
@@ -916,6 +1042,7 @@ export default function CRMCompanies() {
                       companyId={selected.id}
                       companyName={selected.name}
                       onNoteCreated={note => setSelected(s => s ? { ...s, activities: [note, ...(s.activities ?? [])] } : s)}
+                      onNoteUpdated={(id, body) => setSelected(s => s ? { ...s, activities: (s.activities ?? []).map(a => a.id === id ? { ...a, body } : a) } : s)}
                       onNoteDeleted={id => {
                         fetch(`/api/crm/activities/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {});
                         setSelected(s => s ? { ...s, activities: (s.activities ?? []).filter(a => a.id !== id) } : s);
