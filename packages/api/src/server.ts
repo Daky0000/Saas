@@ -128,7 +128,7 @@ import {
   getVisibleUserPlatformSlugs, formatSocialAccountLabel, getUserConnectedAccounts,
   OAUTH_AUTH_URLS, resolveOAuthRedirectUri,
 } from './platform-helpers.ts';
-import { runDueDateAlerts, publishDuePosts } from './scheduler.ts';
+import { runDueDateAlerts, publishDuePosts, runTaskReminders } from './scheduler.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -828,6 +828,10 @@ if (config.nodeEnv !== 'test') {
     const schedulerDeps = { queueSocialAutomationForPublishedPost: distModule.queueSocialAutomationForPublishedPost, fireWorkflowTriggers };
     void publishDuePosts(schedulerDeps);
     setInterval(() => void publishDuePosts(schedulerDeps), 2 * 60 * 1000);
+
+    // Fire task reminders every 2 minutes
+    void runTaskReminders();
+    setInterval(() => void runTaskReminders(), 2 * 60 * 1000);
   });
 }
 

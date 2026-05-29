@@ -43,6 +43,53 @@ export async function runDueDateAlerts() {
   }
 }
 
+// Runs every 2 minutes. Fires a notification when a task's reminder_at falls
+// within the current 2-minute window. Uses the notifications table to dedup.
+export async function runTaskReminders() {
+  if (!hasDatabase()) return;
+  try {
+    // Collect assignees + creator for tasks whose reminder window has arrived
+    const { rows } = await pool!.query<{
+      task_id: string; title: string; due_date: string | null;
+      project_id: string; user_id: string;
+    }>(`
+      SELECT DISTINCT t.id AS task_id, t.title, t.due_date, t.project_id,
+             recipient.user_id
+      FROM tasks t
+      CROSS JOIN LATERAL (
+        SELECT ta.user_id FROM task_assignees ta WHERE ta.task_id = t.id
+        UNION
+        SELECT t.created_by AS user_id
+      ) recipient
+      WHERE t.status != 'done'
+        AND t.reminder_at IS NOT NULL
+        AND t.reminder_at BETWEEN NOW() - INTERVAL '1 minute' AND NOW() + INTERVAL '1 minute'
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = recipient.user_id
+            AND n.type = 'task_reminder'
+            AND (n.data->>'task_id') = t.id::text
+        )
+    `);
+    for (const row of rows) {
+      const due = row.due_date ? new Date(row.due_date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
+      await pool!.query(
+        `INSERT INTO notifications (user_id, type, title, message, data)
+         VALUES ($1, 'task_reminder', $2, $3, $4)`,
+        [
+          row.user_id,
+          `Reminder: "${row.title}"`,
+          due ? `This task is due on ${due}.` : 'This task is due soon.',
+          JSON.stringify({ task_id: row.task_id, project_id: row.project_id }),
+        ]
+      );
+    }
+    if (rows.length > 0) logger.info({ count: rows.length }, 'task_reminders_sent');
+  } catch (err) {
+    logger.error({ err }, 'task_reminder_error');
+  }
+}
+
 export interface PublishDuePostsDeps {
   queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
   fireWorkflowTriggers: (userId: string, event: string, data: any) => Promise<void>;
