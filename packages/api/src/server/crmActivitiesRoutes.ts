@@ -45,26 +45,55 @@ export function registerCRMActivitiesRoutes({ requireAuth, pool }: Deps): Router
   // ── Create activity ────────────────────────────────────────────────────────
   router.post('/activities', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
-    const { type, title, body, outcome, duration, scheduled_at, completed_at, contact_id, deal_id, company_id } = req.body;
+    const {
+      type, title, body, outcome, duration, scheduled_at, completed_at,
+      contact_id, deal_id, company_id,
+      // meeting-specific
+      end_time, recurrence, attendees, reminder_minutes, google_event_id,
+    } = req.body;
     const VALID_TYPES = ['note','call','email','meeting','task','whatsapp','sms'];
     if (!type || !VALID_TYPES.includes(type)) return void res.status(400).json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` });
     const id = randomUUID();
     const { rows } = await pool.query(
-      `INSERT INTO crm_activities (id,user_id,type,title,body,outcome,duration,scheduled_at,completed_at,contact_id,deal_id,company_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [id, auth.userId, type, title||null, body||null, outcome||null, duration||null, scheduled_at||null, completed_at||null, contact_id||null, deal_id||null, company_id||null]
+      `INSERT INTO crm_activities
+         (id,user_id,type,title,body,outcome,duration,scheduled_at,completed_at,contact_id,deal_id,company_id,
+          end_time,recurrence,attendees,reminder_minutes,google_event_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      [
+        id, auth.userId, type, title||null, body||null, outcome||null, duration||null,
+        scheduled_at||null, completed_at||null, contact_id||null, deal_id||null, company_id||null,
+        end_time||null, recurrence||null,
+        attendees ? JSON.stringify(attendees) : null,
+        reminder_minutes && Array.isArray(reminder_minutes) && reminder_minutes.length > 0 ? reminder_minutes : null,
+        google_event_id||null,
+      ]
     );
+
+    // Create in-app reminder notifications for each reminder
+    if (type === 'meeting' && scheduled_at && Array.isArray(reminder_minutes) && reminder_minutes.length > 0) {
+      const meetingTime = new Date(scheduled_at);
+      for (const mins of reminder_minutes) {
+        const reminderMsg = `Meeting "${title || 'Untitled'}" starts ${mins < 60 ? `in ${mins} min` : `in ${Math.round(mins/60)} hour(s)`} at ${meetingTime.toLocaleString()}`;
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, message, data) VALUES ($1,'meeting_reminder','Meeting Reminder',$2,$3)`,
+          [auth.userId, reminderMsg, JSON.stringify({ activity_id: id, scheduled_at, reminder_minutes: mins })]
+        ).catch(() => undefined);
+      }
+    }
+
     res.status(201).json(rows[0]);
   });
 
   // ── Update activity ────────────────────────────────────────────────────────
   router.patch('/activities/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
-    const fields = ['title','body','outcome','duration','scheduled_at','completed_at'];
+    const fields = ['title','body','outcome','duration','scheduled_at','completed_at','end_time','recurrence','google_event_id'];
     const sets: string[] = []; const params: unknown[] = [req.params.id, auth.userId];
     for (const f of fields) {
       if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); }
     }
+    if (req.body.attendees !== undefined) { params.push(req.body.attendees ? JSON.stringify(req.body.attendees) : null); sets.push(`attendees=$${params.length}`); }
+    if (req.body.reminder_minutes !== undefined) { params.push(req.body.reminder_minutes); sets.push(`reminder_minutes=$${params.length}`); }
     if (!sets.length) return void res.status(400).json({ error: 'nothing to update' });
     sets.push(`updated_at=NOW()`);
     const { rows } = await pool.query(`UPDATE crm_activities SET ${sets.join(',')} WHERE id=$1 AND user_id=$2 RETURNING *`, params);

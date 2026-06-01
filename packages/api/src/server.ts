@@ -40,6 +40,7 @@ import { registerOrgRoutes } from './server/orgRoutes.ts';
 import { registerCRMCompaniesRoutes } from './server/crmCompaniesRoutes.ts';
 import { registerCRMDealsRoutes } from './server/crmDealsRoutes.ts';
 import { registerCRMActivitiesRoutes } from './server/crmActivitiesRoutes.ts';
+import { registerCalendarRoutes } from './server/calendarRoutes.ts';
 import { registerConnectorRegistryRoutes } from './server/connectorRegistryRoutes.ts';
 import { registerConnectorPreferencesRoutes } from './server/connectorPreferencesRoutes.ts';
 import { registerConnectorSyncRoutes } from './server/connectorSyncRoutes.ts';
@@ -742,6 +743,9 @@ const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'ht
 const leadsDeps = { requireAuth, pool: pool!, frontendUrl: FRONTEND_URL, gsClientId: GS_CLIENT_ID, gsClientSecret: GS_CLIENT_SECRET, gsRedirect: GS_REDIRECT };
 app.use('/api/leads', registerLeadsRoutes(leadsDeps));
 app.use('/api/google-sheets', registerGoogleSheetsRoutes(leadsDeps));
+
+// ─── Calendar (Google Calendar OAuth + events) ────────────────────────────────
+app.use('/api/calendar', registerCalendarRoutes({ requireAuth, pool: pool!, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret, frontendUrl: FRONTEND_URL }));
 
 // ─── Analytics Routes ───────────────────────────────────────────────────────
 app.use('/api', registerAnalyticsRoutes({ requireAuth, pool, decryptIntegrationSecret, getPublishableSocialConnection }));

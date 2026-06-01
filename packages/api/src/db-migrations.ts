@@ -3984,4 +3984,12 @@ await pool.query(`
     updated_at  TIMESTAMPTZ DEFAULT NOW()
   )
 `).catch(() => undefined);
+
+// ── CRM: meeting-specific columns on activities ────────────────────────────────
+await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ`).catch(() => undefined);
+await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS recurrence TEXT`).catch(() => undefined);
+await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS attendees JSONB`).catch(() => undefined);
+await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS reminder_minutes INTEGER[]`).catch(() => undefined);
+await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS google_event_id TEXT`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_company_idx ON crm_activities (company_id, created_at DESC)`).catch(() => undefined);
 }

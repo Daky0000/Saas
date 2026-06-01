@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import CreateTaskModal from '../components/tasks/CreateTaskModal';
 import RichTextEditor from '../components/RichTextEditor';
+import ScheduleMeetingModal from '../components/crm/ScheduleMeetingModal';
 
 const API = '/api/crm';
 const tok = () => localStorage.getItem('auth_token') ?? '';
@@ -61,6 +62,7 @@ interface Activity {
   outcome: string | null;
   duration: number | null;
   scheduled_at: string | null;
+  end_time: string | null;
   completed_at: string | null;
   created_at: string;
   contact_email: string | null;
@@ -68,6 +70,10 @@ interface Activity {
   contact_last_name: string | null;
   gmail_message_id: string | null;
   author_name: string | null;
+  recurrence: string | null;
+  attendees: { id?: string; type: string; name: string; email: string }[] | null;
+  reminder_minutes: number[] | null;
+  google_event_id: string | null;
 }
 
 const INDUSTRY_OPTIONS = ['Technology','Finance','Healthcare','Retail','Manufacturing','Education','Media','Real Estate','Consulting','Other'];
@@ -157,13 +163,18 @@ function ActivityItem({ act }: { act: Activity }) {
   const isGmail = Boolean(act.gmail_message_id);
   const isSent = act.title?.startsWith('Sent: ');
   const isNote = act.type === 'note';
+  const isMeeting = act.type === 'meeting';
   const displayTitle = isNote
     ? `Note by ${act.author_name ?? 'You'}`
     : (act.title?.replace(/^(Sent|Received): /, '') ?? `${act.type.charAt(0).toUpperCase() + act.type.slice(1)} activity`);
   const when = new Date(act.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const contactName = [act.contact_first_name, act.contact_last_name].filter(Boolean).join(' ') || act.contact_email || '';
-  // For notes, strip HTML for the collapsed preview
   const bodyPlain = isNote && act.body ? stripHtml(act.body) : act.body;
+
+  const meetingTime = isMeeting && act.scheduled_at
+    ? new Date(act.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
+    : null;
+
   return (
     <div className="flex gap-3 py-4 border-b border-gray-100 last:border-0">
       <ActivityIcon type={act.type} />
@@ -178,8 +189,20 @@ function ActivityItem({ act }: { act: Activity }) {
                   {isSent ? 'Sent' : 'Received'}
                 </span>
               )}
+              {isMeeting && act.google_event_id && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 font-medium">
+                  <Calendar className="w-2.5 h-2.5" /> Synced
+                </span>
+              )}
             </div>
-            {contactName && <p className="text-xs text-gray-400 mt-0.5">{contactName}</p>}
+            {meetingTime && <p className="text-xs text-[#5b6cf9] mt-0.5 font-medium">{meetingTime}</p>}
+            {!meetingTime && contactName && <p className="text-xs text-gray-400 mt-0.5">{contactName}</p>}
+            {isMeeting && Array.isArray(act.attendees) && act.attendees.length > 0 && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                {act.attendees.slice(0, 3).map(a => a.name || a.email).join(', ')}
+                {act.attendees.length > 3 && ` +${act.attendees.length - 3} more`}
+              </p>
+            )}
           </div>
           <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5">{when}</span>
         </div>
@@ -545,6 +568,109 @@ const ACTIVITY_TYPE_MAP: Record<ActivitySubTab, Activity['type'] | null> = {
   'All activities': null, 'Notes': 'note', 'Emails': 'email', 'Calls': 'call', 'Tasks': 'task', 'Meetings': 'meeting',
 };
 
+function AddContactToCompanyModal({
+  companyId, companyName, existingContactIds,
+  query, setQuery, results, setResults, searching, setSearching, saving, setSaving,
+  onAdded, onClose,
+}: {
+  companyId: string; companyName: string; existingContactIds: string[];
+  query: string; setQuery: (q: string) => void;
+  results: { id: string; email: string; first_name: string | null; last_name: string | null }[];
+  setResults: (r: { id: string; email: string; first_name: string | null; last_name: string | null }[]) => void;
+  searching: boolean; setSearching: (v: boolean) => void;
+  saving: string | null; setSaving: (id: string | null) => void;
+  onAdded: (c: { id: string; email: string; first_name: string | null; last_name: string | null }) => void;
+  onClose: () => void;
+}) {
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleSearch = (q: string) => {
+    setQuery(q);
+    clearTimeout(timerRef.current);
+    if (!q.trim()) { setResults([]); return; }
+    timerRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await fetch(`/api/mailing/contacts?search=${encodeURIComponent(q)}`, { headers: authHeaders() });
+        const d = r.ok ? await r.json() : { contacts: [] };
+        setResults((d.contacts || []).filter((c: any) => !existingContactIds.includes(c.id)).slice(0, 10));
+      } finally { setSearching(false); }
+    }, 250);
+  };
+
+  const linkContact = async (c: { id: string; email: string; first_name: string | null; last_name: string | null }) => {
+    setSaving(c.id);
+    try {
+      const r = await fetch(`/api/crm/companies/${companyId}/contacts`, {
+        method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ contact_id: c.id }),
+      });
+      if (r.ok) { onAdded(c); setResults(results.filter(x => x.id !== c.id)); }
+    } finally { setSaving(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-[15px] font-bold text-gray-900 flex items-center gap-2">
+            <Users size={15} className="text-[#5b6cf9]" /> Add Contact to {companyName}
+          </h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X size={16} /></button>
+        </div>
+        <div className="px-5 py-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+            <input
+              className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+              placeholder="Search contacts by name or email…"
+              value={query}
+              onChange={e => handleSearch(e.target.value)}
+              autoFocus
+            />
+            {searching && <Loader2 className="absolute right-3 top-2.5 w-4 h-4 animate-spin text-gray-400" />}
+          </div>
+          {results.length > 0 && (
+            <div className="mt-2 divide-y divide-gray-50 max-h-64 overflow-y-auto rounded-lg border border-gray-100">
+              {results.map(c => {
+                const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email;
+                const { bg, text } = paletteFor(c.email);
+                return (
+                  <div key={c.id} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className={`w-8 h-8 rounded-full ${bg} ${text} flex items-center justify-center text-xs font-bold flex-shrink-0`}>
+                      {(c.first_name?.[0] || c.email[0]).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{name}</p>
+                      <p className="text-xs text-gray-400 truncate">{c.email}</p>
+                    </div>
+                    <button
+                      onClick={() => void linkContact(c)}
+                      disabled={saving === c.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5b6cf9] text-white text-xs font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-60 flex-shrink-0"
+                    >
+                      {saving === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                      Add
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!searching && query.trim() && results.length === 0 && (
+            <p className="text-xs text-gray-400 mt-3 text-center">No contacts found for "{query}"</p>
+          )}
+          {!query.trim() && (
+            <p className="text-xs text-gray-400 mt-3 text-center">Start typing to search your contacts</p>
+          )}
+        </div>
+        <div className="flex justify-end px-5 py-3 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl border border-gray-200">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CatchupTab({ company }: { company: Company & { activities?: Activity[] } }) {
   const emailCount = company.activities?.filter(a => a.type === 'email').length ?? 0;
   const activityCount = company.activities?.length ?? 0;
@@ -694,6 +820,12 @@ export default function CRMCompanies() {
   const [dealsExpanded, setDealsExpanded] = useState(true);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [showAddContactModal, setShowAddContactModal] = useState(false);
+  const [addContactQuery, setAddContactQuery] = useState('');
+  const [addContactResults, setAddContactResults] = useState<{ id: string; email: string; first_name: string | null; last_name: string | null }[]>([]);
+  const [addContactSearching, setAddContactSearching] = useState(false);
+  const [addContactSaving, setAddContactSaving] = useState<string | null>(null);
 
   // refs so load() can always read latest values without stale closure
   const searchRef = useRef('');
@@ -932,7 +1064,7 @@ export default function CRMCompanies() {
                   { icon: Mail,            label: 'Email',   action: undefined         },
                   { icon: PhoneCall,       label: 'Call',    action: undefined         },
                   { icon: Clock,           label: 'Task',    action: () => setShowTaskModal(true) },
-                  { icon: Calendar,        label: 'Meeti...',action: undefined         },
+                  { icon: Calendar,        label: 'Meeti...',action: () => setShowMeetingModal(true) },
                   { icon: MoreHorizontal,  label: 'More',    action: undefined         },
                 ] as { icon: React.ComponentType<{className?:string}>; label: string; action?: () => void }[]).map(({ icon: Icon, label, action }) => (
                   <button key={label} onClick={action} className="flex flex-col items-center gap-1 py-2.5 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors">
@@ -1081,7 +1213,7 @@ export default function CRMCompanies() {
                   {contactsExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
                   Contacts ({selected.contacts?.length ?? selected.contact_count ?? 0})
                 </button>
-                <span className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</span>
+                <button onClick={() => setShowAddContactModal(true)} className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</button>
               </div>
               {contactsExpanded && (
                 <div className="px-4 pb-3 space-y-2">
@@ -1194,6 +1326,46 @@ export default function CRMCompanies() {
             setShowNoteModal(false);
           }}
           onClose={() => setShowNoteModal(false)}
+        />
+      )}
+      {showMeetingModal && selected && (
+        <ScheduleMeetingModal
+          companyId={selected.id}
+          companyName={selected.name}
+          companyEmail={selected.email}
+          defaultAttendees={selected.contacts?.map(c => ({
+            id: c.id, type: 'contact' as const,
+            name: [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email,
+            email: c.email,
+          }))}
+          onCreated={activity => {
+            setSelected(s => s ? { ...s, activities: [activity, ...(s.activities ?? [])] } : s);
+            setShowMeetingModal(false);
+          }}
+          onClose={() => setShowMeetingModal(false)}
+        />
+      )}
+      {showAddContactModal && selected && (
+        <AddContactToCompanyModal
+          companyId={selected.id}
+          companyName={selected.name}
+          existingContactIds={(selected.contacts ?? []).map(c => c.id)}
+          query={addContactQuery}
+          setQuery={setAddContactQuery}
+          results={addContactResults}
+          setResults={setAddContactResults}
+          searching={addContactSearching}
+          setSearching={setAddContactSearching}
+          saving={addContactSaving}
+          setSaving={setAddContactSaving}
+          onAdded={contact => {
+            setSelected(s => s ? {
+              ...s,
+              contacts: [...(s.contacts ?? []), { id: contact.id, email: contact.email, first_name: contact.first_name, last_name: contact.last_name, phone: null, role: null, is_primary: false }],
+              contact_count: (s.contact_count ?? 0) + 1,
+            } : s);
+          }}
+          onClose={() => { setShowAddContactModal(false); setAddContactQuery(''); setAddContactResults([]); }}
         />
       )}
       </>
