@@ -187,32 +187,26 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
       const ttl = Number(expires_in || 3600);
       const expiry = new Date(Date.now() + ttl * 1000).toISOString();
 
-      const { rows: existing } = await pool.query(
-        `SELECT id FROM social_accounts WHERE user_id=$1 AND platform='google_calendar' LIMIT 1`,
-        [userId]
-      );
+      const encAccess = encryptIntegrationSecret(access_token);
+      const encRefresh = refresh_token ? encryptIntegrationSecret(refresh_token) : null;
 
-      if (existing.length > 0) {
-        const sets: string[] = ['access_token_encrypted=$1', 'token_expires_at=$2', 'connected=true', 'updated_at=NOW()'];
-        const params: unknown[] = [encryptIntegrationSecret(access_token), expiry];
-        if (refresh_token) { params.push(encryptIntegrationSecret(refresh_token)); sets.push(`refresh_token_encrypted=$${params.length}`); }
-        params.push(userId);
-        await pool.query(
-          `UPDATE social_accounts SET ${sets.join(', ')} WHERE user_id=$${params.length} AND platform='google_calendar'`,
-          params
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO social_accounts (id, user_id, platform, account_type, access_token_encrypted, refresh_token_encrypted, token_expires_at, connected)
-           VALUES ($1, $2, 'google_calendar', 'profile', $3, $4, $5, true)`,
-          [randomUUID(), userId, encryptIntegrationSecret(access_token), refresh_token ? encryptIntegrationSecret(refresh_token) : null, expiry]
-        );
-      }
+      // Upsert using unique index on (user_id, platform) WHERE account_type='profile'
+      await pool.query(
+        `INSERT INTO social_accounts (id, user_id, platform, account_type, access_token_encrypted, refresh_token_encrypted, token_expires_at, connected)
+         VALUES ($1, $2, 'google_calendar', 'profile', $3, $4, $5, true)
+         ON CONFLICT (user_id, platform) WHERE account_type = 'profile'
+         DO UPDATE SET
+           access_token_encrypted = EXCLUDED.access_token_encrypted,
+           token_expires_at = EXCLUDED.token_expires_at,
+           connected = true
+           ${encRefresh ? ", refresh_token_encrypted = EXCLUDED.refresh_token_encrypted" : ""}`,
+        [randomUUID(), userId, encAccess, encRefresh, expiry]
+      );
 
       send('success');
     } catch (e: any) {
       logger.error('[calendarRoutes] callback error:', e);
-      send('error', 'server_error');
+      send('error', String(e?.message || 'server_error'));
     }
   });
 
