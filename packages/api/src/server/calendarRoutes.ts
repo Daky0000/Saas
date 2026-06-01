@@ -126,16 +126,37 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
   });
 
   // ── GET /api/calendar/google/callback ─────────────────────────────────────────
+  const popupPage = (type: 'success' | 'error', detail = '') => {
+    const safeDetail = detail.replace(/[<>"'&]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '&': '&amp;' }[c] ?? c));
+    const msg = type === 'success'
+      ? { type: 'calendar_connected' }
+      : { type: 'calendar_error', error: safeDetail };
+    const msgJson = JSON.stringify(msg);
+    const bodyText = type === 'success'
+      ? 'Google Calendar connected! You can close this window.'
+      : `Failed to connect Google Calendar: ${safeDetail}. You can close this window.`;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${type === 'success' ? 'Connected' : 'Error'}</title></head><body>
+<p style="font-family:sans-serif;padding:24px">${bodyText}</p>
+<script>
+try { if(window.opener) window.opener.postMessage(${msgJson},'${FRONTEND}'); } catch(e){}
+window.close();
+setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
+</script></body></html>`;
+  };
+
   router.get('/google/callback', async (req: Request, res: Response) => {
+    const send = (type: 'success' | 'error', detail = '') =>
+      res.setHeader('Content-Type', 'text/html').send(popupPage(type, detail));
+
     try {
       const { code, state, error: oauthError } = req.query as Record<string, string>;
-      if (oauthError) return void res.redirect(`${FRONTEND}/?calendar_error=${encodeURIComponent(oauthError)}`);
-      if (!code || !state) return void res.redirect(`${FRONTEND}/?calendar_error=missing_params`);
+      if (oauthError) return void send('error', oauthError);
+      if (!code || !state) return void send('error', 'missing_params');
 
       const stateData = calendarStateStore.get(state);
       if (!stateData || stateData.expiry < Date.now()) {
         calendarStateStore.delete(state);
-        return void res.redirect(`${FRONTEND}/?calendar_error=invalid_state`);
+        return void send('error', 'invalid_state — please try connecting again');
       }
       calendarStateStore.delete(state);
 
@@ -153,12 +174,13 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
       );
 
       if (tokenResp.status >= 400) {
+        const errMsg = (tokenResp.data as any)?.error_description || (tokenResp.data as any)?.error || 'token_exchange_failed';
         logger.error('[calendarRoutes] token exchange failed:', tokenResp.data);
-        return void res.redirect(`${FRONTEND}/?calendar_error=token_exchange_failed`);
+        return void send('error', String(errMsg));
       }
 
       const { access_token, refresh_token, expires_in } = tokenResp.data as any;
-      if (!access_token) return void res.redirect(`${FRONTEND}/?calendar_error=no_token`);
+      if (!access_token) return void send('error', 'no_token');
 
       const ttl = Number(expires_in || 3600);
       const expiry = new Date(Date.now() + ttl * 1000).toISOString();
@@ -185,10 +207,10 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
         );
       }
 
-      res.redirect(`${FRONTEND}/?calendar_connected=1`);
+      send('success');
     } catch (e: any) {
       logger.error('[calendarRoutes] callback error:', e);
-      res.redirect(`${FRONTEND}/?calendar_error=server_error`);
+      send('error', 'server_error');
     }
   });
 

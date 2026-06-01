@@ -534,6 +534,11 @@ export default function Integrations({ onNavigateSettings }: Props) {
           await load();
           setGcalMsg({ text: 'Google Calendar connected successfully.', ok: true });
           setGcalLoading(false);
+        } else if (evt.data?.type === 'calendar_error') {
+          window.removeEventListener('message', onMessage);
+          clearInterval(pollTimer);
+          setGcalMsg({ text: `Connection failed: ${evt.data.error || 'unknown error'}`, ok: false });
+          setGcalLoading(false);
         }
       };
       window.addEventListener('message', onMessage);

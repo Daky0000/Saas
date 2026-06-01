@@ -804,14 +804,6 @@ function App() {
     }
   }, []);
 
-  // Close OAuth popup and notify parent after Google Calendar auth redirect
-  useEffect(() => {
-    if (window.opener && window.location.search.includes('calendar_connected=1')) {
-      try { window.opener.postMessage({ type: 'calendar_connected' }, window.location.origin); } catch {}
-      window.close();
-    }
-  }, []);
-
   useEffect(() => {
     // Use localStorage (not sessionStorage) so the flag survives cross-origin
     // OAuth redirects (LinkedIn/Facebook/etc.). sessionStorage is cleared by some

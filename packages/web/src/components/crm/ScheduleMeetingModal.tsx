@@ -335,27 +335,29 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
       // Open OAuth in a popup so the modal stays open
       const popup = window.open(d.url, 'gcal_oauth', 'width=600,height=700,left=200,top=100');
 
-      // Listen for postMessage from popup after OAuth completes
+      // Listen for postMessage from the popup's inline script
       const onMessage = (ev: MessageEvent) => {
         if (ev.data?.type === 'calendar_connected') {
           window.removeEventListener('message', onMessage);
           clearInterval(pollTimer);
           setCalConnected(true);
           void fetchCalEvents();
+        } else if (ev.data?.type === 'calendar_error') {
+          window.removeEventListener('message', onMessage);
+          clearInterval(pollTimer);
+          setError(`Google Calendar: ${ev.data.error || 'connection failed'}`);
         }
       };
       window.addEventListener('message', onMessage);
 
-      // Fallback poll: if popup closes without postMessage (user cancelled), re-check status
+      // Fallback: if popup closes without postMessage (user cancelled), re-check status
       const pollTimer = setInterval(() => {
         if (popup?.closed) {
           clearInterval(pollTimer);
           window.removeEventListener('message', onMessage);
           fetch(api('/api/calendar/google/status'), { headers: authH() })
             .then(r => r.ok ? r.json() : { connected: false })
-            .then(d => {
-              if (d.connected) { setCalConnected(true); void fetchCalEvents(); }
-            })
+            .then(d => { if (d.connected) { setCalConnected(true); void fetchCalEvents(); } })
             .catch(() => {});
         }
       }, 1000);
