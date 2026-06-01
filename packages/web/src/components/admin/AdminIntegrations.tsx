@@ -311,6 +311,12 @@ export default function AdminIntegrations() {
           merged.redirectUri = buildRedirectUri(id);
         }
       }
+      if (def?.fields.some((field) => field.id === 'calendarRedirectUri')) {
+        const current = String(merged.calendarRedirectUri ?? '').trim();
+        if (!current) {
+          merged.calendarRedirectUri = `${getBackendBase()}/api/calendar/google/callback`;
+        }
+      }
       setForm(Object.fromEntries(Object.entries(merged).map(([k, v]) => [k, String(v ?? '')])));
     } catch (e) {
       setForm({});
