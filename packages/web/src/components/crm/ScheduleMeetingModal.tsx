@@ -4,10 +4,12 @@ import {
   Repeat, Link2, AlertCircle, Loader2, Check,
 } from 'lucide-react';
 import RichTextEditor from '../RichTextEditor';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 const tok = () => localStorage.getItem('auth_token') ?? '';
 const authH = () => ({ Authorization: `Bearer ${tok()}` });
 const jsonH = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
+const api = (path: string) => `${API_BASE_URL}${path}`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,7 +41,7 @@ const RECURRENCE_OPTIONS = [
   { value: '', label: 'Does not repeat' },
   { value: 'RRULE:FREQ=DAILY', label: 'Every day' },
   { value: 'RRULE:FREQ=WEEKLY', label: 'Every week' },
-  { value: 'RRULE:FREQ=BIWEEKLY', label: 'Every 2 weeks' },
+  { value: 'RRULE:FREQ=WEEKLY;INTERVAL=2', label: 'Every 2 weeks' },
   { value: 'RRULE:FREQ=MONTHLY', label: 'Every month' },
 ];
 
@@ -93,9 +95,6 @@ function MiniCalendar({
     ? [0, 1, 2, 3, 4].map(i => { const d = new Date(weekStart); d.setDate(weekStart.getDate() + i); return d; })
     : [0, 1, 2, 3, 4, 5, 6].map(i => { const d = new Date(weekStart); d.setDate(weekStart.getDate() + i); return d; });
 
-  const weekEnd = new Date(days[days.length - 1]);
-  weekEnd.setHours(23, 59, 59, 999);
-
   const weekLabel = (() => {
     const s = days[0];
     const e = days[days.length - 1];
@@ -111,16 +110,15 @@ function MiniCalendar({
   const HOUR_END = 22;
   const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START);
   const TOTAL_MINUTES = (HOUR_END - HOUR_START) * 60;
-  const PX_PER_MIN = 1.5; // 1.5px per minute → 60px per hour
+  const PX_PER_MIN = 1.5;
 
-  function getEventStyle(ev: GoogleEvent, dayStr: string) {
+  function getEventStyle(ev: GoogleEvent, day: Date) {
     const startStr = ev.start.dateTime;
     const endStr = ev.end.dateTime;
     if (!startStr || !endStr) return null;
     const s = new Date(startStr);
     const e = new Date(endStr);
-    const dayDate = new Date(dayStr + 'T00:00:00');
-    if (s.toDateString() !== dayDate.toDateString()) return null;
+    if (s.toDateString() !== day.toDateString()) return null;
     const startMins = (s.getHours() - HOUR_START) * 60 + s.getMinutes();
     const durationMins = Math.max(30, (e.getTime() - s.getTime()) / 60000);
     const top = Math.max(0, startMins) * PX_PER_MIN;
@@ -178,16 +176,14 @@ function MiniCalendar({
 
           {/* Day columns */}
           {days.map(day => {
-            const dayStr = toLocalDateString(day);
             const dayEvents = events.filter(ev => {
               const startDt = ev.start.dateTime || ev.start.date;
               if (!startDt) return false;
-              const evDate = new Date(startDt);
-              return evDate.toDateString() === day.toDateString();
+              return new Date(startDt).toDateString() === day.toDateString();
             });
 
             return (
-              <div key={dayStr} className="flex-1 relative border-l border-gray-100 first:border-l-0" style={{ height: `${TOTAL_MINUTES * PX_PER_MIN}px` }}>
+              <div key={day.toISOString()} className="flex-1 relative border-l border-gray-100 first:border-l-0" style={{ height: `${TOTAL_MINUTES * PX_PER_MIN}px` }}>
                 {/* Hour lines */}
                 {HOURS.map(h => (
                   <div key={h} className="absolute w-full border-t border-gray-50" style={{ top: `${(h - HOUR_START) * 60 * PX_PER_MIN}px` }} />
@@ -195,11 +191,11 @@ function MiniCalendar({
 
                 {/* Events */}
                 {dayEvents.map(ev => {
-                  const style = getEventStyle(ev, dayStr);
+                  const style = getEventStyle(ev, day);
                   if (!style) return null;
                   const color = EVENT_COLORS[(parseInt(ev.colorId || '0') || 0) % EVENT_COLORS.length] || '#4285f4';
                   const startStr = ev.start.dateTime;
-                  const timeLabel = startStr ? `${new Date(startStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false })}` : '';
+                  const timeLabel = startStr ? new Date(startStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false }) : '';
                   return (
                     <div
                       key={ev.id}
@@ -212,14 +208,6 @@ function MiniCalendar({
                     </div>
                   );
                 })}
-
-                {/* "Unavailable" placeholder if no Google Calendar */}
-                {!loading && events.length === 0 && (
-                  <div className="absolute left-0.5 right-0.5 rounded overflow-hidden px-1 py-0.5 border border-gray-200 text-gray-400 text-[9px]"
-                    style={{ top: `${(19 - HOUR_START) * 60 * PX_PER_MIN}px`, height: `${60 * PX_PER_MIN}px` }}>
-                    Unavailable
-                  </div>
-                )}
               </div>
             );
           })}
@@ -266,33 +254,23 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
 
   // Check Google Calendar status
   useEffect(() => {
-    fetch('/api/calendar/google/status', { headers: authH() })
+    fetch(api('/api/calendar/google/status'), { headers: authH() })
       .then(r => r.ok ? r.json() : { connected: false })
       .then(d => setCalConnected(d.connected))
       .catch(() => setCalConnected(false));
   }, []);
 
-  // Detect calendar_connected param after OAuth redirect
-  useEffect(() => {
-    if (window.location.search.includes('calendar_connected=1')) {
-      setCalConnected(true);
-      const url = new URL(window.location.href);
-      url.searchParams.delete('calendar_connected');
-      window.history.replaceState({}, '', url.toString());
-    }
-  }, []);
-
-  // Fetch calendar events when connected
+  // Fetch calendar events when connected or week changes
   const fetchCalEvents = useCallback(async () => {
     if (!calConnected) return;
     setCalLoading(true);
     try {
-      const today = new Date();
-      const weekStart = new Date(today);
-      weekStart.setDate(today.getDate() - today.getDay() + 1 + weekOffset * 7);
+      const base = new Date();
+      const weekStart = new Date(base);
+      weekStart.setDate(base.getDate() - base.getDay() + 1 + weekOffset * 7);
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 7);
-      const r = await fetch(`/api/calendar/events?start=${weekStart.toISOString()}&end=${weekEnd.toISOString()}`, { headers: authH() });
+      const r = await fetch(api(`/api/calendar/events?start=${weekStart.toISOString()}&end=${weekEnd.toISOString()}`), { headers: authH() });
       const data = r.ok ? await r.json() : { events: [] };
       setCalEvents(Array.isArray(data.events) ? data.events : []);
     } finally {
@@ -308,7 +286,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
     const t = setTimeout(async () => {
       setAttendeeSearching(true);
       try {
-        const r = await fetch(`/api/mailing/contacts?search=${encodeURIComponent(attendeeQuery)}&limit=10`, { headers: authH() });
+        const r = await fetch(api(`/api/mailing/contacts?search=${encodeURIComponent(attendeeQuery)}&limit=10`), { headers: authH() });
         const d = r.ok ? await r.json() : { contacts: [] };
         const contacts: Attendee[] = (d.contacts || []).map((c: any) => ({
           id: c.id, type: 'contact' as const,
@@ -350,13 +328,37 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
   const connectGoogleCalendar = async () => {
     setConnectingCal(true);
     try {
-      const r = await fetch('/api/calendar/google/connect-url', { method: 'POST', headers: jsonH() });
+      const r = await fetch(api('/api/calendar/google/connect-url'), { method: 'POST', headers: jsonH() });
       const d = await r.json();
-      if (d.url) {
-        window.location.href = d.url;
-      } else {
-        setError(d.error || 'Failed to get OAuth URL');
-      }
+      if (!d.url) { setError(d.error || 'Failed to get OAuth URL'); return; }
+
+      // Open OAuth in a popup so the modal stays open
+      const popup = window.open(d.url, 'gcal_oauth', 'width=600,height=700,left=200,top=100');
+
+      // Listen for postMessage from popup after OAuth completes
+      const onMessage = (ev: MessageEvent) => {
+        if (ev.data?.type === 'calendar_connected') {
+          window.removeEventListener('message', onMessage);
+          clearInterval(pollTimer);
+          setCalConnected(true);
+          void fetchCalEvents();
+        }
+      };
+      window.addEventListener('message', onMessage);
+
+      // Fallback poll: if popup closes without postMessage (user cancelled), re-check status
+      const pollTimer = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(pollTimer);
+          window.removeEventListener('message', onMessage);
+          fetch(api('/api/calendar/google/status'), { headers: authH() })
+            .then(r => r.ok ? r.json() : { connected: false })
+            .then(d => {
+              if (d.connected) { setCalConnected(true); void fetchCalEvents(); }
+            })
+            .catch(() => {});
+        }
+      }, 1000);
     } catch {
       setError('Failed to initiate Google Calendar connection');
     } finally { setConnectingCal(false); }
@@ -368,58 +370,62 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
     try {
       const startDt = parseDateTime(startDate, startTime);
       const endDt = parseDateTime(startDate, endTime);
-      if (endDt <= startDt) {
-        setError('End time must be after start time');
-        return;
-      }
+      if (endDt <= startDt) { setError('End time must be after start time'); return; }
 
       const attendeesWithEmail = attendees.filter(a => a.email);
 
       // Create CRM activity
-      const body = {
-        type: 'meeting',
-        title: title.trim(),
-        body: notes || null,
-        company_id: companyId,
-        scheduled_at: startDt.toISOString(),
-        end_time: endDt.toISOString(),
-        recurrence: recurrence || null,
-        attendees: attendeesWithEmail,
-        reminder_minutes: reminders.length > 0 ? reminders : null,
-      };
-
-      const r = await fetch('/api/crm/activities', { method: 'POST', headers: jsonH(), body: JSON.stringify(body) });
-      if (!r.ok) {
-        const d = await r.json();
+      const actRes = await fetch(api('/api/crm/activities'), {
+        method: 'POST',
+        headers: jsonH(),
+        body: JSON.stringify({
+          type: 'meeting',
+          title: title.trim(),
+          body: notes || null,
+          company_id: companyId,
+          scheduled_at: startDt.toISOString(),
+          end_time: endDt.toISOString(),
+          recurrence: recurrence || null,
+          attendees: attendeesWithEmail,
+          reminder_minutes: reminders.length > 0 ? reminders : null,
+        }),
+      });
+      if (!actRes.ok) {
+        const d = await actRes.json();
         setError(d.error || 'Failed to save meeting');
         return;
       }
-      const activity = await r.json();
+      const activity = await actRes.json();
 
-      // Also create Google Calendar event if connected
+      // Create Google Calendar event if connected
       if (calConnected) {
-        const gcBody = {
-          summary: title.trim(),
-          description: notes ? notes.replace(/<[^>]*>/g, '') : '',
-          start: { dateTime: startDt.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-          end: { dateTime: endDt.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-          attendees: attendeesWithEmail,
-          recurrence: recurrence ? [recurrence] : undefined,
-          reminders: reminders.length > 0
-            ? { useDefault: false, overrides: reminders.map(m => ({ method: 'popup', minutes: m })) }
-            : { useDefault: true },
-        };
-        const gcRes = await fetch('/api/calendar/events', { method: 'POST', headers: jsonH(), body: JSON.stringify(gcBody) });
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const gcRes = await fetch(api('/api/calendar/events'), {
+          method: 'POST',
+          headers: jsonH(),
+          body: JSON.stringify({
+            summary: title.trim(),
+            description: notes ? notes.replace(/<[^>]*>/g, '') : '',
+            start: { dateTime: startDt.toISOString(), timeZone: tz },
+            end: { dateTime: endDt.toISOString(), timeZone: tz },
+            attendees: attendeesWithEmail,
+            recurrence: recurrence ? [recurrence] : undefined,
+            reminders: reminders.length > 0
+              ? { useDefault: false, overrides: reminders.map(m => ({ method: 'popup', minutes: m })) }
+              : { useDefault: true },
+          }),
+        });
         if (gcRes.ok) {
           const gcData = await gcRes.json();
-          // Update the activity with Google event ID
           if (gcData.event?.id) {
-            await fetch(`/api/crm/activities/${activity.id}`, {
+            await fetch(api(`/api/crm/activities/${activity.id}`), {
               method: 'PATCH',
               headers: jsonH(),
               body: JSON.stringify({ google_event_id: gcData.event.id }),
             }).catch(() => {});
           }
+          // Refresh calendar view to show the new event
+          void fetchCalEvents();
         }
       }
 
@@ -481,7 +487,14 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                   type="time"
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
                   value={startTime}
-                  onChange={e => { setStartTime(e.target.value); if (e.target.value >= endTime) { const [h, m] = e.target.value.split(':').map(Number); const newEnd = `${String(h + (m >= 30 ? 1 : 0)).padStart(2,'0')}:${m < 30 ? String(m+30).padStart(2,'0') : '00'}`; setEndTime(newEnd); } }}
+                  onChange={e => {
+                    setStartTime(e.target.value);
+                    if (e.target.value >= endTime) {
+                      const [h, m] = e.target.value.split(':').map(Number);
+                      const newEnd = `${String(h + (m >= 30 ? 1 : 0)).padStart(2, '0')}:${m < 30 ? String(m + 30).padStart(2, '0') : '00'}`;
+                      setEndTime(newEnd);
+                    }
+                  }}
                 />
               </div>
               <div>
