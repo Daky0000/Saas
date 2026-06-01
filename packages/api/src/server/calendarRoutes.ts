@@ -10,16 +10,7 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
 const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 
-// In-memory state store keyed by random state param
-const calendarStateStore = new Map<string, { userId: string; redirectUri: string; expiry: number }>();
-
-// Prune expired states every 10 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of calendarStateStore) {
-    if (val.expiry < now) calendarStateStore.delete(key);
-  }
-}, 600_000);
+// OAuth state is stored in the DB (oauth_states table) so it survives server restarts and multi-instance deployments.
 
 interface CalendarDeps {
   requireAuth: (req: Request, res: Response) => { userId: string } | null;
@@ -107,7 +98,13 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
       const apiOrigin = `${req.protocol}://${req.get('host')}`;
       const redirectUri = cfg.calendarRedirectUri || `${apiOrigin}/api/calendar/google/callback`;
 
-      calendarStateStore.set(state, { userId: auth.userId, redirectUri, expiry: Date.now() + 600_000 });
+      // Persist state in DB so it survives server restarts / multi-instance deployments
+      await pool.query(
+        `INSERT INTO oauth_states (state, user_id, platform, return_to, expires_at)
+         VALUES ($1, $2, 'google_calendar', $3, NOW() + INTERVAL '15 minutes')
+         ON CONFLICT (state) DO NOTHING`,
+        [state, auth.userId, redirectUri]
+      );
 
       const params = new URLSearchParams({
         client_id: cfg.clientId,
@@ -153,20 +150,25 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
       if (oauthError) return void send('error', oauthError);
       if (!code || !state) return void send('error', 'missing_params');
 
-      const stateData = calendarStateStore.get(state);
-      if (!stateData || stateData.expiry < Date.now()) {
-        calendarStateStore.delete(state);
-        return void send('error', 'invalid_state — please try connecting again');
-      }
-      calendarStateStore.delete(state);
+      // Look up and consume state from DB
+      const { rows: stateRows } = await pool.query(
+        `DELETE FROM oauth_states WHERE state=$1 AND platform='google_calendar' AND expires_at > NOW() RETURNING user_id, return_to`,
+        [state]
+      );
+      if (!stateRows.length) return void send('error', 'invalid_state — please try connecting again');
+      const { user_id: userId, return_to: storedRedirectUri } = stateRows[0] as { user_id: string; return_to: string };
 
+      // Reconstruct redirectUri: use what was stored, or fall back to the same derivation as connect-url
       const cfg = await getCalendarCredentials();
+      const apiOrigin = `${req.protocol}://${req.get('host')}`;
+      const redirectUri = storedRedirectUri || cfg.calendarRedirectUri || `${apiOrigin}/api/calendar/google/callback`;
+
       const tokenResp = await axios.post(
         GOOGLE_TOKEN_URL,
         new URLSearchParams({
           grant_type: 'authorization_code',
           code,
-          redirect_uri: stateData.redirectUri,
+          redirect_uri: redirectUri,
           client_id: cfg.clientId,
           client_secret: cfg.clientSecret,
         }).toString(),
@@ -187,14 +189,14 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
 
       const { rows: existing } = await pool.query(
         `SELECT id FROM social_accounts WHERE user_id=$1 AND platform='google_calendar' LIMIT 1`,
-        [stateData.userId]
+        [userId]
       );
 
       if (existing.length > 0) {
         const sets: string[] = ['access_token_encrypted=$1', 'token_expires_at=$2', 'connected=true', 'updated_at=NOW()'];
         const params: unknown[] = [encryptIntegrationSecret(access_token), expiry];
         if (refresh_token) { params.push(encryptIntegrationSecret(refresh_token)); sets.push(`refresh_token_encrypted=$${params.length}`); }
-        params.push(stateData.userId);
+        params.push(userId);
         await pool.query(
           `UPDATE social_accounts SET ${sets.join(', ')} WHERE user_id=$${params.length} AND platform='google_calendar'`,
           params
@@ -203,7 +205,7 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
         await pool.query(
           `INSERT INTO social_accounts (id, user_id, platform, account_type, access_token_encrypted, refresh_token_encrypted, token_expires_at, connected)
            VALUES ($1, $2, 'google_calendar', 'profile', $3, $4, $5, true)`,
-          [randomUUID(), stateData.userId, encryptIntegrationSecret(access_token), refresh_token ? encryptIntegrationSecret(refresh_token) : null, expiry]
+          [randomUUID(), userId, encryptIntegrationSecret(access_token), refresh_token ? encryptIntegrationSecret(refresh_token) : null, expiry]
         );
       }
 
