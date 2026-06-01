@@ -153,6 +153,18 @@ const PLATFORMS: PlatformDef[] = [
     redirectHint: 'Use `/auth/gmail/callback` on the backend. Enable Gmail API in Google Cloud Console before testing.',
   },
   {
+    id: 'google_calendar',
+    name: 'Google Calendar',
+    description: 'OAuth credentials for syncing meetings to Google Calendar. Users connect their calendar to schedule meetings from the CRM.',
+    fields: [
+      { id: 'clientId', label: 'Client ID', placeholder: 'Google OAuth Client ID', type: 'text', helpText: 'Same Client ID as Gmail if using the same Google Cloud project. From Google Cloud Console → APIs & Services → Credentials.' },
+      { id: 'clientSecret', label: 'Client Secret', placeholder: 'Google OAuth Client Secret', type: 'password', helpText: 'Same Client Secret as Gmail if using the same Google Cloud project. Keep this secret.' },
+      { id: 'calendarRedirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/api/calendar/google/callback', type: 'text', helpText: 'Must be added to Authorized redirect URIs in Google Cloud Console. Enable the Google Calendar API in your project.' },
+    ],
+    docsUrl: 'https://developers.google.com/calendar/api/guides/overview',
+    redirectHint: 'Use `/api/calendar/google/callback` on the backend. Enable Google Calendar API in Google Cloud Console. You can reuse the same OAuth client as Gmail — just add this redirect URI.',
+  },
+  {
     id: 'slack',
     name: 'Slack',
     description: 'OAuth credentials for sending workflow notifications and agent alerts to Slack workspaces.',

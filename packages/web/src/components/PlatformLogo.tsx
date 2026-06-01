@@ -190,6 +190,24 @@ function WhatsAppLogo({ size }: { size: number }) {
   );
 }
 
+function GoogleCalendarLogo({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="8" fill="white" stroke="#e0e0e0" strokeWidth="1" />
+      {/* Top bar - Google blue */}
+      <rect x="8" y="8" width="24" height="7" rx="2" fill="#1a73e8" />
+      {/* Calendar grid area */}
+      <rect x="8" y="14" width="24" height="18" rx="0" fill="white" />
+      <rect x="8" y="14" width="24" height="18" rx="2" fill="none" stroke="#e0e0e0" strokeWidth="1" />
+      {/* Day number "31" in Google blue */}
+      <text x="20" y="28" textAnchor="middle" fill="#1a73e8" fontSize="11" fontWeight="bold" fontFamily="sans-serif">31</text>
+      {/* Ring hooks */}
+      <rect x="14" y="6" width="3" height="6" rx="1.5" fill="#1a73e8" />
+      <rect x="23" y="6" width="3" height="6" rx="1.5" fill="#1a73e8" />
+    </svg>
+  );
+}
+
 const LOGOS: Record<string, (size: number) => React.ReactElement> = {
   facebook: (s) => <FacebookLogo size={s} />,
   instagram: (s) => <InstagramLogo size={s} />,
@@ -205,6 +223,7 @@ const LOGOS: Record<string, (size: number) => React.ReactElement> = {
   mailchimp: (s) => <MailchimpLogo size={s} />,
   hubtel: (s) => <HubtelLogo size={s} />,
   gmail: (s) => <GmailLogo size={s} />,
+  google_calendar: (s) => <GoogleCalendarLogo size={s} />,
   slack: (s) => <SlackLogo size={s} />,
   zoom: (s) => <ZoomLogo size={s} />,
   whatsapp: (s) => <WhatsAppLogo size={s} />,
