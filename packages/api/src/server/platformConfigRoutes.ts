@@ -345,9 +345,9 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const auth = requireAuth(req, res);
       if (!auth) return;
 
-      const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp', 'tiktok', 'threads', 'gmail', 'slack', 'whatsapp', 'zoom'] as const;
+      const SUPPORTED_SLUGS = ['wordpress', 'facebook', 'instagram', 'linkedin', 'twitter', 'pinterest', 'mailchimp', 'tiktok', 'threads', 'gmail', 'slack', 'whatsapp', 'zoom', 'google_calendar'] as const;
       const integrations: Array<{
-        slug: string; name: string; type: 'cms' | 'social' | 'marketing' | 'other';
+        slug: string; name: string; type: 'cms' | 'social' | 'marketing' | 'messaging' | 'other';
         adminEnabled: boolean; configured: boolean; connected: boolean; connection: Record<string, any> | null;
       }> = [];
 
@@ -406,8 +406,10 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
 
       for (const slug of SUPPORTED_SLUGS) {
         const registry = await getIntegrationRowBySlug(slug).catch(() => null);
-        const name = registry?.name || (slug === 'twitter' ? 'X (Twitter)' : slug === 'wordpress' ? 'WordPress' : slug[0].toUpperCase() + slug.slice(1));
-        const type = (registry?.type as any) || (slug === 'wordpress' ? 'cms' : 'social');
+        const nameMap: Record<string, string> = { twitter: 'X (Twitter)', wordpress: 'WordPress', google_calendar: 'Google Calendar' };
+        const name = registry?.name || nameMap[slug] || (slug[0].toUpperCase() + slug.slice(1));
+        const typeMap: Record<string, string> = { wordpress: 'cms', mailchimp: 'marketing', gmail: 'messaging', slack: 'messaging', zoom: 'messaging', whatsapp: 'messaging', google_calendar: 'messaging' };
+        const type = (registry?.type as any) || typeMap[slug] || 'social';
         const cfg = cfgMap.get(slug)?.config || {};
         const manualSlug = slug === 'wordpress' || slug === 'mailchimp' || slug === 'whatsapp';
         const adminEnabled = cfgMap.has(slug) ? Boolean(cfgMap.get(slug)?.enabled) : manualSlug;
@@ -421,6 +423,12 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
           const redirectUri = resolveOAuthRedirectUri('facebook', String((facebookPlatformConfig as any).redirectUri || (metaConfig as any).redirectUri || ''), req);
           const secretValue = String((metaConfig as any).appSecret || (facebookPlatformConfig as any).appSecret || '').trim();
           configured = Boolean(clientId && redirectUri && secretValue);
+        } else if (slug === 'google_calendar') {
+          // Reuse Gmail credentials if no dedicated google_calendar config is set
+          const calCfg = Object.keys(cfg || {}).length > 0 ? cfg : cfgMap.get('gmail')?.config || {};
+          const clientId = String((calCfg as any).clientId || '').trim();
+          const clientSecret = String((calCfg as any).clientSecret || '').trim();
+          configured = Boolean(clientId && clientSecret);
         } else {
           const meta = oauthAuthUrls[slug];
           if (meta) {

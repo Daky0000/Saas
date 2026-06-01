@@ -158,6 +158,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [gsLoading, setGsLoading] = useState(false);
   const [gsMsg, setGsMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
+  // Google Calendar
+  const [gcalLoading, setGcalLoading] = useState(false);
+  const [gcalMsg, setGcalMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -511,6 +515,57 @@ export default function Integrations({ onNavigateSettings }: Props) {
     }
   };
 
+  const handleConnectGoogleCalendar = async () => {
+    setGcalLoading(true);
+    setGcalMsg(null);
+    try {
+      const tok = localStorage.getItem('auth_token') ?? '';
+      const r = await fetch('/api/calendar/google/connect-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      });
+      const d = await r.json();
+      if (!d.url) { setGcalMsg({ text: d.error || 'Failed to get OAuth URL', ok: false }); setGcalLoading(false); return; }
+      const popup = window.open(d.url, 'gcal_oauth', 'width=600,height=700,left=200,top=100');
+      const onMessage = async (evt: MessageEvent) => {
+        if (evt.data?.type === 'calendar_connected') {
+          window.removeEventListener('message', onMessage);
+          clearInterval(pollTimer);
+          await load();
+          setGcalMsg({ text: 'Google Calendar connected successfully.', ok: true });
+          setGcalLoading(false);
+        }
+      };
+      window.addEventListener('message', onMessage);
+      const pollTimer = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(pollTimer);
+          window.removeEventListener('message', onMessage);
+          void load();
+          setGcalLoading(false);
+        }
+      }, 1000);
+    } catch (e) {
+      setGcalMsg({ text: e instanceof Error ? e.message : 'Failed to connect', ok: false });
+      setGcalLoading(false);
+    }
+  };
+
+  const handleDisconnectGoogleCalendar = async () => {
+    if (!confirm('Disconnect Google Calendar?')) return;
+    setGcalLoading(true);
+    try {
+      const tok = localStorage.getItem('auth_token') ?? '';
+      await fetch('/api/calendar/google/disconnect', { method: 'DELETE', headers: { Authorization: `Bearer ${tok}` } });
+      await load();
+      setGcalMsg(null);
+    } catch (e) {
+      setGcalMsg({ text: e instanceof Error ? e.message : 'Failed to disconnect', ok: false });
+    } finally {
+      setGcalLoading(false);
+    }
+  };
+
   const connectWhatsApp = async () => {
     setBusy('whatsapp');
     try {
@@ -567,6 +622,39 @@ export default function Integrations({ onNavigateSettings }: Props) {
     const effectiveDisabledReason = slug === 'instagram' ? instagramDisabledReason : disabledReason;
 
     const canConnect = item.adminEnabled && (item.configured || !isOauth);
+
+    if (slug === 'google_calendar') {
+      return (
+        <Card
+          title="Google Calendar"
+          description="Connect your Google Calendar to sync meetings scheduled in the CRM directly to your calendar and view your schedule when booking meetings."
+          statusLabel={item.connected ? 'Connected' : 'Disconnected'}
+          statusTone={item.connected ? 'connected' : 'disconnected'}
+          icon={<PlatformLogo platform="google_calendar" size={48} />}
+          meta={gcalMsg ? gcalMsg.text : item.connected ? 'Calendar synced' : null}
+        >
+          {!item.connected ? (
+            <button
+              type="button"
+              onClick={() => void handleConnectGoogleCalendar()}
+              disabled={gcalLoading || !item.adminEnabled}
+              className={PRIMARY_ACTION}
+            >
+              {gcalLoading ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} Connect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleDisconnectGoogleCalendar()}
+              disabled={gcalLoading}
+              className={SECONDARY_ACTION}
+            >
+              {gcalLoading ? <Loader2 size={16} className="animate-spin" /> : <Unplug size={16} />} Disconnect
+            </button>
+          )}
+        </Card>
+      );
+    }
 
     if (slug === 'wordpress') {
       return (

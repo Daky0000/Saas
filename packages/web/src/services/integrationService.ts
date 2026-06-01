@@ -35,6 +35,7 @@ const FALLBACK_CATALOG: Array<{ slug: string; name: string; type: IntegrationTyp
   { slug: 'slack', name: 'Slack', type: 'messaging' },
   { slug: 'whatsapp', name: 'WhatsApp', type: 'messaging' },
   { slug: 'zoom', name: 'Zoom', type: 'messaging' },
+  { slug: 'google_calendar', name: 'Google Calendar', type: 'messaging' },
 ];
 
 const normalizePlatform = (value: string) => {
