@@ -594,6 +594,34 @@ const syncBlogPostMedia = mediaModule.syncBlogPostMedia;
 
 // ── DB Audit & Cleanup (admin-only, one-shot) ──────────────────────────────
 app.use('/api/admin', registerDbAuditRoutes({ requireAdmin, pool: pool! }));
+
+// ── Platform nav settings ──────────────────────────────────────────────────
+app.get('/api/platform/nav-settings', async (req: Request, res: Response) => {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  if (!hasDatabase) return res.json({ disabled: [] });
+  try {
+    const { rows } = await dbQuery<{ value: { disabled: string[] } }>(
+      `SELECT value FROM platform_settings WHERE key='nav_disabled'`
+    );
+    res.json({ disabled: rows[0]?.value?.disabled ?? [] });
+  } catch {
+    res.json({ disabled: [] });
+  }
+});
+
+app.put('/api/admin/nav-settings', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { disabled } = req.body;
+  if (!Array.isArray(disabled)) return void res.status(400).json({ error: 'disabled must be array' });
+  await dbQuery(
+    `INSERT INTO platform_settings (key, value, updated_at) VALUES ('nav_disabled', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
+    [JSON.stringify({ disabled })]
+  );
+  res.json({ ok: true, disabled });
+});
 app.get('/tiktokGuHuKYUdxb13mmRk5PkdrDFlLEBosnIF.txt', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain');
   res.send('tiktok-developers-site-verification=GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF');

@@ -242,6 +242,7 @@ type AppSidebarProps = {
   handleLogout: () => void;
   onMobileClose?: () => void;
   goTasks: (filter?: string) => void;
+  disabledNav: Set<string>;
 };
 
 function AppSidebar({
@@ -260,7 +261,9 @@ function AppSidebar({
   handleLogout,
   onMobileClose,
   goTasks,
+  disabledNav,
 }: AppSidebarProps) {
+  const navOn = (key: string) => authUser?.role === 'admin' || !disabledNav.has(key);
   const { currentOrg, currentProject, projects, refresh } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -392,54 +395,66 @@ function AppSidebar({
       <nav className="flex-1 overflow-y-auto py-2 flex flex-col">
 
         {/* Dashboard */}
-        <button type="button" data-tour-id="nav-dashboard" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
-          <BarChart4 size={15} className="shrink-0" />
-          <span className="flex-1 text-left">Dashboard</span>
-        </button>
+        {navOn('dashboard') && (
+          <button type="button" data-tour-id="nav-dashboard" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
+            <BarChart4 size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Dashboard</span>
+          </button>
+        )}
 
         {/* Notifications */}
-        <button type="button" onClick={() => go('notifications')} className={cls(currentPage === 'notifications')}>
-          <Bell size={15} className="shrink-0" />
-          <span className="flex-1 text-left">Notifications</span>
-        </button>
+        {navOn('notifications') && (
+          <button type="button" onClick={() => go('notifications')} className={cls(currentPage === 'notifications')}>
+            <Bell size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Notifications</span>
+          </button>
+        )}
 
         {/* Content (Posts + Automation + Media + Cards) */}
-        <button
-          type="button"
-          data-tour-id="nav-content"
-          onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
-          className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
-        >
-          <FileText size={15} className="shrink-0" />
-          <span className="flex-1 text-left">Content</span>
-          <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
-        </button>
-        {postsMenuOpen && (
-          <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-            {([
-              { id: 'post-automation' as PageType, label: 'Automation' },
-              { id: 'media' as PageType, label: 'Media' },
-              { id: 'cards' as PageType, label: 'AI Studio' },
-              { id: 'workflow' as PageType, label: 'Workflow' },
-            ] as { id: PageType; label: string }[]).map((c) => (
-              <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                {c.label}
-              </button>
-            ))}
-          </div>
+        {navOn('content') && (
+          <>
+            <button
+              type="button"
+              data-tour-id="nav-content"
+              onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
+              className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
+            >
+              <FileText size={15} className="shrink-0" />
+              <span className="flex-1 text-left">Content</span>
+              <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {postsMenuOpen && (
+              <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                {([
+                  { id: 'post-automation' as PageType, label: 'Automation', navKey: 'content-automation' },
+                  { id: 'media' as PageType, label: 'Media', navKey: 'content-media' },
+                  { id: 'cards' as PageType, label: 'AI Studio', navKey: 'content-studio' },
+                  { id: 'workflow' as PageType, label: 'Workflow', navKey: 'content-workflow' },
+                ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
+                  <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* AI Team */}
-        <button type="button" onClick={() => go('ai-team')} className={cls(currentPage === 'ai-team')}>
-          <Bot size={15} className="shrink-0" />
-          <span className="flex-1 text-left">AI Team</span>
-        </button>
+        {navOn('ai-team') && (
+          <button type="button" onClick={() => go('ai-team')} className={cls(currentPage === 'ai-team')}>
+            <Bot size={15} className="shrink-0" />
+            <span className="flex-1 text-left">AI Team</span>
+          </button>
+        )}
 
         {/* Analytics */}
-        <button type="button" data-tour-id="nav-analytics" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
-          <TrendingUp size={15} className="shrink-0" />
-          <span className="flex-1 text-left">Analytics</span>
-        </button>
+        {navOn('analytics') && (
+          <button type="button" data-tour-id="nav-analytics" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
+            <TrendingUp size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Analytics</span>
+          </button>
+        )}
 
         {/* ── Projects ── */}
         <div className="mt-1">
@@ -559,103 +574,121 @@ function AppSidebar({
         <div className="mt-2 border-t border-gray-100 pt-2">
 
           {/* CRM */}
-          <button
-            type="button"
-            onClick={() => { setCrmMenuOpen(p => !p); go('crm-pipeline'); }}
-            className={cls(
-              currentPage === 'crm-companies' ||
-              currentPage === 'crm-pipeline' ||
-              currentPage === 'crm-scoring' ||
-              currentPage === 'gmail-agent'
-            )}
-          >
-            <Building2 size={15} className="shrink-0" />
-            <span className="flex-1 text-left">CRM</span>
-            <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
-          </button>
-          {crmMenuOpen && (
-            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-              {([
-                { id: 'crm-companies' as PageType, label: 'Companies' },
-                { id: 'crm-pipeline' as PageType, label: 'Deals' },
-                { id: 'crm-scoring' as PageType, label: 'Lead Scoring' },
-                { id: 'gmail-agent' as PageType, label: 'Gmail Agent' },
-              ] as { id: PageType; label: string }[]).map((c) => (
-                <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                  {c.label}
-                </button>
-              ))}
-            </div>
+          {navOn('crm') && (
+            <>
+              <button
+                type="button"
+                onClick={() => { setCrmMenuOpen(p => !p); go('crm-pipeline'); }}
+                className={cls(
+                  currentPage === 'crm-companies' ||
+                  currentPage === 'crm-pipeline' ||
+                  currentPage === 'crm-scoring' ||
+                  currentPage === 'gmail-agent'
+                )}
+              >
+                <Building2 size={15} className="shrink-0" />
+                <span className="flex-1 text-left">CRM</span>
+                <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {crmMenuOpen && (
+                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                  {([
+                    { id: 'crm-companies' as PageType, label: 'Companies', navKey: 'crm-companies' },
+                    { id: 'crm-pipeline' as PageType, label: 'Deals', navKey: 'crm-pipeline' },
+                    { id: 'crm-scoring' as PageType, label: 'Lead Scoring', navKey: 'crm-scoring' },
+                    { id: 'gmail-agent' as PageType, label: 'Gmail Agent', navKey: 'crm-gmail-agent' },
+                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
+                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
-          <button
-            type="button"
-            data-tour-id="nav-marketing"
-            onClick={() => { setMarketingMenuOpen(p => !p); go('marketing'); }}
-            className={cls(
-              currentPage === 'marketing' ||
-              currentPage === 'marketing-contacts' ||
-              currentPage === 'marketing-email' ||
-              currentPage === 'marketing-campaigns' ||
-              currentPage === 'marketing-surveys' ||
-              currentPage === 'marketing-automations'
-            )}
-          >
-            <Megaphone size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Marketing</span>
-            <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
-          </button>
-          {marketingMenuOpen && (
-            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-              {([
-                { id: 'marketing' as PageType, label: 'Overview' },
-                { id: 'marketing-contacts' as PageType, label: 'Contacts' },
-                { id: 'marketing-email' as PageType, label: 'Email' },
-                { id: 'marketing-campaigns' as PageType, label: 'Campaigns' },
-                { id: 'marketing-surveys' as PageType, label: 'Surveys' },
-                { id: 'marketing-automations' as PageType, label: 'Automations' },
-              ] as { id: PageType; label: string }[]).map((c) => (
-                <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                  {c.label}
-                </button>
-              ))}
-            </div>
+          {navOn('marketing') && (
+            <>
+              <button
+                type="button"
+                data-tour-id="nav-marketing"
+                onClick={() => { setMarketingMenuOpen(p => !p); go('marketing'); }}
+                className={cls(
+                  currentPage === 'marketing' ||
+                  currentPage === 'marketing-contacts' ||
+                  currentPage === 'marketing-email' ||
+                  currentPage === 'marketing-campaigns' ||
+                  currentPage === 'marketing-surveys' ||
+                  currentPage === 'marketing-automations'
+                )}
+              >
+                <Megaphone size={15} className="shrink-0" />
+                <span className="flex-1 text-left">Marketing</span>
+                <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {marketingMenuOpen && (
+                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                  {([
+                    { id: 'marketing' as PageType, label: 'Overview', navKey: 'marketing-overview' },
+                    { id: 'marketing-contacts' as PageType, label: 'Contacts', navKey: 'marketing-contacts' },
+                    { id: 'marketing-email' as PageType, label: 'Email', navKey: 'marketing-email' },
+                    { id: 'marketing-campaigns' as PageType, label: 'Campaigns', navKey: 'marketing-campaigns' },
+                    { id: 'marketing-surveys' as PageType, label: 'Surveys', navKey: 'marketing-surveys' },
+                    { id: 'marketing-automations' as PageType, label: 'Automations', navKey: 'marketing-automations' },
+                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
+                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
-            <Waypoints size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Integrations</span>
-          </button>
+
+          {navOn('integrations') && (
+            <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
+              <Waypoints size={15} className="shrink-0" />
+              <span className="flex-1 text-left">Integrations</span>
+            </button>
+          )}
 
           {/* Connectors */}
-          <button
-            type="button"
-            onClick={() => { setConnectorMenuOpen(p => !p); go('connector-hub'); }}
-            className={cls(
-              currentPage === 'connector-hub' ||
-              currentPage === 'connector-setup' ||
-              currentPage === 'connector-sync'
-            )}
-          >
-            <Layers size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Connectors</span>
-            <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
-          </button>
-          {connectorMenuOpen && (
-            <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-              {([
-                { id: 'connector-hub' as PageType, label: 'Hub' },
-                { id: 'connector-sync' as PageType, label: 'Sync Dashboard' },
-              ] as { id: PageType; label: string }[]).map((c) => (
-                <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                  {c.label}
-                </button>
-              ))}
-            </div>
+          {navOn('connectors') && (
+            <>
+              <button
+                type="button"
+                onClick={() => { setConnectorMenuOpen(p => !p); go('connector-hub'); }}
+                className={cls(
+                  currentPage === 'connector-hub' ||
+                  currentPage === 'connector-setup' ||
+                  currentPage === 'connector-sync'
+                )}
+              >
+                <Layers size={15} className="shrink-0" />
+                <span className="flex-1 text-left">Connectors</span>
+                <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {connectorMenuOpen && (
+                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                  {([
+                    { id: 'connector-hub' as PageType, label: 'Hub', navKey: 'connectors-hub' },
+                    { id: 'connector-sync' as PageType, label: 'Sync Dashboard', navKey: 'connectors-sync' },
+                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
+                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          <button type="button" data-tour-id="nav-billing" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
-            <CreditCard size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Billing</span>
-          </button>
+
+          {navOn('billing') && (
+            <button type="button" data-tour-id="nav-billing" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
+              <CreditCard size={15} className="shrink-0" />
+              <span className="flex-1 text-left">Billing</span>
+            </button>
+          )}
         </div>
 
         {/* Admin */}
@@ -755,6 +788,7 @@ function App() {
   const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
   const [crmMenuOpen, setCrmMenuOpen] = useState(false);
   const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
+  const [disabledNav, setDisabledNav] = useState<Set<string>>(new Set());
   const [connectorSetupDomain, setConnectorSetupDomain] = useState<any>(null);
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -859,6 +893,15 @@ function App() {
       window.fetch = originalFetch;
     };
   }, [isAuthenticated, navigatePath]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const token = localStorage.getItem('auth_token') ?? '';
+    fetch('/api/platform/nav-settings', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : { disabled: [] })
+      .then(d => setDisabledNav(new Set(d.disabled ?? [])))
+      .catch(() => {});
+  }, [isAuthenticated]);
 
   useEffect(() => {
     let canceled = false;
@@ -1106,6 +1149,7 @@ function App() {
     navigateToPage,
     handleLogout,
     goTasks,
+    disabledNav,
   };
 
   const guide = PAGE_GUIDES[currentPage];

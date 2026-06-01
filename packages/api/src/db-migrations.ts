@@ -3975,4 +3975,13 @@ await pool.query(`
   )
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS crm_note_comments_note_idx ON crm_note_comments (note_id, created_at ASC)`).catch(() => undefined);
+
+// ── Platform settings (key-value store for admin-controlled config) ────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS platform_settings (
+    key         TEXT PRIMARY KEY,
+    value       JSONB NOT NULL DEFAULT '{}',
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(() => undefined);
 }

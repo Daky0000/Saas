@@ -22,6 +22,7 @@ import AdminOpenAI from '../components/admin/AdminOpenAI';
 import AdminAuditLog from '../components/admin/AdminAuditLog';
 import AdminPlatformSettings from '../components/admin/AdminPlatformSettings';
 import AdminHiggsfield from '../components/admin/AdminHiggsfield';
+import AdminNavSettings from '../components/admin/AdminNavSettings';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -37,6 +38,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'integrations'
     | 'settings'
     | 'audit'
+    | 'nav-settings'
     | 'pages-home'
     | 'pages-tools'
     | 'pages-pricing-public'
@@ -65,6 +67,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     integrations: '/admin/integrations',
     settings: '/admin/settings',
     audit: '/admin/audit',
+    'nav-settings': '/admin/nav-settings',
     'pages-home': '/admin/pages/home',
     'pages-tools': '/admin/pages/tools',
     'pages-pricing-public': '/admin/pages/pricing',
@@ -115,6 +118,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'media', label: 'Media', icon: Image, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: true },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: true },
+    { id: 'nav-settings', label: 'Navigation', icon: Network, active: true },
   ] as { id: AdminTab; label: string; icon: React.ElementType; active: boolean; tourId?: string }[];
 
   const pagesItems: { id: AdminTab; label: string }[] = [
@@ -423,6 +427,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'openai' && <AdminOpenAI />}
             {activeTab === 'settings' && <AdminPlatformSettings />}
             {activeTab === 'audit' && <AdminAuditLog />}
+            {activeTab === 'nav-settings' && <AdminNavSettings />}
             {activeTab === 'higgsfield' && <AdminHiggsfield />}
             {activeTab.startsWith('pages-') && (
               <AdminPagesManagement activePage={activeTab} />
