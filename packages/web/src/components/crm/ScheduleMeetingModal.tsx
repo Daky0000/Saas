@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Calendar, Users, Bell, ChevronLeft, ChevronRight,
-  Repeat, Link2, AlertCircle, Loader2, Check,
+  Repeat, Link2, AlertCircle, Loader2, Check, RefreshCw,
 } from 'lucide-react';
 import RichTextEditor from '../RichTextEditor';
 import { API_BASE_URL } from '../../utils/apiBase';
@@ -28,6 +28,12 @@ interface GoogleEvent {
   colorId?: string;
 }
 
+interface Holiday {
+  date: string;       // YYYY-MM-DD
+  localName: string;
+  name: string;
+}
+
 interface Props {
   companyId: string;
   companyName: string;
@@ -46,14 +52,39 @@ const RECURRENCE_OPTIONS = [
 ];
 
 const REMINDER_OPTIONS = [
-  { value: 5, label: '5 min before' },
-  { value: 10, label: '10 min before' },
-  { value: 30, label: '30 min before' },
-  { value: 60, label: '1 hour before' },
-  { value: 1440, label: '1 day before' },
+  { value: 5, label: '5 min' },
+  { value: 10, label: '10 min' },
+  { value: 30, label: '30 min' },
+  { value: 60, label: '1 hr' },
+  { value: 1440, label: '1 day' },
 ];
 
 const EVENT_COLORS = ['#4285f4','#0f9d58','#f4b400','#db4437','#9c27b0','#00bcd4','#ff5722','#795548'];
+
+// Timezone → ISO-3166-1 alpha-2 country code (best-effort)
+const TZ_COUNTRY: Record<string, string> = {
+  'Africa/Accra': 'GH', 'Africa/Lagos': 'NG', 'Africa/Nairobi': 'KE',
+  'Africa/Cairo': 'EG', 'Africa/Johannesburg': 'ZA', 'Africa/Abidjan': 'CI',
+  'America/New_York': 'US', 'America/Chicago': 'US', 'America/Denver': 'US',
+  'America/Los_Angeles': 'US', 'America/Sao_Paulo': 'BR', 'America/Toronto': 'CA',
+  'America/Vancouver': 'CA', 'America/Mexico_City': 'MX', 'America/Bogota': 'CO',
+  'Europe/London': 'GB', 'Europe/Paris': 'FR', 'Europe/Berlin': 'DE',
+  'Europe/Madrid': 'ES', 'Europe/Rome': 'IT', 'Europe/Amsterdam': 'NL',
+  'Asia/Tokyo': 'JP', 'Asia/Shanghai': 'CN', 'Asia/Kolkata': 'IN',
+  'Asia/Dubai': 'AE', 'Asia/Singapore': 'SG', 'Asia/Seoul': 'KR',
+  'Australia/Sydney': 'AU', 'Pacific/Auckland': 'NZ',
+};
+
+function detectCountry(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (TZ_COUNTRY[tz]) return TZ_COUNTRY[tz];
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale || navigator.language || '';
+    const parts = locale.replace('_', '-').split('-');
+    if (parts.length >= 2) return parts[parts.length - 1].toUpperCase().slice(0, 2);
+  } catch {}
+  return 'US';
+}
 
 function toLocalDateString(d: Date) {
   const y = d.getFullYear();
@@ -70,26 +101,36 @@ function parseDateTime(dateStr: string, timeStr: string): Date {
 
 function MiniCalendar({
   events,
+  holidays,
   loading,
+  syncing,
   weekOffset,
   onPrevWeek,
   onNextWeek,
+  onSync,
   hideWeekends,
   onToggleWeekends,
+  countryCode,
+  onCountryChange,
 }: {
   events: GoogleEvent[];
+  holidays: Holiday[];
   loading: boolean;
+  syncing: boolean;
   weekOffset: number;
   onPrevWeek: () => void;
   onNextWeek: () => void;
+  onSync: () => void;
   currentStart?: string;
   currentEnd?: string;
   hideWeekends: boolean;
   onToggleWeekends: () => void;
+  countryCode: string;
+  onCountryChange: (cc: string) => void;
 }) {
   const today = new Date();
   const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() - today.getDay() + 1 + weekOffset * 7); // Monday
+  weekStart.setDate(today.getDate() - today.getDay() + 1 + weekOffset * 7);
 
   const days = hideWeekends
     ? [0, 1, 2, 3, 4].map(i => { const d = new Date(weekStart); d.setDate(weekStart.getDate() + i); return d; })
@@ -101,11 +142,10 @@ function MiniCalendar({
     const monthSame = s.getMonth() === e.getMonth();
     const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     return monthSame
-      ? `${s.toLocaleDateString('en-US', { month: 'short' })} ${s.getDate()} - ${e.getDate()}, ${s.getFullYear()}`
-      : `${fmt(s)} - ${fmt(e)}, ${s.getFullYear()}`;
+      ? `${s.toLocaleDateString('en-US', { month: 'short' })} ${s.getDate()} – ${e.getDate()}, ${s.getFullYear()}`
+      : `${fmt(s)} – ${fmt(e)}, ${s.getFullYear()}`;
   })();
 
-  // Hours to show: 7am to 10pm
   const HOUR_START = 7;
   const HOUR_END = 22;
   const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START);
@@ -126,36 +166,69 @@ function MiniCalendar({
     return { top, height };
   }
 
+  const holidayMap = new Map<string, Holiday>();
+  for (const h of holidays) holidayMap.set(h.date, h);
+
   return (
     <div className="flex flex-col h-full">
-      {/* Calendar header */}
-      <div className="flex-shrink-0 px-4 py-3 border-b border-gray-100">
+      {/* Header */}
+      <div className="flex-shrink-0 px-3 py-2.5 border-b border-gray-100">
         <div className="flex items-center justify-between mb-2">
           <button onClick={onPrevWeek} className="p-1 rounded hover:bg-gray-100 text-gray-400"><ChevronLeft className="w-4 h-4" /></button>
-          <span className="text-sm font-semibold text-gray-700">{weekLabel}</span>
+          <span className="text-xs font-semibold text-gray-700">{weekLabel}</span>
           <button onClick={onNextWeek} className="p-1 rounded hover:bg-gray-100 text-gray-400"><ChevronRight className="w-4 h-4" /></button>
         </div>
-        <div className="flex items-center justify-between">
-          <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-1.5 text-[11px] text-gray-500 cursor-pointer">
             <input type="checkbox" checked={hideWeekends} onChange={() => onToggleWeekends()} className="rounded text-[#5b6cf9]" />
             Hide weekends
           </label>
-          {loading && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+          <div className="flex items-center gap-1.5">
+            {/* Country picker */}
+            <input
+              type="text"
+              value={countryCode}
+              onChange={e => onCountryChange(e.target.value.toUpperCase().slice(0, 2))}
+              maxLength={2}
+              title="Country code for public holidays (e.g. GH, US, GB)"
+              className="w-8 text-center text-[11px] border border-gray-200 rounded px-1 py-0.5 uppercase focus:outline-none focus:ring-1 focus:ring-[#5b6cf9]/30"
+            />
+            <button
+              onClick={onSync}
+              disabled={syncing}
+              title="Sync calendar"
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-gray-500 hover:text-[#5b6cf9] hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
+              Sync
+            </button>
+            {loading && !syncing && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+          </div>
         </div>
       </div>
 
-      {/* Day columns header */}
+      {/* Day column headers */}
       <div className="flex-shrink-0 border-b border-gray-100">
         <div className="flex">
           <div className="w-10 flex-shrink-0" />
           {days.map(d => {
             const isToday = d.toDateString() === today.toDateString();
+            const ds = toLocalDateString(d);
+            const holiday = holidayMap.get(ds);
             return (
-              <div key={d.toISOString()} className="flex-1 py-2 text-center border-l border-gray-100 first:border-l-0">
+              <div key={d.toISOString()} className="flex-1 py-1.5 text-center border-l border-gray-100 first:border-l-0">
                 <p className="text-[10px] font-medium text-gray-400 uppercase">{d.toLocaleDateString('en-US', { weekday: 'short' })}</p>
                 <div className={`w-6 h-6 mx-auto rounded-full flex items-center justify-center text-xs font-semibold mt-0.5 ${isToday ? 'bg-[#5b6cf9] text-white' : 'text-gray-700'}`}>
                   {d.getDate()}
                 </div>
+                {holiday && (
+                  <div
+                    className="mx-0.5 mt-0.5 rounded text-[9px] leading-tight px-0.5 py-px bg-amber-100 text-amber-700 truncate"
+                    title={holiday.name}
+                  >
+                    {holiday.localName}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -165,7 +238,6 @@ function MiniCalendar({
       {/* Time grid */}
       <div className="flex-1 overflow-y-auto">
         <div className="flex" style={{ minHeight: `${TOTAL_MINUTES * PX_PER_MIN}px` }}>
-          {/* Hour labels */}
           <div className="w-10 flex-shrink-0 relative">
             {HOURS.map(h => (
               <div key={h} className="absolute text-[9px] text-gray-400 text-right pr-1.5 leading-none" style={{ top: `${(h - HOUR_START) * 60 * PX_PER_MIN - 4}px`, right: 0, width: '100%' }}>
@@ -174,7 +246,6 @@ function MiniCalendar({
             ))}
           </div>
 
-          {/* Day columns */}
           {days.map(day => {
             const dayEvents = events.filter(ev => {
               const startDt = ev.start.dateTime || ev.start.date;
@@ -184,18 +255,14 @@ function MiniCalendar({
 
             return (
               <div key={day.toISOString()} className="flex-1 relative border-l border-gray-100 first:border-l-0" style={{ height: `${TOTAL_MINUTES * PX_PER_MIN}px` }}>
-                {/* Hour lines */}
                 {HOURS.map(h => (
                   <div key={h} className="absolute w-full border-t border-gray-50" style={{ top: `${(h - HOUR_START) * 60 * PX_PER_MIN}px` }} />
                 ))}
-
-                {/* Events */}
                 {dayEvents.map(ev => {
                   const style = getEventStyle(ev, day);
                   if (!style) return null;
                   const color = EVENT_COLORS[(parseInt(ev.colorId || '0') || 0) % EVENT_COLORS.length] || '#4285f4';
-                  const startStr = ev.start.dateTime;
-                  const timeLabel = startStr ? new Date(startStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false }) : '';
+                  const timeLabel = ev.start.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false }) : '';
                   return (
                     <div
                       key={ev.id}
@@ -246,9 +313,14 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
   const [calConnected, setCalConnected] = useState<boolean | null>(null);
   const [calEvents, setCalEvents] = useState<GoogleEvent[]>([]);
   const [calLoading, setCalLoading] = useState(false);
+  const [calSyncing, setCalSyncing] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
   const [hideWeekends, setHideWeekends] = useState(true);
   const [connectingCal, setConnectingCal] = useState(false);
+
+  // Holidays
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [countryCode, setCountryCode] = useState(detectCountry);
 
   const attendeeRef = useRef<HTMLDivElement>(null);
 
@@ -260,10 +332,10 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
       .catch(() => setCalConnected(false));
   }, []);
 
-  // Fetch calendar events when connected or week changes
-  const fetchCalEvents = useCallback(async () => {
+  // Fetch calendar events
+  const fetchCalEvents = useCallback(async (isSyncButton = false) => {
     if (!calConnected) return;
-    setCalLoading(true);
+    if (isSyncButton) setCalSyncing(true); else setCalLoading(true);
     try {
       const base = new Date();
       const weekStart = new Date(base);
@@ -275,10 +347,36 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
       setCalEvents(Array.isArray(data.events) ? data.events : []);
     } finally {
       setCalLoading(false);
+      setCalSyncing(false);
     }
   }, [calConnected, weekOffset]);
 
   useEffect(() => { void fetchCalEvents(); }, [fetchCalEvents]);
+
+  // Fetch public holidays for the visible week's year(s)
+  const fetchHolidays = useCallback(async (cc: string) => {
+    if (!cc || cc.length !== 2) return;
+    const base = new Date();
+    const weekStart = new Date(base);
+    weekStart.setDate(base.getDate() - base.getDay() + 1 + weekOffset * 7);
+    const year = weekStart.getFullYear();
+    try {
+      const r = await fetch(api(`/api/calendar/holidays?countryCode=${cc}&year=${year}`), { headers: authH() });
+      if (!r.ok) return;
+      const d = await r.json();
+      setHolidays(Array.isArray(d.holidays) ? d.holidays : []);
+      // Also fetch next year if we're near year-end
+      if (weekStart.getMonth() >= 11) {
+        const r2 = await fetch(api(`/api/calendar/holidays?countryCode=${cc}&year=${year + 1}`), { headers: authH() });
+        if (r2.ok) {
+          const d2 = await r2.json();
+          if (Array.isArray(d2.holidays)) setHolidays(prev => [...prev, ...d2.holidays]);
+        }
+      }
+    } catch {}
+  }, [weekOffset]);
+
+  useEffect(() => { void fetchHolidays(countryCode); }, [fetchHolidays, countryCode]);
 
   // Attendee search
   useEffect(() => {
@@ -302,9 +400,8 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
   // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (attendeeRef.current && !attendeeRef.current.contains(e.target as Node)) {
+      if (attendeeRef.current && !attendeeRef.current.contains(e.target as Node))
         setShowAttendeeDropdown(false);
-      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -332,10 +429,8 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
       const d = await r.json();
       if (!d.url) { setError(d.error || 'Failed to get OAuth URL'); return; }
 
-      // Open OAuth in a popup so the modal stays open
       const popup = window.open(d.url, 'gcal_oauth', 'width=600,height=700,left=200,top=100');
 
-      // Listen for postMessage from the popup's inline script
       const onMessage = (ev: MessageEvent) => {
         if (ev.data?.type === 'calendar_connected') {
           window.removeEventListener('message', onMessage);
@@ -350,7 +445,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
       };
       window.addEventListener('message', onMessage);
 
-      // Fallback: if popup closes without postMessage (user cancelled), re-check status
       const pollTimer = setInterval(() => {
         if (popup?.closed) {
           clearInterval(pollTimer);
@@ -376,7 +470,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
 
       const attendeesWithEmail = attendees.filter(a => a.email);
 
-      // Create CRM activity
       const actRes = await fetch(api('/api/crm/activities'), {
         method: 'POST',
         headers: jsonH(),
@@ -399,7 +492,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
       }
       const activity = await actRes.json();
 
-      // Create Google Calendar event if connected
       if (calConnected) {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const gcRes = await fetch(api('/api/calendar/events'), {
@@ -426,7 +518,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               body: JSON.stringify({ google_event_id: gcData.event.id }),
             }).catch(() => {});
           }
-          // Refresh calendar view to show the new event
           void fetchCalEvents();
         }
       }
@@ -442,7 +533,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
 
         {/* ── Left: Form ────────────────────────────────────────────────────── */}
         <div className="flex flex-col w-96 flex-shrink-0 border-r border-gray-100">
-          {/* Header */}
           <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <h2 className="text-[15px] font-bold text-gray-900 flex items-center gap-2">
               <Calendar className="w-4 h-4 text-[#5b6cf9]" /> Schedule Meeting
@@ -450,9 +540,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
             <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
           </div>
 
-          {/* Form body */}
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {/* Error */}
             {error && (
               <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
@@ -460,7 +548,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               </div>
             )}
 
-            {/* Title */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Title *</label>
               <input
@@ -472,7 +559,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               />
             </div>
 
-            {/* Date + Times */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Start date</label>
               <input
@@ -493,8 +579,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                     setStartTime(e.target.value);
                     if (e.target.value >= endTime) {
                       const [h, m] = e.target.value.split(':').map(Number);
-                      const newEnd = `${String(h + (m >= 30 ? 1 : 0)).padStart(2, '0')}:${m < 30 ? String(m + 30).padStart(2, '0') : '00'}`;
-                      setEndTime(newEnd);
+                      setEndTime(`${String(h + (m >= 30 ? 1 : 0)).padStart(2, '0')}:${m < 30 ? String(m + 30).padStart(2, '0') : '00'}`);
                     }
                   }}
                 />
@@ -510,7 +595,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               </div>
             </div>
 
-            {/* Recurrence */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1.5">
                 <Repeat className="w-3 h-3" /> Repeat
@@ -524,12 +608,10 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               </select>
             </div>
 
-            {/* Attendees */}
             <div ref={attendeeRef} className="relative">
               <label className="block text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1.5">
                 <Users className="w-3 h-3" /> Attendees
               </label>
-              {/* Chips */}
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {attendees.map(a => (
                   <div key={a.email} className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5 text-xs text-indigo-700">
@@ -543,7 +625,6 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                   </div>
                 ))}
               </div>
-              {/* Search input */}
               <div className="relative">
                 <input
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
@@ -554,16 +635,11 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                 />
                 {attendeeSearching && <Loader2 className="absolute right-2.5 top-2.5 w-4 h-4 animate-spin text-gray-400" />}
               </div>
-              {/* Dropdown */}
               {showAttendeeDropdown && attendeeResults.length > 0 && (
                 <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden max-h-40 overflow-y-auto">
                   {attendeeResults.map(a => (
-                    <button
-                      key={a.email}
-                      type="button"
-                      onMouseDown={() => addAttendee(a)}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-left"
-                    >
+                    <button key={a.email} type="button" onMouseDown={() => addAttendee(a)}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-left">
                       <div className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
                         {(a.name || a.email)[0].toUpperCase()}
                       </div>
@@ -577,33 +653,26 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               )}
             </div>
 
-            {/* Reminders */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
                 <Bell className="w-3 h-3" /> Reminders
               </label>
               <div className="flex flex-wrap gap-1.5">
                 {REMINDER_OPTIONS.map(o => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => toggleReminder(o.value)}
-                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${reminders.includes(o.value) ? 'bg-[#5b6cf9] text-white border-[#5b6cf9]' : 'bg-white text-gray-600 border-gray-200 hover:border-[#5b6cf9] hover:text-[#5b6cf9]'}`}
-                  >
+                  <button key={o.value} type="button" onClick={() => toggleReminder(o.value)}
+                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${reminders.includes(o.value) ? 'bg-[#5b6cf9] text-white border-[#5b6cf9]' : 'bg-white text-gray-600 border-gray-200 hover:border-[#5b6cf9] hover:text-[#5b6cf9]'}`}>
                     {o.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Notes */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
               <RichTextEditor value={notes} onChange={setNotes} />
             </div>
           </div>
 
-          {/* Footer */}
           <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3 flex items-center justify-between gap-2">
             {calConnected === false && (
               <div className="flex items-center gap-1.5 text-xs text-amber-600">
@@ -618,9 +687,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
             )}
             {calConnected === null && <div />}
             <div className="flex items-center gap-2">
-              <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl border border-gray-200">
-                Cancel
-              </button>
+              <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl border border-gray-200">Cancel</button>
               <button
                 onClick={() => void handleSave()}
                 disabled={saving || !title.trim()}
@@ -656,14 +723,19 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
           ) : (
             <MiniCalendar
               events={calEvents}
+              holidays={holidays}
               loading={calLoading}
+              syncing={calSyncing}
               weekOffset={weekOffset}
               onPrevWeek={() => setWeekOffset(w => w - 1)}
               onNextWeek={() => setWeekOffset(w => w + 1)}
+              onSync={() => void fetchCalEvents(true)}
               currentStart={startDate}
               currentEnd={endTime}
               hideWeekends={hideWeekends}
               onToggleWeekends={() => setHideWeekends(h => !h)}
+              countryCode={countryCode}
+              onCountryChange={cc => { setCountryCode(cc); }}
             />
           )}
         </div>

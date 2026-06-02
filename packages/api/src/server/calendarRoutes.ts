@@ -287,6 +287,22 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
     }
   });
 
+  // ── GET /api/calendar/holidays?countryCode=GH&year=2026 ──────────────────────
+  router.get('/holidays', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const cc = String(req.query.countryCode || 'US').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+    const yr = parseInt(String(req.query.year || new Date().getFullYear()), 10);
+    try {
+      const resp = await axios.get(`https://date.nager.at/api/v3/publicholidays/${yr}/${cc}`, {
+        timeout: 6000, validateStatus: () => true,
+      });
+      if (resp.status >= 400) return void res.json({ holidays: [], countryCode: cc });
+      res.json({ holidays: (resp.data as any[]) || [], countryCode: cc });
+    } catch {
+      res.json({ holidays: [], countryCode: cc });
+    }
+  });
+
   // ── DELETE /api/calendar/events/:id ──────────────────────────────────────────
   router.delete('/events/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
