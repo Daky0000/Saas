@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  BarChart2, Calendar, Clock, Loader2, Mail, Plus, Send, Star, Trash2,
+  BarChart2, Calendar, Clock, Loader2, Mail, Pencil, Plus, Send, Star, Trash2,
   TrendingUp, Users, X, Zap,
 } from 'lucide-react';
 import {
@@ -11,6 +11,7 @@ import {
   type MailingSegment,
   type MailingAnalytics,
 } from '../services/mailingService';
+import EmailBuilder from '../components/email/EmailBuilder';
 
 type Tab = 'campaigns' | 'automations' | 'analytics' | 'leads';
 
@@ -76,13 +77,29 @@ function CampaignsTab() {
   const [campaigns, setCampaigns] = useState<MailingCampaign[]>([]);
   const [segments, setSegments] = useState<MailingSegment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', subject: '', subjectB: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '', abMode: false, scheduleDate: '' });
-  const [saving, setSaving] = useState(false);
-  const [sending, setSending] = useState<string | null>(null);
-  const [sendResult, setSendResult] = useState<string | null>(null);
+
+  // Campaign setup modal (before opening the builder)
+  const [showSetup, setShowSetup] = useState(false);
+  const [setup, setSetup] = useState({ name: '', subject: '', preview_text: '', segment_id: '', abMode: false, subjectB: '', goal: '', tone: '' });
+
+  // Email builder
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [builderSubject, setBuilderSubject] = useState('');
+  const [builderPreview, setBuilderPreview] = useState('');
+  const [builderContent, setBuilderContent] = useState('');
+
+  // Schedule
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
+
+  // Sending
+  const [sending, setSending] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savingAndSend, setSavingAndSend] = useState(false);
+
+  // Edit existing
+  const [editingCampaign, setEditingCampaign] = useState<MailingCampaign | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -94,25 +111,60 @@ function CampaignsTab() {
 
   useEffect(() => { void load(); }, []);
 
-  const handleAdd = async () => {
-    if (!form.name || !form.subject) return;
+  const openBuilderForNew = () => {
+    if (!setup.name || !setup.subject) return;
+    setBuilderSubject(setup.subject);
+    setBuilderPreview(setup.preview_text);
+    setBuilderContent('');
+    setShowSetup(false);
+    setBuilderOpen(true);
+  };
+
+  const openBuilderForEdit = (c: MailingCampaign) => {
+    setEditingCampaign(c);
+    setBuilderSubject(c.subject);
+    setBuilderPreview(c.preview_text || '');
+    setBuilderContent(c.content || '');
+    setBuilderOpen(true);
+  };
+
+  const handleBuilderSave = async (html: string) => {
+    const metaPrefix = (setup.goal || setup.tone) && !editingCampaign
+      ? `<!--campaign-meta:${JSON.stringify({ goal: setup.goal || undefined, tone: setup.tone || undefined })}-->\n`
+      : '';
+    const content = metaPrefix + html;
     setSaving(true);
     try {
-      const metaPrefix = (form.goal || form.tone)
-        ? `<!--campaign-meta:${JSON.stringify({ goal: form.goal || undefined, tone: form.tone || undefined })}-->\n`
-        : '';
-      const base = { preview_text: form.preview_text || undefined, segment_id: form.segment_id || undefined, content: metaPrefix + form.content, scheduled_at: form.scheduleDate || undefined };
-      if (form.abMode && form.subjectB.trim()) {
+      if (editingCampaign) {
+        await mailingService.updateCampaign(editingCampaign.id, { subject: builderSubject, preview_text: builderPreview || undefined, content });
+      } else if (setup.abMode && setup.subjectB.trim()) {
         await Promise.all([
-          mailingService.createCampaign({ name: `${form.name} [A]`, subject: form.subject, ...base }),
-          mailingService.createCampaign({ name: `${form.name} [B]`, subject: form.subjectB, ...base }),
+          mailingService.createCampaign({ name: `${setup.name} [A]`, subject: builderSubject, preview_text: builderPreview || undefined, segment_id: setup.segment_id || undefined, content }),
+          mailingService.createCampaign({ name: `${setup.name} [B]`, subject: setup.subjectB, preview_text: builderPreview || undefined, segment_id: setup.segment_id || undefined, content }),
         ]);
       } else {
-        await mailingService.createCampaign({ name: form.name, subject: form.subject, ...base });
+        await mailingService.createCampaign({ name: setup.name, subject: builderSubject, preview_text: builderPreview || undefined, segment_id: setup.segment_id || undefined, content });
       }
-      setForm({ name: '', subject: '', subjectB: '', preview_text: '', segment_id: '', content: '', goal: '', tone: '', abMode: false, scheduleDate: '' });
-      setShowAdd(false); await load();
+      setBuilderOpen(false);
+      setEditingCampaign(null);
+      setSetup({ name: '', subject: '', preview_text: '', segment_id: '', abMode: false, subjectB: '', goal: '', tone: '' });
+      await load();
     } catch { /* silent */ } finally { setSaving(false); }
+  };
+
+  const handleBuilderSend = async () => {
+    if (!editingCampaign) return;
+    setSavingAndSend(true);
+    setSendResult(null);
+    try {
+      const result = await mailingService.sendCampaign(editingCampaign.id);
+      setSendResult(`Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
+      setBuilderOpen(false);
+      setEditingCampaign(null);
+      await load();
+    } catch (err) {
+      setSendResult(err instanceof Error ? err.message : 'Send failed');
+    } finally { setSavingAndSend(false); }
   };
 
   const handleDelete = async (id: string) => {
@@ -120,7 +172,7 @@ function CampaignsTab() {
     await mailingService.deleteCampaign(id); await load();
   };
 
-  const handleSend = async (id: string, name: string) => {
+  const handleSendDirect = async (id: string, name: string) => {
     if (!confirm(`Send "${name}" to all subscribed contacts now?`)) return;
     setSending(id); setSendResult(null);
     try {
@@ -146,10 +198,89 @@ function CampaignsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-500">Create and send email campaigns to your contacts.</p>
-        <button data-tour-id="btn-new-email-campaign" onClick={() => setShowAdd(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        <button data-tour-id="btn-new-email-campaign" onClick={() => setShowSetup(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           <Plus size={14} /> New Campaign
         </button>
       </div>
+
+      {/* Email Builder (full-screen) */}
+      {builderOpen && (
+        <EmailBuilder
+          subject={builderSubject}
+          previewText={builderPreview}
+          onSubjectChange={setBuilderSubject}
+          onPreviewTextChange={setBuilderPreview}
+          onSave={handleBuilderSave}
+          onSend={editingCampaign ? handleBuilderSend : undefined}
+          sending={savingAndSend}
+          hasContacts={segments.length > 0 || true}
+          onClose={() => { setBuilderOpen(false); setEditingCampaign(null); }}
+          initialHtml={builderContent || undefined}
+        />
+      )}
+
+      {/* Campaign setup modal */}
+      {showSetup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <span className="text-sm font-bold">Campaign Setup</span>
+              <button onClick={() => setShowSetup(false)}><X size={18} className="text-slate-400" /></button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <input value={setup.name} onChange={e => setSetup(f => ({...f, name: e.target.value}))} placeholder="Campaign name *" className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+              {/* A/B toggle */}
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => setSetup(f => ({...f, abMode: !f.abMode}))} className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all ${setup.abMode ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                  A/B Test {setup.abMode ? '✓' : ''}
+                </button>
+                <span className="text-xs text-slate-400">Test two subject lines</span>
+              </div>
+              {setup.abMode ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject A *</label>
+                    <input value={setup.subject} onChange={e => setSetup(f => ({...f, subject: e.target.value}))} placeholder="Variant A" className="w-full rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject B *</label>
+                    <input value={setup.subjectB} onChange={e => setSetup(f => ({...f, subjectB: e.target.value}))} placeholder="Variant B" className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-sm outline-none focus:border-purple-400" />
+                  </div>
+                </div>
+              ) : (
+                <input value={setup.subject} onChange={e => setSetup(f => ({...f, subject: e.target.value}))} placeholder="Email subject *" className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+              )}
+              <input value={setup.preview_text} onChange={e => setSetup(f => ({...f, preview_text: e.target.value}))} placeholder="Preview text (optional)" className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+              <select value={setup.segment_id} onChange={e => setSetup(f => ({...f, segment_id: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400 bg-white">
+                <option value="">All contacts (no segment)</option>
+                {segments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              {/* Strategy */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2.5">
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Campaign Strategy (optional)</p>
+                <select value={setup.goal} onChange={e => setSetup(f => ({...f, goal: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
+                  <option value="">Goal — what should this campaign achieve?</option>
+                  {EMAIL_GOAL_OPTIONS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+                </select>
+                <div className="flex flex-wrap gap-1.5">
+                  {EMAIL_TONE_OPTIONS.map(t => (
+                    <button key={t.value} type="button" onClick={() => setSetup(f => ({...f, tone: f.tone === t.value ? '' : t.value}))} className={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-all ${setup.tone === t.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                      {t.emoji} {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <button onClick={() => setShowSetup(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
+              <button onClick={openBuilderForNew} disabled={!setup.name || !setup.subject || (setup.abMode && !setup.subjectB)}
+                className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40 hover:bg-slate-800">
+                <Pencil size={14} /> Design Email
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Schedule modal */}
       {schedulingId && (
@@ -169,81 +300,16 @@ function CampaignsTab() {
         </div>
       )}
 
-      {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <span className="text-sm font-bold">New Campaign</span>
-              <button onClick={() => setShowAdd(false)}><X size={18} className="text-slate-400" /></button>
-            </div>
-            <div className="space-y-3 px-5 py-4 max-h-[70vh] overflow-y-auto">
-              <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="Campaign name *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
-              {/* A/B toggle */}
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setForm(f => ({...f, abMode: !f.abMode}))} className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all ${form.abMode ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
-                  A/B Test {form.abMode ? '✓' : ''}
-                </button>
-                <span className="text-xs text-slate-400">Test two subject lines to find the winner</span>
-              </div>
-              {form.abMode ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject A *</label>
-                    <input value={form.subject} onChange={e => setForm(f => ({...f, subject: e.target.value}))} placeholder="Variant A subject" className="w-full rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject B *</label>
-                    <input value={form.subjectB} onChange={e => setForm(f => ({...f, subjectB: e.target.value}))} placeholder="Variant B subject" className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-sm outline-none focus:border-purple-400" />
-                  </div>
-                </div>
-              ) : (
-                <input value={form.subject} onChange={e => setForm(f => ({...f, subject: e.target.value}))} placeholder="Email subject *" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
-              )}
-              <input value={form.preview_text} onChange={e => setForm(f => ({...f, preview_text: e.target.value}))} placeholder="Preview text (optional)" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400" />
-              <select value={form.segment_id} onChange={e => setForm(f => ({...f, segment_id: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
-                <option value="">All contacts (no segment)</option>
-                {segments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              {/* Strategy section */}
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2.5">
-                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Strategy (optional)</p>
-                <select value={form.goal} onChange={e => setForm(f => ({...f, goal: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
-                  <option value="">Goal — what should this campaign achieve?</option>
-                  {EMAIL_GOAL_OPTIONS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                </select>
-                <div className="flex flex-wrap gap-1.5">
-                  {EMAIL_TONE_OPTIONS.map(t => (
-                    <button key={t.value} type="button" onClick={() => setForm(f => ({...f, tone: f.tone === t.value ? '' : t.value}))} className={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-all ${form.tone === t.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
-                      {t.emoji} {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <textarea value={form.content} onChange={e => setForm(f => ({...f, content: e.target.value}))} placeholder="Email content…" rows={4} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 resize-none" />
-              {/* Schedule */}
-              <div className="rounded-xl border border-amber-100 bg-amber-50 p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Clock size={13} className="text-amber-500" />
-                  <span className="text-xs font-bold text-amber-700">Schedule (optional)</span>
-                </div>
-                <input type="datetime-local" value={form.scheduleDate} onChange={e => setForm(f => ({...f, scheduleDate: e.target.value}))} className="w-full rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm outline-none focus:border-amber-400" />
-                {form.scheduleDate && <p className="text-xs text-amber-600">Will send at {new Date(form.scheduleDate).toLocaleString()}</p>}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
-              <button onClick={() => setShowAdd(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
-              <button onClick={() => void handleAdd()} disabled={saving || !form.name || !form.subject || (form.abMode && !form.subjectB)} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : form.abMode ? 'Create A/B Test' : form.scheduleDate ? 'Schedule' : 'Create'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {sendResult && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
           {sendResult}
           <button onClick={() => setSendResult(null)} className="ml-2 text-emerald-500 hover:text-emerald-700">✕</button>
+        </div>
+      )}
+
+      {saving && (
+        <div className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
+          <Loader2 size={14} className="animate-spin" /> Saving campaign…
         </div>
       )}
 
@@ -254,6 +320,10 @@ function CampaignsTab() {
           <div className="flex flex-col items-center py-16 text-slate-400">
             <Mail size={32} className="mb-3 opacity-30" />
             <p className="text-sm font-semibold">No campaigns yet</p>
+            <p className="mt-1 text-xs text-center max-w-xs">Create your first email campaign with the visual drag-and-drop builder.</p>
+            <button onClick={() => setShowSetup(true)} className="mt-4 flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+              <Plus size={14} /> New Campaign
+            </button>
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -298,10 +368,13 @@ function CampaignsTab() {
                     <div className="flex items-center gap-1 justify-end">
                       {c.status !== 'sent' && (
                         <>
+                          <button onClick={() => openBuilderForEdit(c)} title="Edit in builder" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600">
+                            <Pencil size={13} />
+                          </button>
                           <button onClick={() => { setSchedulingId(c.id); setScheduleDateTime(''); }} title="Schedule send" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600">
                             <Clock size={13} />
                           </button>
-                          <button onClick={() => void handleSend(c.id, c.name)} disabled={sending === c.id} title="Send now" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40">
+                          <button onClick={() => void handleSendDirect(c.id, c.name)} disabled={sending === c.id} title="Send now" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40">
                             {sending === c.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                           </button>
                         </>
