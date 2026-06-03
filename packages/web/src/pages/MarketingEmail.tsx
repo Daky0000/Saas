@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  BarChart2, Calendar, Clock, Loader2, Mail, Pencil, Plus, Send, Star, Trash2,
-  TrendingUp, Users, X, Zap,
+  BarChart2, CheckCircle, Clock, Loader2, Mail,
+  Pencil, Plus, Send, Star, Trash2, TrendingUp, Users, X, Zap,
 } from 'lucide-react';
 import {
   mailingService,
@@ -13,273 +13,214 @@ import {
 } from '../services/mailingService';
 import EmailBuilder from '../components/email/EmailBuilder';
 
-type Tab = 'campaigns' | 'automations' | 'analytics' | 'leads';
-
-const EMAIL_GOAL_OPTIONS = [
-  { value: 'awareness', label: 'Brand Awareness' },
-  { value: 'leads', label: 'Generate Leads' },
-  { value: 'sales', label: 'Drive Sales' },
-  { value: 'traffic', label: 'Drive Traffic' },
-  { value: 'engagement', label: 'Boost Engagement' },
-  { value: 'retention', label: 'Retain Customers' },
-  { value: 'announcement', label: 'Announcement' },
-];
-
-const EMAIL_TONE_OPTIONS = [
-  { value: 'professional', label: 'Professional', emoji: '👔' },
-  { value: 'friendly', label: 'Friendly', emoji: '😊' },
-  { value: 'urgent', label: 'Urgent', emoji: '⚡' },
-  { value: 'playful', label: 'Playful', emoji: '🎉' },
-  { value: 'inspirational', label: 'Inspirational', emoji: '✨' },
-];
-
-function parseCampaignMeta(content: string): { goal?: string; tone?: string; cleanContent: string } {
-  const match = content.match(/^<!--campaign-meta:(\{[^}]+\})-->\n?/);
-  if (!match) return { cleanContent: content };
-  try {
-    const meta = JSON.parse(match[1]);
-    return { goal: meta.goal, tone: meta.tone, cleanContent: content.slice(match[0].length) };
-  } catch { return { cleanContent: content }; }
-}
+type Tab = 'emails' | 'automations' | 'analytics' | 'leads';
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: 'campaigns', label: 'Campaigns', icon: Mail },
+  { id: 'emails',      label: 'Emails',      icon: Mail },
   { id: 'automations', label: 'Automations', icon: Zap },
-  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
-  { id: 'leads', label: 'Lead Scores', icon: Star },
+  { id: 'analytics',   label: 'Analytics',   icon: BarChart2 },
+  { id: 'leads',       label: 'Lead Scores', icon: Star },
 ];
 
-const STATUS_BADGE: Record<string, string> = {
-  draft: 'bg-slate-100 text-slate-600',
-  scheduled: 'bg-amber-50 text-amber-700',
-  sent: 'bg-emerald-50 text-emerald-700',
-  active: 'bg-emerald-50 text-emerald-700',
-  paused: 'bg-amber-50 text-amber-700',
+const STATUS_COLORS: Record<string, { badge: string; dot: string; icon: string }> = {
+  draft:     { badge: 'bg-slate-100 text-slate-600',   dot: 'bg-slate-300',   icon: 'bg-slate-100' },
+  scheduled: { badge: 'bg-amber-50 text-amber-700',    dot: 'bg-amber-400',   icon: 'bg-amber-50' },
+  sent:      { badge: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-400', icon: 'bg-emerald-50' },
+  active:    { badge: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-400', icon: 'bg-emerald-50' },
+  paused:    { badge: 'bg-amber-50 text-amber-700',    dot: 'bg-amber-400',   icon: 'bg-amber-50' },
 };
 
 const TRIGGER_LABELS: Record<string, string> = {
-  signup: 'New signup',
-  unsubscribe: 'Unsubscribe',
-  tag_added: 'Tag added',
-  campaign_open: 'Email opened',
+  signup:         'New signup',
+  unsubscribe:    'Unsubscribe',
+  tag_added:      'Tag added',
+  campaign_open:  'Email opened',
   campaign_click: 'Link clicked',
-  date: 'Specific date',
+  date:           'Specific date',
 };
 
 function formatDate(s?: string | null) {
   if (!s) return '—';
-  return new Date(s).toLocaleDateString();
+  return new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function formatDateTime(s?: string | null) {
+  if (!s) return '—';
+  return new Date(s).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-// ─── Campaigns Tab ───────────────────────────────────────────────────────────
+// ─── Emails Tab ───────────────────────────────────────────────────────────────
 
-function CampaignsTab() {
-  const [campaigns, setCampaigns] = useState<MailingCampaign[]>([]);
+function EmailStatusIcon({ status }: { status: string }) {
+  const c = STATUS_COLORS[status] ?? STATUS_COLORS.draft;
+  return (
+    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${c.icon}`}>
+      {status === 'sent'      ? <CheckCircle size={18} className="text-emerald-500" /> :
+       status === 'scheduled' ? <Clock       size={18} className="text-amber-500"   /> :
+                                <Mail        size={18} className="text-slate-400"   />}
+    </div>
+  );
+}
+
+function EmailsTab() {
+  const [emails, setEmails]     = useState<MailingCampaign[]>([]);
   const [segments, setSegments] = useState<MailingSegment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
 
-  // Campaign setup modal (before opening the builder)
-  const [showSetup, setShowSetup] = useState(false);
-  const [setup, setSetup] = useState({ name: '', subject: '', preview_text: '', segment_id: '', abMode: false, subjectB: '', goal: '', tone: '' });
+  // Builder
+  const [builderOpen, setBuilderOpen]         = useState(false);
+  const [editingEmail, setEditingEmail]       = useState<MailingCampaign | null>(null);
+  const [builderSubject, setBuilderSubject]   = useState('');
+  const [builderPreview, setBuilderPreview]   = useState('');
+  const [builderSegmentId, setBuilderSegmentId] = useState('');
 
-  // Email builder
-  const [builderOpen, setBuilderOpen] = useState(false);
-  const [builderSubject, setBuilderSubject] = useState('');
-  const [builderPreview, setBuilderPreview] = useState('');
-  const [builderContent, setBuilderContent] = useState('');
-
-  // Schedule
+  // UI state
+  const [saving, setSaving]         = useState(false);
+  const [sendingId, setSendingId]   = useState<string | null>(null);
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
+  const [notification, setNotification] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  // Sending
-  const [sending, setSending] = useState<string | null>(null);
-  const [sendResult, setSendResult] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [savingAndSend, setSavingAndSend] = useState(false);
-
-  // Edit existing
-  const [editingCampaign, setEditingCampaign] = useState<MailingCampaign | null>(null);
+  const notify = (ok: boolean, msg: string) => {
+    setNotification({ ok, msg });
+    setTimeout(() => setNotification(null), 4000);
+  };
 
   const load = async () => {
     setLoading(true);
     try {
-      const [c, s] = await Promise.all([mailingService.listCampaigns(), mailingService.listSegments()]);
-      setCampaigns(c); setSegments(s);
-    } catch { /* silent */ } finally { setLoading(false); }
+      const [e, s] = await Promise.all([mailingService.listCampaigns(), mailingService.listSegments()]);
+      setEmails(e); setSegments(s);
+    } catch { } finally { setLoading(false); }
   };
 
   useEffect(() => { void load(); }, []);
 
-  const openBuilderForNew = () => {
-    if (!setup.name || !setup.subject) return;
-    setBuilderSubject(setup.subject);
-    setBuilderPreview(setup.preview_text);
-    setBuilderContent('');
-    setShowSetup(false);
+  const openNew = () => {
+    setEditingEmail(null);
+    setBuilderSubject('');
+    setBuilderPreview('');
+    setBuilderSegmentId('');
     setBuilderOpen(true);
   };
 
-  const openBuilderForEdit = (c: MailingCampaign) => {
-    setEditingCampaign(c);
-    setBuilderSubject(c.subject);
-    setBuilderPreview(c.preview_text || '');
-    setBuilderContent(c.content || '');
+  const openEdit = (email: MailingCampaign) => {
+    setEditingEmail(email);
+    setBuilderSubject(email.subject);
+    setBuilderPreview(email.preview_text || '');
+    setBuilderSegmentId(email.segment_id || '');
     setBuilderOpen(true);
   };
 
-  const handleBuilderSave = async (html: string) => {
-    const metaPrefix = (setup.goal || setup.tone) && !editingCampaign
-      ? `<!--campaign-meta:${JSON.stringify({ goal: setup.goal || undefined, tone: setup.tone || undefined })}-->\n`
-      : '';
-    const content = metaPrefix + html;
+  const closeBuilder = () => { setBuilderOpen(false); setEditingEmail(null); };
+
+  const handleSaveDraft = async (html: string) => {
     setSaving(true);
     try {
-      if (editingCampaign) {
-        await mailingService.updateCampaign(editingCampaign.id, { subject: builderSubject, preview_text: builderPreview || undefined, content });
-      } else if (setup.abMode && setup.subjectB.trim()) {
-        await Promise.all([
-          mailingService.createCampaign({ name: `${setup.name} [A]`, subject: builderSubject, preview_text: builderPreview || undefined, segment_id: setup.segment_id || undefined, content }),
-          mailingService.createCampaign({ name: `${setup.name} [B]`, subject: setup.subjectB, preview_text: builderPreview || undefined, segment_id: setup.segment_id || undefined, content }),
-        ]);
+      const name = builderSubject.trim() || `Email — ${new Date().toLocaleDateString()}`;
+      if (editingEmail) {
+        await mailingService.updateCampaign(editingEmail.id, {
+          name, subject: builderSubject,
+          preview_text: builderPreview || undefined,
+          segment_id: builderSegmentId || undefined,
+          content: html,
+        });
+        notify(true, 'Draft saved.');
       } else {
-        await mailingService.createCampaign({ name: setup.name, subject: builderSubject, preview_text: builderPreview || undefined, segment_id: setup.segment_id || undefined, content });
+        const created = await mailingService.createCampaign({
+          name, subject: builderSubject,
+          preview_text: builderPreview || undefined,
+          segment_id: builderSegmentId || undefined,
+          content: html,
+        });
+        setEditingEmail(created);
+        notify(true, 'Draft saved.');
       }
-      setBuilderOpen(false);
-      setEditingCampaign(null);
-      setSetup({ name: '', subject: '', preview_text: '', segment_id: '', abMode: false, subjectB: '', goal: '', tone: '' });
-      await load();
-    } catch { /* silent */ } finally { setSaving(false); }
-  };
-
-  const handleBuilderSend = async () => {
-    if (!editingCampaign) return;
-    setSavingAndSend(true);
-    setSendResult(null);
-    try {
-      const result = await mailingService.sendCampaign(editingCampaign.id);
-      setSendResult(`Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
-      setBuilderOpen(false);
-      setEditingCampaign(null);
       await load();
     } catch (err) {
-      setSendResult(err instanceof Error ? err.message : 'Send failed');
-    } finally { setSavingAndSend(false); }
+      notify(false, err instanceof Error ? err.message : 'Failed to save.');
+    } finally { setSaving(false); }
+  };
+
+  const handleSendFromBuilder = async (html: string) => {
+    setSaving(true);
+    try {
+      const name = builderSubject.trim() || `Email — ${new Date().toLocaleDateString()}`;
+      let id = editingEmail?.id;
+      if (id) {
+        await mailingService.updateCampaign(id, {
+          name, subject: builderSubject,
+          preview_text: builderPreview || undefined,
+          segment_id: builderSegmentId || undefined,
+          content: html,
+        });
+      } else {
+        const created = await mailingService.createCampaign({
+          name, subject: builderSubject,
+          preview_text: builderPreview || undefined,
+          segment_id: builderSegmentId || undefined,
+          content: html,
+        });
+        id = created.id;
+      }
+      const result = await mailingService.sendCampaign(id!);
+      closeBuilder();
+      notify(true, `Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
+      await load();
+    } catch (err) {
+      notify(false, err instanceof Error ? err.message : 'Failed to send.');
+    } finally { setSaving(false); }
+  };
+
+  const handleSendNow = async (email: MailingCampaign) => {
+    if (!confirm(`Send "${email.subject || 'this email'}" now to ${email.segment_name || 'all contacts'}?`)) return;
+    setSendingId(email.id);
+    try {
+      const result = await mailingService.sendCampaign(email.id);
+      notify(true, `Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}.`);
+      await load();
+    } catch (err) {
+      notify(false, err instanceof Error ? err.message : 'Send failed.');
+    } finally { setSendingId(null); }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this campaign?')) return;
-    await mailingService.deleteCampaign(id); await load();
-  };
-
-  const handleSendDirect = async (id: string, name: string) => {
-    if (!confirm(`Send "${name}" to all subscribed contacts now?`)) return;
-    setSending(id); setSendResult(null);
-    try {
-      const result = await mailingService.sendCampaign(id);
-      setSendResult(`Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
-      await load();
-    } catch (err) {
-      setSendResult(err instanceof Error ? err.message : 'Send failed');
-    } finally { setSending(null); }
+    if (!confirm('Delete this email?')) return;
+    try { await mailingService.deleteCampaign(id); await load(); } catch { }
   };
 
   const handleSchedule = async () => {
     if (!schedulingId || !scheduleDateTime) return;
     try {
       await mailingService.updateCampaign(schedulingId, { scheduled_at: new Date(scheduleDateTime).toISOString() });
-      setSchedulingId(null); setScheduleDateTime(''); await load();
-    } catch { /* */ }
+      setSchedulingId(null); setScheduleDateTime('');
+      notify(true, 'Email scheduled.');
+      await load();
+    } catch { }
   };
 
-  const isAB = (c: MailingCampaign) => /\s\[A\]$/.test(c.name) || /\s\[B\]$/.test(c.name);
+  const drafts    = emails.filter(e => e.status === 'draft');
+  const scheduled = emails.filter(e => e.status === 'scheduled');
+  const sent      = emails.filter(e => e.status === 'sent');
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Create and send email campaigns to your contacts.</p>
-        <button data-tour-id="btn-new-email-campaign" onClick={() => setShowSetup(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-          <Plus size={14} /> New Campaign
-        </button>
-      </div>
-
-      {/* Email Builder (full-screen) */}
+    <div className="space-y-5">
+      {/* Builder full-screen */}
       {builderOpen && (
         <EmailBuilder
           subject={builderSubject}
           previewText={builderPreview}
+          segmentId={builderSegmentId}
+          segments={segments}
           onSubjectChange={setBuilderSubject}
           onPreviewTextChange={setBuilderPreview}
-          onSave={handleBuilderSave}
-          onSend={editingCampaign ? handleBuilderSend : undefined}
-          sending={savingAndSend}
-          hasContacts={segments.length > 0 || true}
-          onClose={() => { setBuilderOpen(false); setEditingCampaign(null); }}
-          initialHtml={builderContent || undefined}
+          onSegmentChange={setBuilderSegmentId}
+          onSave={handleSaveDraft}
+          onSend={handleSendFromBuilder}
+          sending={saving}
+          hasContacts={true}
+          onClose={closeBuilder}
+          initialHtml={editingEmail?.content || undefined}
         />
-      )}
-
-      {/* Campaign setup modal */}
-      {showSetup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <span className="text-sm font-bold">Campaign Setup</span>
-              <button onClick={() => setShowSetup(false)}><X size={18} className="text-slate-400" /></button>
-            </div>
-            <div className="space-y-3 px-5 py-4">
-              <input value={setup.name} onChange={e => setSetup(f => ({...f, name: e.target.value}))} placeholder="Campaign name *" className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-              {/* A/B toggle */}
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setSetup(f => ({...f, abMode: !f.abMode}))} className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all ${setup.abMode ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
-                  A/B Test {setup.abMode ? '✓' : ''}
-                </button>
-                <span className="text-xs text-slate-400">Test two subject lines</span>
-              </div>
-              {setup.abMode ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject A *</label>
-                    <input value={setup.subject} onChange={e => setSetup(f => ({...f, subject: e.target.value}))} placeholder="Variant A" className="w-full rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Subject B *</label>
-                    <input value={setup.subjectB} onChange={e => setSetup(f => ({...f, subjectB: e.target.value}))} placeholder="Variant B" className="w-full rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-sm outline-none focus:border-purple-400" />
-                  </div>
-                </div>
-              ) : (
-                <input value={setup.subject} onChange={e => setSetup(f => ({...f, subject: e.target.value}))} placeholder="Email subject *" className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-              )}
-              <input value={setup.preview_text} onChange={e => setSetup(f => ({...f, preview_text: e.target.value}))} placeholder="Preview text (optional)" className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-              <select value={setup.segment_id} onChange={e => setSetup(f => ({...f, segment_id: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400 bg-white">
-                <option value="">All contacts (no segment)</option>
-                {segments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              {/* Strategy */}
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2.5">
-                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Campaign Strategy (optional)</p>
-                <select value={setup.goal} onChange={e => setSetup(f => ({...f, goal: e.target.value}))} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-slate-400 bg-white">
-                  <option value="">Goal — what should this campaign achieve?</option>
-                  {EMAIL_GOAL_OPTIONS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                </select>
-                <div className="flex flex-wrap gap-1.5">
-                  {EMAIL_TONE_OPTIONS.map(t => (
-                    <button key={t.value} type="button" onClick={() => setSetup(f => ({...f, tone: f.tone === t.value ? '' : t.value}))} className={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-all ${setup.tone === t.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
-                      {t.emoji} {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
-              <button onClick={() => setShowSetup(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
-              <button onClick={openBuilderForNew} disabled={!setup.name || !setup.subject || (setup.abMode && !setup.subjectB)}
-                className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40 hover:bg-slate-800">
-                <Pencil size={14} /> Design Email
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Schedule modal */}
@@ -287,11 +228,12 @@ function CampaignsTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-slate-900">Schedule Send</h3>
+              <h3 className="font-bold text-slate-900">Schedule Email</h3>
               <button onClick={() => setSchedulingId(null)}><X size={16} className="text-slate-400" /></button>
             </div>
             <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1.5">Send Date & Time</label>
             <input type="datetime-local" value={scheduleDateTime} onChange={e => setScheduleDateTime(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-4" />
+            {scheduleDateTime && <p className="text-xs text-amber-600 mb-4">Will send {formatDateTime(scheduleDateTime)}</p>}
             <div className="flex gap-2 justify-end">
               <button onClick={() => setSchedulingId(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
               <button disabled={!scheduleDateTime} onClick={() => void handleSchedule()} className="rounded-xl bg-amber-500 text-white px-4 py-2 text-sm font-semibold disabled:opacity-50 hover:bg-amber-600">Schedule</button>
@@ -300,99 +242,131 @@ function CampaignsTab() {
         </div>
       )}
 
-      {sendResult && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
-          {sendResult}
-          <button onClick={() => setSendResult(null)} className="ml-2 text-emerald-500 hover:text-emerald-700">✕</button>
+      {/* Notification toast */}
+      {notification && (
+        <div className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium ${notification.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+          {notification.ok ? <CheckCircle size={14} /> : <X size={14} />}
+          {notification.msg}
+          <button onClick={() => setNotification(null)} className="ml-auto opacity-60 hover:opacity-100">✕</button>
         </div>
       )}
 
-      {saving && (
-        <div className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
-          <Loader2 size={14} className="animate-spin" /> Saving campaign…
+      {/* Stats bar + action */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4 text-sm text-slate-500">
+          <span>{emails.length} total</span>
+          {drafts.length > 0    && <span className="text-slate-400">{drafts.length} draft{drafts.length !== 1 ? 's' : ''}</span>}
+          {scheduled.length > 0 && <span className="text-amber-500">{scheduled.length} scheduled</span>}
+          {sent.length > 0      && <span className="text-emerald-600">{sent.length} sent</span>}
         </div>
-      )}
-
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        {loading ? (
-          <div className="flex justify-center py-12 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
-        ) : campaigns.length === 0 ? (
-          <div className="flex flex-col items-center py-16 text-slate-400">
-            <Mail size={32} className="mb-3 opacity-30" />
-            <p className="text-sm font-semibold">No campaigns yet</p>
-            <p className="mt-1 text-xs text-center max-w-xs">Create your first email campaign with the visual drag-and-drop builder.</p>
-            <button onClick={() => setShowSetup(true)} className="mt-4 flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-              <Plus size={14} /> New Campaign
-            </button>
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-100">
-              <tr className="text-xs font-semibold text-slate-500">
-                <th className="px-4 py-3 text-left">Campaign</th>
-                <th className="px-4 py-3 text-left">Subject</th>
-                <th className="px-4 py-3 text-left">Segment</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-left">Created</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {campaigns.map(c => (
-                <tr key={c.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">
-                    <div className="flex items-center gap-1.5">
-                      {c.name}
-                      {isAB(c) && <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-700">A/B</span>}
-                    </div>
-                    {(() => {
-                      const { goal, tone } = parseCampaignMeta(c.content ?? '');
-                      return (goal || tone) ? (
-                        <div className="flex gap-1 mt-0.5">
-                          {goal && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">{EMAIL_GOAL_OPTIONS.find(g => g.value === goal)?.label ?? goal}</span>}
-                          {tone && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{EMAIL_TONE_OPTIONS.find(t => t.value === tone)?.emoji} {tone}</span>}
-                        </div>
-                      ) : null;
-                    })()}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{c.subject}</td>
-                  <td className="px-4 py-3 text-slate-500">{c.segment_name || 'All contacts'}</td>
-                  <td className="px-4 py-3">
-                    <div className="space-y-1">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[c.status] || 'bg-slate-100 text-slate-600'}`}>{c.status}</span>
-                      {c.scheduled_at && c.status !== 'sent' && <div className="flex items-center gap-1 text-[10px] text-amber-600"><Calendar size={9} /> {new Date(c.scheduled_at).toLocaleString()}</div>}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">{formatDate(c.created_at)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1 justify-end">
-                      {c.status !== 'sent' && (
-                        <>
-                          <button onClick={() => openBuilderForEdit(c)} title="Edit in builder" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600">
-                            <Pencil size={13} />
-                          </button>
-                          <button onClick={() => { setSchedulingId(c.id); setScheduleDateTime(''); }} title="Schedule send" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600">
-                            <Clock size={13} />
-                          </button>
-                          <button onClick={() => void handleSendDirect(c.id, c.name)} disabled={sending === c.id} title="Send now" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40">
-                            {sending === c.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                          </button>
-                        </>
-                      )}
-                      <button onClick={() => void handleDelete(c.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <button
+          data-tour-id="btn-new-email"
+          onClick={openNew}
+          className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+        >
+          <Plus size={14} /> Compose Email
+        </button>
       </div>
+
+      {/* Email list */}
+      {loading ? (
+        <div className="flex justify-center py-16 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
+      ) : emails.length === 0 ? (
+        <div className="flex flex-col items-center rounded-2xl border border-dashed border-slate-200 py-20 text-slate-400">
+          <Mail size={36} className="mb-4 opacity-30" />
+          <p className="text-base font-bold text-slate-700">No emails yet</p>
+          <p className="mt-1 text-sm text-slate-500">Compose your first email and send it to your contacts.</p>
+          <button onClick={openNew} className="mt-5 flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+            <Plus size={14} /> Compose Email
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          {emails.map((email, i) => {
+            const c = STATUS_COLORS[email.status] ?? STATUS_COLORS.draft;
+            const isLast = i === emails.length - 1;
+            return (
+              <div key={email.id} className={`group flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition-colors ${isLast ? '' : 'border-b border-slate-100'}`}>
+                <EmailStatusIcon status={email.status} />
+
+                <div className="flex-1 min-w-0">
+                  {/* Subject + badge */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-slate-900 truncate">
+                      {email.subject || <em className="font-normal text-slate-400">No subject</em>}
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${c.badge}`}>
+                      {email.status}
+                    </span>
+                  </div>
+                  {/* Meta line */}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-400">
+                    <span>To: {email.segment_name || 'All contacts'}</span>
+                    {email.preview_text && (
+                      <span className="hidden sm:inline truncate max-w-xs text-slate-300">"{email.preview_text}"</span>
+                    )}
+                    {email.status === 'sent' && email.sent_at && (
+                      <span>Sent {formatDate(email.sent_at)}</span>
+                    )}
+                    {email.status === 'sent' && email.recipient_count > 0 && (
+                      <span className="font-medium text-emerald-600">{email.recipient_count} delivered</span>
+                    )}
+                    {email.status === 'scheduled' && email.scheduled_at && (
+                      <span className="font-medium text-amber-600">Scheduled {formatDateTime(email.scheduled_at)}</span>
+                    )}
+                    {email.status === 'draft' && (
+                      <span>Last edited {formatDate(email.updated_at)}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {email.status !== 'sent' && (
+                    <>
+                      <button
+                        onClick={() => openEdit(email)}
+                        title="Edit in builder"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        onClick={() => { setSchedulingId(email.id); setScheduleDateTime(''); }}
+                        title="Schedule"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600"
+                      >
+                        <Clock size={13} />
+                      </button>
+                      <button
+                        onClick={() => void handleSendNow(email)}
+                        disabled={sendingId === email.id}
+                        title="Send now"
+                        className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40"
+                      >
+                        {sendingId === email.id
+                          ? <Loader2 size={13} className="animate-spin" />
+                          : <><Send size={12} /> Send</>}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => void handleDelete(email.id)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Automations Tab ─────────────────────────────────────────────────────────
+// ─── Automations Tab ──────────────────────────────────────────────────────────
 
 function AutomationsTab() {
   const [automations, setAutomations] = useState<MailingAutomation[]>([]);
@@ -403,7 +377,7 @@ function AutomationsTab() {
 
   const load = async () => {
     setLoading(true);
-    try { setAutomations(await mailingService.listAutomations()); } catch { /* silent */ } finally { setLoading(false); }
+    try { setAutomations(await mailingService.listAutomations()); } catch { } finally { setLoading(false); }
   };
 
   useEffect(() => { void load(); }, []);
@@ -418,10 +392,8 @@ function AutomationsTab() {
         actions: [{ subject: form.email_subject, content: form.email_body }],
       });
       setForm({ name: '', trigger_type: 'signup', email_subject: '', email_body: '' });
-      setShowAdd(false);
-      await load();
-    }
-    catch { /* silent */ } finally { setSaving(false); }
+      setShowAdd(false); await load();
+    } catch { } finally { setSaving(false); }
   };
 
   const handleToggle = async (a: MailingAutomation) => {
@@ -434,10 +406,16 @@ function AutomationsTab() {
     await mailingService.deleteAutomation(id); await load();
   };
 
+  const STATUS_BADGE_AUTO: Record<string, string> = {
+    draft:  'bg-slate-100 text-slate-600',
+    active: 'bg-emerald-50 text-emerald-700',
+    paused: 'bg-amber-50 text-amber-700',
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Automate emails based on contact activity.</p>
+        <p className="text-sm text-slate-500">Automatically send emails when contacts take specific actions.</p>
         <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           <Plus size={14} /> New Automation
         </button>
@@ -491,11 +469,11 @@ function AutomationsTab() {
               <div>
                 <div className="text-sm font-bold text-slate-900">{a.name}</div>
                 <div className="text-xs text-slate-500 mt-0.5">Trigger: {TRIGGER_LABELS[a.trigger_type] || a.trigger_type}</div>
-                {Array.isArray(a.actions) && (a.actions as any[])[0]?.subject && (
-                  <div className="text-xs text-slate-400 mt-0.5 truncate">Email: {(a.actions as any[])[0].subject}</div>
+                {Array.isArray(a.actions) && (a.actions as { subject?: string }[])[0]?.subject && (
+                  <div className="text-xs text-slate-400 mt-0.5 truncate">"{(a.actions as { subject?: string }[])[0].subject}"</div>
                 )}
               </div>
-              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[a.status] || 'bg-slate-100 text-slate-600'}`}>{a.status}</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE_AUTO[a.status] ?? 'bg-slate-100 text-slate-600'}`}>{a.status}</span>
             </div>
             <div className="flex items-center gap-2 border-t border-slate-100 pt-3">
               <button onClick={() => void handleToggle(a)} className="flex-1 rounded-lg border border-slate-200 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
@@ -510,7 +488,7 @@ function AutomationsTab() {
   );
 }
 
-// ─── Analytics Tab ───────────────────────────────────────────────────────────
+// ─── Analytics Tab ────────────────────────────────────────────────────────────
 
 function AnalyticsTab() {
   const [data, setData] = useState<MailingAnalytics | null>(null);
@@ -524,12 +502,12 @@ function AnalyticsTab() {
   if (!data) return <div className="py-12 text-center text-sm text-slate-400">Failed to load analytics.</div>;
 
   const kpis = [
-    { label: 'Total Contacts', value: data.contacts.total, sub: `${data.contacts.subscribed} subscribed` },
-    { label: 'Unsubscribed', value: data.contacts.unsubscribed, sub: 'all time' },
-    { label: 'Campaigns Sent', value: data.campaigns.sent, sub: `${data.campaigns.draft} drafts` },
-    { label: 'Open Rate', value: `${data.rates.openRate}%`, sub: 'of delivered' },
-    { label: 'Click Rate', value: `${data.rates.clickRate}%`, sub: 'of delivered' },
-    { label: 'Bounce Rate', value: `${data.rates.bounceRate}%`, sub: 'of delivered' },
+    { label: 'Total Contacts',   value: data.contacts.total,        sub: `${data.contacts.subscribed} subscribed` },
+    { label: 'Unsubscribed',     value: data.contacts.unsubscribed,  sub: 'all time' },
+    { label: 'Emails Sent',      value: data.campaigns.sent,         sub: `${data.campaigns.draft} drafts` },
+    { label: 'Open Rate',        value: `${data.rates.openRate}%`,   sub: 'of delivered' },
+    { label: 'Click Rate',       value: `${data.rates.clickRate}%`,  sub: 'of delivered' },
+    { label: 'Bounce Rate',      value: `${data.rates.bounceRate}%`, sub: 'of delivered' },
   ];
 
   return (
@@ -543,17 +521,16 @@ function AnalyticsTab() {
           </div>
         ))}
       </div>
-
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
         <div className="text-sm font-bold text-slate-900 mb-4">Email Events</div>
         {Object.keys(data.events).length === 0 ? (
-          <p className="text-sm text-slate-400">No events recorded yet. Send a campaign to start tracking.</p>
+          <p className="text-sm text-slate-400">No events recorded yet. Send an email to start tracking.</p>
         ) : (
           <div className="space-y-3">
             {Object.entries(data.events).map(([type, count]) => (
               <div key={type} className="flex items-center justify-between">
                 <span className="text-sm capitalize text-slate-700">{type}</span>
-                <span className="text-sm font-bold text-slate-900">{count.toLocaleString()}</span>
+                <span className="text-sm font-bold text-slate-900">{(count as number).toLocaleString()}</span>
               </div>
             ))}
           </div>
@@ -563,7 +540,7 @@ function AnalyticsTab() {
   );
 }
 
-// ─── Lead Scores Tab ─────────────────────────────────────────────────────────
+// ─── Lead Scores Tab ──────────────────────────────────────────────────────────
 
 function LeadsTab() {
   const [contacts, setContacts] = useState<MailingContact[]>([]);
@@ -587,10 +564,10 @@ function LeadsTab() {
   const maxScore = withScore.length > 0 ? parseInt((withScore[0].custom_data as Record<string, string>)?.lead_score || '1', 10) : 1;
 
   const getTier = (score: number) => {
-    if (score >= 80) return { label: 'Hot', color: 'text-red-600 bg-red-50', bar: 'bg-red-400' };
+    if (score >= 80) return { label: 'Hot',  color: 'text-red-600 bg-red-50',   bar: 'bg-red-400' };
     if (score >= 50) return { label: 'Warm', color: 'text-amber-600 bg-amber-50', bar: 'bg-amber-400' };
-    if (score >= 20) return { label: 'Cool', color: 'text-blue-600 bg-blue-50', bar: 'bg-blue-400' };
-    return { label: 'Cold', color: 'text-slate-500 bg-slate-100', bar: 'bg-slate-300' };
+    if (score >= 20) return { label: 'Cool', color: 'text-blue-600 bg-blue-50',  bar: 'bg-blue-400' };
+    return             { label: 'Cold', color: 'text-slate-500 bg-slate-100', bar: 'bg-slate-300' };
   };
 
   const avgScore = withScore.length > 0
@@ -599,10 +576,9 @@ function LeadsTab() {
 
   return (
     <div className="space-y-5">
-      {/* Summary KPIs */}
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { label: 'Scored Leads', value: withScore.length, sub: `of ${contacts.length} total contacts`, icon: <TrendingUp size={16} /> },
+          { label: 'Scored Leads',   value: withScore.length, sub: `of ${contacts.length} total contacts`, icon: <TrendingUp size={16} /> },
           { label: 'Hot Leads (80+)', value: withScore.filter(c => parseInt(c.custom_data?.lead_score || '0', 10) >= 80).length, sub: 'ready to convert', icon: <Star size={16} className="text-red-500" /> },
           { label: 'Avg Lead Score', value: avgScore, sub: 'across scored contacts', icon: <Users size={16} /> },
         ].map(k => (
@@ -617,11 +593,10 @@ function LeadsTab() {
         ))}
       </div>
 
-      {/* Leaderboard */}
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <div className="border-b border-slate-100 px-5 py-4">
           <h3 className="text-sm font-bold text-slate-900">Lead Score Leaderboard</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Contacts ranked by engagement score. Scores increase via automations (UTM clicks, survey responses, email opens).</p>
+          <p className="text-xs text-slate-500 mt-0.5">Contacts ranked by engagement score.</p>
         </div>
         {loading ? (
           <div className="flex justify-center py-12 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
@@ -629,7 +604,7 @@ function LeadsTab() {
           <div className="flex flex-col items-center py-16 text-slate-400">
             <Star size={32} className="mb-3 opacity-30" />
             <p className="text-sm font-semibold">No lead scores yet</p>
-            <p className="mt-1 text-xs text-center max-w-xs">Use the "Score Lead" action in Automations to assign points when contacts engage — e.g. click a UTM link or complete a survey.</p>
+            <p className="mt-1 text-xs text-center max-w-xs">Use "Score Lead" in Automations to assign points when contacts engage.</p>
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -645,8 +620,8 @@ function LeadsTab() {
             <tbody className="divide-y divide-slate-50">
               {withScore.map((c, i) => {
                 const score = parseInt(c.custom_data?.lead_score || '0', 10);
-                const pct = Math.round((score / maxScore) * 100);
-                const tier = getTier(score);
+                const pct   = Math.round((score / maxScore) * 100);
+                const tier  = getTier(score);
                 return (
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 text-slate-400 font-mono text-xs">{i + 1}</td>
@@ -684,16 +659,16 @@ function LeadsTab() {
   );
 }
 
-// ─── Main Page ───────────────────────────────────────────────────────────────
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MarketingEmail() {
-  const [tab, setTab] = useState<Tab>('campaigns');
+  const [tab, setTab] = useState<Tab>('emails');
 
   return (
     <div className="space-y-6 pb-8">
       <div>
-        <h1 className="text-4xl font-black tracking-[-0.04em] text-slate-950">Email Marketing</h1>
-        <p className="mt-2 text-base text-slate-500">Create campaigns, automate sequences, and track performance.</p>
+        <h1 className="text-4xl font-black tracking-[-0.04em] text-slate-950">Email</h1>
+        <p className="mt-2 text-base text-slate-500">Compose, send and track emails to your contacts.</p>
       </div>
 
       <div className="flex items-center gap-1 border-b border-slate-200">
@@ -713,10 +688,10 @@ export default function MarketingEmail() {
       </div>
 
       <div>
-        {tab === 'campaigns' && <CampaignsTab />}
+        {tab === 'emails'      && <EmailsTab />}
         {tab === 'automations' && <AutomationsTab />}
-        {tab === 'analytics' && <AnalyticsTab />}
-        {tab === 'leads' && <LeadsTab />}
+        {tab === 'analytics'   && <AnalyticsTab />}
+        {tab === 'leads'       && <LeadsTab />}
       </div>
     </div>
   );

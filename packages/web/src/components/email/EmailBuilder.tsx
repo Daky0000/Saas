@@ -577,18 +577,22 @@ function PreSendChecklist({ blocks, subject, hasContacts, onSend, onClose, sendi
 export interface EmailBuilderProps {
   subject: string;
   previewText: string;
+  segmentId?: string;
+  segments?: Array<{ id: string; name: string }>;
   onSubjectChange: (v: string) => void;
   onPreviewTextChange: (v: string) => void;
+  onSegmentChange?: (v: string) => void;
   onSave: (html: string) => void;
   onClose: () => void;
-  onSend?: () => void;
+  onSend?: (html: string) => void;
   sending?: boolean;
   hasContacts?: boolean;
   initialHtml?: string;
 }
 
 export default function EmailBuilder({
-  subject, previewText, onSubjectChange, onPreviewTextChange,
+  subject, previewText, segmentId = '', segments = [],
+  onSubjectChange, onPreviewTextChange, onSegmentChange,
   onSave, onClose, onSend, sending = false, hasContacts = true, initialHtml,
 }: EmailBuilderProps) {
   const firstTemplate = TEMPLATES[0].blocks();
@@ -656,13 +660,21 @@ export default function EmailBuilder({
         <div className="h-5 w-px bg-slate-200" />
         <input
           value={subject} onChange={e => onSubjectChange(e.target.value)}
-          placeholder="Email subject line *"
-          className="h-9 flex-1 max-w-sm rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium outline-none focus:border-slate-400 focus:bg-white"
+          placeholder="Subject line *"
+          className="h-9 w-56 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium outline-none focus:border-slate-400 focus:bg-white"
         />
+        <select
+          value={segmentId}
+          onChange={e => onSegmentChange?.(e.target.value)}
+          className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-slate-400 focus:bg-white text-slate-700"
+        >
+          <option value="">To: All contacts</option>
+          {segments.map(s => <option key={s.id} value={s.id}>To: {s.name}</option>)}
+        </select>
         <input
           value={previewText} onChange={e => onPreviewTextChange(e.target.value)}
-          placeholder="Preview text (shown in inbox)"
-          className="h-9 flex-1 max-w-sm rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-slate-400 focus:bg-white"
+          placeholder="Preview text…"
+          className="h-9 w-48 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-slate-400 focus:bg-white"
         />
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => setShowTemplatePicker(true)}
@@ -787,7 +799,7 @@ export default function EmailBuilder({
         <PreSendChecklist
           blocks={blocks} subject={subject} hasContacts={hasContacts}
           sending={sending}
-          onSend={() => { onSend?.(); setShowChecklist(false); }}
+          onSend={() => { onSend?.(blocksToHtml(blocks)); setShowChecklist(false); }}
           onClose={() => setShowChecklist(false)}
         />
       )}
