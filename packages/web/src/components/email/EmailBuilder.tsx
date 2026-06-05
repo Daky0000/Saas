@@ -255,13 +255,22 @@ const SECTION_PRESETS: SectionPreset[] = [
   },
 ];
 
-// ─── Drop indicator (inserted between blocks during drag) ─────────────────────
+// ─── Drop zone (visible gap shown between all blocks while dragging) ─────────
 
-function DropIndicator() {
+function GapZone({ isActive }: { isActive: boolean }) {
   return (
-    <div className="relative z-20 mx-0 -my-0.5 flex items-center">
-      <div className="h-3 w-3 shrink-0 rounded-full bg-[#5b6cf9]" />
-      <div className="h-0.5 flex-1 bg-[#5b6cf9]" />
+    <div
+      className={`mx-3 my-1 flex h-8 items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+        isActive
+          ? 'border-[#5b6cf9] bg-indigo-50'
+          : 'border-slate-200 bg-transparent'
+      }`}
+    >
+      {isActive && (
+        <span className="flex items-center gap-1 text-xs font-semibold text-[#5b6cf9]">
+          <Plus size={11} /> Drop here
+        </span>
+      )}
     </div>
   );
 }
@@ -294,6 +303,7 @@ function CanvasBlock({
 
   const wrap = (content: React.ReactNode) => (
     <div
+      data-canvas-block
       className={`group relative cursor-pointer select-none transition-opacity ${ring} ${isDragging ? 'opacity-40' : ''}`}
       onClick={onSelect}
       draggable
@@ -1085,7 +1095,9 @@ export default function EmailBuilder({
     e.dataTransfer.dropEffect = dragInfo.source === 'canvas' ? 'move' : 'copy';
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const blockEls = Array.from(canvas.querySelectorAll('[data-block-idx]')) as HTMLElement[];
+    // Use [data-canvas-block] on the CanvasBlock inner root — excludes the
+    // trailing GapZone so midpoint calculation stays accurate.
+    const blockEls = Array.from(canvas.querySelectorAll('[data-canvas-block]')) as HTMLElement[];
     let idx = blockEls.length;
     for (let i = 0; i < blockEls.length; i++) {
       const rect = blockEls[i].getBoundingClientRect();
@@ -1317,7 +1329,8 @@ export default function EmailBuilder({
                   </div>
                 ) : (
                   <>
-                    {dropIndex === 0 && <DropIndicator />}
+                    {/* Gap before first block */}
+                    {!!dragInfo && <GapZone isActive={dropIndex === 0} />}
                     {blocks.map((block, i) => (
                       <div key={block.id} data-block-idx={i} data-block-id={block.id}>
                         <CanvasBlock
@@ -1329,7 +1342,8 @@ export default function EmailBuilder({
                           onDragStart={e => handleDragStartCanvas(e, block.id)}
                           onDragEnd={() => { setDragInfo(null); setDropIndex(null); }}
                         />
-                        {dropIndex === i + 1 && <DropIndicator />}
+                        {/* Gap after every block */}
+                        {!!dragInfo && <GapZone isActive={dropIndex === i + 1} />}
                       </div>
                     ))}
                   </>
