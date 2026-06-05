@@ -255,26 +255,13 @@ const SECTION_PRESETS: SectionPreset[] = [
   },
 ];
 
-// ─── Drop zone ────────────────────────────────────────────────────────────────
+// ─── Drop indicator (inserted between blocks during drag) ─────────────────────
 
-function DropZone({
-  active, onDragOver, onDragLeave, onDrop,
-}: {
-  index?: number; active: boolean;
-  onDragOver: () => void; onDragLeave: () => void; onDrop: () => void;
-}) {
+function DropIndicator() {
   return (
-    <div
-      className={`mx-4 rounded-lg transition-all duration-100 ${active ? 'my-1 h-10 border-2 border-dashed border-[#5b6cf9] bg-indigo-50' : 'h-1'}`}
-      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; onDragOver(); }}
-      onDragLeave={onDragLeave}
-      onDrop={e => { e.preventDefault(); onDrop(); }}
-    >
-      {active && (
-        <div className="flex h-full items-center justify-center text-xs font-semibold text-indigo-400">
-          Drop here
-        </div>
-      )}
+    <div className="relative z-20 mx-0 -my-0.5 flex items-center">
+      <div className="h-3 w-3 shrink-0 rounded-full bg-[#5b6cf9]" />
+      <div className="h-0.5 flex-1 bg-[#5b6cf9]" />
     </div>
   );
 }
@@ -992,14 +979,13 @@ export interface EmailBuilderProps {
 export default function EmailBuilder({
   subject, previewText, segmentId = '', segments = [],
   onSubjectChange, onPreviewTextChange, onSegmentChange,
-  onSave, onClose, onSend, sending = false, hasContacts = true, initialHtml,
+  onSave, onClose, onSend, sending = false, hasContacts = true, initialHtml: _initialHtml,
 }: EmailBuilderProps) {
-  const firstTemplate = TEMPLATES[0].blocks();
-  const [blocks, setBlocks] = useState<EmailBlock[]>(() => initialHtml ? [] : firstTemplate);
-  const [selectedId, setSelectedId] = useState<string | null>(blocks[0]?.id ?? null);
+  const [blocks, setBlocks] = useState<EmailBlock[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>('add');
   const [showPreview, setShowPreview] = useState(false);
-  const [showTemplatePicker, setShowTemplatePicker] = useState(!initialHtml);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showChecklist, setShowChecklist] = useState(false);
 
   // DnD
@@ -1091,6 +1077,31 @@ export default function EmailBuilder({
     setDragInfo(null);
     setDropIndex(null);
   }, [dragInfo]);
+
+  // Single canvas-level DnD — calculates drop index from mouse Y so any point on the canvas is a valid target
+  const handleCanvasDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!dragInfo) return;
+    e.dataTransfer.dropEffect = dragInfo.source === 'canvas' ? 'move' : 'copy';
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const blockEls = Array.from(canvas.querySelectorAll('[data-block-idx]')) as HTMLElement[];
+    let idx = blockEls.length;
+    for (let i = 0; i < blockEls.length; i++) {
+      const rect = blockEls[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) { idx = i; break; }
+    }
+    setDropIndex(idx);
+  }, [dragInfo]);
+
+  const handleCanvasDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (dropIndex !== null) handleDrop(dropIndex);
+  }, [dropIndex, handleDrop]);
+
+  const handleCanvasDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropIndex(null);
+  }, []);
 
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
@@ -1266,34 +1277,49 @@ export default function EmailBuilder({
         >
           <div className="mx-auto my-8 w-full max-w-[660px] px-4">
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-              <div ref={canvasRef}>
+              {/* Single drag target covering the whole canvas */}
+              <div
+                ref={canvasRef}
+                onDragOver={handleCanvasDragOver}
+                onDrop={handleCanvasDrop}
+                onDragLeave={handleCanvasDragLeave}
+              >
                 {blocks.length === 0 ? (
-                  <div
-                    className="flex flex-col items-center justify-center py-24 text-slate-400"
-                    onDragOver={e => { e.preventDefault(); setDropIndex(0); }}
-                    onDragLeave={() => setDropIndex(null)}
-                    onDrop={e => { e.preventDefault(); handleDrop(0); }}
-                  >
-                    <Layout size={36} className="mb-4 opacity-30" />
-                    <p className="text-sm font-semibold">No blocks yet</p>
-                    <p className="mt-1 text-xs">Drag modules from the left panel or choose a template.</p>
-                    <button
-                      onClick={e => { e.stopPropagation(); setShowTemplatePicker(true); }}
-                      className="mt-5 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
-                    >
-                      Choose Template
-                    </button>
+                  <div className={`flex flex-col items-center justify-center py-24 transition-colors ${dragInfo ? 'bg-indigo-50' : 'text-slate-400'}`}>
+                    {dragInfo ? (
+                      <>
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#5b6cf9]/10 text-[#5b6cf9]">
+                          <Plus size={24} />
+                        </div>
+                        <p className="text-sm font-semibold text-[#5b6cf9]">Drop to add block</p>
+                      </>
+                    ) : (
+                      <>
+                        <Layout size={36} className="mb-4 opacity-30" />
+                        <p className="text-sm font-semibold text-slate-600">Start building your email</p>
+                        <p className="mt-1 text-xs text-slate-400">Drag modules from the left panel, or use a template to get started.</p>
+                        <div className="mt-5 flex gap-2">
+                          <button
+                            onClick={e => { e.stopPropagation(); setShowTemplatePicker(true); }}
+                            className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+                          >
+                            Choose Template
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); addBlock('text'); }}
+                            className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Add Text Block
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
-                    <DropZone
-                      index={0} active={dropIndex === 0}
-                      onDragOver={() => setDropIndex(0)}
-                      onDragLeave={() => setDropIndex(null)}
-                      onDrop={() => handleDrop(0)}
-                    />
+                    {dropIndex === 0 && <DropIndicator />}
                     {blocks.map((block, i) => (
-                      <div key={block.id} data-block-id={block.id}>
+                      <div key={block.id} data-block-idx={i} data-block-id={block.id}>
                         <CanvasBlock
                           block={block}
                           selected={selectedId === block.id}
@@ -1303,12 +1329,7 @@ export default function EmailBuilder({
                           onDragStart={e => handleDragStartCanvas(e, block.id)}
                           onDragEnd={() => { setDragInfo(null); setDropIndex(null); }}
                         />
-                        <DropZone
-                          index={i + 1} active={dropIndex === i + 1}
-                          onDragOver={() => setDropIndex(i + 1)}
-                          onDragLeave={() => setDropIndex(null)}
-                          onDrop={() => handleDrop(i + 1)}
-                        />
+                        {dropIndex === i + 1 && <DropIndicator />}
                       </div>
                     ))}
                   </>
