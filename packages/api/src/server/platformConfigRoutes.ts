@@ -158,11 +158,12 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       if (!toEmail) return res.status(400).json({ success: false, error: 'Recipient email required' });
       const resend = new Resend(resendKey);
       const fromField = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-      await resend.emails.send({
+      const { error: sendError } = await resend.emails.send({
         from: fromField, to: toEmail,
         subject: 'Resend configuration test ✓',
         html: `<p>Your Resend integration is working correctly.</p><p>From: <strong>${fromField}</strong></p>`,
       });
+      if (sendError) throw new Error(sendError.message);
       return res.json({ success: true, message: `Test email sent to ${toEmail}` });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message || 'Failed to send test email' });

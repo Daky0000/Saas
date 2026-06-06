@@ -65,7 +65,8 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
         const subject = String(automation.actions?.[0]?.subject || `Message from ${automation.name}`);
         const body = String(automation.actions?.[0]?.content || automation.name);
         try {
-          await resend.emails.send({ from: fromField, to: contactEmail, subject, html: body });
+          const { error: sendErr } = await resend.emails.send({ from: fromField, to: contactEmail, subject, html: body });
+          if (sendErr) throw new Error(sendErr.message);
           await pool.query(
             `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,NULL,$3,'delivered',NOW())`,
             [randomUUID(), userId, data.contact_id || null]
@@ -268,7 +269,8 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
         ? `<br><br><hr style="border:none;border-top:1px solid #eee"><p style="font-size:12px;color:#999">You received this email because you are subscribed. <a href="${process.env.API_URL || ''}/api/mailing/unsubscribe/${contact.unsubscribe_token}">Unsubscribe</a></p>`
         : '';
       const resend = new Resend(resendKey);
-      await resend.emails.send({ from: fromName ? `${fromName} <${fromEmail}>` : fromEmail, to: contact.email, subject: subject.trim(), html: `${html}${unsubFooter}` });
+      const { error: sendErr } = await resend.emails.send({ from: fromName ? `${fromName} <${fromEmail}>` : fromEmail, to: contact.email, subject: subject.trim(), html: `${html}${unsubFooter}` });
+      if (sendErr) throw new Error(sendErr.message);
       await pool.query(`INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,NULL,$3,'delivered',NOW())`, [randomUUID(), auth.userId, contact.id]).catch(() => undefined);
       return res.json({ success: true });
     } catch (err) { logger.error(err); return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Send failed' }); }
@@ -448,11 +450,12 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
         try {
           const unsubscribeUrl = contact.unsubscribe_token ? `${process.env.VITE_APP_URL || ''}/unsubscribe/${contact.unsubscribe_token}` : null;
           const htmlBody = `${campaign.content || '(no content)'}${unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`;
-          await resend.emails.send({
+          const { error: sendErr } = await resend.emails.send({
             from: fromField, to: contact.email, subject: campaign.subject,
             html: htmlBody.includes('<') ? htmlBody : htmlBody.replace(/\n/g, '<br>'),
             headers: unsubscribeUrl ? { 'List-Unsubscribe': `<${unsubscribeUrl}>` } : undefined,
           });
+          if (sendErr) throw new Error(sendErr.message);
           await pool.query(`INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,$3,$4,'delivered',NOW())`, [randomUUID(), auth.userId, campaign.id, contact.id]).catch(() => undefined);
           sentCount++;
         } catch (_err) { failedCount++; }

@@ -78,7 +78,7 @@ async function sendPasswordResetEmail(
     return;
   }
   const resend = new Resend(apiKey);
-  await resend.emails.send({
+  const { error: sendError } = await resend.emails.send({
     from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
     to: email,
     subject: 'Reset your password',
@@ -88,6 +88,7 @@ async function sendPasswordResetEmail(
       <p>If you did not request this, you can safely ignore this email.</p>
     `,
   });
+  if (sendError) throw new Error(sendError.message);
 }
 
 async function sendEmailVerification(
@@ -112,7 +113,7 @@ async function sendEmailVerification(
   if (!apiKey) return;
   const verifyUrl = `${appUrl.replace(/\/$/, '')}/verify-email#token=${rawToken}`;
   const resend = new Resend(apiKey);
-  await resend.emails.send({
+  const { error: sendError } = await resend.emails.send({
     from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
     to: email,
     subject: 'Verify your email address',
@@ -121,6 +122,7 @@ async function sendEmailVerification(
       <p><a href="${verifyUrl}">${verifyUrl}</a></p>
     `,
   });
+  if (sendError) throw new Error(sendError.message);
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
