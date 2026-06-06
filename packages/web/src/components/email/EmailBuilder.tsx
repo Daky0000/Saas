@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type DragEvent } from 'react';
+import { useState, useRef, useCallback, Fragment, type DragEvent } from 'react';
 import {
   AlignCenter, AlignLeft, AlignRight, Eye, Loader2, Minus,
   Monitor, Plus, Smartphone, Trash2, Type, X, Image as ImageIcon,
@@ -764,45 +764,114 @@ function AddPanel({
 
 // ─── Contents Panel ───────────────────────────────────────────────────────────
 
-function ContentsPanel({ blocks, selectedId, subject, previewText, onSelect }: {
+// ─── Layer drop indicator ────────────────────────────────────────────────────
+
+function LayerDropLine() {
+  return (
+    <div className="my-0.5 flex items-center px-1 pointer-events-none">
+      <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#5b6cf9]" />
+      <div className="h-[2px] flex-1 rounded-full bg-[#5b6cf9]" />
+    </div>
+  );
+}
+
+// ─── Contents panel ───────────────────────────────────────────────────────────
+
+function ContentsPanel({ blocks, selectedId, subject, previewText, onSelect, onReorder }: {
   blocks: EmailBlock[]; selectedId: string | null; subject: string; previewText: string;
   onSelect: (id: string) => void;
+  onReorder: (from: number, to: number) => void;
 }) {
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
+
   const ICON: Partial<Record<string, React.ElementType>> = {
     header: Hash, text: Type, image: ImageIcon, button: Link, divider: Minus,
     spacer: Layout, footer: Mail, social: Share2, html: Code, video: VideoIcon, section: Columns,
   };
+
+  const getLabel = (block: EmailBlock) => {
+    if (block.type === 'section') return `Section (${block.columns.length} col)`;
+    if (block.type === 'header') return (block as HeaderBlock).headline?.slice(0, 22) || 'Header';
+    if (block.type === 'button') return (block as ButtonBlock).text || 'Button';
+    return block.type.charAt(0).toUpperCase() + block.type.slice(1);
+  };
+
+  const handleItemDragOver = (e: React.DragEvent<HTMLDivElement>, i: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setOverIdx(e.clientY < rect.top + rect.height / 2 ? i : i + 1);
+  };
+
+  const handleListDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (dragIdx !== null && overIdx !== null) {
+      onReorder(dragIdx, overIdx);
+    }
+    setDragIdx(null);
+    setOverIdx(null);
+  };
+
   return (
     <div>
-      <div className="sticky top-0 z-10 border-b border-slate-100 bg-white px-4 py-3"><span className="text-xs font-bold text-slate-700">Contents</span></div>
+      <div className="sticky top-0 z-10 border-b border-slate-100 bg-white px-4 py-3">
+        <span className="text-xs font-bold text-slate-700">Contents</span>
+      </div>
+
+      {/* Inbox meta */}
       <div className="px-4 py-3">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Inbox content</div>
         {[{ label: 'Subject line', value: subject || '—' }, { label: 'Preview text', value: previewText || '—' }].map(r => (
           <div key={r.label} className="flex items-start gap-2 py-1.5">
             <Mail size={12} className="mt-0.5 shrink-0 text-slate-400" />
-            <div><div className="text-[11px] font-semibold text-slate-500">{r.label}</div><div className="text-xs text-slate-700 truncate max-w-[160px]">{r.value}</div></div>
+            <div>
+              <div className="text-[11px] font-semibold text-slate-500">{r.label}</div>
+              <div className="text-xs text-slate-700 truncate max-w-[160px]">{r.value}</div>
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Draggable layers */}
       <div className="border-t border-slate-100 px-4 py-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Email body</span>
           <span className="text-[10px] text-slate-400">{blocks.length} items</span>
         </div>
-        <div className="space-y-0.5">
+
+        <div
+          onDragOver={e => e.preventDefault()}
+          onDrop={handleListDrop}
+          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setDragIdx(null); setOverIdx(null); } }}
+        >
+          {dragIdx !== null && overIdx === 0 && <LayerDropLine />}
+
           {blocks.map((block, i) => {
             const Icon = ICON[block.type] || Layout;
-            const label = block.type === 'section'
-              ? `Section (${block.columns.length} col)`
-              : block.type === 'header' ? (block as HeaderBlock).headline?.slice(0, 24) || 'Header'
-              : block.type === 'button' ? (block as ButtonBlock).text || 'Button'
-              : block.type.charAt(0).toUpperCase() + block.type.slice(1);
             return (
-              <button key={block.id} onClick={() => onSelect(block.id)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${selectedId === block.id ? 'bg-indigo-50 text-[#5b6cf9]' : 'text-slate-600 hover:bg-slate-50'}`}>
-                <Icon size={13} className="shrink-0" />
-                <span className="flex-1 truncate text-xs font-medium">{label}</span>
-                <span className="shrink-0 text-[10px] text-slate-300">{i + 1}</span>
-              </button>
+              <Fragment key={block.id}>
+                <div
+                  draggable
+                  onDragStart={e => { e.stopPropagation(); setDragIdx(i); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                  onDragOver={e => handleItemDragOver(e, i)}
+                  onClick={() => onSelect(block.id)}
+                  className={`group flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors select-none ${
+                    dragIdx === i
+                      ? 'opacity-40'
+                      : selectedId === block.id
+                      ? 'bg-indigo-50 text-[#5b6cf9]'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <GripVertical size={11} className="shrink-0 cursor-grab text-slate-300 opacity-0 transition-opacity group-hover:opacity-100" />
+                  <Icon size={13} className="shrink-0" />
+                  <span className="flex-1 truncate text-xs font-medium">{getLabel(block)}</span>
+                  <span className="shrink-0 text-[10px] text-slate-300">{i + 1}</span>
+                </div>
+                {dragIdx !== null && overIdx === i + 1 && <LayerDropLine />}
+              </Fragment>
             );
           })}
         </div>
@@ -965,6 +1034,16 @@ export default function EmailBuilder({
 
   const applyTemplate = useCallback((t: Template) => {
     const nb = t.blocks(); setBlocks(nb); setSelectedId(nb[0]?.id ?? null); setSelectedColId(null); setShowTemplatePicker(false);
+  }, []);
+
+  const reorderBlocks = useCallback((from: number, to: number) => {
+    if (from === to || from === to - 1) return;
+    setBlocks(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(from < to ? to - 1 : to, 0, moved);
+      return next;
+    });
   }, []);
 
   // ── Column CRUD ──
@@ -1132,7 +1211,7 @@ export default function EmailBuilder({
               />
             )}
             {panelMode === 'contents' && (
-              <ContentsPanel blocks={blocks} selectedId={selectedId} subject={subject} previewText={previewText} onSelect={selectBlock} />
+              <ContentsPanel blocks={blocks} selectedId={selectedId} subject={subject} previewText={previewText} onSelect={selectBlock} onReorder={reorderBlocks} />
             )}
             {panelMode === 'edit' && selectedBlock && (
               <EditPanel
