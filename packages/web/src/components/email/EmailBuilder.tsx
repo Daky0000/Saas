@@ -201,8 +201,20 @@ const SECTION_PRESETS: SectionPreset[] = [
 
 function GapZone({ isActive }: { isActive: boolean }) {
   return (
-    <div className={`mx-3 my-1 flex h-8 items-center justify-center rounded-lg border-2 border-dashed transition-colors ${isActive ? 'border-[#5b6cf9] bg-indigo-50' : 'border-slate-200 bg-transparent'}`}>
-      {isActive && <span className="flex items-center gap-1 text-xs font-semibold text-[#5b6cf9]"><Plus size={11} /> Drop here</span>}
+    <div className={`relative z-20 transition-all duration-100 ${isActive ? 'my-1 py-1' : 'my-0 py-1.5'}`}>
+      {isActive ? (
+        /* Prominent blue insertion line */
+        <div className="flex items-center px-2">
+          <div className="h-4 w-4 shrink-0 rounded-full bg-[#5b6cf9] ring-4 ring-[#5b6cf9]/20 flex items-center justify-center">
+            <Plus size={9} className="text-white" />
+          </div>
+          <div className="h-[2px] flex-1 bg-[#5b6cf9] rounded-full" />
+          <div className="h-2 w-2 shrink-0 rounded-full bg-[#5b6cf9]" />
+        </div>
+      ) : (
+        /* Subtle dashed line showing a potential drop point */
+        <div className="mx-3 border-t border-dashed border-slate-200" />
+      )}
     </div>
   );
 }
@@ -1165,7 +1177,7 @@ export default function EmailBuilder({
                   </div>
                 ) : (
                   <>
-                    {!!dragInfo && !dragInfo.blockId && <GapZone isActive={dropIndex === 0} />}
+                    {!!dragInfo && <GapZone isActive={dropIndex === 0} />}
                     {blocks.map((block, i) => (
                       <div key={block.id} data-block-id={block.id}>
                         {block.type === 'section' ? (
@@ -1196,7 +1208,7 @@ export default function EmailBuilder({
                             onDragEnd={() => { setDragInfo(null); setDropIndex(null); }}
                           />
                         )}
-                        {!!dragInfo && !dragInfo.blockId && <GapZone isActive={dropIndex === i + 1} />}
+                        {!!dragInfo && <GapZone isActive={dropIndex === i + 1} />}
                       </div>
                     ))}
                   </>
