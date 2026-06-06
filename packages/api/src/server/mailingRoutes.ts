@@ -134,8 +134,8 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
       for (const c of contacts.slice(0, 5000)) {
         if (!c.email || !String(c.email).includes('@')) { skipped++; continue; }
         await pool.query(
-          `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id, email) DO NOTHING`,
-          [randomUUID(), auth.userId, String(c.email).toLowerCase().trim(), c.first_name || null, c.last_name || null]
+          `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, unsubscribe_token) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id, email) DO NOTHING`,
+          [randomUUID(), auth.userId, String(c.email).toLowerCase().trim(), c.first_name || null, c.last_name || null, randomUUID()]
         ).then(() => imported++).catch(() => { skipped++; });
       }
       return res.json({ success: true, imported, skipped });
@@ -172,11 +172,11 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
       const id = randomUUID();
       const customDataJson = (custom_data && typeof custom_data === 'object') ? JSON.stringify(custom_data) : '{}';
       const { rows } = await pool.query(
-        `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, phone, source, email_marketing_consent, custom_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, phone, source, email_marketing_consent, custom_data, unsubscribe_token)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON CONFLICT (user_id, email) DO UPDATE SET first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, phone=EXCLUDED.phone, custom_data=EXCLUDED.custom_data, updated_at=NOW()
          RETURNING *`,
-        [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, phone || null, source || 'manual', !!email_marketing_consent, customDataJson]
+        [id, auth.userId, String(email).toLowerCase().trim(), first_name || null, last_name || null, phone || null, source || 'manual', !!email_marketing_consent, customDataJson, randomUUID()]
       );
       const contact = rows[0];
       if (Array.isArray(tags) && tags.length) {
@@ -436,19 +436,29 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
       if (!campaignRows.length) return res.status(404).json({ success: false, error: 'Campaign not found' });
       const campaign = campaignRows[0];
       if (campaign.status === 'sent') return res.status(400).json({ success: false, error: 'Campaign already sent' });
-      const { rows: contacts } = await pool.query(
-        campaign.segment_id
-          ? `SELECT mc.* FROM mailing_contacts mc JOIN mailing_contact_tags mct ON mct.contact_id = mc.id JOIN mailing_segments ms ON ms.id = $1 WHERE mc.user_id = $2 AND mc.subscribed = true`
-          : `SELECT * FROM mailing_contacts WHERE user_id = $1 AND subscribed = true`,
-        campaign.segment_id ? [campaign.segment_id, auth.userId] : [auth.userId]
-      );
+      let contacts: any[];
+      if (campaign.segment_id) {
+        const { rows: segs } = await pool.query('SELECT * FROM mailing_segments WHERE id=$1 AND user_id=$2', [campaign.segment_id, auth.userId]);
+        if (!segs.length) return res.status(400).json({ success: false, error: 'Segment not found' });
+        const segParams: unknown[] = [auth.userId];
+        const segWhere = buildSegmentWhere(segs[0].rules as _SegRules, segParams);
+        const { rows } = await pool.query(
+          `SELECT mc.* FROM mailing_contacts mc LEFT JOIN mailing_contact_tags mct ON mct.contact_id = mc.id WHERE mc.user_id = $1 AND mc.subscribed = true AND ${segWhere} GROUP BY mc.id`,
+          segParams
+        );
+        contacts = rows;
+      } else {
+        const { rows } = await pool.query('SELECT * FROM mailing_contacts WHERE user_id = $1 AND subscribed = true', [auth.userId]);
+        contacts = rows;
+      }
       if (!contacts.length) return res.status(400).json({ success: false, error: 'No subscribed contacts found' });
       const fromField = resendFromName ? `${resendFromName} <${resendFrom}>` : resendFrom;
       const resend = new Resend(resendKey);
+      const apiBase = (process.env.API_URL || '').replace(/\/$/, '');
       let sentCount = 0, failedCount = 0;
       for (const contact of contacts) {
         try {
-          const unsubscribeUrl = contact.unsubscribe_token ? `${process.env.VITE_APP_URL || ''}/unsubscribe/${contact.unsubscribe_token}` : null;
+          const unsubscribeUrl = contact.unsubscribe_token ? `${apiBase}/api/mailing/unsubscribe/${contact.unsubscribe_token}` : null;
           const htmlBody = `${campaign.content || '(no content)'}${unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`;
           const { error: sendErr } = await resend.emails.send({
             from: fromField, to: contact.email, subject: campaign.subject,

@@ -259,8 +259,8 @@ async function syncToCRM(pool: Pool, userId: string): Promise<CRMSyncResult> {
 
       try {
         const contactResult = await pool.query(
-          `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, created_at, updated_at)
-           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, NOW(), NOW())
+          `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, unsubscribe_token, created_at, updated_at)
+           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, gen_random_uuid()::text, NOW(), NOW())
            ON CONFLICT (user_id, email) DO UPDATE SET
              first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
                                 THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,
@@ -312,8 +312,8 @@ async function syncToCRM(pool: Pool, userId: string): Promise<CRMSyncResult> {
   for (const sender of personalContacts) {
     const nameParts = sender.name.trim().split(/\s+/).filter(Boolean);
     await pool.query(
-      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, created_at, updated_at)
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, NOW(), NOW())
+      `INSERT INTO mailing_contacts (id, user_id, email, first_name, last_name, source, subscribed, unsubscribe_token, created_at, updated_at)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'gmail', false, gen_random_uuid()::text, NOW(), NOW())
        ON CONFLICT (user_id, email) DO UPDATE SET
          first_name = CASE WHEN mailing_contacts.first_name IS NULL OR mailing_contacts.first_name = ''
                             THEN EXCLUDED.first_name ELSE mailing_contacts.first_name END,

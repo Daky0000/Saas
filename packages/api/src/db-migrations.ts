@@ -1795,6 +1795,7 @@ await pool.query(`ALTER TABLE mailing_contacts ADD COLUMN IF NOT EXISTS custom_d
 await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contacts_user_idx ON mailing_contacts (user_id);`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS mailing_contacts_email_idx ON mailing_contacts (email);`).catch(() => undefined);
 await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS mailing_contacts_unsubscribe_token_unique_idx ON mailing_contacts (unsubscribe_token) WHERE unsubscribe_token IS NOT NULL;`).catch(() => undefined);
+await pool.query(`UPDATE mailing_contacts SET unsubscribe_token = gen_random_uuid()::text WHERE unsubscribe_token IS NULL;`).catch(() => undefined);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS mailing_contact_tags (
