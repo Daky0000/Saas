@@ -85,7 +85,13 @@
       "PowerShell(Copy-Item \"d:\\\\Saas\\\\packages\\\\web\\\\src\\\\pages\\\\Tools.tsx\" \"d:\\\\Saas\\\\tmp_deploy_repo\\\\src\\\\pages\\\\Tools.tsx\" -Force)",
       "PowerShell(Copy-Item \"d:\\\\Saas\\\\packages\\\\web\\\\src\\\\components\\\\landing\\\\PublicNav.tsx\" \"d:\\\\Saas\\\\tmp_deploy_repo\\\\src\\\\components\\\\landing\\\\PublicNav.tsx\" -Force)",
       "PowerShell(Copy-Item \"d:\\\\Saas\\\\packages\\\\web\\\\src\\\\components\\\\landing\\\\PublicFooter.tsx\" \"d:\\\\Saas\\\\tmp_deploy_repo\\\\src\\\\components\\\\landing\\\\PublicFooter.tsx\" -Force)",
-      "PowerShell(cd \"d:\\\\Saas\\\\tmp_deploy_repo\"; git status --short | Where-Object { $_ -match \"^M|^A|^R\" } | Select-Object -First 30)"
+      "PowerShell(cd \"d:\\\\Saas\\\\tmp_deploy_repo\"; git status --short | Where-Object { $_ -match \"^M|^A|^R\" } | Select-Object -First 30)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Saas\\\\packages\\\\web\\\\src\" -Recurse -Filter \"*.tsx\" -o Name)",
+      "Bash(Select-Object -First 20)",
+      "WebFetch(domain:cdn.simpleicons.org)",
+      "Bash(Get-ChildItem \"d:\\\\Saas\\\\src\" -Recurse -Filter \"*.tsx\")",
+      "Bash(Select-Object FullName)",
+      "WebFetch(domain:docs.magnific.com)"
     ],
     "additionalDirectories": [
       "d:\\skills\\user\\db-cleanup",

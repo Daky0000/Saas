@@ -106,3 +106,10 @@ packages/**/.env.production
 packages/**/.env.development
 packages/**/.env.test
 packages/**/.env.*.local
+
+# gh-pages deploy artifact at root (regenerated on deploy)
+/.nojekyll
+
+# Generated business docs (regenerable via scripts/generate-*-doc.mjs)
+/PRICING_FINANCIALS.docx
+/SYSTEM_OVERVIEW.docx
