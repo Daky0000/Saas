@@ -2,7 +2,18 @@ import express from 'express';
 import type Stripe from 'stripe';
 import type { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
+import { z } from 'zod';
 import { logger } from '../logger.ts';
+import { validateBody } from '../middleware/validate.ts';
+
+const checkoutSchema = z.object({
+  planId: z.string().min(1, 'planId is required'),
+  period: z.enum(['monthly', 'yearly']).default('monthly'),
+}).passthrough();
+
+const adminPlanSchema = z.object({
+  planId: z.string().min(1).nullish(),
+}).passthrough();
 
 type AuthResult = { userId: string; email?: string; role?: string } | null;
 type RequireAuthFn = (req: Request, res: Response) => AuthResult;
@@ -96,12 +107,11 @@ export function registerBillingRoutes({
   });
 
   // POST /checkout — create Stripe Checkout session for a plan
-  router.post('/checkout', async (req: Request, res: Response) => {
+  router.post('/checkout', validateBody(checkoutSchema), async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured on this server.' });
     const { planId, period = 'monthly' } = req.body as { planId: string; period?: 'monthly' | 'yearly' };
-    if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
     if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
     try {
       const { rows: planRows } = await dbQuery(
@@ -314,7 +324,7 @@ export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
   });
 
   // PUT /api/admin/billing/customers/:userId/plan — manually assign plan
-  router.put('/admin/billing/customers/:userId/plan', async (req: Request, res: Response) => {
+  router.put('/admin/billing/customers/:userId/plan', validateBody(adminPlanSchema), async (req: Request, res: Response) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });

@@ -3,7 +3,61 @@ import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { Resend } from 'resend';
+import { z } from 'zod';
 import { logger } from '../logger.ts';
+import { validateBody } from '../middleware/validate.ts';
+
+const contactCreateSchema = z.object({
+  email: z.string().email('Valid email required'),
+  first_name: z.string().nullish(),
+  last_name: z.string().nullish(),
+  phone: z.string().nullish(),
+  source: z.string().nullish(),
+  tags: z.array(z.string()).nullish(),
+  email_marketing_consent: z.boolean().nullish(),
+  custom_data: z.record(z.unknown()).nullish(),
+}).passthrough();
+
+const contactImportSchema = z.object({
+  contacts: z.array(z.record(z.unknown())).min(1, 'contacts array required'),
+}).passthrough();
+
+const contactBulkSchema = z.object({
+  action: z.enum(['delete', 'archive', 'tag']),
+  ids: z.array(z.string()).min(1, 'No contacts selected'),
+  tag: z.string().nullish(),
+}).passthrough();
+
+const tagSchema = z.object({ tag: z.string().trim().min(1, 'Tag required') }).passthrough();
+
+const sendEmailSchema = z.object({
+  subject: z.string().trim().min(1, 'Subject is required'),
+  html: z.string().default(''),
+  include_unsubscribe_footer: z.boolean().nullish(),
+}).passthrough();
+
+const segmentCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Name required'),
+  rules: z.record(z.unknown()).nullish(),
+}).passthrough();
+
+const campaignCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Name required'),
+  subject: z.string().trim().min(1, 'Subject required'),
+  preview_text: z.string().nullish(),
+  content: z.string().nullish(),
+  segment_id: z.string().nullish(),
+  status: z.string().nullish(),
+  scheduled_at: z.string().nullish(),
+}).passthrough();
+
+const automationCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Name required'),
+  trigger_type: z.string().trim().min(1, 'trigger_type required'),
+  conditions: z.array(z.unknown()).nullish(),
+  actions: z.array(z.unknown()).nullish(),
+  status: z.string().nullish(),
+}).passthrough();
 
 type AuthResult = { userId: string; email?: string } | null;
 
@@ -125,11 +179,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/contacts/import
-  router.post('/contacts/import', async (req: Request, res: Response) => {
+  router.post('/contacts/import', validateBody(contactImportSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { contacts } = req.body;
-      if (!Array.isArray(contacts) || !contacts.length) return res.status(400).json({ success: false, error: 'contacts array required' });
       let imported = 0, skipped = 0;
       for (const c of contacts.slice(0, 5000)) {
         if (!c.email || !String(c.email).includes('@')) { skipped++; continue; }
@@ -143,11 +196,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/contacts/bulk
-  router.post('/contacts/bulk', async (req: Request, res: Response) => {
+  router.post('/contacts/bulk', validateBody(contactBulkSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { action, ids, tag } = req.body as { action: string; ids: string[]; tag?: string };
-      if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ success: false, error: 'No contacts selected' });
       const ph = ids.map((_, i) => `$${i + 2}`).join(',');
       if (action === 'delete') {
         await pool.query(`DELETE FROM mailing_contacts WHERE user_id=$1 AND id IN (${ph})`, [auth.userId, ...ids]);
@@ -164,11 +216,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/contacts
-  router.post('/contacts', async (req: Request, res: Response) => {
+  router.post('/contacts', validateBody(contactCreateSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { email, first_name, last_name, phone, source, tags, email_marketing_consent, custom_data } = req.body;
-      if (!email || !String(email).includes('@')) return res.status(400).json({ success: false, error: 'Valid email required' });
       const id = randomUUID();
       const customDataJson = (custom_data && typeof custom_data === 'object') ? JSON.stringify(custom_data) : '{}';
       const { rows } = await pool.query(
@@ -235,11 +286,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/contacts/:id/tags
-  router.post('/contacts/:id/tags', async (req: Request, res: Response) => {
+  router.post('/contacts/:id/tags', validateBody(tagSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
-      const tag = String(req.body?.tag || '').trim();
-      if (!tag) return res.status(400).json({ success: false, error: 'Tag required' });
+      const tag = String(req.body.tag).trim();
       await pool.query('INSERT INTO mailing_contact_tags (id, contact_id, user_id, tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [randomUUID(), req.params.id, auth.userId, tag]);
       return res.json({ success: true });
     } catch (err) { logger.error('Failed to add tag', err); return res.status(500).json({ success: false, error: 'Failed to add tag' }); }
@@ -255,11 +305,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/contacts/:id/send-email
-  router.post('/contacts/:id/send-email', async (req: Request, res: Response) => {
+  router.post('/contacts/:id/send-email', validateBody(sendEmailSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { subject, html, include_unsubscribe_footer } = req.body as { subject: string; html: string; include_unsubscribe_footer?: boolean };
-      if (!subject?.trim()) return res.status(400).json({ success: false, error: 'Subject is required' });
       const { rows } = await pool.query('SELECT * FROM mailing_contacts WHERE id=$1 AND user_id=$2', [req.params.id, auth.userId]);
       if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
       const contact = rows[0];
@@ -309,11 +358,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/segments
-  router.post('/segments', async (req: Request, res: Response) => {
+  router.post('/segments', validateBody(segmentCreateSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { name, rules } = req.body;
-      if (!name) return res.status(400).json({ success: false, error: 'Name required' });
       const id = randomUUID();
       const rulesJson = JSON.stringify(rules && typeof rules === 'object' && !Array.isArray(rules) ? rules : { match: 'all', conditions: [] });
       const { rows } = await pool.query(`INSERT INTO mailing_segments (id, user_id, name, rules) VALUES ($1,$2,$3,$4) RETURNING *`, [id, auth.userId, name, rulesJson]);
@@ -386,11 +434,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/campaigns
-  router.post('/campaigns', async (req: Request, res: Response) => {
+  router.post('/campaigns', validateBody(campaignCreateSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { name, subject, preview_text, content, segment_id, status, scheduled_at } = req.body;
-      if (!name || !subject) return res.status(400).json({ success: false, error: 'Name and subject required' });
       const id = randomUUID();
       const { rows } = await pool.query(
         `INSERT INTO mailing_campaigns (id, user_id, name, subject, preview_text, content, segment_id, status, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -487,11 +534,10 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   });
 
   // POST /api/mailing/automations
-  router.post('/automations', async (req: Request, res: Response) => {
+  router.post('/automations', validateBody(automationCreateSchema), async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const { name, trigger_type, conditions, actions, status } = req.body;
-      if (!name || !trigger_type) return res.status(400).json({ success: false, error: 'Name and trigger_type required' });
       const id = randomUUID();
       const { rows } = await pool.query(
         `INSERT INTO mailing_automations (id, user_id, name, trigger_type, conditions, actions, status) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -554,7 +600,7 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
   router.get('/unsubscribe/:token', async (req: Request, res: Response) => {
     try {
       const { rows } = await pool.query(
-        `UPDATE mailing_contacts SET subscribed = false WHERE unsubscribe_token = $1 RETURNING email`,
+        `UPDATE mailing_contacts SET subscribed = false, unsubscribed_at = NOW() WHERE unsubscribe_token = $1 RETURNING email`,
         [req.params.token]
       );
       if (!rows.length) return res.status(404).send('Invalid unsubscribe link.');

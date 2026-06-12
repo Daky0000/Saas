@@ -85,8 +85,10 @@ import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
 import { runDatabaseMigrations } from './db-migrations.ts';
 import { pool, dbReady, setDbReady, setDbInitError, dbInitError, hasDatabase, dbQuery, normalizeEmail, normalizeUsername } from './db.ts';
-import {
+import type {
   DbUserRow, AdminDbRole, AdminDbStatus, DbPricingPlan, DbCardTemplate, PlatformConfigRow,
+} from './user-auth.ts';
+import {
   inMemoryUsersById, inMemoryUserIdByEmail, inMemoryUserIdByUsername,
   inMemoryPricingPlansById, inMemoryCardTemplatesById, inMemoryPlatformConfigs,
   getPlatformConfig, isPlatformEnabled, getResendConfig,
@@ -165,16 +167,17 @@ async function refreshStripe(): Promise<void> {
 const app = express();
 const PORT = config.port;
 
+// Request IDs first so even health checks carry x-request-id
+app.use(requestIdMiddleware);
+
 // Registered BEFORE all other middleware so nothing can intercept it
 app.get('/ping', (_req, res) => res.send('pong'));
-app.get('/health', (_req, res) => res.send('ok'));
+app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 app.get('/api/health', (_req, res) => res.json({
   status: 'ok',
   timestamp: new Date().toISOString(),
   db: { configured: Boolean(config.databaseUrl), ready: dbReady, error: dbInitError },
 }));
-
-app.use(requestIdMiddleware);
 
 // ── Security & parsing middleware — must be before ALL routes ─────────────────
 app.use(

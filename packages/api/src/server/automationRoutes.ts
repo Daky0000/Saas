@@ -13,8 +13,8 @@ interface AutomationDeps {
 export function registerAutomationRoutes({ requireAuth, pool }: AutomationDeps): Router {
   const router = express.Router();
 
-  // Apply migration once on startup
-  pool.query(`
+  // Apply migration once on startup (pool is null when no DATABASE_URL, e.g. tests)
+  pool?.query(`
     ALTER TABLE mailing_automations
       ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '',
       ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb;
