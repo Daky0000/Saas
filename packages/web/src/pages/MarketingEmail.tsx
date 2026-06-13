@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import {
-  BarChart2, CheckCircle, Clock, Loader2, Mail,
+  BarChart2, CheckCircle, Clock, Loader2, Mail, MousePointerClick,
   Pencil, Plus, Send, Star, Trash2, TrendingUp, Users, X, Zap,
 } from 'lucide-react';
 import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts';
+import {
   mailingService,
+  type CampaignAnalyticsRow,
   type MailingAutomation,
   type MailingCampaign,
   type MailingContact,
@@ -492,50 +496,120 @@ function AutomationsTab() {
 
 function AnalyticsTab() {
   const [data, setData] = useState<MailingAnalytics | null>(null);
+  const [campaigns, setCampaigns] = useState<CampaignAnalyticsRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    mailingService.getAnalytics().then(setData).catch(() => undefined).finally(() => setLoading(false));
+    Promise.all([
+      mailingService.getAnalytics(),
+      mailingService.getCampaignAnalytics(),
+    ]).then(([summary, rows]) => { setData(summary); setCampaigns(rows); }).catch(() => undefined).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="flex justify-center py-20 text-slate-400"><Loader2 size={20} className="animate-spin" /></div>;
   if (!data) return <div className="py-12 text-center text-sm text-slate-400">Failed to load analytics.</div>;
 
   const kpis = [
-    { label: 'Total Contacts',   value: data.contacts.total,        sub: `${data.contacts.subscribed} subscribed` },
-    { label: 'Unsubscribed',     value: data.contacts.unsubscribed,  sub: 'all time' },
-    { label: 'Emails Sent',      value: data.campaigns.sent,         sub: `${data.campaigns.draft} drafts` },
-    { label: 'Open Rate',        value: `${data.rates.openRate}%`,   sub: 'of delivered' },
-    { label: 'Click Rate',       value: `${data.rates.clickRate}%`,  sub: 'of delivered' },
-    { label: 'Bounce Rate',      value: `${data.rates.bounceRate}%`, sub: 'of delivered' },
+    { label: 'Total Contacts',  value: data.contacts.total.toLocaleString(),        sub: `${data.contacts.subscribed} subscribed`, icon: <Users size={16} className="text-slate-400" /> },
+    { label: 'Unsubscribed',    value: data.contacts.unsubscribed.toLocaleString(),  sub: 'all time', icon: <X size={16} className="text-slate-400" /> },
+    { label: 'Emails Sent',     value: data.campaigns.sent.toLocaleString(),         sub: `${data.campaigns.draft} drafts`, icon: <Send size={16} className="text-slate-400" /> },
+    { label: 'Open Rate',       value: `${data.rates.openRate}%`,                    sub: 'of delivered', icon: <Mail size={16} className="text-[#5b6cf9]" /> },
+    { label: 'Click Rate',      value: `${data.rates.clickRate}%`,                   sub: 'of delivered', icon: <MousePointerClick size={16} className="text-emerald-500" /> },
+    { label: 'Bounce Rate',     value: `${data.rates.bounceRate}%`,                  sub: 'of delivered', icon: <TrendingUp size={16} className="text-red-400" /> },
   ];
+
+  const chartData = campaigns.slice(0, 10).reverse().map(c => ({
+    name: c.name.length > 18 ? c.name.slice(0, 16) + '…' : c.name,
+    Opens: c.opens,
+    Clicks: c.clicks,
+    Delivered: c.delivered,
+  }));
 
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {kpis.map(k => (
-          <div key={k.label} className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{k.label}</div>
-            <div className="mt-2 text-3xl font-black text-slate-950">{k.value}</div>
-            <div className="mt-1 text-xs text-slate-400">{k.sub}</div>
+          <div key={k.label} className="rounded-2xl border border-slate-200 bg-white p-5 flex items-start gap-3">
+            <div className="mt-1">{k.icon}</div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{k.label}</div>
+              <div className="mt-1.5 text-3xl font-black text-slate-950">{k.value}</div>
+              <div className="mt-0.5 text-xs text-slate-400">{k.sub}</div>
+            </div>
           </div>
         ))}
       </div>
-      <div className="rounded-2xl border border-slate-200 bg-white p-5">
-        <div className="text-sm font-bold text-slate-900 mb-4">Email Events</div>
-        {Object.keys(data.events).length === 0 ? (
-          <p className="text-sm text-slate-400">No events recorded yet. Send an email to start tracking.</p>
-        ) : (
-          <div className="space-y-3">
-            {Object.entries(data.events).map(([type, count]) => (
-              <div key={type} className="flex items-center justify-between">
-                <span className="text-sm capitalize text-slate-700">{type}</span>
-                <span className="text-sm font-bold text-slate-900">{(count as number).toLocaleString()}</span>
-              </div>
-            ))}
+
+      {chartData.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-1 text-sm font-bold text-slate-900">Opens &amp; Clicks by Campaign</div>
+          <p className="mb-4 text-xs text-slate-400">Last {chartData.length} sent campaigns</p>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Delivered" fill="#e2e8f0" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Opens" fill="#5b6cf9" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Clicks" fill="#10b981" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {campaigns.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h3 className="text-sm font-bold text-slate-900">Campaign Performance</h3>
+            <p className="mt-0.5 text-xs text-slate-400">Detailed stats for each sent campaign.</p>
           </div>
-        )}
-      </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-5 py-3 text-left">Campaign</th>
+                  <th className="px-4 py-3 text-right">Delivered</th>
+                  <th className="px-4 py-3 text-right">Opens</th>
+                  <th className="px-4 py-3 text-right">Clicks</th>
+                  <th className="px-4 py-3 text-right">Unsubs</th>
+                  <th className="px-4 py-3 text-right">Open %</th>
+                  <th className="px-4 py-3 text-right">Click %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {campaigns.map(c => (
+                  <tr key={c.campaign_id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-5 py-3">
+                      <div className="font-medium text-slate-900 truncate max-w-[200px]">{c.name}</div>
+                      <div className="text-[11px] text-slate-400">{c.sent_at ? new Date(c.sent_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</div>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-700">{c.delivered.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono text-[#5b6cf9] font-semibold">{c.opens.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono text-emerald-600 font-semibold">{c.clicks.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono text-red-400">{c.unsubscribes.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-[#5b6cf9]">{c.open_rate}%</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-600">{c.click_rate}%</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {campaigns.length === 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+          <BarChart2 size={32} className="mx-auto mb-3 text-slate-200" />
+          <p className="text-sm font-semibold text-slate-500">No sent campaigns yet</p>
+          <p className="mt-1 text-xs text-slate-400">Send your first email to start tracking opens, clicks, and unsubscribes.</p>
+        </div>
+      )}
     </div>
   );
 }

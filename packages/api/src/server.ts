@@ -751,7 +751,7 @@ app.use('/api/google-sheets', registerGoogleSheetsRoutes(leadsDeps));
 app.use('/api/calendar', registerCalendarRoutes({ requireAuth, pool: pool!, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret, frontendUrl: FRONTEND_URL }));
 
 // ─── Analytics Routes ───────────────────────────────────────────────────────
-app.use('/api', registerAnalyticsRoutes({ requireAuth, pool, decryptIntegrationSecret, getPublishableSocialConnection }));
+app.use('/api', registerAnalyticsRoutes({ requireAuth, pool, decryptIntegrationSecret, getPublishableSocialConnection, getPlatformConfig }));
 // ─── End Analytics & Insights Engine ─────────────────────────────────────────
 
 // ─── Campaign & Funnel Builder ────────────────────────────────────────────────

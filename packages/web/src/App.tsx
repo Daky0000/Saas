@@ -75,6 +75,7 @@ const Workspace = lazy(() => import('./pages/Workspace'));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
 const Billing = lazy(() => import('./pages/Billing'));
 const Memory = lazy(() => import('./pages/Memory'));
+const Changelog = lazy(() => import('./pages/Changelog'));
 const AITeam = lazy(() => import('./pages/AITeam'));
 const Discover = lazy(() => import('./pages/Discover'));
 const Notifications = lazy(() => import('./pages/Notifications'));
@@ -953,7 +954,7 @@ function App() {
     }
 
     if (!loggedIn) {
-      const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion', '/reset-password', '/verify-email'];
+      const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/changelog', '/data-deletion', '/reset-password', '/verify-email'];
       if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
         navigatePath('/login', true);
       }
@@ -993,7 +994,7 @@ function App() {
       }
 
       if (!isAuthenticated) {
-        const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/data-deletion', '/reset-password', '/verify-email'];
+        const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/changelog', '/data-deletion', '/reset-password', '/verify-email'];
         if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
           navigatePath('/login', true);
           setCurrentPathname('/login');
@@ -1047,6 +1048,7 @@ function App() {
   if (currentPathname === '/terms') return <Suspense fallback={<PageFallback />}><TermsOfService /></Suspense>;
   if (currentPathname === '/refund') return <Suspense fallback={<PageFallback />}><RefundPolicy /></Suspense>;
   if (currentPathname === '/tools') return <Suspense fallback={<PageFallback />}><Tools onLoginClick={goToLogin} /></Suspense>;
+  if (currentPathname === '/changelog') return <Suspense fallback={<PageFallback />}><Changelog /></Suspense>;
   if (currentPathname === '/data-deletion') return <Suspense fallback={<PageFallback />}><DataDeletion /></Suspense>;
   if (currentPathname.startsWith('/auth/')) return <Suspense fallback={<PageFallback />}><OAuthCallback /></Suspense>;
   if (currentPathname === '/reset-password') return <Suspense fallback={<PageFallback />}><ResetPassword /></Suspense>;

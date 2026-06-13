@@ -1,4 +1,4 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import type { Pool } from 'pg';
@@ -12,8 +12,23 @@ import { TikTokAdapter } from '../../backend/src/services/platform-adapters/tikt
 import type { PostObject } from '../../backend/platforms/types.ts';
 import { config } from '../config.ts';
 import { logger } from '../logger.ts';
+import {
+  getLinkedInRestHeaders,
+  parseLinkedInOrganizationId as _parseLinkedInOrganizationId,
+  fetchLinkedInOrganizationsByIds,
+  fetchLinkedInOrganizationNetworkSize,
+  fetchLinkedInPostsByAuthor,
+  fetchLinkedInSocialMetadataBatch,
+  sumLinkedInReactionCounts,
+  fetchLinkedInShareStatisticsForPosts,
+  listLinkedInAdminOrganizations,
+  resolveLinkedInProfileIdentity,
+  extractLinkedInOrganizationDescription,
+  extractLinkedInPostText,
+  extractLinkedInPostMediaType,
+} from './distribution/linkedinHelpers.ts';
 
-// ─── Deps ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Deps 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface DistributionDeps {
   requireAuth: (req: Request, res: Response) => { userId: string; role: string; tokenVersion: number | null } | null;
@@ -39,7 +54,7 @@ export type PublishableSocialConnection = {
   token_expires_at?: string | null;
 };
 
-// ─── Platform instances (singletons) ─────────────────────────────────────────
+// 鈹€鈹€鈹€ Platform instances (singletons) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 const facebookPagesPlatform = new FacebookPagesPlatform();
 const instagramBusinessPlatform = new InstagramBusinessPlatform();
@@ -51,7 +66,7 @@ function isBullMqEnabled() {
   return Boolean(REDIS_URL && REDIS_URL.trim());
 }
 
-// ─── Factory ──────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Factory 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface DistributionModule {
   router: Router;
@@ -628,7 +643,7 @@ async function markSocialAccountNeedsReapproval(params: {
 
 async function resolveLinkedInAuthorUrn(params: { userId: string; accessToken: string }) {
   if (!pool) return null;
-  // Primary: /v2/me (r_liteprofile — standard "Share on LinkedIn" scope)
+  // Primary: /v2/me (r_liteprofile 鈥?standard "Share on LinkedIn" scope)
   const meResp = await axios.get('https://api.linkedin.com/v2/me', {
     headers: { Authorization: `Bearer ${params.accessToken}` },
     validateStatus: () => true,
@@ -844,8 +859,8 @@ async function refreshThreadsAccessToken(accessToken: string) {
 // Fetch TikTok user profile with graceful scope fallback.
 // Fetch TikTok user profile using two independent requests so a missing
 // user.info.stats scope never blocks the basic profile from being saved.
-// Call 1 (always): basic identity fields — always works with user.info.basic
-// Call 2 (optional): stats fields — silently skipped if scope not approved
+// Call 1 (always): basic identity fields 鈥?always works with user.info.basic
+// Call 2 (optional): stats fields 鈥?silently skipped if scope not approved
 
 async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
   if (!pool) return null;
@@ -1166,411 +1181,6 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     needs_reapproval: true,
     token_expires_at: rawExpiry,
   };
-}
-
-const LINKEDIN_MARKETING_VERSION = String(process.env.LINKEDIN_API_VERSION || '202603').trim() || '202603';
-
-function getLinkedInRestHeaders(accessToken: string, contentType = 'application/json'): Record<string, string> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    'X-Restli-Protocol-Version': '2.0.0',
-    'LinkedIn-Version': LINKEDIN_MARKETING_VERSION,
-  };
-  if (contentType) headers['Content-Type'] = contentType;
-  return headers;
-}
-
-function parseLinkedInOrganizationId(value: unknown): string {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  const urnMatch = raw.match(/organization:(\d+)/i);
-  if (urnMatch?.[1]) return urnMatch[1];
-  return /^\d+$/.test(raw) ? raw : '';
-}
-
-function buildLinkedInRestliList(values: string[]): string {
-  return `List(${values.map((value) => encodeURIComponent(value)).join(',')})`;
-}
-
-function buildLinkedInRestliListValue(values: string[]): string {
-  return `List(${values.join(',')})`;
-}
-
-function normalizeLinkedInOrganization(org: any, idFallback = ''): {
-  id: string;
-  name: string;
-  picture_url?: string | null;
-  raw: any;
-} {
-  const id = parseLinkedInOrganizationId(org?.id) || idFallback;
-  const localizedName = String(org?.localizedName || org?.name || '').trim();
-  return {
-    id,
-    name: localizedName || `LinkedIn Page ${id || idFallback}`,
-    picture_url:
-      (typeof org?.logoV2?.displayedPicture === 'string' && org.logoV2.displayedPicture) ||
-      (typeof org?.logoV2?.original === 'string' && org.logoV2.original) ||
-      null,
-    raw: org,
-  };
-}
-
-async function fetchLinkedInOrganizationsByIds(
-  accessToken: string,
-  organizationIds: string[],
-): Promise<Array<{ id: string; name: string; picture_url?: string | null; raw: any }>> {
-  const uniqueIds = Array.from(new Set(organizationIds.map((id) => String(id || '').trim()).filter(Boolean)));
-  if (uniqueIds.length === 0) return [];
-
-  const batchResp = await axios.get(
-    `https://api.linkedin.com/rest/organizations?ids=${buildLinkedInRestliList(uniqueIds)}`,
-    {
-      headers: getLinkedInRestHeaders(accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    },
-  );
-
-  const batchData: any = batchResp.data || {};
-  if (batchResp.status < 400 && batchData?.results && typeof batchData.results === 'object') {
-    return uniqueIds
-      .map((id) => {
-        const status = Number(batchData?.statuses?.[id] ?? 200);
-        if (status >= 400) return null;
-        const org = batchData.results[id];
-        if (!org) return null;
-        return normalizeLinkedInOrganization(org, id);
-      })
-      .filter(Boolean) as Array<{ id: string; name: string; picture_url?: string | null; raw: any }>;
-  }
-
-  const organizations: Array<{ id: string; name: string; picture_url?: string | null; raw: any }> = [];
-  for (const organizationId of uniqueIds) {
-    const orgResp = await axios.get(`https://api.linkedin.com/rest/organizations/${encodeURIComponent(organizationId)}`, {
-      headers: getLinkedInRestHeaders(accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (orgResp.status >= 400 || !orgResp.data) continue;
-    organizations.push(normalizeLinkedInOrganization(orgResp.data, organizationId));
-  }
-  return organizations;
-}
-
-async function fetchLinkedInOrganizationNetworkSize(accessToken: string, organizationUrn: string): Promise<number | null> {
-  const resp = await axios.get(
-    `https://api.linkedin.com/rest/networkSizes/${encodeURIComponent(organizationUrn)}`,
-    {
-      params: { edgeType: 'COMPANY_FOLLOWED_BY_MEMBER' },
-      headers: getLinkedInRestHeaders(accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    },
-  );
-  if (resp.status >= 400) return null;
-  const firstDegreeSize = Number((resp.data as any)?.firstDegreeSize);
-  return Number.isFinite(firstDegreeSize) ? firstDegreeSize : null;
-}
-
-async function fetchLinkedInPostsByAuthor(accessToken: string, authorUrn: string, maxCount = 100): Promise<any[]> {
-  const posts: any[] = [];
-  let start = 0;
-
-  while (posts.length < maxCount) {
-    const count = Math.min(100, maxCount - posts.length);
-    const resp = await axios.get('https://api.linkedin.com/rest/posts', {
-      params: {
-        q: 'author',
-        author: authorUrn,
-        viewContext: 'AUTHOR',
-        count,
-        start,
-      },
-      headers: getLinkedInRestHeaders(accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (resp.status >= 400) break;
-
-    const elements = Array.isArray((resp.data as any)?.elements) ? (resp.data as any).elements : [];
-    posts.push(...elements);
-    if (elements.length < count) break;
-    start += elements.length;
-  }
-
-  return posts;
-}
-
-async function fetchLinkedInSocialMetadataBatch(accessToken: string, entityUrns: string[]): Promise<Record<string, any>> {
-  const uniqueUrns = Array.from(new Set(entityUrns.map((urn) => String(urn || '').trim()).filter(Boolean)));
-  if (uniqueUrns.length === 0) return {};
-
-  const resp = await axios.get(
-    `https://api.linkedin.com/rest/socialMetadata?ids=${buildLinkedInRestliList(uniqueUrns)}`,
-    {
-      headers: getLinkedInRestHeaders(accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    },
-  );
-  if (resp.status >= 400) return {};
-  const data: any = resp.data || {};
-  return data?.results && typeof data.results === 'object' ? data.results : {};
-}
-
-function sumLinkedInReactionCounts(metadata: any): number {
-  const summaries = metadata?.reactionSummaries;
-  if (!summaries || typeof summaries !== 'object') return 0;
-  return Object.values(summaries).reduce((sum, summary: any) => sum + Number(summary?.count || 0), 0);
-}
-
-async function fetchLinkedInShareStatisticsForPosts(
-  accessToken: string,
-  organizationUrn: string,
-  postUrns: string[],
-): Promise<Map<string, any>> {
-  const uniquePostUrns = Array.from(new Set(postUrns.map((urn) => String(urn || '').trim()).filter(Boolean)));
-  if (uniquePostUrns.length === 0) return new Map();
-
-  const params = new URLSearchParams({
-    q: 'organizationalEntity',
-    organizationalEntity: organizationUrn,
-  });
-
-  const shareUrns = uniquePostUrns.filter((urn) => /^urn:li:share:/i.test(urn));
-  const ugcPostUrns = uniquePostUrns.filter((urn) => /^urn:li:ugcPost:/i.test(urn));
-  if (shareUrns.length > 0) params.set('shares', buildLinkedInRestliListValue(shareUrns));
-  if (ugcPostUrns.length > 0) params.set('ugcPosts', buildLinkedInRestliListValue(ugcPostUrns));
-
-  const resp = await axios.get(
-    `https://api.linkedin.com/rest/organizationalEntityShareStatistics?${params.toString()}`,
-    {
-      headers: getLinkedInRestHeaders(accessToken),
-      validateStatus: () => true,
-      timeout: 15000,
-    },
-  );
-
-  const statsByPost = new Map<string, any>();
-  if (resp.status >= 400) return statsByPost;
-
-  const elements = Array.isArray((resp.data as any)?.elements) ? (resp.data as any).elements : [];
-  for (const element of elements) {
-    const key = String(element?.share || element?.ugcPost || '').trim();
-    if (!key) continue;
-    statsByPost.set(key, element?.totalShareStatistics || {});
-  }
-  return statsByPost;
-}
-
-async function getLinkedInAuthContext(userId: string): Promise<{
-  accessToken: string;
-  socialAccountId: string | null;
-  hasConnection: boolean;
-  accountId: string | null;
-  accountName: string | null;
-  tokenData: any;
-}> {
-  const conn = await getPublishableSocialConnection(userId, 'linkedin');
-  const preferredAccountId = String(conn?.account_id || '').trim();
-  let socialAccountId: string | null = null;
-
-  if (pool) {
-    const accountRes = await pool.query(
-      `SELECT id
-       FROM social_accounts
-       WHERE user_id=$1
-         AND platform='linkedin'
-         AND connected=true
-       ORDER BY
-         CASE WHEN account_type='profile' OR account_type IS NULL THEN 0 ELSE 1 END,
-         CASE WHEN $2 <> '' AND account_id=$2 THEN 0 ELSE 1 END,
-         CASE WHEN COALESCE(access_token_encrypted, '') <> '' OR COALESCE(access_token, '') <> '' THEN 0 ELSE 1 END,
-         COALESCE(connected_at, created_at) DESC,
-         created_at DESC
-       LIMIT 1`,
-      [userId, preferredAccountId]
-    );
-    socialAccountId = accountRes.rows[0]?.id ? String(accountRes.rows[0].id) : null;
-  }
-
-  return {
-    accessToken: String(conn?.access_token || '').trim(),
-    socialAccountId,
-    hasConnection: Boolean(conn || socialAccountId),
-    accountId: conn?.account_id || null,
-    accountName: conn?.account_name || null,
-    tokenData: conn?.token_data || {},
-  };
-}
-
-async function resolveLinkedInProfileIdentity(accessToken: string, fallback?: {
-  accountId?: string | null;
-  accountName?: string | null;
-  tokenData?: any;
-}): Promise<{ personId: string; profileName: string }> {
-  let personId =
-    String(fallback?.accountId || '').trim() ||
-    String(fallback?.tokenData?.sub || fallback?.tokenData?.user_id || fallback?.tokenData?.id || '').trim();
-  let profileName = String(fallback?.accountName || fallback?.tokenData?.name || '').trim();
-
-  if (!personId || !profileName) {
-    const meResp = await axios.get('https://api.linkedin.com/v2/me', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      validateStatus: () => true,
-      timeout: 15000,
-    });
-    if (meResp.status < 400) {
-      const meData: any = meResp.data || {};
-      personId = personId || String(meData?.id || '').trim();
-      profileName = profileName ||
-        [String(meData?.localizedFirstName || '').trim(), String(meData?.localizedLastName || '').trim()]
-          .filter(Boolean)
-          .join(' ')
-          .trim();
-    }
-    if (!personId) {
-      const userinfoResp = await axios.get('https://api.linkedin.com/v2/userinfo', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        validateStatus: () => true,
-        timeout: 15000,
-      });
-      if (userinfoResp.status >= 400) {
-        throw new Error('LinkedIn profile lookup failed — please reconnect');
-      }
-      const userData: any = userinfoResp.data || {};
-      personId = String(userData?.sub || '').trim();
-      profileName = profileName ||
-        String(userData?.name || '').trim() ||
-        [String(userData?.given_name || '').trim(), String(userData?.family_name || '').trim()]
-          .filter(Boolean)
-          .join(' ')
-          .trim();
-    }
-  }
-
-  return { personId, profileName };
-}
-
-async function listLinkedInAdminOrganizations(
-  accessToken: string,
-  _personId: string,
-  options?: { allowedRoles?: string[] },
-): Promise<{
-  organizations: Array<{ id: string; name: string; picture_url?: string | null; roles?: string[] }>;
-  warning: string | null;
-}> {
-  const allowedRoles = new Set((options?.allowedRoles || []).map((role) => String(role || '').trim().toUpperCase()).filter(Boolean));
-  const aclRequests = [
-    {
-      url: 'https://api.linkedin.com/rest/organizationAcls',
-      headers: getLinkedInRestHeaders(accessToken),
-    },
-    {
-      url: 'https://api.linkedin.com/v2/organizationAcls',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'X-Restli-Protocol-Version': '2.0.0',
-      },
-    },
-  ];
-
-  let aclWarning: string | null = null;
-  const organizationRoles = new Map<string, Set<string>>();
-  let requestIndex = 0;
-  let start = 0;
-  const count = 100;
-
-  while (requestIndex < aclRequests.length) {
-    const request = aclRequests[requestIndex];
-    const params: Record<string, string | number> = {
-      q: 'roleAssignee',
-      count,
-      start,
-    };
-
-    const aclResp = await axios.get(
-      request.url,
-      {
-        params,
-        headers: request.headers,
-        validateStatus: () => true,
-        timeout: 15000,
-      },
-    );
-    const aclData: any = aclResp.data || {};
-
-    if (aclResp.status >= 400) {
-      aclWarning = aclData?.message || `LinkedIn organization ACL lookup failed (${aclResp.status})`;
-      if (requestIndex === 0 && [400, 401, 404, 410, 426].includes(aclResp.status)) {
-        requestIndex += 1;
-        start = 0;
-        continue;
-      }
-      return { organizations: [], warning: aclWarning };
-    }
-
-    const elements = Array.isArray(aclData?.elements) ? aclData.elements : [];
-    for (const row of elements) {
-      const state = String(row?.state || '').trim().toUpperCase();
-      if (state && state !== 'APPROVED') continue;
-      const role = String(row?.role || '').trim().toUpperCase();
-      if (allowedRoles.size > 0 && role && !allowedRoles.has(role)) continue;
-      const organizationId = parseLinkedInOrganizationId(row?.organizationTarget || row?.organization);
-      if (!organizationId) continue;
-      const roles = organizationRoles.get(organizationId) || new Set<string>();
-      if (role) roles.add(role);
-      organizationRoles.set(organizationId, roles);
-    }
-
-    if (elements.length < count) {
-      const organizationDetails = await fetchLinkedInOrganizationsByIds(accessToken, Array.from(organizationRoles.keys()));
-      return {
-        organizations: organizationDetails.map((org) => ({
-          id: org.id,
-          name: org.name,
-          picture_url: org.picture_url,
-          roles: Array.from(organizationRoles.get(org.id) || []),
-        })),
-        warning: aclWarning,
-      };
-    }
-
-    start += count;
-  }
-
-  return { organizations: [], warning: aclWarning };
-}
-
-function extractLinkedInOrganizationDescription(org: any): string | null {
-  const direct = String(org?.description || '').trim();
-  if (direct) return direct;
-
-  const localized = org?.description?.localized;
-  if (localized && typeof localized === 'object') {
-    const first = Object.values(localized).find((value) => typeof value === 'string' && String(value).trim());
-    if (typeof first === 'string' && first.trim()) return first.trim();
-  }
-
-  return null;
-}
-
-function extractLinkedInPostText(post: any): string | null {
-  const commentary = String(post?.commentary || '').trim();
-  if (commentary) return commentary.slice(0, 5000);
-  const articleTitle = String(post?.content?.article?.title || '').trim();
-  if (articleTitle) return articleTitle.slice(0, 5000);
-  return null;
-}
-
-function extractLinkedInPostMediaType(post: any): string {
-  const mediaId = String(post?.content?.media?.id || '').trim().toLowerCase();
-  if (post?.content?.multiImage?.images?.length) return 'multi_image';
-  if (post?.content?.article?.source) return 'article';
-  if (mediaId.includes(':video:')) return 'video';
-  if (mediaId.includes(':image:')) return 'image';
-  if (mediaId.includes(':document:')) return 'document';
-  return 'text';
 }
 
 async function getUserSettingValue(userId: string, key: string): Promise<any | null> {
@@ -2441,7 +2051,7 @@ async function publishToplatform(
       if (!boardId) {
         return {
           status: 'failed',
-          error: 'No Pinterest board selected. Pick a default board in Analytics → Pinterest, or create a board on Pinterest first.',
+          error: 'No Pinterest board selected. Pick a default board in Analytics 鈫?Pinterest, or create a board on Pinterest first.',
         };
       }
 
@@ -2721,7 +2331,7 @@ async function publishToplatform(
       const commentDisabled = creatorInfo?.comment_disabled ?? false;
       const maxVideoDuration = Number(creatorInfo?.max_video_post_duration_sec || 60);
 
-      // Step 2: Initialize post — photo post if image available, otherwise text-to-video (draft)
+      // Step 2: Initialize post 鈥?photo post if image available, otherwise text-to-video (draft)
       const postCaption = text.slice(0, 2200); // TikTok caption limit
 
       if (featuredImage) {
@@ -2762,7 +2372,7 @@ async function publishToplatform(
         return { status: 'published', platformPostId: publishId };
       }
 
-      // No image — send as draft video so user can finish in TikTok app
+      // No image 鈥?send as draft video so user can finish in TikTok app
       const draftBody = {
         post_info: {
           title: postCaption,
@@ -2790,7 +2400,7 @@ async function publishToplatform(
         return { status: 'failed', error: msg, retryable: draftResp.status >= 500 };
       }
       const draftPublishId = String(draftData?.data?.publish_id || '').trim();
-      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_drafted', status: 'success', response: { publishId: draftPublishId, note: 'Text-only post sent as TikTok draft — open TikTok app to finish and post' } });
+      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_drafted', status: 'success', response: { publishId: draftPublishId, note: 'Text-only post sent as TikTok draft 鈥?open TikTok app to finish and post' } });
       // Return as published with a note so the user knows to check their TikTok drafts
       return {
         status: 'published',
@@ -2952,8 +2562,7 @@ router.post('/api/automation/retry/:logId', async (req: Request, res: Response) 
   }
 });
 
-// ═════════ Meta Data Deletion (Facebook requirement) ═════════
-
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Meta Data Deletion (Facebook requirement) 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 const base64UrlToBuffer = (value: string): Buffer => {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
@@ -3081,7 +2690,7 @@ const deleteBestEffortUserDataByMetaUserId = async (metaUserId: string): Promise
   return deleted;
 };
 
-// POST /api/meta/data-deletion — Meta "Data Deletion Request URL"
+// POST /api/meta/data-deletion 鈥?Meta "Data Deletion Request URL"
 router.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
   try {
     const signedRequest = String((req.body as any)?.signed_request || '').trim();
@@ -3112,7 +2721,7 @@ router.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/meta/data-deletion/status?code=... — used by our public status page
+// GET /api/meta/data-deletion/status?code=... 鈥?used by our public status page
 router.get('/api/meta/data-deletion/status', async (req: Request, res: Response) => {
   try {
     const code = String((req.query as any)?.code || '').trim();
@@ -3138,7 +2747,7 @@ router.get('/api/meta/data-deletion/status', async (req: Request, res: Response)
 
 // Meta Deauthorize Callback (uninstall)
 
-// POST /api/meta/deauthorize — Meta "Deauthorize Callback URL"
+// POST /api/meta/deauthorize 鈥?Meta "Deauthorize Callback URL"
 router.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
   try {
     const signedRequest = String((req.body as any)?.signed_request || '').trim();

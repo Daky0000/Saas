@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { label: 'Features', href: '/#features' },
   { label: 'Tools', href: '/tools' },
   { label: 'Pricing', href: '/pricing' },
+  { label: "What's New", href: '/changelog', badge: true },
 ];
 
 export default function PublicNav({ onLoginClick, activePath = '/' }: PublicNavProps) {
@@ -57,13 +58,16 @@ export default function PublicNav({ onLoginClick, activePath = '/' }: PublicNavP
             <a
               key={link.label}
               href={link.href}
-              className={`px-3.5 py-2 rounded-lg text-[14px] font-medium transition-all duration-150 ${
+              className={`relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[14px] font-medium transition-all duration-150 ${
                 activePath === link.href.replace('/#features','/')
                   ? 'text-[#5b6cf9] bg-[#eef0fe]'
                   : 'text-[#6b7280] hover:text-[#0a0a0b] hover:bg-[#f3f4f6]'
               }`}
             >
               {link.label}
+              {(link as any).badge && (
+                <span className="rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-white leading-none">New</span>
+              )}
             </a>
           ))}
         </nav>

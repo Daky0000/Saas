@@ -69,6 +69,18 @@ export type MailingAnalytics = {
   rates: { openRate: number; clickRate: number; bounceRate: number };
 };
 
+export type CampaignAnalyticsRow = {
+  campaign_id: string;
+  name: string;
+  sent_at: string | null;
+  delivered: number;
+  opens: number;
+  clicks: number;
+  unsubscribes: number;
+  open_rate: number;
+  click_rate: number;
+};
+
 const BASE = `${API_BASE_URL}/api/mailing`;
 
 export type ContactAnalytics = {
@@ -258,5 +270,11 @@ export const mailingService = {
     const res = await fetch(`${BASE}/analytics`, { headers: authHeaders() });
     const data = await parseJson<MailingAnalytics & { success: boolean }>(res);
     return data;
+  },
+
+  async getCampaignAnalytics(): Promise<CampaignAnalyticsRow[]> {
+    const res = await fetch(`${BASE}/analytics/campaigns`, { headers: authHeaders() });
+    const data = await parseJson<{ success: boolean; rows: CampaignAnalyticsRow[] }>(res);
+    return data.rows ?? [];
   },
 };

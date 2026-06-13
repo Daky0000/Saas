@@ -145,32 +145,120 @@ function makeSection(fractions: number[]): SectionBlock {
 
 // ─── Templates ────────────────────────────────────────────────────────────────
 
-interface Template { id: string; name: string; emoji: string; description: string; blocks: () => EmailBlock[] }
+interface Template {
+  id: string; name: string; emoji: string; description: string; category: string;
+  accentColor: string; headerBg: string; blocks: () => EmailBlock[];
+}
 
 const TEMPLATES: Template[] = [
   {
-    id: 'blank', name: 'Blank', emoji: '📄', description: 'Start from scratch',
+    id: 'blank', name: 'Blank', emoji: '📄', description: 'Start from scratch', category: 'Basic',
+    accentColor: '#5b6cf9', headerBg: '#5b6cf9',
     blocks: () => [
-      { id: uid(), type: 'header', headline: 'Welcome', subheadline: '', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 40 },
+      { id: uid(), type: 'header', headline: 'Your Headline Here', subheadline: 'A brief supporting tagline', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 40 },
       { id: uid(), type: 'text', content: 'Write your message here.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.7 },
       { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#f9fafb', textColor: '#6b7280' },
     ],
   },
   {
-    id: 'newsletter', name: 'Newsletter', emoji: '📰', description: 'Regular updates',
+    id: 'welcome', name: 'Welcome Email', emoji: '👋', description: 'Greet new subscribers', category: 'Onboarding',
+    accentColor: '#10b981', headerBg: '#065f46',
     blocks: () => [
-      { id: uid(), type: 'header', headline: 'Monthly Newsletter', subheadline: 'Your roundup', bgColor: '#1e293b', textColor: '#ffffff', align: 'center', padding: 48 },
-      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>Here\'s what\'s been happening this month.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
-      { id: uid(), type: 'button', text: 'Read More', href: '#', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 32, borderRadius: 8, fontSize: 15 },
+      { id: uid(), type: 'header', headline: 'Welcome to {{company}}!', subheadline: "We're so glad you're here", bgColor: '#065f46', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>Welcome aboard! We\'re excited to have you join us. Here\'s what you can expect from us.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'button', text: 'Get Started', href: '#', bgColor: '#10b981', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'spacer', height: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St, City', bgColor: '#f0fdf4', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'newsletter', name: 'Newsletter', emoji: '📰', description: 'Regular updates & roundup', category: 'Content',
+    accentColor: '#5b6cf9', headerBg: '#1e293b',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: 'Monthly Newsletter', subheadline: 'Your curated roundup', bgColor: '#1e293b', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>Here\'s what\'s been happening this month. We\'ve curated the best stories and updates just for you.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'divider', color: '#e5e7eb', thickness: 1, padding: 8 },
+      { id: uid(), type: 'text', content: '<strong>Top Story</strong><br/>Add your featured story or announcement here.', bgColor: '#ffffff', textColor: '#374151', fontSize: 15, padding: 24, lineHeight: 1.7 },
+      { id: uid(), type: 'button', text: 'Read More', href: '#', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 8, fontSize: 15 },
       { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St', bgColor: '#f9fafb', textColor: '#6b7280' },
     ],
   },
   {
-    id: 'promotional', name: 'Promotional', emoji: '🛍️', description: 'Sales & offers',
+    id: 'promotional', name: 'Promotional', emoji: '🛍️', description: 'Sales, discounts & offers', category: 'Marketing',
+    accentColor: '#ef4444', headerBg: '#ef4444',
     blocks: () => [
-      { id: uid(), type: 'header', headline: '🔥 Limited Time Offer', subheadline: 'Don\'t miss out', bgColor: '#ef4444', textColor: '#ffffff', align: 'center', padding: 48 },
-      { id: uid(), type: 'button', text: 'Shop Now', href: '#', bgColor: '#ef4444', textColor: '#ffffff', align: 'center', padding: 32, borderRadius: 10, fontSize: 17 },
-      { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#f9fafb', textColor: '#6b7280' },
+      { id: uid(), type: 'header', headline: 'Limited Time Offer', subheadline: "Don't miss out — ends Sunday", bgColor: '#ef4444', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: 'Hi {{first_name}},<br/><br/>We\'re offering an exclusive discount just for you. Use the button below to claim your offer before it expires.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.7 },
+      { id: uid(), type: 'button', text: 'Claim My Offer', href: '#', bgColor: '#ef4444', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 17 },
+      { id: uid(), type: 'spacer', height: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#fef2f2', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'product-launch', name: 'Product Launch', emoji: '🚀', description: 'Announce a new product or feature', category: 'Marketing',
+    accentColor: '#8b5cf6', headerBg: '#4c1d95',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: 'Introducing Something New', subheadline: 'Your new product — now live', bgColor: '#4c1d95', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We\'ve been working hard on something special, and today is finally the day. We\'re thrilled to introduce our latest product.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'divider', color: '#e5e7eb', thickness: 1, padding: 8 },
+      { id: uid(), type: 'text', content: '<strong>What\'s new</strong><br/>• Feature one description<br/>• Feature two description<br/>• Feature three description', bgColor: '#ffffff', textColor: '#374151', fontSize: 15, padding: 24, lineHeight: 1.8 },
+      { id: uid(), type: 'button', text: 'See It Now', href: '#', bgColor: '#8b5cf6', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St', bgColor: '#f5f3ff', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'event-invite', name: 'Event Invitation', emoji: '🎉', description: 'Invite subscribers to an event', category: 'Events',
+    accentColor: '#f59e0b', headerBg: '#92400e',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: "You're Invited!", subheadline: 'Join us for an exclusive event', bgColor: '#92400e', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We\'d love for you to join us at our upcoming event. Reserve your spot now — seats are limited.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'text', content: '<strong>Date:</strong> [Event Date]<br/><strong>Time:</strong> [Event Time]<br/><strong>Location:</strong> [Event Location]', bgColor: '#fffbeb', textColor: '#374151', fontSize: 15, padding: 24, lineHeight: 1.8 },
+      { id: uid(), type: 'button', text: 'Reserve My Spot', href: '#', bgColor: '#f59e0b', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St', bgColor: '#fffbeb', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'feature-update', name: 'Feature Update', emoji: '✨', description: 'Share new features or improvements', category: 'Content',
+    accentColor: '#0ea5e9', headerBg: '#0c4a6e',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: "What's New", subheadline: 'Updates and improvements just for you', bgColor: '#0c4a6e', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We\'ve shipped several improvements based on your feedback. Here\'s a quick look at what changed.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'divider', color: '#e0f2fe', thickness: 2, padding: 8 },
+      { id: uid(), type: 'text', content: '<strong>New feature 1</strong><br/>Describe this improvement and what problem it solves.', bgColor: '#f0f9ff', textColor: '#374151', fontSize: 15, padding: 24, lineHeight: 1.7 },
+      { id: uid(), type: 'button', text: 'Try It Now', href: '#', bgColor: '#0ea5e9', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 8, fontSize: 15 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#f0f9ff', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'survey', name: 'Survey / Feedback', emoji: '📋', description: 'Ask subscribers for feedback', category: 'Engagement',
+    accentColor: '#14b8a6', headerBg: '#134e4a',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: 'Share Your Feedback', subheadline: 'Your opinion matters to us', bgColor: '#134e4a', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We value your feedback and would love to hear your thoughts. This survey takes just 2 minutes — we promise!', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'button', text: 'Take the Survey', href: '#', bgColor: '#14b8a6', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'spacer', height: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#f0fdfa', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'reengagement', name: 'Re-engagement', emoji: '💌', description: 'Win back inactive subscribers', category: 'Engagement',
+    accentColor: '#ec4899', headerBg: '#831843',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: 'We Miss You', subheadline: "It's been a while — come back!", bgColor: '#831843', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We noticed you haven\'t heard from us in a while. We\'ve been busy building things we think you\'ll love. Here\'s a special offer to welcome you back.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'button', text: "I'm Back!", href: '#', bgColor: '#ec4899', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'spacer', height: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#fdf2f8', textColor: '#6b7280' },
+    ],
+  },
+  {
+    id: 'thankyou', name: 'Thank You', emoji: '🙏', description: 'Express gratitude to subscribers', category: 'Basic',
+    accentColor: '#f97316', headerBg: '#7c2d12',
+    blocks: () => [
+      { id: uid(), type: 'header', headline: 'Thank You!', subheadline: 'We appreciate your support', bgColor: '#7c2d12', textColor: '#ffffff', align: 'center', padding: 48 },
+      { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We just wanted to take a moment to say thank you. Your support means everything to us and we\'re committed to continuing to deliver value to you.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
+      { id: uid(), type: 'button', text: 'View Your Benefits', href: '#', bgColor: '#f97316', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#fff7ed', textColor: '#6b7280' },
     ],
   },
 ];
@@ -907,19 +995,64 @@ function PreviewModal({ html, onClose }: { html: string; onClose: () => void }) 
 
 // ─── Template Picker ──────────────────────────────────────────────────────────
 
-function TemplatePicker({ onSelect, onClose }: { onSelect: (t: Template) => void; onClose: () => void }) {
+const TEMPLATE_CATEGORIES = ['All', 'Basic', 'Onboarding', 'Marketing', 'Content', 'Events', 'Engagement'];
+
+function TemplateMiniPreview({ t }: { t: Template }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-6">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+    <div className="w-full overflow-hidden rounded-lg border border-slate-100" style={{ background: '#f4f4f7' }}>
+      <div className="flex flex-col" style={{ minHeight: 88 }}>
+        <div className="px-3 py-3 text-center" style={{ background: t.headerBg }}>
+          <div className="mx-auto h-2 rounded-full bg-white/80" style={{ width: '72%', marginBottom: 4 }} />
+          <div className="mx-auto h-1.5 rounded-full bg-white/40" style={{ width: '48%' }} />
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5 bg-white p-2">
+          <div className="h-1.5 rounded-full bg-slate-200" style={{ width: '90%' }} />
+          <div className="h-1.5 rounded-full bg-slate-200" style={{ width: '75%' }} />
+          <div className="mt-1 flex justify-center">
+            <div className="h-4 rounded-full px-3" style={{ background: t.accentColor, width: 44 }} />
+          </div>
+        </div>
+        <div className="flex justify-center bg-slate-50 px-2 py-1.5">
+          <div className="h-1 rounded-full bg-slate-200" style={{ width: '55%' }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TemplatePicker({ onSelect, onClose }: { onSelect: (t: Template) => void; onClose: () => void }) {
+  const [activeCategory, setActiveCategory] = useState('All');
+  const visible = activeCategory === 'All' ? TEMPLATES : TEMPLATES.filter(t => t.category === activeCategory);
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+      <div className="flex w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl" style={{ maxHeight: 'calc(100vh - 48px)' }}>
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
-          <div><h2 className="text-lg font-black text-slate-950">Choose a Template</h2><p className="mt-0.5 text-sm text-slate-500">Start with a pre-built layout.</p></div>
+          <div>
+            <h2 className="text-lg font-black text-slate-950">Choose a Template</h2>
+            <p className="mt-0.5 text-sm text-slate-500">{TEMPLATES.length} pre-built layouts — pick one to customize.</p>
+          </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><X size={18} /></button>
         </div>
-        <div className="grid grid-cols-2 gap-3 p-6 sm:grid-cols-3">
-          {TEMPLATES.map(t => (
-            <button key={t.id} onClick={() => onSelect(t)} className="flex flex-col items-start gap-2 rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-[#5b6cf9] hover:bg-indigo-50 transition-all">
-              <span className="text-2xl">{t.emoji}</span>
-              <div><div className="text-sm font-bold text-slate-900">{t.name}</div><div className="mt-0.5 text-xs text-slate-500">{t.description}</div></div>
+        <div className="flex gap-1.5 overflow-x-auto border-b border-slate-100 px-6 py-3 scrollbar-hide">
+          {TEMPLATE_CATEGORIES.map(cat => (
+            <button key={cat} onClick={() => setActiveCategory(cat)}
+              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors ${activeCategory === cat ? 'bg-[#5b6cf9] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {cat}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3 overflow-y-auto p-6 sm:grid-cols-3 lg:grid-cols-4">
+          {visible.map(t => (
+            <button key={t.id} onClick={() => onSelect(t)}
+              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-[#5b6cf9] hover:shadow-md transition-all">
+              <TemplateMiniPreview t={t} />
+              <div className="flex items-start gap-1.5">
+                <span className="mt-0.5 text-base leading-none">{t.emoji}</span>
+                <div>
+                  <div className="text-xs font-bold text-slate-900 group-hover:text-[#5b6cf9] transition-colors">{t.name}</div>
+                  <div className="mt-0.5 text-[10px] text-slate-400">{t.description}</div>
+                </div>
+              </div>
             </button>
           ))}
         </div>

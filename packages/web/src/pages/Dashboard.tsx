@@ -278,12 +278,95 @@ function ChartTooltip({ active, payload, label }: any) {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
+// ── Onboarding Checklist ─────────────────────────────────────────────────────
+
+function OnboardingChecklist({
+  hasAccounts, hasPosts, hasDesigns, hasEmails, userId,
+}: {
+  hasAccounts: boolean; hasPosts: boolean; hasDesigns: boolean; hasEmails: boolean; userId?: string | null;
+}) {
+  const storageKey = `onboarding_dismissed_${userId ?? 'anon'}`;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(storageKey) === '1');
+
+  const steps = [
+    { label: 'Connect a social platform', done: hasAccounts, href: '/integrations', icon: Link2 },
+    { label: 'Create your first post', done: hasPosts, href: '/posts', icon: FileText },
+    { label: 'Design a card', done: hasDesigns, href: '/cards', icon: Palette },
+    { label: 'Send a marketing email', done: hasEmails, href: '/marketing/email', icon: Bell },
+  ];
+  const completed = steps.filter(s => s.done).length;
+  const allDone = completed === steps.length;
+
+  if (dismissed) return null;
+
+  const dismiss = () => {
+    localStorage.setItem(storageKey, '1');
+    setDismissed(true);
+  };
+
+  const navigate = (path: string) => {
+    window.history.pushState({}, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
+  return (
+    <div className={`rounded-2xl border p-5 ${allDone ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'} shadow-sm`}>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Getting Started</p>
+          <h3 className="text-base font-black text-slate-900">
+            {allDone ? 'You\'re all set! 🎉' : `Setup checklist (${completed}/${steps.length})`}
+          </h3>
+          {!allDone && <p className="mt-0.5 text-xs text-slate-500">Complete these steps to get the most out of your workspace.</p>}
+        </div>
+        <button type="button" onClick={dismiss} className="rounded-lg p-1 text-slate-300 hover:text-slate-500 transition-colors">
+          <X size={14} />
+        </button>
+      </div>
+
+      {!allDone && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-slate-500">{Math.round((completed / steps.length) * 100)}% complete</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div className="h-full rounded-full bg-[#5b6cf9] transition-all duration-500" style={{ width: `${(completed / steps.length) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      <ul className="space-y-2">
+        {steps.map(step => (
+          <li key={step.label}>
+            <button type="button" disabled={step.done} onClick={() => navigate(step.href)}
+              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${step.done ? 'opacity-60 cursor-default' : 'hover:bg-slate-50 cursor-pointer'}`}>
+              <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all ${step.done ? 'border-emerald-400 bg-emerald-400' : 'border-slate-200'}`}>
+                {step.done && <CheckCircle2 size={14} className="text-white" />}
+              </div>
+              <span className={`flex-1 text-sm font-medium ${step.done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{step.label}</span>
+              {!step.done && <ArrowRight size={13} className="shrink-0 text-slate-400" />}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {allDone && (
+        <button type="button" onClick={dismiss}
+          className="mt-3 w-full rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-600 transition-colors">
+          Dismiss
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard({ currentUser }: DashboardProps) {
   const { currentProject } = useWorkspace();
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [designs, setDesigns] = useState<UserDesign[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [emailsSent, setEmailsSent] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -302,6 +385,10 @@ export default function Dashboard({ currentUser }: DashboardProps) {
       setPosts(postData);
       setAccounts(accountData);
       setDesigns(designData);
+      // Check if any email has been sent (lightweight — just needs the count)
+      fetch(`${API_BASE_URL}/api/mailing/analytics`, {
+        headers: { Authorization: `Bearer ${tok()}` },
+      }).then(r => r.json()).then(d => { if (active && d?.campaigns?.sent > 0) setEmailsSent(true); }).catch(() => undefined);
     };
 
     fetchAll()
@@ -425,6 +512,15 @@ export default function Dashboard({ currentUser }: DashboardProps) {
               <QuickAction icon={Link2} label="Integrations" color="#10b981" onClick={() => navigate('/integrations')} />
             </div>
           </div>
+
+          {/* ── Onboarding Checklist ── */}
+          <OnboardingChecklist
+            hasAccounts={accounts.length > 0}
+            hasPosts={posts.length > 0}
+            hasDesigns={designs.length > 0}
+            hasEmails={emailsSent}
+            userId={currentUser?.id}
+          />
 
           {/* ── Stat cards ── */}
           <div data-tour-id="dashboard-stats" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">

@@ -596,6 +596,41 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
     } catch (err) { logger.error('Failed to fetch mailing analytics', err); return res.status(500).json({ success: false, error: 'Failed to fetch analytics' }); }
   });
 
+  // GET /api/mailing/analytics/campaigns — per-campaign open/click/unsub breakdown
+  router.get('/analytics/campaigns', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res); if (!auth) return;
+      const { rows } = await pool.query(
+        `SELECT
+           mc.id AS campaign_id,
+           mc.name,
+           mc.sent_at,
+           COALESCE(SUM(CASE WHEN me.event_type = 'delivered' THEN 1 ELSE 0 END), 0)::int AS delivered,
+           COALESCE(SUM(CASE WHEN me.event_type = 'open'      THEN 1 ELSE 0 END), 0)::int AS opens,
+           COALESCE(SUM(CASE WHEN me.event_type = 'click'     THEN 1 ELSE 0 END), 0)::int AS clicks,
+           COALESCE(SUM(CASE WHEN me.event_type = 'unsubscribe' THEN 1 ELSE 0 END), 0)::int AS unsubscribes,
+           CASE WHEN SUM(CASE WHEN me.event_type = 'delivered' THEN 1 ELSE 0 END) > 0
+             THEN ROUND(SUM(CASE WHEN me.event_type = 'open' THEN 1 ELSE 0 END)::numeric
+               / SUM(CASE WHEN me.event_type = 'delivered' THEN 1 ELSE 0 END) * 100, 1)
+             ELSE 0
+           END AS open_rate,
+           CASE WHEN SUM(CASE WHEN me.event_type = 'delivered' THEN 1 ELSE 0 END) > 0
+             THEN ROUND(SUM(CASE WHEN me.event_type = 'click' THEN 1 ELSE 0 END)::numeric
+               / SUM(CASE WHEN me.event_type = 'delivered' THEN 1 ELSE 0 END) * 100, 1)
+             ELSE 0
+           END AS click_rate
+         FROM mailing_campaigns mc
+         LEFT JOIN mailing_email_events me ON me.campaign_id = mc.id
+         WHERE mc.user_id = $1 AND mc.status = 'sent'
+         GROUP BY mc.id, mc.name, mc.sent_at
+         ORDER BY mc.sent_at DESC NULLS LAST
+         LIMIT 50`,
+        [auth.userId]
+      );
+      return res.json({ success: true, rows: rows.map(r => ({ ...r, delivered: Number(r.delivered), opens: Number(r.opens), clicks: Number(r.clicks), unsubscribes: Number(r.unsubscribes), open_rate: Number(r.open_rate), click_rate: Number(r.click_rate) })) });
+    } catch (err) { logger.error('Failed to fetch campaign analytics', err); return res.status(500).json({ success: false, error: 'Failed to fetch campaign analytics' }); }
+  });
+
   // GET /api/mailing/unsubscribe/:token — public unsubscribe link
   router.get('/unsubscribe/:token', async (req: Request, res: Response) => {
     try {
