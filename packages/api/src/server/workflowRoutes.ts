@@ -1,4 +1,5 @@
 import express from 'express';
+import { FAST_MODEL } from '../ai-helpers.ts';
 import type { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
@@ -155,7 +156,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                   } else {
                     const anthropic = new Anthropic({ apiKey });
                     const resp = await anthropic.messages.create({
-                      model: 'claude-haiku-4-5-20251001',
+                      model: FAST_MODEL,
                       max_tokens: 150,
                       messages: [{
                         role: 'user',

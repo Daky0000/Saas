@@ -1,4 +1,5 @@
 import express from 'express';
+import { FAST_MODEL } from '../ai-helpers.ts';
 import type { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -150,7 +151,7 @@ JSON shape:
         try {
           const learnFastModel = learnCfg.provider === 'google'
             ? (GEMINI_MODELS.includes(learnCfg.model) ? learnCfg.model : 'gemini-2.0-flash')
-            : 'claude-haiku-4-5-20251001';
+            : FAST_MODEL;
           const raw = await callAINonStreaming(
             learnCfg.provider,
             apiKey,
@@ -219,7 +220,7 @@ JSON shape:
 
       const fastModel = cfg.provider === 'google'
         ? (GEMINI_MODELS.includes(cfg.model) ? cfg.model : 'gemini-2.0-flash')
-        : 'claude-haiku-4-5-20251001';
+        : FAST_MODEL;
 
       const isYouTubeItem = /youtube\.com|youtu\.be/.test(item.url || '');
 
@@ -320,7 +321,7 @@ JSON shape:
 
       const fastModel = aiCfgCompile.provider === 'google'
         ? (GEMINI_MODELS.includes(aiCfgCompile.model) ? aiCfgCompile.model : 'gemini-2.0-flash')
-        : 'claude-haiku-4-5-20251001';
+        : FAST_MODEL;
 
       const compiledPrompt = await callAINonStreaming(
         aiCfgCompile.provider,

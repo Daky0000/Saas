@@ -37,6 +37,42 @@ export function registerAIConfigRoutes(deps: AIConfigDeps): Router {
 
   const router = Router();
 
+  // GET /api/admin/ai-usage — token spend by day, feature, model, and top users
+  router.get('/admin/ai-usage', async (req: Request, res: Response) => {
+    try {
+      const admin = await requireAdmin(req, res);
+      if (!admin) return;
+      if (!hasDatabase()) return res.json({ success: true, byDay: [], byFeature: [], topUsers: [] });
+      const days = Math.min(90, Math.max(1, Number(req.query.days) || 30));
+      const [byDay, byFeature, topUsers] = await Promise.all([
+        dbQuery(
+          `SELECT DATE(created_at) AS day, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+                  SUM(cache_read_tokens) AS cache_read_tokens, COUNT(*) AS calls
+           FROM ai_usage_log WHERE created_at > NOW() - ($1 || ' days')::interval
+           GROUP BY DATE(created_at) ORDER BY day`,
+          [days]
+        ).catch(() => ({ rows: [] })),
+        dbQuery(
+          `SELECT feature, model, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, COUNT(*) AS calls
+           FROM ai_usage_log WHERE created_at > NOW() - ($1 || ' days')::interval
+           GROUP BY feature, model ORDER BY SUM(input_tokens + output_tokens) DESC LIMIT 30`,
+          [days]
+        ).catch(() => ({ rows: [] })),
+        dbQuery(
+          `SELECT l.user_id, u.email, SUM(l.input_tokens) AS input_tokens, SUM(l.output_tokens) AS output_tokens, COUNT(*) AS calls
+           FROM ai_usage_log l LEFT JOIN users u ON u.id = l.user_id
+           WHERE l.created_at > NOW() - ($1 || ' days')::interval
+           GROUP BY l.user_id, u.email ORDER BY SUM(l.input_tokens + l.output_tokens) DESC LIMIT 20`,
+          [days]
+        ).catch(() => ({ rows: [] })),
+      ]);
+      return res.json({ success: true, days, byDay: byDay.rows, byFeature: byFeature.rows, topUsers: topUsers.rows });
+    } catch (err) {
+      logger.error('AI usage GET error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load AI usage' });
+    }
+  });
+
   router.get('/admin/ai-config', async (req: Request, res: Response) => {
     try {
       const admin = await requireAdmin(req, res);

@@ -10,21 +10,21 @@ const authHeaders = (): Record<string, string> => {
 type Provider = 'anthropic' | 'google';
 
 const ANTHROPIC_MODELS = [
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', note: 'Fastest · lowest cost' },
-  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', note: 'Balanced · recommended' },
-  { id: 'claude-opus-4-7', label: 'Claude Opus 4.7', note: 'Most capable · highest cost' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', note: 'Most capable · recommended' },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', note: 'Near-Opus quality · lower cost' },
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', note: 'Balanced' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', note: 'Fastest · lowest cost' },
 ];
 
 const GOOGLE_MODELS = [
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', note: 'Most capable · recommended' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', note: 'Fast · low cost' },
   { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', note: 'Fastest · lowest cost' },
-  { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', note: 'Fast · low cost' },
-  { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', note: 'Balanced · recommended' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', note: 'Most capable · highest cost' },
 ];
 
 const DEFAULT_MODELS: Record<Provider, string> = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  google: 'gemini-2.0-flash',
+  anthropic: 'claude-opus-4-8',
+  google: 'gemini-2.5-pro',
 };
 
 type Config = {
@@ -51,7 +51,7 @@ export default function AdminAIConfig() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const [provider, setProvider] = useState<Provider>('anthropic');
-  const [model, setModel] = useState('claude-haiku-4-5-20251001');
+  const [model, setModel] = useState('claude-opus-4-8');
   const [apiKey, setApiKey] = useState('');
   const [googleApiKey, setGoogleApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
@@ -73,7 +73,7 @@ export default function AdminAIConfig() {
         if (data.config) {
           setConfig(data.config);
           setProvider(data.config.provider || 'anthropic');
-          setModel(data.config.model || 'claude-haiku-4-5-20251001');
+          setModel(data.config.model || 'claude-opus-4-8');
           setApiKey(data.config.apiKeyMasked || '');
           setGoogleApiKey(data.config.googleApiKeyMasked || '');
           setPromptText(data.config.systemPrompt || data.config.defaultSystemPrompt || '');

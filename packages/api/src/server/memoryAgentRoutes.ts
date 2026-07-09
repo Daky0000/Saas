@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.ts';
+import { FAST_MODEL } from '../ai-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -253,7 +254,7 @@ Generate 20-35 diverse, specific memories covering all categories. No markdown, 
     try {
       const client = new Anthropic({ apiKey });
       const msg = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: FAST_MODEL,
         max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }],
       });
@@ -377,7 +378,7 @@ Generate 20-35 diverse, specific memories covering all categories. No markdown, 
       try {
         const client = new Anthropic({ apiKey: aiKey });
         const resp = await client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: FAST_MODEL,
           max_tokens: 2500,
           messages: [{
             role: 'user',

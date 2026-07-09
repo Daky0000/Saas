@@ -169,3 +169,20 @@ test('mailing: contact timeline requires auth', async () => {
   const res = await request(app).get('/api/mailing/contacts/c1/timeline');
   assert.equal(res.status, 401);
 });
+
+test('ai: admin usage endpoint rejects non-admin (403, or 503 fail-closed without DB)', async () => {
+  const app = await loadApp();
+  const res = await request(app).get('/api/admin/ai-usage').set('Authorization', authHeader());
+  assert.equal([401, 403, 503].includes(res.status), true);
+});
+
+test('ai: model registry resolves Gemini equivalents including legacy IDs', async () => {
+  const { resolveGeminiModel, FAST_MODEL, DEFAULT_CHAT_MODEL, CLAUDE_MODELS } = await import('../src/ai-helpers.ts');
+  assert.equal(resolveGeminiModel('gemini-2.5-pro'), 'gemini-2.5-pro'); // passthrough
+  assert.equal(resolveGeminiModel('claude-opus-4-8'), 'gemini-2.5-pro');
+  assert.equal(resolveGeminiModel('claude-haiku-4-5-20251001'), 'gemini-2.0-flash'); // legacy id
+  assert.equal(resolveGeminiModel('unknown-model'), 'gemini-2.0-flash'); // safe fallback
+  assert.equal(FAST_MODEL, 'claude-haiku-4-5');
+  assert.equal(DEFAULT_CHAT_MODEL, 'claude-opus-4-8');
+  assert.ok(CLAUDE_MODELS.some((m) => m.id === DEFAULT_CHAT_MODEL));
+});

@@ -1862,6 +1862,24 @@ await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automations_user_idx ON mai
 await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';`).catch(() => undefined);
 await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb;`).catch(() => undefined);
 
+// Per-call AI token usage — populated by recordAIUsage() in ai-helpers.ts.
+// Powers GET /api/admin/ai-usage and (later) credit metering of AI features.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS ai_usage_log (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    feature TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS ai_usage_user_idx ON ai_usage_log (user_id, created_at);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage_log (created_at);`).catch(() => undefined);
+
 // Lead-capture forms (Marketing → Forms). Hosted at /f/:id and embeddable via
 // iframe; submissions upsert mailing_contacts and fire automation triggers.
 await pool.query(`

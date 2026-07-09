@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { FAST_MODEL } from '../ai-helpers.ts';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
@@ -1000,7 +1001,7 @@ async function seedSocialMemory(
     if (apiKey) {
       const fastModel = cfg.provider === 'google'
         ? (GEMINI_MODELS.includes(cfg.model) ? cfg.model : 'gemini-2.0-flash')
-        : 'claude-haiku-4-5-20251001';
+        : FAST_MODEL;
       content = await callAINonStreaming(
         cfg.provider, apiKey, fastModel,
         'You write concise memory entries for a marketing AI assistant. Be factual and useful. 2-3 sentences max.',

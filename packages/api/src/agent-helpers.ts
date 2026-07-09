@@ -1,5 +1,5 @@
 import { pool, dbQuery } from './db.ts';
-import { getAIConfig, decryptAIKey, resolveActiveKey, callAINonStreaming, GEMINI_MODELS } from './ai-helpers.ts';
+import { getAIConfig, decryptAIKey, resolveActiveKey, callAINonStreaming, GEMINI_MODELS, FAST_MODEL } from './ai-helpers.ts';
 
 export const AGENT_DEFS: Record<string, { name: string; role: string; icon: string; color: string; memoryKeywords: string[] }> = {
   daky:             { name: 'Daky',    role: 'Content Writer',        icon: '✦', color: '#5B6CF9', memoryKeywords: [] },
@@ -63,12 +63,13 @@ export async function compileAgentSkill(userId: string, agentKey: string): Promi
     const compileKey = resolveActiveKey(aiCfgCompile);
     const compileFastModel = aiCfgCompile.provider === 'google'
       ? (GEMINI_MODELS.includes(aiCfgCompile.model) ? aiCfgCompile.model : 'gemini-2.0-flash')
-      : 'claude-haiku-4-5-20251001';
+      : FAST_MODEL;
     const skill = await callAINonStreaming(
       aiCfgCompile.provider, compileKey, compileFastModel,
       `You are ${def.name} (${def.role}) on a marketing team.`,
       `Below is the user's brand/business memory. Write a concise 3-5 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty. Be specific and useful — this will be injected into your system prompt.\n\nUser memory:\n${memText}\n\nSkill brief:`,
-      512
+      512,
+      { userId, feature: 'agent_skill_compile' }
     );
     await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [skill, userId, agentKey]);
   } catch (_err) { /* non-fatal */ }

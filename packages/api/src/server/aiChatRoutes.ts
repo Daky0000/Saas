@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL } from '../ai-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -30,12 +31,6 @@ interface AIChatDeps {
 }
 
 // ── Local constants ───────────────────────────────────────────────────────────
-
-const ANTHROPIC_TO_GEMINI: Record<string, string> = {
-  'claude-haiku-4-5-20251001': 'gemini-2.0-flash',
-  'claude-sonnet-4-6': 'gemini-1.5-pro',
-  'claude-opus-4-7': 'gemini-2.5-pro',
-};
 
 const AI_CORE_RULES = `
 ---
@@ -802,8 +797,15 @@ export function registerAIChatRoutes({
 
       const saasContext = await getUserSaaSContext(auth.userId);
 
-      const basePrompt = (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', userMemoryBlock);
-      const activeSystemPrompt = [basePrompt, saasContext, AI_CORE_RULES, skillsPrompt].filter(Boolean).join('\n\n');
+      // System prompt in two blocks so the stable prefix (persona + core rules —
+      // identical for every user and request) is served from the prompt cache;
+      // only the per-user block (memory, live SaaS state, page skills) is
+      // reprocessed each request. Tools render before system, so they're cached too.
+      const stablePrompt = [
+        (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', '(See the ABOUT THIS USER section at the end of this prompt.)'),
+        AI_CORE_RULES,
+      ].join('\n\n');
+      const dynamicPrompt = [userMemoryBlock, saasContext, skillsPrompt].filter(Boolean).join('\n\n');
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -813,9 +815,9 @@ export function registerAIChatRoutes({
 
       // ── Google Gemini path — direct streaming, no tool use ──────────────────
       if (aiCfg.provider === 'google') {
-        const effectiveModel = GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : (ANTHROPIC_TO_GEMINI[aiCfg.model] ?? 'gemini-2.0-flash');
+        const effectiveModel = resolveGeminiModel(aiCfg.model);
         const genAI = new GoogleGenerativeAI(apiKey);
-        const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: activeSystemPrompt });
+        const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: `${stablePrompt}\n\n${dynamicPrompt}` });
 
         const allMessages = messages.slice(-20).map((m) => ({
           role: m.role === 'assistant' ? 'model' : 'user',
@@ -830,13 +832,27 @@ export function registerAIChatRoutes({
           const text = chunk.text();
           if (text) send({ type: 'text', text });
         }
+        const agg = await stream.response;
+        void recordAIUsage({
+          userId: auth.userId, feature: 'chat', provider: 'google', model: effectiveModel,
+          inputTokens: agg.usageMetadata?.promptTokenCount ?? 0,
+          outputTokens: agg.usageMetadata?.candidatesTokenCount ?? 0,
+        });
         res.write('data: [DONE]\n\n');
         res.end();
         return;
       }
 
-      // ── Anthropic path — full agentic loop with tools ───────────────────────
+      // ── Anthropic path — streaming agentic loop with tools ──────────────────
+      // One streamed request per iteration: text deltas reach the user live,
+      // and the same response is used to detect tool_use — no second
+      // "final answer" generation.
       const client = new Anthropic({ apiKey });
+
+      const systemBlocks: Anthropic.TextBlockParam[] = [
+        { type: 'text', text: stablePrompt, cache_control: { type: 'ephemeral' } },
+        ...(dynamicPrompt ? [{ type: 'text' as const, text: dynamicPrompt }] : []),
+      ];
 
       const conversationMessages: Anthropic.MessageParam[] = messages.slice(-20).map((m) => ({
         role: m.role as 'user' | 'assistant',
@@ -844,59 +860,60 @@ export function registerAIChatRoutes({
       }));
 
       let loopMessages = [...conversationMessages];
-      for (let iteration = 0; iteration < 4; iteration++) {
-        const isLastIteration = iteration >= 3;
+      const usage = { input: 0, output: 0, cacheRead: 0 };
 
-        const response = await client.messages.create({
+      for (let iteration = 0; iteration < 5; iteration++) {
+        const isLastIteration = iteration >= 4;
+
+        const stream = client.messages.stream({
           model: aiCfg.model,
-          max_tokens: 2048,
-          system: activeSystemPrompt,
-          tools: isLastIteration ? [] : AI_TOOLS,
+          max_tokens: 4096,
+          system: systemBlocks,
+          // Tools stay in the request on every iteration so the cached
+          // tools+system prefix is byte-identical; the last iteration blocks
+          // further calls via tool_choice instead of dropping the tool list.
+          tools: AI_TOOLS,
+          ...(isLastIteration ? { tool_choice: { type: 'none' as const } } : {}),
           messages: loopMessages,
         });
-
-        if (response.stop_reason === 'tool_use' && !isLastIteration) {
-          for (const block of response.content) {
-            if (block.type === 'text' && block.text.trim()) {
-              send({ type: 'text', text: block.text });
-            }
+        for await (const chunk of stream) {
+          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            send({ type: 'text', text: chunk.delta.text });
           }
-
-          const toolResultContents: Anthropic.ToolResultBlockParam[] = [];
-          for (const block of response.content) {
-            if (block.type !== 'tool_use') continue;
-            send({ type: 'tool_start', name: block.name, label: aiToolLabel(block.name, block.input) });
-            try {
-              const result = await executeAITool(block.name, block.input, auth.userId);
-              send({ type: 'tool_done', name: block.name, success: true, result });
-              toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
-            } catch (err: any) {
-              const errMsg = err?.message || 'Tool failed';
-              send({ type: 'tool_done', name: block.name, success: false, error: errMsg });
-              toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${errMsg}`, is_error: true });
-            }
-          }
-
-          loopMessages = [
-            ...loopMessages,
-            { role: 'assistant', content: response.content },
-            { role: 'user', content: toolResultContents },
-          ];
-        } else {
-          const finalStream = await client.messages.stream({
-            model: aiCfg.model,
-            max_tokens: 1024,
-            system: activeSystemPrompt,
-            messages: loopMessages,
-          });
-          for await (const chunk of finalStream) {
-            if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-              send({ type: 'text', text: chunk.delta.text });
-            }
-          }
-          break;
         }
+        const response = await stream.finalMessage();
+        usage.input += response.usage.input_tokens;
+        usage.output += response.usage.output_tokens;
+        usage.cacheRead += response.usage.cache_read_input_tokens ?? 0;
+
+        if (response.stop_reason !== 'tool_use' || isLastIteration) break;
+
+        const toolResultContents: Anthropic.ToolResultBlockParam[] = [];
+        for (const block of response.content) {
+          if (block.type !== 'tool_use') continue;
+          send({ type: 'tool_start', name: block.name, label: aiToolLabel(block.name, block.input) });
+          try {
+            const result = await executeAITool(block.name, block.input, auth.userId);
+            send({ type: 'tool_done', name: block.name, success: true, result });
+            toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          } catch (err: any) {
+            const errMsg = err?.message || 'Tool failed';
+            send({ type: 'tool_done', name: block.name, success: false, error: errMsg });
+            toolResultContents.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${errMsg}`, is_error: true });
+          }
+        }
+
+        loopMessages = [
+          ...loopMessages,
+          { role: 'assistant', content: response.content },
+          { role: 'user', content: toolResultContents },
+        ];
       }
+
+      void recordAIUsage({
+        userId: auth.userId, feature: 'chat', provider: 'anthropic', model: aiCfg.model,
+        inputTokens: usage.input, outputTokens: usage.output, cacheReadTokens: usage.cacheRead,
+      });
 
       res.write('data: [DONE]\n\n');
       res.end();
@@ -926,9 +943,7 @@ export function registerAIChatRoutes({
       if (!apiKey) return res.json({ type: 'direct' });
 
       const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-      const orchFastModel = aiCfgOrch.provider === 'google'
-        ? (GEMINI_MODELS.includes(aiCfgOrch.model) ? aiCfgOrch.model : 'gemini-2.0-flash')
-        : 'claude-haiku-4-5-20251001';
+      const orchFastModel = aiCfgOrch.provider === 'google' ? resolveGeminiModel(aiCfgOrch.model) : FAST_MODEL;
 
       const orchSystemPrompt = `You are a routing assistant for a marketing AI team. Decide if a user message requires a coordinated multi-agent response from specialist agents (Nova=creative director, Sage=strategy analyst, Aria=analytics, Flux=automation) or can be handled directly by the main assistant.
 
@@ -1009,9 +1024,7 @@ Rules:
       send({ type: 'agents_start', count: enabledAgents.length });
       const agentResults: Array<{ key: string; name: string; icon: string; color: string; task: string; analysis: string }> = [];
 
-      const agentFastModel = aiCfg.provider === 'google'
-        ? (GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : 'gemini-2.0-flash')
-        : 'claude-haiku-4-5-20251001';
+      const agentFastModel = aiCfg.provider === 'google' ? resolveGeminiModel(aiCfg.model) : FAST_MODEL;
 
       await Promise.all(enabledAgents.map(async (agent) => {
         send({ type: 'agent_start', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color });
@@ -1044,7 +1057,7 @@ Rules:
       const synthPrompt = `${lastUserMsg}\n\n---\nYour specialist team has analyzed this:\n\n${teamContext}\n\nSynthesize their insights into one unified, decisive recommendation. Be the orchestrator — build on their analyses, don't just repeat them.`;
 
       if (aiCfg.provider === 'google') {
-        const effectiveModel = GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : (ANTHROPIC_TO_GEMINI[aiCfg.model] ?? 'gemini-1.5-pro');
+        const effectiveModel = resolveGeminiModel(aiCfg.model);
         const genAI = new GoogleGenerativeAI(apiKey);
         const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: synthSystem });
         const gStream = await gModel.generateContentStream(synthPrompt);

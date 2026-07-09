@@ -17,6 +17,7 @@ import {
   ASPECT_RATIO_MAP,
   FREEPIK_IMAGE_MODELS,
 } from './magnificRoutes.ts';
+import { FAST_MODEL, recordAIUsage } from '../ai-helpers.ts';
 
 const logger = pino();
 
@@ -38,10 +39,10 @@ export interface NovaDeps {
 
 const USER_AGENT_MODELS: Record<string, string> = {
   sage: 'claude-sonnet-4-6',
-  daky: 'claude-haiku-4-5-20251001',
-  nova: 'claude-haiku-4-5-20251001',
-  aria: 'claude-haiku-4-5-20251001',
-  flux: 'claude-haiku-4-5-20251001',
+  daky: FAST_MODEL,
+  nova: FAST_MODEL,
+  aria: FAST_MODEL,
+  flux: FAST_MODEL,
 };
 
 const USER_AGENT_PROMPTS: Record<string, string> = {
@@ -627,25 +628,81 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
     const systemPrompt = customInstr
       ? `${baseSystemPrompt}\n\nUSER'S STANDING INSTRUCTIONS FOR YOU:\n${customInstr.replace(/^custom_instructions:\s*/, '').trim()}`
       : baseSystemPrompt;
-    const model = USER_AGENT_MODELS[agentKey] ?? 'claude-haiku-4-5-20251001';
+    const model = USER_AGENT_MODELS[agentKey] ?? FAST_MODEL;
     const userMessage = `User context:\n\n${JSON.stringify(merged, null, 2)}\n\n${buildUserAgentOutputSpec(extraInstruction)}`;
     const client = new Anthropic({ apiKey });
-    const aiRes = await client.messages.create({
-      model, max_tokens: 800,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-    const rawText = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+
+    // Structured outputs guarantee valid JSON — no regex extraction needed.
+    // Falls back to the legacy free-text + regex path if the request fails
+    // (e.g. an older model without structured-output support configured).
+    const proposalsSchema = {
+      type: 'object' as const,
+      additionalProperties: false,
+      required: ['proposals'],
+      properties: {
+        proposals: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['task_type', 'title', 'body'],
+            properties: {
+              task_type: { type: 'string' },
+              title: { type: 'string' },
+              body: { type: 'string' },
+              payload: { type: 'string', description: 'JSON-encoded object with key details for this proposal' },
+            },
+          },
+        },
+      },
+    };
+
+    let rawText = '';
     let proposals: any[] = [];
     try {
-      const block = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const candidate = block ? block[1] : rawText;
-      const match = candidate.match(/\{[\s\S]*\}/);
-      if (match) {
-        const j = JSON.parse(match[0]);
-        if (Array.isArray(j.proposals)) proposals = j.proposals;
+      const aiRes = await client.messages.create({
+        model, max_tokens: 1200,
+        system: systemPrompt,
+        output_config: { format: { type: 'json_schema', schema: proposalsSchema } },
+        messages: [{ role: 'user', content: userMessage }],
+      } as any);
+      void recordAIUsage({
+        userId, feature: `agent_${agentKey}`, provider: 'anthropic', model,
+        inputTokens: aiRes.usage.input_tokens, outputTokens: aiRes.usage.output_tokens,
+        cacheReadTokens: aiRes.usage.cache_read_input_tokens ?? 0,
+      });
+      rawText = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+      const j = JSON.parse(rawText);
+      if (Array.isArray(j.proposals)) {
+        proposals = j.proposals.map((p: any) => {
+          if (typeof p.payload === 'string') {
+            try { p.payload = JSON.parse(p.payload); } catch { p.payload = {}; }
+          }
+          return p;
+        });
       }
-    } catch (_err) { /* ignore */ }
+    } catch (_structuredErr) {
+      // Legacy free-text path
+      const aiRes = await client.messages.create({
+        model, max_tokens: 800,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      void recordAIUsage({
+        userId, feature: `agent_${agentKey}`, provider: 'anthropic', model,
+        inputTokens: aiRes.usage.input_tokens, outputTokens: aiRes.usage.output_tokens,
+      });
+      rawText = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+      try {
+        const block = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+        const candidate = block ? block[1] : rawText;
+        const match = candidate.match(/\{[\s\S]*\}/);
+        if (match) {
+          const j = JSON.parse(match[0]);
+          if (Array.isArray(j.proposals)) proposals = j.proposals;
+        }
+      } catch (_err) { /* ignore */ }
+    }
     if (proposals.length === 0) {
       proposals = [{ task_type: 'strategy_proposal', title: `${AGENT_NAMES[agentKey] ?? agentKey} — Check in`, body: rawText.slice(0, 350), payload: {} }];
     }
@@ -1244,7 +1301,7 @@ Current user brand context:
 ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche || 'N/A'}, Tone: ${ctx.brand.tone || 'N/A'}, Audience: ${ctx.brand.audience || 'N/A'}` : 'No brand profile set up yet.'}`;
       const client = new Anthropic({ apiKey });
       const aiRes = await client.messages.create({
-        model: USER_AGENT_MODELS[key] ?? 'claude-haiku-4-5-20251001',
+        model: USER_AGENT_MODELS[key] ?? FAST_MODEL,
         max_tokens: 512,
         system: systemPrompt,
         messages: messages.map((m) => ({ role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant', content: String(m.content).slice(0, 2000) })),
@@ -1295,7 +1352,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
       if (!apiKey) return res.status(503).json({ success: false, error: 'Anthropic API key not configured' });
       const client = new Anthropic({ apiKey });
       const aiRes = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: FAST_MODEL,
         max_tokens: 600,
         messages: [{ role: 'user', content: `Analyze these content samples and extract the brand voice. Reply ONLY with valid JSON, no markdown:\n{\n  "tone": "one sentence describing overall tone",\n  "vocabulary": "description of vocabulary style",\n  "personality": ["trait1", "trait2", "trait3"],\n  "do_list": ["writing habit they clearly have", "..."],\n  "dont_list": ["what they clearly avoid", "..."],\n  "one_liner": "one sentence that captures this brand's voice"\n}\n\nCONTENT SAMPLES:\n${samples.slice(0, 3000)}` }],
       });
@@ -1357,7 +1414,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
         try {
           if (step.tool === 'meigen_search') {
             const searchRes = await anthropic.messages.create({
-              model: 'claude-haiku-4-5-20251001', max_tokens: 1500,
+              model: FAST_MODEL, max_tokens: 1500,
               messages: [{ role: 'user', content: `You are a design research AI. Generate 4 realistic design concepts as if retrieved from a design AI library.\n\nRequest: "${description || 'professional brand design'}"\nBrand niche: ${brandNiche}\n\nReturn ONLY valid JSON array (no markdown, no text outside the array):\n[\n  {\n    "title": "short descriptive name",\n    "style": "visual style description",\n    "colors": "main colors used",\n    "prompt": "detailed image generation prompt that would create this design",\n    "model": "one of: flux-2-turbo | flux-kontext-pro | seedream-v5-lite | mystic",\n    "thumbnail_description": "brief visual description for display"\n  }\n]` }],
             });
             let designs: any[] = [];
@@ -1374,7 +1431,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
               .replace('{step_search.result}', JSON.stringify(stepResults['step_search']?.designs ?? []))
               .replace('{step_extract.result}', stepResults['step_extract']?.result ?? '');
             if (brandSummary) prompt += `\n\nUSER BRAND MEMORY:\n${brandSummary}`;
-            const synthRes = await anthropic.messages.create({ model: 'claude-haiku-4-5-20251001', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
+            const synthRes = await anthropic.messages.create({ model: FAST_MODEL, max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
             const result = synthRes.content[0].type === 'text' ? synthRes.content[0].text : '';
             stepResults[step.id] = { result };
             send({ type: 'step_done', step_id: step.id });
@@ -1472,7 +1529,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
               prompt = prompt.replace(`{${k}.result}`, r);
             }
             if (brandSummary) prompt += `\n\nUSER BRAND MEMORY:\n${brandSummary}`;
-            const draftRes = await anthropic.messages.create({ model: 'claude-haiku-4-5-20251001', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] });
+            const draftRes = await anthropic.messages.create({ model: FAST_MODEL, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] });
             const result = draftRes.content[0].type === 'text' ? draftRes.content[0].text : '';
             stepResults[step.id] = { result };
             send({ type: 'step_done', step_id: step.id });
@@ -1787,7 +1844,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
       if (!apiKey) return res.json({ success: true, has_memory: true, suggestions: [] });
       const anthropic = new Anthropic({ apiKey });
       const msg = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001', max_tokens: 800,
+        model: FAST_MODEL, max_tokens: 800,
         messages: [{ role: 'user', content: `Based on this brand's memory profile, generate 4 personalized design suggestions for social media / marketing content.\n\nBRAND MEMORY:\n${brandSummary}\n\nReturn ONLY a valid JSON array (no markdown):\n[\n  {\n    "id": "s1",\n    "title": "Short catchy title (3-5 words)",\n    "description": "One sentence describing what this design achieves for the brand",\n    "hint": "A specific image generation prompt tailored to this brand's style, colors, and niche (used as the pre-filled description)"\n  }\n]\n\nMake each suggestion specific to this brand — reference their niche, audience, and visual style. Vary the formats: social post, banner, story, etc.` }],
       });
       let suggestions: any[] = [];
