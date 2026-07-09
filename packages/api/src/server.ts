@@ -55,6 +55,7 @@ import { registerAutomationRoutes } from './server/automationRoutes.ts';
 import { buildAutomationEngine } from './server/automationEngine.ts';
 import { recalcLeadScore } from './server/leadScoring.ts';
 import { registerApiKeyRoutes, registerPublicTriggerRoutes } from './server/publicApiRoutes.ts';
+import { registerFormsRoutes, registerPublicFormRoutes } from './server/formsRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -170,6 +171,10 @@ async function refreshStripe(): Promise<void> {
 const app = express();
 const PORT = config.port;
 
+// Automation engine executes the flows built in Marketing → Automations.
+// Built before all routes so public forms, webhooks, and mailing can fire triggers.
+const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl });
+
 // Request IDs first so even health checks carry x-request-id
 app.use(requestIdMiddleware);
 
@@ -181,6 +186,12 @@ app.get('/api/health', (_req, res) => res.json({
   timestamp: new Date().toISOString(),
   db: { configured: Boolean(config.databaseUrl), ready: dbReady, error: dbInitError },
 }));
+
+// Public hosted lead-capture forms (/f/:id). Mounted BEFORE the CORS and
+// helmet middleware on purpose: the page must be embeddable in iframes on
+// customers' external sites (helmet's frame-ancestors/X-Frame-Options would
+// block that, and cross-origin form POSTs would fail the CORS allowlist).
+app.use('/f', registerPublicFormRoutes({ pool, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 // ── Security & parsing middleware — must be before ALL routes ─────────────────
 app.use(
@@ -361,10 +372,6 @@ async function ensureDatabase() {
   setDbReady(true);
 
 }
-
-// Automation engine executes the flows built in Marketing → Automations.
-// Built early so webhooks and mailing routes can fire triggers.
-const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl });
 
 // ── Stripe + Resend Webhooks ──
 // markSocialAccountNeedsReapproval is const from distModule (defined later) — use wrapper so it's read at call time
@@ -847,6 +854,9 @@ app.use('/api', registerAutomationRoutes({ requireAuth, pool: pool!, runAutomati
 // ── Public API: key management (authenticated) + inbound trigger (API-key auth) ──
 app.use('/api', registerApiKeyRoutes({ requireAuth, pool: pool! }));
 app.use('/api/v1', registerPublicTriggerRoutes({ pool, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
+
+// ── Lead-capture forms (authenticated CRUD; public form served at /f/:id) ──
+app.use('/api', registerFormsRoutes({ requireAuth, pool: pool! }));
 
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {

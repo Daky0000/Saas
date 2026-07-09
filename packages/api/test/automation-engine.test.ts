@@ -142,3 +142,30 @@ test('api keys: management requires auth', async () => {
   const res = await request(app).get('/api/keys');
   assert.equal(res.status, 401);
 });
+
+test('forms: hosted form 404s for unknown id', async () => {
+  const app = await loadApp();
+  const res = await request(app).get('/f/nonexistent-form');
+  assert.equal(res.status, 404);
+});
+
+test('forms: CRUD requires auth', async () => {
+  const app = await loadApp();
+  const res = await request(app).get('/api/forms');
+  assert.equal(res.status, 401);
+});
+
+test('forms: create rejects invalid field keys', async () => {
+  const app = await loadApp();
+  const res = await request(app).post('/api/forms').set('Authorization', authHeader()).send({
+    name: 'Bad form',
+    fields: [{ key: 'has spaces!', label: 'Bad', type: 'text', required: false }],
+  });
+  assert.equal(res.status, 400);
+});
+
+test('mailing: contact timeline requires auth', async () => {
+  const app = await loadApp();
+  const res = await request(app).get('/api/mailing/contacts/c1/timeline');
+  assert.equal(res.status, 401);
+});

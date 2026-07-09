@@ -1862,6 +1862,23 @@ await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automations_user_idx ON mai
 await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';`).catch(() => undefined);
 await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb;`).catch(() => undefined);
 
+// Lead-capture forms (Marketing → Forms). Hosted at /f/:id and embeddable via
+// iframe; submissions upsert mailing_contacts and fire automation triggers.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS lead_forms (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'active',
+    submissions_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS lead_forms_user_idx ON lead_forms (user_id);`).catch(() => undefined);
+
 // Public API keys (Settings → API Keys). Only the SHA-256 hash is stored;
 // the full key is shown once at creation. Used by POST /api/v1/trigger.
 await pool.query(`

@@ -254,6 +254,62 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
     } catch (err) { logger.error('Failed to delete contact', err); return res.status(500).json({ success: false, error: 'Failed to delete contact' }); }
   });
 
+  // GET /api/mailing/contacts/:id/timeline — unified activity feed for one contact
+  router.get('/contacts/:id/timeline', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res); if (!auth) return;
+      const contactId = req.params.id;
+      const [contact, emailEvents, tagEvents, automationRuns] = await Promise.all([
+        pool.query(`SELECT created_at, source FROM mailing_contacts WHERE id=$1 AND user_id=$2`, [contactId, auth.userId]),
+        pool.query(
+          `SELECT e.event_type, e.created_at, e.metadata, c.name AS campaign_name
+           FROM mailing_email_events e LEFT JOIN mailing_campaigns c ON c.id = e.campaign_id
+           WHERE e.contact_id=$1 AND e.user_id=$2 ORDER BY e.created_at DESC LIMIT 100`,
+          [contactId, auth.userId]
+        ),
+        pool.query(
+          `SELECT tag, created_at FROM mailing_contact_tags WHERE contact_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 50`,
+          [contactId, auth.userId]
+        ),
+        pool.query(
+          `SELECT j.status, j.run_at, j.created_at, a.name AS automation_name
+           FROM mailing_automation_jobs j LEFT JOIN mailing_automations a ON a.id = j.automation_id
+           WHERE j.contact_id=$1 AND j.user_id=$2 ORDER BY j.created_at DESC LIMIT 50`,
+          [contactId, auth.userId]
+        ).catch(() => ({ rows: [] as any[] })),
+      ]);
+      if (!contact.rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+      type TimelineItem = { type: string; label: string; detail?: string | null; at: string };
+      const items: TimelineItem[] = [
+        { type: 'created', label: 'Added to audience', detail: contact.rows[0].source ? `via ${contact.rows[0].source}` : null, at: contact.rows[0].created_at },
+        ...emailEvents.rows.map((e: any): TimelineItem => ({
+          type: `email_${e.event_type}`,
+          label: {
+            delivered: 'Email sent', open: 'Opened email', click: 'Clicked a link',
+            bounced: 'Email bounced', complained: 'Marked as spam',
+          }[e.event_type as string] ?? `Email ${e.event_type}`,
+          detail: e.campaign_name || (e.metadata?.link ? String(e.metadata.link) : null),
+          at: e.created_at,
+        })),
+        ...tagEvents.rows.map((t: any): TimelineItem => ({
+          type: 'tag', label: `Tagged "${t.tag}"`, at: t.created_at,
+        })),
+        ...automationRuns.rows.map((j: any): TimelineItem => ({
+          type: 'automation',
+          label: `Automation: ${j.automation_name || 'flow'}`,
+          detail: j.status === 'waiting' ? 'waiting for trigger' : j.status === 'pending' ? 'scheduled' : j.status,
+          at: j.created_at,
+        })),
+      ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+      return res.json({ success: true, timeline: items.slice(0, 150) });
+    } catch (err) {
+      logger.error('Failed to fetch contact timeline', err);
+      return res.status(500).json({ success: false, error: 'Failed to fetch timeline' });
+    }
+  });
+
   // GET /api/mailing/contacts/:id
   router.get('/contacts/:id', async (req: Request, res: Response) => {
     try {

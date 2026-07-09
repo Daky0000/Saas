@@ -37,6 +37,7 @@ import {
   type MailingSegment,
 } from '../services/mailingService';
 import { googleSheetsService, leadService, type Lead, type LeadGroup } from '../services/leadService';
+import { api } from '../services/apiClient';
 
 type Tab = 'contacts' | 'segments' | 'analytics' | 'leads';
 
@@ -80,27 +81,33 @@ function ContactDetailView({
   const [savingActivity, setSavingActivity] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/crm/activities?contact_id=${contact.id}&limit=30`)
-      .then(r => r.ok ? r.json() : [])
-      .then(rows => setCrmActivities(Array.isArray(rows) ? rows : []));
+    api.get<any[]>(`/api/crm/activities?contact_id=${contact.id}&limit=30`)
+      .then(rows => setCrmActivities(Array.isArray(rows) ? rows : []))
+      .catch(() => setCrmActivities([]));
+  }, [contact.id]);
+
+  // Unified timeline (email opens/clicks, tags, automations)
+  type TimelineItem = { type: string; label: string; detail?: string | null; at: string };
+  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  useEffect(() => {
+    setLoadingTimeline(true);
+    api.get<{ success: boolean; timeline: TimelineItem[] }>(`/api/mailing/contacts/${contact.id}/timeline`)
+      .then(j => setTimeline(j.timeline ?? []))
+      .catch(() => setTimeline([]))
+      .finally(() => setLoadingTimeline(false));
   }, [contact.id]);
 
   const handleLogActivity = async () => {
     if (!activityForm.body.trim() && !activityForm.title.trim()) return;
     setSavingActivity(true);
     try {
-      const r = await fetch('/api/crm/activities', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...activityForm, contact_id: contact.id }),
-      });
-      if (r.ok) {
-        const newA = await r.json();
-        setCrmActivities(prev => [newA, ...prev]);
-        setActivityForm({ type: 'note', title: '', body: '' });
-        setShowActivityForm(false);
-      }
-    } finally { setSavingActivity(false); }
+      const newA = await api.post<any>('/api/crm/activities', { ...activityForm, contact_id: contact.id });
+      setCrmActivities(prev => [newA, ...prev]);
+      setActivityForm({ type: 'note', title: '', body: '' });
+      setShowActivityForm(false);
+    } catch { /* message surface not needed for quick log */ }
+    finally { setSavingActivity(false); }
   };
 
   if (composing) return <SendEmailView contact={contact} onBack={() => setComposing(false)} />;
@@ -307,50 +314,40 @@ function ContactDetailView({
 
           {tab === 'overview' && (
             <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <h3 className="text-base font-bold text-slate-900 mb-5">Activity</h3>
-              <div className="space-y-4">
-                <div className="flex gap-3">
-                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50">
-                    <Users size={13} className="text-indigo-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-700 font-medium">Contact added</p>
-                    <p className="text-xs text-slate-400">{fd(contact.created_at)} · Source: {contact.source || 'manual'}</p>
-                  </div>
+              <h3 className="text-base font-bold text-slate-900 mb-5">Timeline</h3>
+              {loadingTimeline && (
+                <div className="flex items-center gap-2 py-6 text-sm text-slate-400">
+                  <Loader2 size={14} className="animate-spin" /> Loading activity…
                 </div>
-                {contact.subscribed && (
-                  <div className="flex gap-3">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50">
-                      <Mail size={13} className="text-emerald-600" />
+              )}
+              {!loadingTimeline && timeline.length === 0 && (
+                <p className="py-6 text-sm text-slate-400">No activity yet for this contact.</p>
+              )}
+              <div className="space-y-4">
+                {timeline.map((item, i) => {
+                  const style =
+                    item.type === 'email_open' ? { bg: 'bg-emerald-50', icon: <Mail size={13} className="text-emerald-600" /> } :
+                    item.type === 'email_click' ? { bg: 'bg-indigo-50', icon: <Link2 size={13} className="text-indigo-600" /> } :
+                    item.type === 'email_bounced' || item.type === 'email_complained' ? { bg: 'bg-red-50', icon: <X size={13} className="text-red-500" /> } :
+                    item.type === 'email_delivered' ? { bg: 'bg-slate-50', icon: <Send size={13} className="text-slate-500" /> } :
+                    item.type === 'tag' ? { bg: 'bg-amber-50', icon: <Tag size={13} className="text-amber-600" /> } :
+                    item.type === 'automation' ? { bg: 'bg-violet-50', icon: <RefreshCw size={13} className="text-violet-600" /> } :
+                    { bg: 'bg-indigo-50', icon: <Users size={13} className="text-indigo-500" /> };
+                  return (
+                    <div key={i} className="flex gap-3">
+                      <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${style.bg}`}>
+                        {style.icon}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-700 font-medium">{item.label}</p>
+                        <p className="truncate text-xs text-slate-400">
+                          {new Date(item.at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          {item.detail ? ` · ${item.detail}` : ''}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm text-slate-700 font-medium">Subscribed to email marketing</p>
-                      <p className="text-xs text-slate-400">{fd(contact.created_at)}</p>
-                    </div>
-                  </div>
-                )}
-                {!contact.subscribed && contact.unsubscribed_at && (
-                  <div className="flex gap-3">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-50">
-                      <X size={13} className="text-red-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-700 font-medium">Unsubscribed</p>
-                      <p className="text-xs text-slate-400">{fd(contact.unsubscribed_at)}</p>
-                    </div>
-                  </div>
-                )}
-                {(contact.tags ?? []).length > 0 && (
-                  <div className="flex gap-3">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-50">
-                      <Tag size={13} className="text-slate-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-700 font-medium">Tags: {(contact.tags ?? []).join(', ')}</p>
-                      <p className="text-xs text-slate-400">Current tags on this contact</p>
-                    </div>
-                  </div>
-                )}
+                  );
+                })}
               </div>
             </div>
           )}
