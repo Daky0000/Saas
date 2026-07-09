@@ -121,3 +121,24 @@ test('resend webhook: ignores unknown event types without error', async () => {
   const res = await request(app).post('/webhooks/resend').send({ type: 'email.delivery_delayed', data: {} });
   assert.equal(res.status, 200);
 });
+
+test('public trigger: rejects missing API key', async () => {
+  const app = await loadApp();
+  const res = await request(app).post('/api/v1/trigger').send({ email: 'a@b.com' });
+  assert.equal(res.status, 401);
+  assert.equal(res.body.success, false);
+});
+
+test('public trigger: rejects invalid body before auth leaks anything', async () => {
+  const app = await loadApp();
+  const res = await request(app).post('/api/v1/trigger')
+    .set('Authorization', 'Bearer cf_live_deadbeef')
+    .send({ email: 'not-an-email' });
+  assert.equal(res.status, 400);
+});
+
+test('api keys: management requires auth', async () => {
+  const app = await loadApp();
+  const res = await request(app).get('/api/keys');
+  assert.equal(res.status, 401);
+});

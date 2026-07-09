@@ -54,6 +54,7 @@ import { registerOpenAIRoutes } from './server/openaiRoutes.ts';
 import { registerAutomationRoutes } from './server/automationRoutes.ts';
 import { buildAutomationEngine } from './server/automationEngine.ts';
 import { recalcLeadScore } from './server/leadScoring.ts';
+import { registerApiKeyRoutes, registerPublicTriggerRoutes } from './server/publicApiRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -842,6 +843,10 @@ app.use('/api', workflowRouter);
 
 // ── Automation Flows API ─────────────────────────────────────────────────────
 app.use('/api', registerAutomationRoutes({ requireAuth, pool: pool!, runAutomationForContact: automationEngine.runAutomationForContact }));
+
+// ── Public API: key management (authenticated) + inbound trigger (API-key auth) ──
+app.use('/api', registerApiKeyRoutes({ requireAuth, pool: pool! }));
+app.use('/api/v1', registerPublicTriggerRoutes({ pool, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {

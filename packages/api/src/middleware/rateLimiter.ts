@@ -63,3 +63,17 @@ export const passwordLimiter = rateLimit({
   message: { success: false, error: 'Too many password change attempts, please try again in an hour' },
   ...makeStore('rl:pwd', PWD_WINDOW_MS),
 });
+
+const PUBLIC_API_WINDOW_MS = 60 * 1000;
+
+// Inbound public API (POST /api/v1/trigger) — keyed by API key when present so
+// one integration can't exhaust another's budget behind a shared IP.
+export const publicApiLimiter = rateLimit({
+  windowMs: PUBLIC_API_WINDOW_MS,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.headers.authorization || req.ip),
+  message: { success: false, error: 'Rate limit exceeded — max 120 requests per minute' },
+  ...makeStore('rl:pubapi', PUBLIC_API_WINDOW_MS),
+});

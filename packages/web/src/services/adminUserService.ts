@@ -8,26 +8,7 @@ import {
   UserQueryParams,
 } from '../types/admin';
 
-import { API_BASE_URL } from '../utils/apiBase';
-
-const authHeaders = () => {
-  if (typeof window === 'undefined') return {} as Record<string, string>;
-  const token = localStorage.getItem('auth_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
-
-const parseJson = async <T>(response: Response): Promise<T | null> => {
-  try {
-    return (await response.json()) as T;
-  } catch {
-    return null;
-  }
-};
-
-const extractError = async (response: Response, fallback: string) => {
-  const payload = await parseJson<{ error?: string; message?: string }>(response);
-  return payload?.error || payload?.message || fallback;
-};
+import { api } from './apiClient';
 
 export const adminUserService = {
   async getUsers(query: UserQueryParams): Promise<PaginatedUsersResponse> {
@@ -39,117 +20,31 @@ export const adminUserService = {
       page: String(query.page),
       perPage: String(query.perPage),
     });
-
-    const response = await fetch(`${API_BASE_URL}/api/users?${params.toString()}`, {
-      headers: authHeaders(),
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to fetch users'));
-    }
-
-    const payload = await parseJson<PaginatedUsersResponse>(response);
-    if (!payload) {
-      throw new Error('Invalid users response');
-    }
-
-    return payload;
+    return api.get<PaginatedUsersResponse>(`/api/users?${params.toString()}`);
   },
 
   async createUser(input: CreateUserInput): Promise<ManagedUser> {
-    const response = await fetch(`${API_BASE_URL}/api/users`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify(input),
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to create user'));
-    }
-
-    const payload = await parseJson<ManagedUser>(response);
-    if (!payload) {
-      throw new Error('Invalid create-user response');
-    }
-
-    return payload;
+    return api.post<ManagedUser>('/api/users', input);
   },
 
   async updateUser(id: string, input: UpdateUserInput): Promise<ManagedUser> {
-    const response = await fetch(`${API_BASE_URL}/api/users/${id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify(input),
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to update user'));
-    }
-
-    const payload = await parseJson<ManagedUser>(response);
-    if (!payload) {
-      throw new Error('Invalid update-user response');
-    }
-
-    return payload;
+    return api.put<ManagedUser>(`/api/users/${id}`, input);
   },
 
   async deleteUser(id: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/users/${id}`, {
-      method: 'DELETE',
-      headers: authHeaders(),
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to delete user'));
-    }
+    await api.del(`/api/users/${id}`);
   },
 
   async patchUserStatus(id: string, status: ManagedUserStatus): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/users/${id}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify({ status }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to update user status'));
-    }
+    await api.patch(`/api/users/${id}/status`, { status });
   },
 
   async patchUserRole(id: string, role: ManagedUser['role']): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/users/${id}/role`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify({ role }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to update user role'));
-    }
+    await api.patch(`/api/users/${id}/role`, { role });
   },
 
   async grantCredits(userId: string, amount: number): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/credits/admin/grant`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ user_id: userId, amount }),
-    });
-    if (!response.ok) {
-      throw new Error(await extractError(response, 'Failed to grant credits'));
-    }
+    await api.post('/api/credits/admin/grant', { user_id: userId, amount });
   },
 
   async bulkAction(action: BulkUserAction): Promise<void> {

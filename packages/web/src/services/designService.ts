@@ -1,9 +1,4 @@
-import { getApiBaseUrl } from '../utils/apiBase';
-
-function authHeader(): Record<string, string> {
-  const token = localStorage.getItem('auth_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import { api } from './apiClient';
 
 export interface UserDesign {
   id: string;
@@ -17,27 +12,21 @@ export interface UserDesign {
   updated_at: string;
 }
 
-async function request<T>(method: string, path: string, body?: object): Promise<T> {
-  const base = getApiBaseUrl();
-  const res = await fetch(`${base}/api${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json();
+type DesignResponse = { success: boolean; error?: string; design: UserDesign };
+type DesignListResponse = { success: boolean; error?: string; designs: UserDesign[] };
+
+function assertSuccess<T extends { success: boolean; error?: string }>(data: T): T {
   if (!data.success) throw new Error(data.error || 'Request failed');
-  return data as T;
+  return data;
 }
 
 export const designService = {
   async list(): Promise<UserDesign[]> {
-    const data = await request<{ success: boolean; designs: UserDesign[] }>('GET', '/designs');
-    return data.designs;
+    return assertSuccess(await api.get<DesignListResponse>('/api/designs')).designs;
   },
 
   async get(id: string): Promise<UserDesign> {
-    const data = await request<{ success: boolean; design: UserDesign }>('GET', `/designs/${id}`);
-    return data.design;
+    return assertSuccess(await api.get<DesignResponse>(`/api/designs/${id}`)).design;
   },
 
   async create(payload: {
@@ -47,8 +36,7 @@ export const designService = {
     canvas_data?: object;
     thumbnail_url?: string | null;
   }): Promise<UserDesign> {
-    const data = await request<{ success: boolean; design: UserDesign }>('POST', '/designs', payload);
-    return data.design;
+    return assertSuccess(await api.post<DesignResponse>('/api/designs', payload)).design;
   },
 
   async update(
@@ -61,11 +49,10 @@ export const designService = {
       thumbnail_url: string | null;
     }>,
   ): Promise<UserDesign> {
-    const data = await request<{ success: boolean; design: UserDesign }>('PUT', `/designs/${id}`, payload);
-    return data.design;
+    return assertSuccess(await api.put<DesignResponse>(`/api/designs/${id}`, payload)).design;
   },
 
   async delete(id: string): Promise<void> {
-    await request('DELETE', `/designs/${id}`);
+    assertSuccess(await api.del<{ success: boolean; error?: string }>(`/api/designs/${id}`));
   },
 };

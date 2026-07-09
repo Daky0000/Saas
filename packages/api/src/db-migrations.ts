@@ -1862,6 +1862,22 @@ await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automations_user_idx ON mai
 await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';`).catch(() => undefined);
 await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb;`).catch(() => undefined);
 
+// Public API keys (Settings → API Keys). Only the SHA-256 hash is stored;
+// the full key is shown once at creation. Used by POST /api/v1/trigger.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);`).catch(() => undefined);
+
 // Durable continuations for automation runs: a row is created when a run hits a
 // delay (status=pending, run_at in the future) or a wait_trigger (status=waiting,
 // resumed when that trigger later fires for the same contact).

@@ -100,7 +100,7 @@ function SectionCard({ children, className = '' }: { children: React.ReactNode; 
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function Settings({ currentUser, onUserUpdated, onNavigateToBilling }: SettingsProps) {
-  const [tab, setTab] = useState<'account' | 'security' | 'notifications' | 'billing'>('account');
+  const [tab, setTab] = useState<'account' | 'security' | 'notifications' | 'billing' | 'apikeys'>('account');
 
   // ── Account tab ──────────────────────────────────────────────────────────
   const [form, setForm] = useState<ProfileForm>(() => toForm(currentUser));
@@ -257,6 +257,66 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [loadingBilling, setLoadingBilling] = useState(false);
 
+  // ── API keys state ──
+  type ApiKeyRow = { id: string; name: string; key_prefix: string; created_at: string; last_used_at: string | null; revoked_at: string | null };
+  const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [createdSecret, setCreatedSecret] = useState<string | null>(null);
+  const [keyMsg, setKeyMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+
+  const loadApiKeys = async () => {
+    setLoadingKeys(true);
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/keys`, { headers: authHdr() });
+      const j = await safeJson<{ success: boolean; keys: ApiKeyRow[] }>(r);
+      if (j?.success) setApiKeys(j.keys);
+    } finally {
+      setLoadingKeys(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'apikeys') void loadApiKeys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const createApiKey = async () => {
+    setCreatingKey(true);
+    setKeyMsg(null);
+    setCreatedSecret(null);
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/keys`, {
+        method: 'POST',
+        headers: { ...authHdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newKeyName.trim() || 'API key' }),
+      });
+      const j = await safeJson<{ success: boolean; key?: { secret: string }; error?: string }>(r);
+      if (!j?.success || !j.key) throw new Error(j?.error || 'Failed to create key');
+      setCreatedSecret(j.key.secret);
+      setNewKeyName('');
+      void loadApiKeys();
+    } catch (err) {
+      setKeyMsg({ ok: false, text: err instanceof Error ? err.message : 'Failed to create key' });
+    } finally {
+      setCreatingKey(false);
+    }
+  };
+
+  const revokeApiKey = async (id: string) => {
+    if (!window.confirm('Revoke this API key? Integrations using it will stop working immediately.')) return;
+    const r = await fetch(`${API_BASE_URL}/api/keys/${id}`, { method: 'DELETE', headers: authHdr() });
+    const j = await safeJson<{ success: boolean; error?: string }>(r);
+    if (j?.success) {
+      setKeyMsg({ ok: true, text: 'Key revoked.' });
+      void loadApiKeys();
+    } else {
+      setKeyMsg({ ok: false, text: j?.error || 'Failed to revoke key' });
+    }
+  };
+
   useEffect(() => {
     if (tab !== 'billing') return;
     setLoadingBilling(true);
@@ -282,6 +342,7 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
     { id: 'security', label: 'Security', icon: Shield },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'billing', label: 'Billing', icon: CreditCard },
+    { id: 'apikeys', label: 'API Keys', icon: KeyRound },
   ] as const;
 
   const inputCls = 'h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition';
@@ -607,6 +668,85 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
                   </div>
                 )
             }
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ── API Keys ── */}
+      {tab === 'apikeys' && (
+        <div className="space-y-5">
+          <SectionCard>
+            <h2 className="text-lg font-black text-slate-950">API Keys</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Trigger your automations and add contacts from external tools. Send a POST request to{' '}
+              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">{API_BASE_URL}/api/v1/trigger</code>{' '}
+              with your key as a Bearer token and a JSON body like{' '}
+              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">{'{ "event": "api", "email": "lead@example.com", "tags": ["webinar"] }'}</code>.
+            </p>
+
+            <div className="mt-5 flex gap-3">
+              <input
+                type="text"
+                value={newKeyName}
+                onChange={(e) => setNewKeyName(e.target.value)}
+                placeholder="Key name (e.g. Zapier, my website form)"
+                className={inputCls}
+              />
+              <button
+                type="button"
+                onClick={() => void createApiKey()}
+                disabled={creatingKey}
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+              >
+                {creatingKey ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />} Create key
+              </button>
+            </div>
+
+            {createdSecret && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Copy your key now — it won't be shown again</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <code className="flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-800 border border-amber-200">{createdSecret}</code>
+                  <button
+                    type="button"
+                    onClick={() => { void navigator.clipboard.writeText(createdSecret); setCopiedSecret(true); setTimeout(() => setCopiedSecret(false), 2000); }}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white"
+                  >
+                    {copiedSecret ? <Check size={12} /> : null} {copiedSecret ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {keyMsg && <div className={msgCls(keyMsg.ok)}>{keyMsg.text}</div>}
+
+            <div className="mt-5 divide-y divide-slate-100">
+              {loadingKeys && <p className="py-4 text-sm text-slate-400">Loading keys…</p>}
+              {!loadingKeys && apiKeys.length === 0 && (
+                <p className="py-4 text-sm text-slate-400">No API keys yet. Create one to connect external tools.</p>
+              )}
+              {apiKeys.map((k) => (
+                <div key={k.id} className="flex items-center gap-3 py-3">
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-bold ${k.revoked_at ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{k.name}</p>
+                    <p className="text-xs text-slate-400">
+                      {k.key_prefix} · created {new Date(k.created_at).toLocaleDateString()}
+                      {k.last_used_at ? ` · last used ${new Date(k.last_used_at).toLocaleDateString()}` : ' · never used'}
+                      {k.revoked_at ? ' · revoked' : ''}
+                    </p>
+                  </div>
+                  {!k.revoked_at && (
+                    <button
+                      type="button"
+                      onClick={() => void revokeApiKey(k.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 size={12} /> Revoke
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </SectionCard>
         </div>
       )}
