@@ -53,6 +53,7 @@ import { registerGoogleRoutes } from './server/googleRoutes.ts';
 import { registerOpenAIRoutes } from './server/openaiRoutes.ts';
 import { registerAutomationRoutes } from './server/automationRoutes.ts';
 import { buildAutomationEngine } from './server/automationEngine.ts';
+import { recalcLeadScore } from './server/leadScoring.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -360,7 +361,11 @@ async function ensureDatabase() {
 
 }
 
-// ── Stripe Webhook ──
+// Automation engine executes the flows built in Marketing → Automations.
+// Built early so webhooks and mailing routes can fire triggers.
+const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl });
+
+// ── Stripe + Resend Webhooks ──
 // markSocialAccountNeedsReapproval is const from distModule (defined later) — use wrapper so it's read at call time
 app.use(registerWebhookRoutes({
   stripe, hasDatabase, dbQuery, pool, requireAuth,
@@ -368,6 +373,9 @@ app.use(registerWebhookRoutes({
   markSocialAccountNeedsReapproval: (...args) => markSocialAccountNeedsReapproval(...args),
   logIntegrationEvent,
   decryptIntegrationSecret,
+  getPlatformConfig,
+  fireAutomationTrigger: automationEngine.fireAutomationTrigger,
+  recalcLeadScore,
 }));
 
 
@@ -723,8 +731,6 @@ app.use('/api', registerSocialRoutes({
 }));
 
 // ─── Mailing ────────────────────────────────────────────────────────────────
-// Automation engine executes the flows built in Marketing → Automations
-const automationEngine = buildAutomationEngine({ pool, getResendConfig, appUrl: config.appUrl });
 app.use('/api/mailing', registerMailingRoutes({ requireAuth, pool: pool!, getResendConfig, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────
@@ -760,7 +766,7 @@ app.use('/api', registerAnalyticsRoutes({ requireAuth, pool, decryptIntegrationS
 // ─── Campaign & Funnel Builder ────────────────────────────────────────────────
 app.use('/api/campaign', registerCampaignRoutes({ requireAuth, pool: pool!, redisUrl: REDIS_URL }));
 app.use('/api/track', registerTrackingRoutes({ pool: pool! }));
-app.use('/r', registerShortLinkRoutes({ pool: pool! }));
+app.use('/r', registerShortLinkRoutes({ pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 // ─── End Campaign & Funnel Builder ────────────────────────────────────────────
 
 // ── AI Chat & Multi-Agent Routes ───────────────────────────────────────────

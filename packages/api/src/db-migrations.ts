@@ -1898,6 +1898,9 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS mailing_email_events_campaign_idx ON mailing_email_events (campaign_id);`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS mailing_email_events_contact_idx ON mailing_email_events (contact_id);`).catch(() => undefined);
+// Older deployments created mailing_email_events without metadata — needed for resend_id correlation
+await pool.query(`ALTER TABLE mailing_email_events ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS mailing_email_events_resend_idx ON mailing_email_events ((metadata->>'resend_id')) WHERE metadata->>'resend_id' IS NOT NULL;`).catch(() => undefined);
 
 // ── End Mailing Module ──────────────────────────────────────────────────────
 

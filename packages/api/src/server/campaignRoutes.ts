@@ -693,16 +693,26 @@ export function registerTrackingRoutes({ pool }: { pool: Pool }): Router {
   return router;
 }
 
-export function registerShortLinkRoutes({ pool }: { pool: Pool }): Router {
+export function registerShortLinkRoutes({ pool, fireAutomationTrigger }: {
+  pool: Pool;
+  fireAutomationTrigger?: (userId: string, triggerType: string, contact: { id?: string | null; email?: string }) => Promise<void>;
+}): Router {
   const router = express.Router();
 
-  // GET /r/:shortCode — public UTM link redirect
+  // GET /r/:shortCode — public UTM link redirect.
+  // Append ?c=<contact_id> to attribute the click to a contact and fire their
+  // link-click automation triggers.
   router.get('/:shortCode', async (req: Request, res: Response) => {
     try {
       if (!pool) return res.redirect('/');
       const { rows } = await pool.query('SELECT * FROM utm_links WHERE short_code=$1 LIMIT 1', [req.params.shortCode]);
       if (!rows[0]) return res.status(404).send('Link not found');
       pool.query('UPDATE utm_links SET clicks=clicks+1 WHERE id=$1', [rows[0].id]).catch(() => undefined);
+      const contactId = String(req.query.c || '').trim();
+      if (contactId && rows[0].user_id && fireAutomationTrigger) {
+        void fireAutomationTrigger(rows[0].user_id, 'utm_link_clicked', { id: contactId }).catch(() => undefined);
+        void fireAutomationTrigger(rows[0].user_id, 'link_click', { id: contactId }).catch(() => undefined);
+      }
       const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
       pool.query(`INSERT INTO funnel_events (id,campaign_id,event_type,url,referrer,utm_source,utm_medium,utm_campaign,utm_term,utm_content,ip,user_agent) VALUES (gen_random_uuid()::text,$1,'click',$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [rows[0].campaign_id, rows[0].full_url, req.headers.referer || null, rows[0].utm_source, rows[0].utm_medium, rows[0].utm_campaign, rows[0].utm_term || null, rows[0].utm_content || null, ip, req.headers['user-agent'] || null]).catch(() => undefined);
       return res.redirect(302, rows[0].full_url);

@@ -105,3 +105,19 @@ test('automation: manual run requires auth', async () => {
   const res = await request(app).post('/api/automations/auto_x/run').send({ email: 'a@b.com' });
   assert.equal(res.status, 401);
 });
+
+test('resend webhook: accepts events and returns 200', async () => {
+  const app = await loadApp();
+  const res = await request(app).post('/webhooks/resend').send({
+    type: 'email.opened',
+    data: { email_id: 'test-resend-id' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.received, true);
+});
+
+test('resend webhook: ignores unknown event types without error', async () => {
+  const app = await loadApp();
+  const res = await request(app).post('/webhooks/resend').send({ type: 'email.delivery_delayed', data: {} });
+  assert.equal(res.status, 200);
+});

@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { Resend } from 'resend';
+import axios from 'axios';
 import { logger } from '../logger.ts';
 import { isValidWebhookUrl } from '../integration-helpers.ts';
+import { recalcLeadScore } from './leadScoring.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mailing automation engine.
@@ -109,10 +111,11 @@ export function deriveTriggerType(steps: unknown): string {
 interface EngineDeps {
   pool: Pool | null;
   getResendConfig: () => Promise<{ apiKey: string; fromEmail: string; fromName: string }>;
+  getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
   appUrl: string;
 }
 
-export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineDeps) {
+export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl }: EngineDeps) {
   async function loadContact(userId: string, contact: Partial<AutomationContact>): Promise<AutomationContact | null> {
     if (!pool) return null;
     const byId = contact.id ? 'id=$2' : 'LOWER(email)=LOWER($2)';
@@ -145,7 +148,7 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
     const finalFromName = String(opts.fromName || fromName || '');
     const from = finalFromName ? `${finalFromName} <${finalFromEmail}>` : finalFromEmail;
     const resend = new Resend(apiKey);
-    const { error } = await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from,
       to: opts.to ?? contact.email,
       subject: personalize(opts.subject, contact),
@@ -153,10 +156,33 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
     });
     if (error) throw new Error(error.message);
     if (!opts.to && pool) {
+      // resend_id lets the /webhooks/resend endpoint correlate opens/clicks back to this contact
       await pool.query(
-        `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,NULL,$3,'delivered',NOW())`,
-        [randomUUID(), userId, contact.id]
+        `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata, created_at) VALUES ($1,$2,NULL,$3,'delivered',$4::jsonb,NOW())`,
+        [randomUUID(), userId, contact.id, JSON.stringify({ resend_id: data?.id ?? null })]
       ).catch((err) => logger.warn({ err }, 'automation_email_event_insert_failed'));
+    }
+  }
+
+  async function sendHubtelSms(userId: string, contact: AutomationContact, message: string): Promise<void> {
+    if (!contact.phone) {
+      logger.info({ userId, contactId: contact.id }, 'automation_sms_skipped_no_phone');
+      return;
+    }
+    const cfg = await getPlatformConfig('hubtel').catch(() => ({} as Record<string, string>));
+    const clientId = cfg.clientId || process.env.HUBTEL_CLIENT_ID || '';
+    const clientSecret = cfg.clientSecret || process.env.HUBTEL_CLIENT_SECRET || '';
+    const senderId = cfg.smsSenderId || cfg.senderId || process.env.HUBTEL_SMS_SENDER_ID || '';
+    if (!clientId || !clientSecret || !senderId) {
+      throw new Error('Hubtel SMS is not configured — set clientId, clientSecret and smsSenderId in Admin → Platform Settings (hubtel)');
+    }
+    const resp = await axios.post(
+      'https://smsc.hubtel.com/v1/messages/send',
+      { From: senderId, To: contact.phone, Content: personalize(message, contact).slice(0, 480) },
+      { auth: { username: clientId, password: clientSecret }, timeout: 15_000, validateStatus: () => true }
+    );
+    if (resp.status >= 400) {
+      throw new Error(`Hubtel SMS failed (${resp.status}): ${JSON.stringify(resp.data)?.slice(0, 200)}`);
     }
   }
 
@@ -292,6 +318,11 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
           break;
         }
 
+        case 'send_sms': {
+          await sendHubtelSms(userId, contact, String(cfg.message ?? ''));
+          break;
+        }
+
         case 'tag':
         case 'group': {
           const tag = step.type === 'group' ? `group:${String(cfg.group ?? '').trim()}` : String(cfg.tag ?? '').trim();
@@ -300,6 +331,7 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
             `INSERT INTO mailing_contact_tags (id, contact_id, user_id, tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
             [randomUUID(), contact.id, userId, tag]
           );
+          await recalcLeadScore(pool, userId, contact.id);
           break;
         }
 
@@ -311,6 +343,7 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
             `DELETE FROM mailing_contact_tags WHERE user_id=$1 AND contact_id=$2 AND LOWER(tag)=LOWER($3)`,
             [userId, contact.id, tag]
           );
+          await recalcLeadScore(pool, userId, contact.id);
           break;
         }
 
@@ -337,18 +370,22 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
             `UPDATE mailing_contacts SET subscribed=false, unsubscribed_at=NOW(), updated_at=NOW() WHERE user_id=$1 AND id=$2`,
             [userId, contact.id]
           );
+          await recalcLeadScore(pool, userId, contact.id);
           break;
         }
 
         case 'score_lead': {
           if (!contact.id) break;
           const points = Number(cfg.points ?? 0);
+          // Adjustment is a running counter on top of the rules-based score;
+          // recalcLeadScore combines both into custom_data.lead_score.
           await pool.query(
             `UPDATE mailing_contacts SET custom_data = COALESCE(custom_data,'{}'::jsonb) ||
-               jsonb_build_object('lead_score', COALESCE((custom_data->>'lead_score')::numeric, 0) + $1::numeric),
+               jsonb_build_object('lead_score_adjustment', COALESCE((custom_data->>'lead_score_adjustment')::numeric, 0) + $1::numeric),
              updated_at=NOW() WHERE user_id=$2 AND id=$3`,
             [points, userId, contact.id]
           );
+          await recalcLeadScore(pool, userId, contact.id);
           break;
         }
 
@@ -385,8 +422,8 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
         }
 
         default:
-          // send_sms (no SMS provider wired) and add_to_campaign (no membership
-          // schema yet) are accepted by the builder but skipped at run time.
+          // add_to_campaign (no membership schema yet) is accepted by the
+          // builder but skipped at run time.
           logger.info({ automationId, stepType: step.type }, 'automation_step_skipped_unsupported');
           break;
       }
@@ -433,9 +470,49 @@ export function buildAutomationEngine({ pool, getResendConfig, appUrl }: EngineD
     }
   }
 
+  // Birthday trigger: once per day, run flows with a 'birthday' trigger for
+  // contacts whose custom_data.birthday (YYYY-MM-DD or MM-DD) is today. A
+  // deterministic job id (automation+contact+year) dedupes across restarts
+  // and multiple instances.
+  let lastBirthdayRunDate = '';
+  async function processBirthdayTriggers(): Promise<void> {
+    if (!pool) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (lastBirthdayRunDate === today) return;
+    lastBirthdayRunDate = today;
+    try {
+      const { rows: automations } = await pool.query<AutomationRow>(
+        `SELECT id, user_id, name, trigger_type, status, steps, actions FROM mailing_automations WHERE status='active'`
+      );
+      const birthdayFlows = automations.filter((a) => matchesTrigger(a, 'birthday'));
+      if (!birthdayFlows.length) return;
+      const monthDay = today.slice(5); // MM-DD
+      const year = today.slice(0, 4);
+      for (const flow of birthdayFlows) {
+        const { rows: contacts } = await pool.query(
+          `SELECT id, email, first_name, last_name, phone FROM mailing_contacts
+           WHERE user_id=$1 AND subscribed=true AND RIGHT(custom_data->>'birthday', 5) = $2`,
+          [flow.user_id, monthDay]
+        );
+        for (const contact of contacts) {
+          const dedupeId = `bday_${flow.id}_${contact.id}_${year}`;
+          const { rowCount } = await pool.query(
+            `INSERT INTO mailing_automation_jobs (id, user_id, automation_id, contact_id, contact, steps, run_at, status)
+             VALUES ($1,$2,$3,$4,$5,'[]'::jsonb,NOW(),'done') ON CONFLICT (id) DO NOTHING`,
+            [dedupeId, flow.user_id, flow.id, contact.id, JSON.stringify(contact)]
+          );
+          if (rowCount) await runAutomationForContact(flow.user_id, flow, contact);
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'automation_birthday_tick_failed');
+    }
+  }
+
   // Called from the scheduler tick: claim and run due continuations.
   async function processDueAutomationJobs(): Promise<void> {
     if (!pool) return;
+    void processBirthdayTriggers();
     try {
       const { rows: jobs } = await pool.query(
         `UPDATE mailing_automation_jobs SET status='processing', attempts=attempts+1, updated_at=NOW()

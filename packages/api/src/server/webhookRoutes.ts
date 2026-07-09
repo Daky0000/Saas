@@ -18,6 +18,9 @@ export interface WebhookDeps {
   markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
   logIntegrationEvent: (params: { userId: string | null; integrationSlug: string | null; eventType: string; status: 'success' | 'failed' | 'info'; response?: any }) => Promise<void>;
   decryptIntegrationSecret: (encrypted: string) => string;
+  getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
+  fireAutomationTrigger: (userId: string, triggerType: string, contact: { id?: string | null; email?: string }) => Promise<void>;
+  recalcLeadScore: (pool: Pool | null, userId: string, contactId: string) => Promise<number | null>;
 }
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
@@ -73,6 +76,24 @@ async function upsertBillingInvoice(
       inv.status_transitions?.paid_at ? new Date(inv.status_transitions.paid_at * 1000).toISOString() : null,
     ]
   ).catch(() => undefined);
+}
+
+// Resend signs webhooks with Svix: base64 HMAC-SHA256 of "{id}.{timestamp}.{body}"
+// keyed by the base64 portion of the whsec_… secret. The signature header may
+// contain several space-separated "v1,<sig>" entries.
+function verifySvixSignature(req: Request, secret: string): boolean {
+  const raw = (req as any).rawBody as Buffer | undefined;
+  const svixId = String(req.headers['svix-id'] || '');
+  const svixTimestamp = String(req.headers['svix-timestamp'] || '');
+  const svixSignature = String(req.headers['svix-signature'] || '');
+  if (!raw || !svixId || !svixTimestamp || !svixSignature) return false;
+  const key = Buffer.from(secret.startsWith('whsec_') ? secret.slice(6) : secret, 'base64');
+  const expected = createHmac('sha256', key).update(`${svixId}.${svixTimestamp}.${raw.toString('utf8')}`).digest('base64');
+  return svixSignature.split(' ').some((part) => {
+    const sig = part.includes(',') ? part.split(',')[1] : part;
+    if (!sig || sig.length !== expected.length) return false;
+    try { return timingSafeEqual(Buffer.from(sig), Buffer.from(expected)); } catch { return false; }
+  });
 }
 
 function verifyMetaWebhookSignature(req: Request, appSecret: string): boolean {
@@ -186,6 +207,88 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
     }
 
     res.json({ received: true });
+  });
+
+  // POST /webhooks/resend — email engagement events (opens, clicks, bounces).
+  // Correlated back to user/campaign/contact via the resend_id stored in
+  // mailing_email_events metadata at send time. Configure this URL + signing
+  // secret in the Resend dashboard (secret: platform_configs resend.webhookSecret
+  // or RESEND_WEBHOOK_SECRET env var).
+  router.post('/webhooks/resend', async (req: Request, res: Response) => {
+    res.status(200).json({ received: true });
+    try {
+      if (!pool) return;
+      const cfg = await deps.getPlatformConfig('resend').catch(() => ({} as Record<string, string>));
+      const secret = String(cfg.webhookSecret || process.env.RESEND_WEBHOOK_SECRET || '').trim();
+      if (secret) {
+        if (!verifySvixSignature(req, secret)) {
+          logger.warn('Resend webhook: invalid signature — discarding');
+          return;
+        }
+      } else {
+        logger.warn('Resend webhook: no signing secret configured — processing unverified event');
+      }
+
+      const type = String(req.body?.type || '');
+      const eventMap: Record<string, string> = {
+        'email.opened': 'open',
+        'email.clicked': 'click',
+        'email.bounced': 'bounced',
+        'email.complained': 'complained',
+      };
+      const eventType = eventMap[type];
+      if (!eventType) return; // delivered/delayed/etc — already tracked at send time
+
+      const resendId = String(req.body?.data?.email_id || '').trim();
+      if (!resendId) return;
+      const { rows: origin } = await pool.query(
+        `SELECT user_id, campaign_id, contact_id FROM mailing_email_events
+         WHERE event_type='delivered' AND metadata->>'resend_id'=$1 LIMIT 1`,
+        [resendId]
+      );
+      if (!origin.length) return; // sent before correlation existed, or not ours
+      const { user_id: userId, campaign_id: campaignId, contact_id: contactId } = origin[0];
+
+      // Opens fire repeatedly (every image load) — record only the first per email.
+      if (eventType === 'open') {
+        const { rows: dup } = await pool.query(
+          `SELECT 1 FROM mailing_email_events WHERE event_type='open' AND metadata->>'resend_id'=$1 LIMIT 1`,
+          [resendId]
+        );
+        if (dup.length) return;
+      }
+
+      const link = eventType === 'click' ? String(req.body?.data?.click?.link || '') : null;
+      await pool.query(
+        `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,NOW())`,
+        [randomUUID(), userId, campaignId, contactId, eventType, JSON.stringify({ resend_id: resendId, ...(link ? { link } : {}) })]
+      );
+
+      if (contactId) {
+        const { rows: contactRows } = await pool.query(
+          `SELECT email FROM mailing_contacts WHERE id=$1 AND user_id=$2`, [contactId, userId]
+        );
+        const contact = { id: contactId, email: contactRows[0]?.email };
+
+        if (eventType === 'open') {
+          await deps.fireAutomationTrigger(userId, 'email_opened', contact);
+        } else if (eventType === 'click') {
+          await deps.fireAutomationTrigger(userId, 'link_click', contact);
+        } else {
+          // Bounce/complaint → suppress so campaigns and automations stop emailing them
+          await pool.query(
+            `UPDATE mailing_contacts SET subscribed=false, unsubscribed_at=NOW(),
+             custom_data = COALESCE(custom_data,'{}'::jsonb) || jsonb_build_object('suppression_reason', $1::text),
+             updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+            [eventType, contactId, userId]
+          );
+          await deps.recalcLeadScore(pool, userId, contactId);
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'resend_webhook_error');
+    }
   });
 
   // GET /webhooks/meta + GET /api/v1/webhooks/facebook — Meta webhook verification

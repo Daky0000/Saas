@@ -2,6 +2,7 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import { recalcLeadScore } from './leadScoring.ts';
 
 type AuthResult = { userId: string } | null;
 
@@ -228,38 +229,13 @@ export function registerCRMActivitiesRoutes({ requireAuth, pool }: Deps): Router
   });
 
   // ── Recalculate contact lead score ─────────────────────────────────────────
+  // Shared evaluator in leadScoring.ts — also runs automatically on contact
+  // state changes (tags, subscribe, consent) and from automation steps.
   router.post('/scoring/recalculate/:contactId', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
-    const { rows: rules } = await pool.query(
-      `SELECT * FROM crm_lead_scoring_rules WHERE user_id=$1 AND active=true ORDER BY position`,
-      [auth.userId]
-    );
-    const { rows: [contact] } = await pool.query(
-      `SELECT mc.*, ARRAY_AGG(mct.tag) FILTER (WHERE mct.tag IS NOT NULL) AS tags
-       FROM mailing_contacts mc
-       LEFT JOIN mailing_contact_tags mct ON mct.contact_id=mc.id
-       WHERE mc.id=$1 AND mc.user_id=$2 GROUP BY mc.id`,
-      [req.params.contactId, auth.userId]
-    );
-    if (!contact) return void res.status(404).json({ error: 'Not found' });
-    let score = 0;
-    for (const rule of rules) {
-      const cond = rule.condition as { field: string; op: string; value: string };
-      let match = false;
-      if (cond.field === 'tag') {
-        const tags: string[] = contact.tags || [];
-        match = cond.op === 'has' ? tags.includes(cond.value) : !tags.includes(cond.value);
-      } else if (cond.field === 'subscribed') {
-        match = contact.subscribed === (cond.value === 'true');
-      } else if (cond.field === 'email_consent') {
-        match = contact.email_marketing_consent === (cond.value === 'true');
-      }
-      if (match) score += rule.points;
-    }
-    const custom = contact.custom_data || {};
-    custom.lead_score = Math.max(0, Math.min(100, score));
-    await pool.query(`UPDATE mailing_contacts SET custom_data=$1 WHERE id=$2`, [JSON.stringify(custom), req.params.contactId]);
-    res.json({ score: custom.lead_score });
+    const score = await recalcLeadScore(pool, auth.userId, req.params.contactId);
+    if (score === null) return void res.status(404).json({ error: 'Not found' });
+    res.json({ score });
   });
 
   return router;

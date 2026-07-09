@@ -26,6 +26,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
+import EmailBuilder from '../components/email/EmailBuilder';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -234,6 +235,7 @@ function StepConfigPanel({
 }) {
   const meta = NODE_META[step.type];
   const set = (key: string, val: unknown) => onChange({ ...step, config: { ...step.config, [key]: val } });
+  const [showEmailBuilder, setShowEmailBuilder] = useState(false);
 
   return (
     <div className="flex flex-col h-full">
@@ -331,12 +333,33 @@ function StepConfigPanel({
             <Field label="Preview text">
               <input type="text" value={String(step.config.preview ?? '')} onChange={e => set('preview', e.target.value)} placeholder="Short preview shown in inbox…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
             </Field>
+            <Field label="Email content">
+              <textarea rows={6} value={String(step.config.content ?? '')} onChange={e => set('content', e.target.value)} placeholder="Write your email (HTML supported), or design it visually below…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none resize-y font-mono" />
+              <button
+                type="button"
+                onClick={() => setShowEmailBuilder(true)}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-100"
+              >
+                <Mail size={14} /> Design in email builder
+              </button>
+              <p className="mt-1 text-xs text-slate-400 leading-relaxed">Saving from the builder replaces the content above. Use {"{{first_name}}"}, {"{{last_name}}"}, {"{{email}}"} for personalization.</p>
+            </Field>
             <Field label="From name">
               <input type="text" value={String(step.config.from_name ?? '')} onChange={e => set('from_name', e.target.value)} placeholder="Your Name" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
             </Field>
             <Field label="From email">
               <input type="email" value={String(step.config.from_email ?? '')} onChange={e => set('from_email', e.target.value)} placeholder="you@example.com" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
             </Field>
+            {showEmailBuilder && (
+              <EmailBuilder
+                subject={String(step.config.subject ?? '')}
+                previewText={String(step.config.preview ?? '')}
+                onSubjectChange={v => set('subject', v)}
+                onPreviewTextChange={v => set('preview', v)}
+                onSave={html => { onChange({ ...step, config: { ...step.config, content: html } }); setShowEmailBuilder(false); }}
+                onClose={() => setShowEmailBuilder(false)}
+              />
+            )}
           </>
         )}
 

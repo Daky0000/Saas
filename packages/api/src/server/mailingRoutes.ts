@@ -6,6 +6,7 @@ import { Resend } from 'resend';
 import { z } from 'zod';
 import { logger } from '../logger.ts';
 import { validateBody } from '../middleware/validate.ts';
+import { recalcLeadScore } from './leadScoring.ts';
 
 const contactCreateSchema = z.object({
   email: z.string().email('Valid email required'),
@@ -176,12 +177,14 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
         await pool.query(`DELETE FROM mailing_contacts WHERE user_id=$1 AND id IN (${ph})`, [auth.userId, ...ids]);
       } else if (action === 'archive') {
         await pool.query(`UPDATE mailing_contacts SET subscribed=false,unsubscribed_at=NOW(),updated_at=NOW() WHERE user_id=$1 AND id IN (${ph})`, [auth.userId, ...ids]);
+        for (const id of ids) void recalcLeadScore(pool, auth.userId, id);
       } else if (action === 'tag' && tag) {
         for (const id of ids) {
           await pool.query('INSERT INTO mailing_contact_tags (id,contact_id,user_id,tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
             [randomUUID(), id, auth.userId, String(tag).trim()]).catch(() => undefined);
           void fireAutomationTrigger(auth.userId, 'tag_added', { id })
             .catch((err) => logger.warn({ err }, 'automation_tag_trigger_failed'));
+          void recalcLeadScore(pool, auth.userId, id);
         }
       } else { return res.status(400).json({ success: false, error: 'Invalid action' }); }
       return res.json({ success: true });
@@ -211,6 +214,7 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
           ).catch(() => undefined);
         }
       }
+      void recalcLeadScore(pool, auth.userId, contact.id);
       // 'email_signup' also matches legacy 'signup' automations (engine aliases them)
       void fireAutomationTrigger(auth.userId, 'email_signup', { id: contact.id, email: contact.email })
         .catch((err) => logger.warn({ err }, 'automation_signup_trigger_failed'));
@@ -236,6 +240,7 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
         [first_name || null, last_name || null, phone || null, subscribed !== false, !!email_marketing_consent, customDataJson ?? null, req.params.id, auth.userId]
       );
       if (!rows.length) return res.status(404).json({ success: false, error: 'Contact not found' });
+      void recalcLeadScore(pool, auth.userId, req.params.id);
       return res.json({ success: true, contact: rows[0] });
     } catch (err) { logger.error('Failed to update contact', err); return res.status(500).json({ success: false, error: 'Failed to update contact' }); }
   });
@@ -486,13 +491,17 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
         try {
           const unsubscribeUrl = contact.unsubscribe_token ? `${apiBase}/api/mailing/unsubscribe/${contact.unsubscribe_token}` : null;
           const htmlBody = `${campaign.content || '(no content)'}${unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`;
-          const { error: sendErr } = await resend.emails.send({
+          const { data: sendData, error: sendErr } = await resend.emails.send({
             from: fromField, to: contact.email, subject: campaign.subject,
             html: htmlBody.includes('<') ? htmlBody : htmlBody.replace(/\n/g, '<br>'),
             headers: unsubscribeUrl ? { 'List-Unsubscribe': `<${unsubscribeUrl}>` } : undefined,
           });
           if (sendErr) throw new Error(sendErr.message);
-          await pool.query(`INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,$3,$4,'delivered',NOW())`, [randomUUID(), auth.userId, campaign.id, contact.id]).catch(() => undefined);
+          // resend_id lets /webhooks/resend correlate opens/clicks/bounces back to this send
+          await pool.query(
+            `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata, created_at) VALUES ($1,$2,$3,$4,'delivered',$5::jsonb,NOW())`,
+            [randomUUID(), auth.userId, campaign.id, contact.id, JSON.stringify({ resend_id: sendData?.id ?? null })]
+          ).catch((err) => logger.warn({ err }, 'campaign_send_event_insert_failed'));
           sentCount++;
         } catch (_err) { failedCount++; }
       }
@@ -614,10 +623,11 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
   router.get('/unsubscribe/:token', async (req: Request, res: Response) => {
     try {
       const { rows } = await pool.query(
-        `UPDATE mailing_contacts SET subscribed = false, unsubscribed_at = NOW() WHERE unsubscribe_token = $1 RETURNING email`,
+        `UPDATE mailing_contacts SET subscribed = false, unsubscribed_at = NOW() WHERE unsubscribe_token = $1 RETURNING id, user_id, email`,
         [req.params.token]
       );
       if (!rows.length) return res.status(404).send('Invalid unsubscribe link.');
+      void recalcLeadScore(pool, rows[0].user_id, rows[0].id);
       return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>${rows[0].email} has been unsubscribed.</p></body></html>`);
     } catch (err) {
       logger.error('Unsubscribe error:', err);
