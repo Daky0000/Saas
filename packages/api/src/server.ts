@@ -52,6 +52,7 @@ import { registerGmailInboxRoutes } from './server/gmailInboxRoutes.ts';
 import { registerGoogleRoutes } from './server/googleRoutes.ts';
 import { registerOpenAIRoutes } from './server/openaiRoutes.ts';
 import { registerAutomationRoutes } from './server/automationRoutes.ts';
+import { buildAutomationEngine } from './server/automationEngine.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -722,7 +723,9 @@ app.use('/api', registerSocialRoutes({
 }));
 
 // ─── Mailing ────────────────────────────────────────────────────────────────
-app.use('/api/mailing', registerMailingRoutes({ requireAuth, pool: pool!, getResendConfig }));
+// Automation engine executes the flows built in Marketing → Automations
+const automationEngine = buildAutomationEngine({ pool, getResendConfig, appUrl: config.appUrl });
+app.use('/api/mailing', registerMailingRoutes({ requireAuth, pool: pool!, getResendConfig, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────
 app.use('/api/crm', registerCRMCompaniesRoutes({ requireAuth, pool: pool! }));
@@ -832,7 +835,7 @@ app.use('/api', workflowRouter);
 
 
 // ── Automation Flows API ─────────────────────────────────────────────────────
-app.use('/api', registerAutomationRoutes({ requireAuth, pool: pool! }));
+app.use('/api', registerAutomationRoutes({ requireAuth, pool: pool!, runAutomationForContact: automationEngine.runAutomationForContact }));
 
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {
@@ -867,6 +870,10 @@ if (config.nodeEnv !== 'test') {
     // Fire task reminders every 2 minutes
     void runTaskReminders();
     setInterval(() => void runTaskReminders(), 2 * 60 * 1000);
+
+    // Run due automation continuations (delay steps) every 2 minutes
+    void automationEngine.processDueAutomationJobs();
+    setInterval(() => void automationEngine.processDueAutomationJobs(), 2 * 60 * 1000);
   });
 }
 

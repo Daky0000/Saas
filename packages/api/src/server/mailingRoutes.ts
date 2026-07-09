@@ -65,6 +65,7 @@ interface MailingDeps {
   requireAuth: (req: Request, res: Response) => AuthResult;
   pool: Pool;
   getResendConfig: () => Promise<{ apiKey: string; fromEmail: string; fromName: string }>;
+  fireAutomationTrigger: (userId: string, triggerType: string, contact: { id?: string | null; email?: string }) => Promise<void>;
 }
 
 interface _SegCond { field: string; op: string; value: string }
@@ -97,38 +98,8 @@ function buildSegmentWhere(rules: _SegRules, params: unknown[]): string {
   return '(' + clauses.join(rules.match === 'any' ? ' OR ' : ' AND ') + ')';
 }
 
-export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: MailingDeps): Router {
+export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fireAutomationTrigger }: MailingDeps): Router {
   const router = express.Router();
-
-  // ─── Mailing Helper ───────────────────────────────────────────────────────────
-
-  async function fireMailingAutomations(userId: string, triggerType: string, data: Record<string, unknown>): Promise<void> {
-    try {
-      const { apiKey: resendKey, fromEmail, fromName } = await getResendConfig();
-      if (!resendKey) return;
-      const { rows: automations } = await pool.query(
-        `SELECT * FROM mailing_automations WHERE user_id=$1 AND trigger_type=$2 AND status='active'`,
-        [userId, triggerType]
-      );
-      if (!automations.length) return;
-      const fromField = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-      const resend = new Resend(resendKey);
-      for (const automation of automations) {
-        const contactEmail = data.email as string | undefined;
-        if (!contactEmail) continue;
-        const subject = String(automation.actions?.[0]?.subject || `Message from ${automation.name}`);
-        const body = String(automation.actions?.[0]?.content || automation.name);
-        try {
-          const { error: sendErr } = await resend.emails.send({ from: fromField, to: contactEmail, subject, html: body });
-          if (sendErr) throw new Error(sendErr.message);
-          await pool.query(
-            `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,NULL,$3,'delivered',NOW())`,
-            [randomUUID(), userId, data.contact_id || null]
-          ).catch(() => undefined);
-        } catch (_err) { /* Non-fatal */ }
-      }
-    } catch (_err) { /* Non-fatal */ }
-  }
 
   // GET /api/mailing/contacts
   router.get('/contacts', async (req: Request, res: Response) => {
@@ -209,6 +180,8 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
         for (const id of ids) {
           await pool.query('INSERT INTO mailing_contact_tags (id,contact_id,user_id,tag) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
             [randomUUID(), id, auth.userId, String(tag).trim()]).catch(() => undefined);
+          void fireAutomationTrigger(auth.userId, 'tag_added', { id })
+            .catch((err) => logger.warn({ err }, 'automation_tag_trigger_failed'));
         }
       } else { return res.status(400).json({ success: false, error: 'Invalid action' }); }
       return res.json({ success: true });
@@ -238,7 +211,13 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig }: Ma
           ).catch(() => undefined);
         }
       }
-      void fireMailingAutomations(auth.userId, 'signup', { contact_id: contact.id, email: contact.email }).catch(() => undefined);
+      // 'email_signup' also matches legacy 'signup' automations (engine aliases them)
+      void fireAutomationTrigger(auth.userId, 'email_signup', { id: contact.id, email: contact.email })
+        .catch((err) => logger.warn({ err }, 'automation_signup_trigger_failed'));
+      if (Array.isArray(tags) && tags.length) {
+        void fireAutomationTrigger(auth.userId, 'tag_added', { id: contact.id, email: contact.email })
+          .catch((err) => logger.warn({ err }, 'automation_tag_trigger_failed'));
+      }
       return res.json({ success: true, contact });
     } catch (err) { logger.error('Failed to create contact', err); return res.status(500).json({ success: false, error: 'Failed to create contact' }); }
   });

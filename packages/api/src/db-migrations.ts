@@ -1858,6 +1858,32 @@ await pool.query(`
   );
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automations_user_idx ON mailing_automations (user_id);`).catch(() => undefined);
+// Flow-builder format: ordered step list (see MarketingAutomations.tsx). Legacy rows use conditions/actions.
+await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';`).catch(() => undefined);
+await pool.query(`ALTER TABLE mailing_automations ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb;`).catch(() => undefined);
+
+// Durable continuations for automation runs: a row is created when a run hits a
+// delay (status=pending, run_at in the future) or a wait_trigger (status=waiting,
+// resumed when that trigger later fires for the same contact).
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS mailing_automation_jobs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    automation_id TEXT NOT NULL,
+    contact_id TEXT,
+    contact JSONB NOT NULL DEFAULT '{}'::jsonb,
+    steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+    wait_trigger TEXT,
+    run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automation_jobs_due_idx ON mailing_automation_jobs (status, run_at);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS mailing_automation_jobs_user_idx ON mailing_automation_jobs (user_id);`).catch(() => undefined);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS mailing_email_events (

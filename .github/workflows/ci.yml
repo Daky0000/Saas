@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Mirrors the production deploy: typecheck + build web, bundle api with esbuild.
+      # Catches the class of failures that only appear at bundle time (missing
+      # imports, bad route registration) before they reach Railway.
+      - name: Build web + api
+        run: npm run build
+
+      - name: Run API tests
+        run: npm test
