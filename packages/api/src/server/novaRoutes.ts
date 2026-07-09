@@ -17,7 +17,7 @@ import {
   ASPECT_RATIO_MAP,
   FREEPIK_IMAGE_MODELS,
 } from './magnificRoutes.ts';
-import { FAST_MODEL, recordAIUsage } from '../ai-helpers.ts';
+import { FAST_MODEL, recordAIUsage, chargeAICredits, hasAICredits } from '../ai-helpers.ts';
 
 const logger = pino();
 
@@ -773,6 +773,12 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
       if (!apiKey) return;
       for (const sched of rows as any[]) {
         try {
+          // Skip users with an empty credit balance, but still advance the
+          // schedule so we don't retry them every hourly tick.
+          if (!(await hasAICredits(sched.user_id))) {
+            await dbQuery(`UPDATE user_agent_schedules SET last_scheduled_run_at = NOW(), updated_at = NOW() WHERE id = $1`, [sched.id]);
+            continue;
+          }
           const proposals = await callAgentAndParse(sched.user_id, sched.agent_key, apiKey);
           const created   = await insertProposals(sched.user_id, sched.agent_key, proposals);
           await notifyProposals(sched.user_id, sched.agent_key, created);
@@ -1208,6 +1214,9 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
         }
       }
     } catch (_err) { /* proceed */ }
+    if (!(await hasAICredits(auth.userId))) {
+      return res.status(402).json({ success: false, error: "You're out of AI credits for this month. Upgrade your plan or wait for your monthly reset." });
+    }
     try {
       const { encryptedKey } = await getAIConfig();
       const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
@@ -1488,7 +1497,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             send({ type: 'step_progress', step_id: step.id, message: 'Submitting to Freepik…' });
             const freepikResult = await freepikGenerateImage(freepikModel, freepikPrompt, 'square_1_1', freepikApiKey, (status) => send({ type: 'step_progress', step_id: step.id, message: `Freepik: ${status}…` }));
             if (freepikResult.error) { send({ type: 'error', message: freepikResult.error }); send({ type: 'done' }); return res.end(); }
-            await dbQuery(`UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`, [freepikCreditCost, auth.userId]).catch(() => undefined);
+            await chargeAICredits(auth.userId, freepikCreditCost, 'image_generate_freepik', { source: 'agent_workflow' });
             const freepikImageUrl = freepikResult.url!;
             stepResults[step.id] = { url: freepikImageUrl, model: freepikModel, prompt: freepikPrompt };
             send({ type: 'step_done', step_id: step.id });
@@ -1513,7 +1522,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             if (vidSubmit.status >= 400) { send({ type: 'error', message: sanitizeMagnificError(vidSubmit.data?.message ?? `Magnific video error ${vidSubmit.status}`) }); send({ type: 'done' }); return res.end(); }
             const vidTaskId: string = vidSubmit.data?.data?.task_id ?? vidSubmit.data?.task_id ?? vidSubmit.data?.data?.id ?? vidSubmit.data?.id;
             if (!vidTaskId) { send({ type: 'error', message: 'No task_id returned from Magnific for video' }); send({ type: 'done' }); return res.end(); }
-            await dbQuery(`UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`, [vidCreditCost, auth.userId]).catch(() => undefined);
+            await chargeAICredits(auth.userId, vidCreditCost, 'video_generate', { source: 'agent_workflow' });
             const vidPoll = await pollMagnificTask(vidModelCfg.pollPath(vidTaskId), vidApiKey, 300, (status) => send({ type: 'step_progress', step_id: step.id, message: `Video: ${status}…` }));
             if (vidPoll.error) { send({ type: 'error', message: vidPoll.error }); send({ type: 'done' }); return res.end(); }
             stepResults[step.id] = { url: vidPoll.url, model: videoModel, prompt: videoPrompt };
@@ -1581,7 +1590,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
       const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id ?? submitResp.data?.data?.id ?? submitResp.data?.id;
       if (!taskId) throw new Error('No task_id returned from Magnific');
       await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-      await pool!.query(`UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'video_generate', { gen_id: genId });
       const result = await pollMagnificTask(modelConfig.pollPath(taskId), apiKey, 300);
       if (result.error) throw new Error(result.error);
       const videoUrl = result.url!;
@@ -1677,7 +1686,8 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
         await dbQuery(`INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at) VALUES ($1, $2, $3, 1080, 1080, $4, $5, NOW())`,
           [designId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, prompt: prompt.trim(), model }), imageUrl]).catch(() => undefined);
       }
-      const deductResult = await dbQuery(`UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2 RETURNING credits`, [actualCreditCost, auth.userId]).catch(() => ({ rows: [] as any[] }));
+      await chargeAICredits(auth.userId, actualCreditCost, 'image_generate', { gen_id: genId, model });
+      const deductResult = await dbQuery(`SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]).catch(() => ({ rows: [] as any[] }));
       if (deductResult.rows.length === 0) {
         await dbQuery(
           `INSERT INTO user_credits (user_id, credits, reset_date, updated_at) VALUES ($1, GREATEST(0, 100 - $2), date_trunc('month', NOW()) + INTERVAL '1 month', NOW())

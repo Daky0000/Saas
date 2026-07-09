@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { logger } from '../logger.ts';
+import { chargeAICredits } from '../ai-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 type Pool = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -548,10 +549,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         [resultUrl, genId]
       ).catch(() => undefined);
 
-      await pool!.query(
-        `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2`,
-        [creditCost, auth.userId]
-      ).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, `image_edit_${type}`, { gen_id: genId });
 
       return res.json({ success: true, url: resultUrl, gen_id: genId });
     } catch (e: any) {

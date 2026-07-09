@@ -1,4 +1,5 @@
 import express from 'express';
+import { chargeAICredits } from '../ai-helpers.ts';
 import type { Router, Request, Response } from 'express';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
@@ -187,7 +188,7 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
       }
 
       await pool.query(`UPDATE openai_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'image_generate_openai', { gen_id: genId });
 
       let designId: string | null = null;
       if (save && imageUrl) {
@@ -252,7 +253,7 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
       const audioUrl = `data:audio/mpeg;base64,${audioBase64}`;
 
       await pool.query(`UPDATE openai_generations SET status='completed', result_url='[audio]', completed_at=NOW() WHERE id=$2`, [genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'image_generate_openai', { gen_id: genId });
 
       return res.json({ success: true, audio_url: audioUrl, gen_id: genId });
     } catch (e: any) {

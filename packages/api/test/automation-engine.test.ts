@@ -186,3 +186,38 @@ test('ai: model registry resolves Gemini equivalents including legacy IDs', asyn
   assert.equal(DEFAULT_CHAT_MODEL, 'claude-opus-4-8');
   assert.ok(CLAUDE_MODELS.some((m) => m.id === DEFAULT_CHAT_MODEL));
 });
+
+test('credits: negative amount can no longer mint credits', async () => {
+  const app = await loadApp();
+  const res = await request(app).post('/api/credits/use').set('Authorization', authHeader()).send({ amount: -100000 });
+  assert.equal(res.status, 400);
+});
+
+test('credits: non-integer and absurd amounts rejected', async () => {
+  const app = await loadApp();
+  for (const amount of [0, 2.5, 10_000, 'evil']) {
+    const res = await request(app).post('/api/credits/use').set('Authorization', authHeader()).send({ amount });
+    assert.equal(res.status, 400, `amount=${amount} should 400`);
+  }
+});
+
+test('credits: cost math matches real API prices with 3x margin', async () => {
+  const { computeAICostUsd, creditsForCostUsd, AI_PROFIT_MULTIPLIER, CREDIT_USD } = await import('../src/ai-helpers.ts');
+  // Opus 4.8: $5/M in, $25/M out — 3K in + 500 out = $0.015 + $0.0125 = $0.0275
+  const cost = computeAICostUsd('claude-opus-4-8', 3000, 500, 0);
+  assert.ok(Math.abs(cost - 0.0275) < 1e-9, `cost=${cost}`);
+  // ×3 margin at $0.01/credit → ceil(8.25) = 9 credits
+  assert.equal(creditsForCostUsd(cost), 9);
+  // Haiku: $1/M in, $5/M out — 2K in + 800 out = $0.006 → 2 credits
+  assert.equal(creditsForCostUsd(computeAICostUsd('claude-haiku-4-5', 2000, 800)), 2);
+  // Cache reads bill at ~0.1x input
+  const cached = computeAICostUsd('claude-opus-4-8', 0, 0, 10000);
+  assert.ok(Math.abs(cached - 0.005) < 1e-9);
+  // Zero usage charges nothing; tiny usage charges minimum 1 credit
+  assert.equal(creditsForCostUsd(0), 0);
+  assert.equal(creditsForCostUsd(0.0001), 1);
+  // Unknown models fall back to Sonnet-tier pricing (never undercharge to 0-cost)
+  assert.ok(computeAICostUsd('mystery-model', 1000, 1000) > 0);
+  assert.equal(AI_PROFIT_MULTIPLIER, 3);
+  assert.equal(CREDIT_USD, 0.01);
+});

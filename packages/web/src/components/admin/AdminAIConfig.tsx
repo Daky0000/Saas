@@ -37,13 +37,46 @@ type Config = {
   defaultSystemPrompt: string;
 };
 
-type Tab = 'general' | 'bots';
+type Tab = 'general' | 'bots' | 'usage';
+
+type UsageTotals = {
+  calls: number; input_tokens: number; output_tokens: number; cache_read_tokens: number;
+  cost_usd: number; credits_charged: number; credit_value_usd: number; gross_margin_usd: number;
+};
+type UsageRow = {
+  feature?: string; model?: string; email?: string | null; user_id?: string | null;
+  calls: string | number; input_tokens: string | number; output_tokens: string | number;
+  cost_usd: string | number; credits_charged: string | number;
+};
 
 export default function AdminAIConfig() {
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('general');
+
+  // ── Usage & margin tab state ──
+  const [usageDays, setUsageDays] = useState(30);
+  const [usageTotals, setUsageTotals] = useState<UsageTotals | null>(null);
+  const [usageByFeature, setUsageByFeature] = useState<UsageRow[]>([]);
+  const [usageTopUsers, setUsageTopUsers] = useState<UsageRow[]>([]);
+  const [usageLoading, setUsageLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'usage') return;
+    setUsageLoading(true);
+    fetch(`${API_BASE_URL}/api/admin/ai-usage?days=${usageDays}`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.success) {
+          setUsageTotals(j.totals ?? null);
+          setUsageByFeature(j.byFeature ?? []);
+          setUsageTopUsers(j.topUsers ?? []);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setUsageLoading(false));
+  }, [activeTab, usageDays]);
 
   // General tab state
   const [saving, setSaving] = useState(false);
@@ -195,7 +228,7 @@ export default function AdminAIConfig() {
 
       {/* Tabs */}
       <div className="flex border-b border-slate-200">
-        {(['general', 'bots'] as Tab[]).map((tab) => (
+        {(['general', 'bots', 'usage'] as Tab[]).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -541,6 +574,92 @@ export default function AdminAIConfig() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── Usage & Margin Tab ── */}
+      {activeTab === 'usage' && (
+        <div className="space-y-5">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-500">Real provider cost vs. credits charged (1 credit = $0.01 retail, 3× markup on raw API cost).</p>
+            <select value={usageDays} onChange={(e) => setUsageDays(Number(e.target.value))}
+              className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
+              <option value={7}>7 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+            </select>
+          </div>
+
+          {usageLoading && <p className="py-8 text-center text-sm text-slate-400">Loading usage…</p>}
+
+          {!usageLoading && usageTotals && (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: 'AI calls', value: usageTotals.calls.toLocaleString() },
+                  { label: 'Tokens (in / out)', value: `${(usageTotals.input_tokens / 1000).toFixed(1)}K / ${(usageTotals.output_tokens / 1000).toFixed(1)}K` },
+                  { label: 'Provider cost', value: `$${usageTotals.cost_usd.toFixed(2)}` },
+                  { label: 'Gross margin', value: `$${usageTotals.gross_margin_usd.toFixed(2)}`, accent: usageTotals.gross_margin_usd >= 0 },
+                ].map(({ label, value, accent }) => (
+                  <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs text-slate-500">{label}</p>
+                    <p className={`mt-1 text-xl font-bold ${accent === undefined ? 'text-slate-900' : accent ? 'text-emerald-600' : 'text-red-600'}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-400">
+                Credits charged: {usageTotals.credits_charged.toLocaleString()} (retail value ${usageTotals.credit_value_usd.toFixed(2)}).
+                Cache reads saved ~${((usageTotals.cache_read_tokens / 1_000_000) * 4.5).toFixed(2)} vs uncached input.
+              </p>
+
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                <p className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900">By feature & model</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-xs text-slate-400">
+                      <th className="px-4 py-2">Feature</th><th className="px-4 py-2">Model</th>
+                      <th className="px-4 py-2 text-right">Calls</th><th className="px-4 py-2 text-right">Cost</th><th className="px-4 py-2 text-right">Credits</th>
+                    </tr></thead>
+                    <tbody>
+                      {usageByFeature.map((r, i) => (
+                        <tr key={i} className="border-t border-slate-50">
+                          <td className="px-4 py-2 text-slate-700">{r.feature}</td>
+                          <td className="px-4 py-2 text-slate-500">{r.model}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">{Number(r.calls).toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">${Number(r.cost_usd).toFixed(3)}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">{Number(r.credits_charged).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      {usageByFeature.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">No AI usage recorded yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                <p className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900">Top users</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-xs text-slate-400">
+                      <th className="px-4 py-2">User</th>
+                      <th className="px-4 py-2 text-right">Calls</th><th className="px-4 py-2 text-right">Cost</th><th className="px-4 py-2 text-right">Credits</th>
+                    </tr></thead>
+                    <tbody>
+                      {usageTopUsers.map((r, i) => (
+                        <tr key={i} className="border-t border-slate-50">
+                          <td className="px-4 py-2 text-slate-700">{r.email || r.user_id || 'system'}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">{Number(r.calls).toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">${Number(r.cost_usd).toFixed(3)}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">{Number(r.credits_charged).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      {usageTopUsers.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400">No AI usage recorded yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

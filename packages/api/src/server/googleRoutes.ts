@@ -1,4 +1,5 @@
 import express from 'express';
+import { chargeAICredits } from '../ai-helpers.ts';
 import type { Router, Request, Response } from 'express';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
@@ -214,7 +215,7 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
       }
 
       await pool.query(`UPDATE google_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'image_generate_google', { gen_id: genId });
 
       let designId: string | null = null;
       if (save && imageUrl) {
@@ -292,7 +293,7 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
       if (!operationName) throw new Error('No operation name returned from Google');
 
       await pool.query(`UPDATE google_generations SET operation_name=$1, status='processing' WHERE id=$2`, [operationName, genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'image_generate_google', { gen_id: genId });
 
       const result = await pollGoogleOperation(operationName, apiKey, 300);
       if (result.error) throw new Error(result.error);

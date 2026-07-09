@@ -4,7 +4,9 @@ import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits } from '../ai-helpers.ts';
+
+const OUT_OF_CREDITS_MSG = "You're out of AI credits for this month. Upgrade your plan or wait for your monthly reset to keep using AI features.";
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -769,6 +771,9 @@ export function registerAIChatRoutes({
       if (!apiKey) {
         return res.status(503).json({ success: false, error: 'AI service not configured — add your API key in Admin → AI Assistant' });
       }
+      if (!(await hasAICredits(auth.userId))) {
+        return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
+      }
 
       const skillsPrompt = await getSkillsPromptForScope(page || '');
 
@@ -941,6 +946,8 @@ export function registerAIChatRoutes({
       const aiCfgOrch = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfgOrch);
       if (!apiKey) return res.json({ type: 'direct' });
+      // No credits → let /ai/chat return its 402 rather than spending on routing
+      if (!(await hasAICredits(auth.userId))) return res.json({ type: 'direct' });
 
       const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
       const orchFastModel = aiCfgOrch.provider === 'google' ? resolveGeminiModel(aiCfgOrch.model) : FAST_MODEL;
@@ -990,6 +997,9 @@ Rules:
       const aiCfg = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfg);
       if (!apiKey) return res.status(503).json({ success: false, error: 'AI not configured' });
+      if (!(await hasAICredits(auth.userId))) {
+        return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
+      }
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');

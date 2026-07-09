@@ -1,4 +1,5 @@
 import express from 'express';
+import { chargeAICredits } from '../ai-helpers.ts';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import axios from 'axios';
@@ -212,7 +213,7 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
       const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
       if (!taskId) throw new Error('No task_id returned from Kling');
       await pool.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'video_generate_kling', { gen_id: genId });
       const result = await pollKlingTask(taskId, `/v1/videos/${pollPath}/${taskId}`, 300);
       if (result.error) throw new Error(result.error);
       await pool.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);
@@ -264,7 +265,7 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
       const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
       if (!taskId) throw new Error('No task_id returned from Kling');
       await pool.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'video_generate_kling', { gen_id: genId });
       const result = await pollKlingTask(taskId, `/v1/videos/image2video/${taskId}`, 300);
       if (result.error) throw new Error(result.error);
       await pool.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);
@@ -315,7 +316,7 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
       const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id;
       if (!taskId) throw new Error('No task_id returned from Kling');
       await pool.query(`UPDATE kling_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-      await pool.query(`UPDATE user_credits SET credits=GREATEST(0,credits-$1), updated_at=NOW() WHERE user_id=$2`, [creditCost, auth.userId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'video_generate_kling', { gen_id: genId });
       const result = await pollKlingTask(taskId, `/v1/images/generations/${taskId}`, 120);
       if (result.error) throw new Error(result.error);
       await pool.query(`UPDATE kling_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [result.url, genId]).catch(() => undefined);

@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
+import { ensureCreditAccount, chargeAICredits, grantCredits } from '../ai-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -14,45 +15,55 @@ interface CreditsDeps {
 export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, pool }: CreditsDeps): Router {
   const router = express.Router();
 
-  // GET /api/credits/balance
+  // GET /api/credits/balance — lazily creates the account at the plan
+  // allowance and applies the monthly reset when reset_date has passed.
   router.get('/credits/balance', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!hasDatabase()) return res.json({ success: true, credits: 100, reset_date: null });
     try {
-      const { rows } = await pool.query<{ credits: number; reset_date: string }>(
-        'SELECT credits, reset_date FROM user_credits WHERE user_id = $1',
-        [auth.userId]
-      );
-      if (rows.length === 0) {
-        await pool.query(
-          `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
-           VALUES ($1, 100, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
-           ON CONFLICT (user_id) DO NOTHING`,
-          [auth.userId]
-        );
-        return res.json({ success: true, credits: 100, reset_date: null });
-      }
-      return res.json({ success: true, credits: rows[0].credits, reset_date: rows[0].reset_date });
+      const { credits, resetDate } = await ensureCreditAccount(auth.userId);
+      return res.json({ success: true, credits, reset_date: resetDate });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
     }
   });
 
-  // POST /api/credits/use
+  // GET /api/credits/history — the user's own credit ledger
+  router.get('/credits/history', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!hasDatabase()) return res.json({ success: true, entries: [] });
+    try {
+      const { rows } = await pool.query(
+        `SELECT delta, balance_after, reason, meta, created_at FROM credit_ledger
+         WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
+        [auth.userId]
+      );
+      return res.json({ success: true, entries: rows });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // POST /api/credits/use — spend credits (frontend-initiated features).
+  // amount is strictly validated: a negative or absurd value previously let
+  // any signed-in user mint credits (credits - (-N) = credits + N).
   router.post('/credits/use', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
+    const rawAmount = Number((req.body as { amount?: unknown })?.amount ?? 5);
+    if (!Number.isFinite(rawAmount) || !Number.isInteger(rawAmount) || rawAmount < 1 || rawAmount > 500) {
+      return res.status(400).json({ success: false, error: 'amount must be an integer between 1 and 500' });
+    }
     if (!hasDatabase()) return res.json({ success: true, credits: 50 });
-    const { amount = 5 } = req.body as { amount?: number };
+    const reason = String((req.body as { reason?: unknown })?.reason ?? 'feature_use').slice(0, 60);
     try {
-      const { rows } = await pool.query<{ credits: number }>(
-        `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW()
-         WHERE user_id = $2 RETURNING credits`,
-        [amount, auth.userId]
-      );
-      if (rows.length === 0) return res.status(404).json({ success: false, error: 'No credit account found' });
-      return res.json({ success: true, credits: rows[0].credits });
+      const { credits } = await ensureCreditAccount(auth.userId);
+      if (credits <= 0) return res.status(402).json({ success: false, error: 'Out of credits', credits: 0 });
+      await chargeAICredits(auth.userId, rawAmount, reason, { source: 'credits_use_endpoint' });
+      const after = await ensureCreditAccount(auth.userId);
+      return res.json({ success: true, credits: after.credits });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
     }
@@ -64,7 +75,10 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
     if (!admin) return;
     if (!hasDatabase()) return res.json({ success: true });
     const { user_id, email, amount } = req.body as { user_id?: string; email?: string; amount: number };
-    if ((!user_id && !email) || !amount) return res.status(400).json({ success: false, error: 'user_id or email, and amount required' });
+    const amt = Number(amount);
+    if ((!user_id && !email) || !Number.isInteger(amt) || amt < 1 || amt > 1_000_000) {
+      return res.status(400).json({ success: false, error: 'user_id or email, and a positive integer amount required' });
+    }
     try {
       let resolvedId = user_id;
       if (!resolvedId && email) {
@@ -72,13 +86,8 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
         if (!r.rows[0]) return res.status(404).json({ success: false, error: `No user found with email: ${email}` });
         resolvedId = r.rows[0].id;
       }
-      await pool.query(
-        `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
-         VALUES ($1, $2, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
-         ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $2, updated_at = NOW()`,
-        [resolvedId, amount]
-      );
-      return res.json({ success: true, user_id: resolvedId });
+      const balance = await grantCredits(resolvedId!, amt, 'admin_grant', { granted_by: (admin as any).id ?? 'admin' });
+      return res.json({ success: true, user_id: resolvedId, credits: balance });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
     }
@@ -89,14 +98,16 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     if (!hasDatabase()) return res.json({ success: true, updated: 0 });
-    const { amount } = req.body as { amount: number };
-    if (!amount || amount <= 0) return res.status(400).json({ success: false, error: 'amount must be positive' });
+    const amt = Number((req.body as { amount?: unknown })?.amount);
+    if (!Number.isInteger(amt) || amt < 1 || amt > 1_000_000) {
+      return res.status(400).json({ success: false, error: 'amount must be a positive integer' });
+    }
     try {
       const result = await pool.query(
         `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
          SELECT id, $1, date_trunc('month', NOW()) + INTERVAL '1 month', NOW() FROM users
          ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $1, updated_at = NOW()`,
-        [amount]
+        [amt]
       );
       return res.json({ success: true, updated: result.rowCount });
     } catch (e: any) {

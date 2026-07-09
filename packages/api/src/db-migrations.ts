@@ -1879,6 +1879,24 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS ai_usage_user_idx ON ai_usage_log (user_id, created_at);`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage_log (created_at);`).catch(() => undefined);
+// Real provider cost + retail credits charged per call (see ai-helpers.ts credit economics)
+await pool.query(`ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0;`).catch(() => undefined);
+await pool.query(`ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS credits_charged INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
+
+// Audit trail for every credit movement: AI charges, image/video generation,
+// admin grants, monthly resets. delta is negative for spend.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS credit_ledger (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    delta INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    meta JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS credit_ledger_user_idx ON credit_ledger (user_id, created_at);`).catch(() => undefined);
 
 // Lead-capture forms (Marketing → Forms). Hosted at /f/:id and embeddable via
 // iframe; submissions upsert mailing_contacts and fire automation triggers.

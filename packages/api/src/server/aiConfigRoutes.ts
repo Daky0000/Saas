@@ -44,29 +44,57 @@ export function registerAIConfigRoutes(deps: AIConfigDeps): Router {
       if (!admin) return;
       if (!hasDatabase()) return res.json({ success: true, byDay: [], byFeature: [], topUsers: [] });
       const days = Math.min(90, Math.max(1, Number(req.query.days) || 30));
-      const [byDay, byFeature, topUsers] = await Promise.all([
+      const [totals, byDay, byFeature, topUsers] = await Promise.all([
+        dbQuery(
+          `SELECT COUNT(*) AS calls, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+                  SUM(cache_read_tokens) AS cache_read_tokens,
+                  COALESCE(SUM(cost_usd), 0) AS cost_usd, COALESCE(SUM(credits_charged), 0) AS credits_charged
+           FROM ai_usage_log WHERE created_at > NOW() - ($1 || ' days')::interval`,
+          [days]
+        ).catch(() => ({ rows: [{}] })),
         dbQuery(
           `SELECT DATE(created_at) AS day, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-                  SUM(cache_read_tokens) AS cache_read_tokens, COUNT(*) AS calls
+                  SUM(cache_read_tokens) AS cache_read_tokens, COUNT(*) AS calls,
+                  COALESCE(SUM(cost_usd), 0) AS cost_usd, COALESCE(SUM(credits_charged), 0) AS credits_charged
            FROM ai_usage_log WHERE created_at > NOW() - ($1 || ' days')::interval
            GROUP BY DATE(created_at) ORDER BY day`,
           [days]
         ).catch(() => ({ rows: [] })),
         dbQuery(
-          `SELECT feature, model, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, COUNT(*) AS calls
+          `SELECT feature, model, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, COUNT(*) AS calls,
+                  COALESCE(SUM(cost_usd), 0) AS cost_usd, COALESCE(SUM(credits_charged), 0) AS credits_charged
            FROM ai_usage_log WHERE created_at > NOW() - ($1 || ' days')::interval
-           GROUP BY feature, model ORDER BY SUM(input_tokens + output_tokens) DESC LIMIT 30`,
+           GROUP BY feature, model ORDER BY SUM(cost_usd) DESC LIMIT 30`,
           [days]
         ).catch(() => ({ rows: [] })),
         dbQuery(
-          `SELECT l.user_id, u.email, SUM(l.input_tokens) AS input_tokens, SUM(l.output_tokens) AS output_tokens, COUNT(*) AS calls
+          `SELECT l.user_id, u.email, SUM(l.input_tokens) AS input_tokens, SUM(l.output_tokens) AS output_tokens, COUNT(*) AS calls,
+                  COALESCE(SUM(l.cost_usd), 0) AS cost_usd, COALESCE(SUM(l.credits_charged), 0) AS credits_charged
            FROM ai_usage_log l LEFT JOIN users u ON u.id = l.user_id
            WHERE l.created_at > NOW() - ($1 || ' days')::interval
-           GROUP BY l.user_id, u.email ORDER BY SUM(l.input_tokens + l.output_tokens) DESC LIMIT 20`,
+           GROUP BY l.user_id, u.email ORDER BY SUM(l.cost_usd) DESC LIMIT 20`,
           [days]
         ).catch(() => ({ rows: [] })),
       ]);
-      return res.json({ success: true, days, byDay: byDay.rows, byFeature: byFeature.rows, topUsers: topUsers.rows });
+      const t: any = totals.rows[0] ?? {};
+      const costUsd = Number(t.cost_usd ?? 0);
+      const creditsCharged = Number(t.credits_charged ?? 0);
+      // Retail value of charged credits ($0.01/credit) minus raw provider cost
+      const revenueUsd = creditsCharged * 0.01;
+      return res.json({
+        success: true, days,
+        totals: {
+          calls: Number(t.calls ?? 0),
+          input_tokens: Number(t.input_tokens ?? 0),
+          output_tokens: Number(t.output_tokens ?? 0),
+          cache_read_tokens: Number(t.cache_read_tokens ?? 0),
+          cost_usd: costUsd,
+          credits_charged: creditsCharged,
+          credit_value_usd: revenueUsd,
+          gross_margin_usd: revenueUsd - costUsd,
+        },
+        byDay: byDay.rows, byFeature: byFeature.rows, topUsers: topUsers.rows,
+      });
     } catch (err) {
       logger.error('AI usage GET error:', err);
       return res.status(500).json({ success: false, error: 'Failed to load AI usage' });
