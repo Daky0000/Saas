@@ -759,7 +759,7 @@ app.use('/api/connectors', registerConnectorSyncRoutes({ requireAuth, pool: pool
 
 // ─── Surveys ──────────────────────────────────────────────────────────────────
 app.use('/api/surveys', registerSurveyRoutes({ requireAuth, pool: pool! }));
-app.use('/api/public/surveys', registerPublicSurveyRoutes({ pool: pool! }));
+app.use('/api/public/surveys', registerPublicSurveyRoutes({ pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 // ─── Leads & Google Sheets ──────────────────────────────────────────────────
 const GS_CLIENT_ID = process.env.GOOGLE_SHEETS_CLIENT_ID || '';

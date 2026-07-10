@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { logger } from '../logger.ts';
 import { validateBody } from '../middleware/validate.ts';
 import { recalcLeadScore } from './leadScoring.ts';
+import { personalize } from './automationEngine.ts';
 
 const contactCreateSchema = z.object({
   email: z.string().email('Valid email required'),
@@ -365,11 +366,13 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
       const contact = rows[0];
       const { apiKey: resendKey, fromEmail, fromName } = await getResendConfig();
       if (!resendKey) return res.status(503).json({ success: false, error: 'Email sending is not configured — add your Resend API key in Admin → Platform Settings' });
-      const unsubFooter = include_unsubscribe_footer && contact.unsubscribe_token
-        ? `<br><br><hr style="border:none;border-top:1px solid #eee"><p style="font-size:12px;color:#999">You received this email because you are subscribed. <a href="${process.env.API_URL || ''}/api/mailing/unsubscribe/${contact.unsubscribe_token}">Unsubscribe</a></p>`
+      const unsubUrl = contact.unsubscribe_token ? `${process.env.API_URL || ''}/api/mailing/unsubscribe/${contact.unsubscribe_token}` : null;
+      const unsubFooter = include_unsubscribe_footer && unsubUrl
+        ? `<br><br><hr style="border:none;border-top:1px solid #eee"><p style="font-size:12px;color:#999">You received this email because you are subscribed. <a href="${unsubUrl}">Unsubscribe</a></p>`
         : '';
+      const resolvedHtml = String(html).replaceAll('{{unsubscribe_url}}', unsubUrl ?? '#');
       const resend = new Resend(resendKey);
-      const { error: sendErr } = await resend.emails.send({ from: fromName ? `${fromName} <${fromEmail}>` : fromEmail, to: contact.email, subject: subject.trim(), html: `${html}${unsubFooter}` });
+      const { error: sendErr } = await resend.emails.send({ from: fromName ? `${fromName} <${fromEmail}>` : fromEmail, to: contact.email, subject: subject.trim(), html: `${resolvedHtml}${unsubFooter}` });
       if (sendErr) throw new Error(sendErr.message);
       await pool.query(`INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, created_at) VALUES ($1,$2,NULL,$3,'delivered',NOW())`, [randomUUID(), auth.userId, contact.id]).catch(() => undefined);
       return res.json({ success: true });
@@ -557,9 +560,14 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
       for (const contact of contacts) {
         try {
           const unsubscribeUrl = contact.unsubscribe_token ? `${apiBase}/api/mailing/unsubscribe/${contact.unsubscribe_token}` : null;
-          const htmlBody = `${campaign.content || '(no content)'}${unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`;
+          // Emails from the builder carry a {{unsubscribe_url}} footer placeholder;
+          // resolve it instead of appending a second unsubscribe link.
+          const rawContent = String(campaign.content || '(no content)');
+          const hasPlaceholder = rawContent.includes('{{unsubscribe_url}}');
+          const resolvedContent = rawContent.replaceAll('{{unsubscribe_url}}', unsubscribeUrl ?? '#');
+          const htmlBody = personalize(`${resolvedContent}${!hasPlaceholder && unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`, contact);
           const { data: sendData, error: sendErr } = await resend.emails.send({
-            from: fromField, to: contact.email, subject: campaign.subject,
+            from: fromField, to: contact.email, subject: personalize(String(campaign.subject ?? ''), contact),
             html: htmlBody.includes('<') ? htmlBody : htmlBody.replace(/\n/g, '<br>'),
             headers: unsubscribeUrl ? { 'List-Unsubscribe': `<${unsubscribeUrl}>` } : undefined,
           });

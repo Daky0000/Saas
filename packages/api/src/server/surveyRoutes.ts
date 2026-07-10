@@ -186,7 +186,10 @@ export function registerSurveyRoutes({ requireAuth, pool }: SurveyDeps): Router 
   return router;
 }
 
-export function registerPublicSurveyRoutes({ pool }: { pool: Pool }): Router {
+export function registerPublicSurveyRoutes({ pool, fireAutomationTrigger }: {
+  pool: Pool;
+  fireAutomationTrigger?: (userId: string, triggerType: string, contact: { id?: string | null; email?: string }) => Promise<void>;
+}): Router {
   const router = express.Router();
 
   // GET /api/public/surveys/:id — fetch published survey for display
@@ -216,6 +219,12 @@ export function registerPublicSurveyRoutes({ pool }: { pool: Pool }): Router {
       await pool.query(
         `INSERT INTO survey_responses (id, survey_id, contact_id, respondent_email, answers, ip_address) VALUES ($1,$2,$3,$4,$5,$6)`,
         [id, req.params.id, contactId, email?.toLowerCase().trim() || null, JSON.stringify(answers), ip]);
+      // Known respondents kick off survey automations (Marketing → Automations).
+      if (fireAutomationTrigger && (contactId || email)) {
+        const who = { id: contactId, email: email?.toLowerCase().trim() };
+        void fireAutomationTrigger(survey.user_id, 'survey_response', who).catch(() => undefined);
+        void fireAutomationTrigger(survey.user_id, 'survey_completed', who).catch(() => undefined);
+      }
       return res.json({ success: true, thank_you_message: survey.thank_you_message });
     } catch (err) { logger.error('Failed to submit survey response', err); return res.status(500).json({ success: false, error: 'Failed to submit response' }); }
   });

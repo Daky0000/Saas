@@ -1931,6 +1931,24 @@ await pool.query(`
 await pool.query(`CREATE INDEX IF NOT EXISTS page_view_events_user_idx ON page_view_events (user_id, created_at DESC);`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS page_view_events_contact_idx ON page_view_events (contact_id, created_at DESC);`).catch(() => undefined);
 
+// Campaign audience membership: which mailing contacts belong to which
+// multi-channel campaign. Written by the automation add_to_campaign step;
+// read by the in_campaign if_else condition and campaign detail views.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS campaign_members (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    contact_id TEXT NOT NULL REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+    label TEXT,
+    source TEXT DEFAULT 'automation',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (campaign_id, contact_id)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_user_idx ON campaign_members (user_id, campaign_id);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_contact_idx ON campaign_members (contact_id);`).catch(() => undefined);
+
 // Public API keys (Settings → API Keys). Only the SHA-256 hash is stored;
 // the full key is shown once at creation. Used by POST /api/v1/trigger.
 await pool.query(`

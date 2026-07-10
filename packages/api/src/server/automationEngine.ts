@@ -141,18 +141,33 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
     return rows.length === 0 || rows[0].subscribed !== false;
   }
 
+  async function getUnsubscribeUrl(userId: string, contact: AutomationContact): Promise<string | null> {
+    if (!pool || !contact.id) return null;
+    const { rows } = await pool.query(
+      `SELECT unsubscribe_token FROM mailing_contacts WHERE user_id=$1 AND id=$2`,
+      [userId, contact.id]
+    );
+    const token = rows[0]?.unsubscribe_token;
+    return token ? `${appUrl.replace(/\/+$/, '')}/api/mailing/unsubscribe/${token}` : null;
+  }
+
   async function sendEmail(userId: string, contact: AutomationContact, opts: { subject: string; html: string; fromName?: string; fromEmail?: string; to?: string }): Promise<void> {
     const { apiKey, fromEmail, fromName } = await getResendConfig();
     if (!apiKey) throw new Error('Resend is not configured');
     const finalFromEmail = String(opts.fromEmail || fromEmail);
     const finalFromName = String(opts.fromName || fromName || '');
     const from = finalFromName ? `${finalFromName} <${finalFromEmail}>` : finalFromEmail;
+    // Resolve the builder's {{unsubscribe_url}} footer placeholder (team
+    // notifications sent via opts.to keep the contact's link out of them).
+    const unsubscribeUrl = opts.to ? null : await getUnsubscribeUrl(userId, contact).catch(() => null);
+    const html = personalize(opts.html, contact).replaceAll('{{unsubscribe_url}}', unsubscribeUrl ?? '#');
     const resend = new Resend(apiKey);
     const { data, error } = await resend.emails.send({
       from,
       to: opts.to ?? contact.email,
       subject: personalize(opts.subject, contact),
-      html: personalize(opts.html, contact),
+      html,
+      headers: unsubscribeUrl ? { 'List-Unsubscribe': `<${unsubscribeUrl}>` } : undefined,
     });
     if (error) throw new Error(error.message);
     if (!opts.to && pool) {
@@ -228,8 +243,43 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
         return [contact.email, contact.first_name, contact.last_name, contact.phone]
           .some((f) => String(f ?? '').toLowerCase() === v);
       }
+      case 'in_campaign': {
+        // Value from the single-value UI may be a campaign id or its name.
+        if (!pool || !contact.id) return false;
+        const { rows } = await pool.query(
+          `SELECT 1 FROM campaign_members m JOIN campaigns c ON c.id = m.campaign_id
+           WHERE m.user_id=$1 AND m.contact_id=$2 AND ($3='' OR m.campaign_id=$3 OR LOWER(c.name)=LOWER($3)) LIMIT 1`,
+          [userId, contact.id, value]
+        ).catch(() => ({ rows: [] as unknown[] }));
+        return rows.length > 0;
+      }
+      case 'survey_completed': {
+        if (!pool) return false;
+        const { rows } = await pool.query(
+          `SELECT 1 FROM survey_responses r JOIN surveys s ON s.id = r.survey_id
+           WHERE s.user_id=$1 AND (r.contact_id=$2 OR LOWER(r.respondent_email)=LOWER($3)) LIMIT 1`,
+          [userId, contact.id ?? '', contact.email ?? '']
+        ).catch(() => ({ rows: [] as unknown[] }));
+        return rows.length > 0;
+      }
+      case 'survey_score': {
+        // Average of the numeric answers in the contact's latest response.
+        if (!pool) return false;
+        const { rows } = await pool.query(
+          `SELECT r.answers FROM survey_responses r JOIN surveys s ON s.id = r.survey_id
+           WHERE s.user_id=$1 AND (r.contact_id=$2 OR LOWER(r.respondent_email)=LOWER($3))
+           ORDER BY r.created_at DESC LIMIT 1`,
+          [userId, contact.id ?? '', contact.email ?? '']
+        ).catch(() => ({ rows: [] as Array<{ answers: unknown }> }));
+        if (!rows.length) return false;
+        const answers = (typeof rows[0].answers === 'string' ? JSON.parse(rows[0].answers) : rows[0].answers) as Array<{ value?: unknown }>;
+        const nums = (Array.isArray(answers) ? answers : [])
+          .map((a) => Number(a?.value)).filter((n) => Number.isFinite(n));
+        if (!nums.length) return false;
+        return nums.reduce((s, n) => s + n, 0) / nums.length >= Number(value || 0);
+      }
       default:
-        // purchase / survey_* / in_campaign have no data source yet — branch to "No".
+        // purchase has no data source yet — branch to "No".
         logger.info({ conditionType: type }, 'automation_condition_unsupported');
         return false;
     }
@@ -421,9 +471,24 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
           break;
         }
 
+        case 'add_to_campaign': {
+          const campaignId = String(cfg.campaign_id ?? '').trim();
+          if (!contact.id || !campaignId) break;
+          // Ownership check doubles as an existence check for the FK.
+          const owned = await pool.query(`SELECT 1 FROM campaigns WHERE id=$1 AND user_id=$2 LIMIT 1`, [campaignId, userId]);
+          if (!owned.rows.length) {
+            logger.warn({ automationId, campaignId }, 'automation_add_to_campaign_unknown_campaign');
+            break;
+          }
+          await pool.query(
+            `INSERT INTO campaign_members (user_id, campaign_id, contact_id, label, source)
+             VALUES ($1,$2,$3,$4,'automation') ON CONFLICT (campaign_id, contact_id) DO NOTHING`,
+            [userId, campaignId, contact.id, String(cfg.label ?? '').trim() || null]
+          );
+          break;
+        }
+
         default:
-          // add_to_campaign (no membership schema yet) is accepted by the
-          // builder but skipped at run time.
           logger.info({ automationId, stepType: step.type }, 'automation_step_skipped_unsupported');
           break;
       }
