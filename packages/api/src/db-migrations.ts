@@ -2038,6 +2038,28 @@ await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS custom_inst
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS image_mode TEXT NOT NULL DEFAULT 'auto';`).catch(() => undefined);
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS ai_recommended BOOLEAN NOT NULL DEFAULT false;`).catch(() => undefined);
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS estimated_credits INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
+// v2 pricing flow: plans are born 'pricing' (Planner + Calculator agents work
+// out the real cost in the background), become 'priced', and only start
+// running when the user explicitly starts them with enough balance.
+await pool.query(`ALTER TABLE content_plans DROP CONSTRAINT IF EXISTS content_plans_status_check;`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD CONSTRAINT content_plans_status_check CHECK (status IN ('pricing','priced','active','paused','completed'));`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS plan_blueprint JSONB NOT NULL DEFAULT '{}'::jsonb;`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS pricing_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb;`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 30;`).catch(() => undefined);
+
+// Test account: keep "User One" topped up at 1,000,000 credits (re-applied
+// on deploy if the lazy monthly reset knocked it down).
+await pool.query(`
+  INSERT INTO user_credits (user_id, credits)
+  SELECT id, 1000000 FROM users WHERE full_name='User One' OR username='User One' OR username='userone'
+  ON CONFLICT (user_id) DO UPDATE SET credits=GREATEST(user_credits.credits, 1000000), updated_at=NOW();
+`).catch(() => undefined);
+await pool.query(`
+  INSERT INTO credit_ledger (id, user_id, delta, balance_after, reason)
+  SELECT gen_random_uuid()::text, id, 1000000, 1000000, 'test_user_grant_1m'
+  FROM users WHERE (full_name='User One' OR username='User One' OR username='userone')
+    AND NOT EXISTS (SELECT 1 FROM credit_ledger cl WHERE cl.reason='test_user_grant_1m');
+`).catch(() => undefined);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS content_plan_runs (

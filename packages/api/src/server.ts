@@ -881,7 +881,7 @@ app.use('/api/admin/mcp', registerMcpAdminRoutes({ requireAdmin, pool: pool!, en
 app.use('/api/mcp', registerMcpMediaRoutes({ requireAuth, pool: pool! }));
 
 // ── Auto-content plans (background promo content generation) ──
-app.use('/api', registerContentPlanRoutes({ requireAuth, pool: pool!, createNotification, runPlanOnce: contentPlanEngine.runPlanOnce }));
+app.use('/api', registerContentPlanRoutes({ requireAuth, pool: pool!, createNotification, runPlanOnce: contentPlanEngine.runPlanOnce, pricePlan: contentPlanEngine.pricePlan }));
 
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {

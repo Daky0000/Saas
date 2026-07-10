@@ -35,14 +35,26 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || `post-${Date.now()}`;
 }
 
-// Credit estimate for a whole plan — shown before starting and enforced at
-// creation. Per piece: ~2 credits copy + 1 QA review; images add 3 each
-// (image_mode 'auto' assumes roughly two thirds of pieces get one).
+// Only actual social media platforms count as content targets — calendar,
+// email, and other integrations must never appear as "connected socials".
+export const SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter', 'x', 'pinterest', 'tiktok', 'threads', 'youtube'];
+
+// Internal rate card (credits). The Calculator agent prices plans against
+// this; the deterministic floor below protects the platform from the agent
+// underpricing a plan.
+const RATE_COPY_PER_POST = 2;
+const RATE_QA_PER_POST = 1;
+const RATE_PER_IMAGE = 3;
+
+export function planCreditFloor(totalPosts: number, totalImages: number): number {
+  return Math.max(1, totalPosts) * (RATE_COPY_PER_POST + RATE_QA_PER_POST) + Math.max(0, totalImages) * RATE_PER_IMAGE;
+}
+
+// Fallback pricing when the agents are unavailable.
 export function estimatePlanCredits(perDay: number, durationDays: number, imageMode: string): number {
   const pieces = Math.max(1, perDay) * Math.max(1, durationDays);
-  const perPieceText = 3;
-  const perPieceImage = imageMode === 'always' ? 3 : imageMode === 'never' ? 0 : 2;
-  return pieces * (perPieceText + perPieceImage);
+  const images = imageMode === 'always' ? pieces : imageMode === 'never' ? 0 : Math.ceil(pieces * 0.66);
+  return planCreditFloor(pieces, images);
 }
 
 // ── Featured image generation (Gemini first, OpenAI fallback) ────────────────
@@ -132,7 +144,7 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
       const [sharedCtx, styleProfile, socials] = await Promise.all([
         buildSharedAgentContext(plan.user_id).catch(() => ''),
         plan.use_liked_style ? likedStyleProfile(plan.user_id) : Promise.resolve(''),
-        pool.query(`SELECT DISTINCT platform FROM social_accounts WHERE user_id=$1 AND connected=true`, [plan.user_id])
+        pool.query(`SELECT DISTINCT platform FROM social_accounts WHERE user_id=$1 AND connected=true AND platform = ANY($2)`, [plan.user_id, SOCIAL_PLATFORMS])
           .then(r => r.rows.map((x: any) => String(x.platform))).catch(() => [] as string[]),
       ]);
       const platformLine = socials.length
@@ -229,6 +241,96 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
     }
   }
 
+  // Pricing pipeline (background, after the user clicks Proceed):
+  // 1. Atlas (Planner) turns the form into a concrete blueprint — total
+  //    posts, which get images, platform mix.
+  // 2. Ledger (Calculator) prices the blueprint against the internal rate
+  //    card. The deterministic floor is enforced afterwards so the agent can
+  //    never underprice a plan below platform cost.
+  // The user is notified with the total and can then start the plan.
+  async function pricePlan(plan: any): Promise<void> {
+    const totalPosts = Math.max(1, Number(plan.per_day) || 1) * Math.max(1, Number(plan.duration_days) || 30);
+    let blueprint: Record<string, any> = { total_posts: totalPosts };
+    let breakdown: Record<string, any> = {};
+    let credits = 0;
+    try {
+      const aiCfg = await getAIConfig();
+      const apiKey = resolveActiveKey(aiCfg);
+      if (!apiKey) throw new Error('AI not configured');
+      const model = aiCfg.provider === 'google'
+        ? (GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : 'gemini-2.0-flash')
+        : FAST_MODEL;
+
+      const [sharedCtx, socials] = await Promise.all([
+        buildSharedAgentContext(plan.user_id).catch(() => ''),
+        pool.query(`SELECT DISTINCT platform FROM social_accounts WHERE user_id=$1 AND connected=true AND platform = ANY($2)`, [plan.user_id, SOCIAL_PLATFORMS])
+          .then(r => r.rows.map((x: any) => String(x.platform))).catch(() => [] as string[]),
+      ]);
+
+      // 1. Atlas — the blueprint
+      const imageRule = plan.image_mode === 'always'
+        ? `Every post gets a featured image (posts_with_images = ${totalPosts}).`
+        : plan.image_mode === 'never'
+          ? 'No post gets an image (posts_with_images = 0).'
+          : 'Decide per post whether an image is worth it for the platforms and content mix.';
+      const planRaw = await callAINonStreaming(
+        aiCfg.provider, apiKey, model,
+        `You are Atlas, the Content Planner on a marketing team. You turn a campaign request into a precise production blueprint.${sharedCtx ? `\n\nUser context:\n${sharedCtx}` : ''}`,
+        `Plan this content campaign:
+- Cadence: ${plan.per_day} posts/day for ${plan.duration_days} days = exactly ${totalPosts} posts total.
+- Topic: ${plan.ai_recommended ? 'AI-chosen from the user\'s personalization' : (plan.topic || 'brand promotion')}
+- Tone: ${plan.tone}. Target platforms: ${socials.join(', ') || 'none connected (platform-neutral)'}
+- ${imageRule}
+${plan.custom_instructions ? `- User's instructions: ${String(plan.custom_instructions).slice(0, 1000)}` : ''}
+Respond ONLY with JSON: {"total_posts": ${totalPosts}, "posts_with_images": <int 0-${totalPosts}>, "total_images": <int>, "platforms": [...], "content_mix": ["3-6 short angle descriptions"], "notes": "one line for the calculator about anything unusually heavy (long instructions, many platforms, image-heavy)"}`,
+        900,
+        { userId: plan.user_id, feature: 'content_plan_planning' }
+      );
+      try { blueprint = JSON.parse(planRaw.slice(planRaw.indexOf('{'), planRaw.lastIndexOf('}') + 1)); } catch { /* keep default */ }
+      blueprint.total_posts = totalPosts; // never trust drift on the fixed number
+      const totalImages = plan.image_mode === 'always' ? totalPosts
+        : plan.image_mode === 'never' ? 0
+        : Math.min(totalPosts, Math.max(0, Number(blueprint.total_images ?? blueprint.posts_with_images) || Math.ceil(totalPosts * 0.66)));
+      blueprint.total_images = totalImages;
+
+      // 2. Ledger — the price
+      const calcRaw = await callAINonStreaming(
+        aiCfg.provider, apiKey, model,
+        `You are Ledger, the Credit Calculator. You price content production plans in platform credits so the platform never generates at a loss. Internal rate card: copy generation ${RATE_COPY_PER_POST} credits per post, quality review ${RATE_QA_PER_POST} credit per post, featured image ${RATE_PER_IMAGE} credits per image. Long custom instructions, many platforms, or unusually long content justify a surcharge of up to 25%. Never price below the rate card.`,
+        `Price this blueprint and respond ONLY with JSON {"total_credits": <int>, "breakdown": {"copy": <int>, "quality_review": <int>, "images": <int>, "surcharge": <int>}, "reason": "one line"}:\n${JSON.stringify({ ...blueprint, custom_instructions_length: String(plan.custom_instructions || '').length, platforms: blueprint.platforms ?? socials })}`,
+        500,
+        { userId: plan.user_id, feature: 'content_plan_pricing' }
+      );
+      try {
+        const calc = JSON.parse(calcRaw.slice(calcRaw.indexOf('{'), calcRaw.lastIndexOf('}') + 1));
+        credits = Math.round(Number(calc.total_credits) || 0);
+        breakdown = calc.breakdown && typeof calc.breakdown === 'object' ? calc.breakdown : {};
+        if (calc.reason) breakdown.reason = String(calc.reason).slice(0, 200);
+      } catch { /* floor below */ }
+
+      // Guardrails: never below cost, never more than double the floor.
+      const floor = planCreditFloor(totalPosts, totalImages);
+      credits = Math.min(Math.max(credits, floor), floor * 2);
+      breakdown.floor = floor;
+    } catch (err) {
+      logger.warn({ err, planId: plan.id }, 'content_plan_pricing_agents_failed');
+      credits = estimatePlanCredits(plan.per_day, plan.duration_days, plan.image_mode || 'auto');
+      breakdown = { fallback: true };
+    }
+
+    await pool.query(
+      `UPDATE content_plans SET status='priced', estimated_credits=$2, plan_blueprint=$3::jsonb, pricing_breakdown=$4::jsonb, updated_at=NOW()
+       WHERE id=$1 AND status='pricing'`,
+      [plan.id, credits, JSON.stringify(blueprint).slice(0, 8000), JSON.stringify(breakdown).slice(0, 4000)]
+    ).catch(() => undefined);
+    await createNotification(
+      plan.user_id, 'content_plan_priced',
+      `Plan priced: "${plan.name}" — ✦${credits} credits`,
+      `Atlas planned ${blueprint.total_posts} posts (${blueprint.total_images ?? 0} with images) and Ledger calculated ✦${credits} credits total. Open Post Automation → Auto-Content to start it.`,
+      { plan_id: plan.id, estimated_credits: credits }
+    ).catch(() => undefined);
+  }
+
   // Scheduler tick: complete expired plans (with a wrap-up notification +
   // email), then claim and run due ones. The claim atomically advances
   // next_run_at (24h / per_day), so concurrent instances can't double-run.
@@ -279,12 +381,12 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
     }
   }
 
-  return { processDueContentPlans, runPlanOnce };
+  return { processDueContentPlans, runPlanOnce, pricePlan };
 }
 
 // ── Routes (mounted at /api) ─────────────────────────────────────────────────
 
-export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any) => Promise<void> }): Router {
+export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any) => Promise<void>; pricePlan: (plan: any) => Promise<void> }): Router {
   const { requireAuth, pool, runPlanOnce } = deps;
   const router = express.Router();
 
@@ -320,6 +422,9 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
     }
   });
 
+  // POST /api/content-plans — "Proceed": creates the plan in 'pricing' state
+  // and kicks off the Planner→Calculator pipeline in the background. The
+  // user is notified with the real total; nothing generates yet.
   router.post('/content-plans', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     try {
@@ -334,29 +439,53 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
         return res.status(400).json({ success: false, error: 'Describe what to promote, or switch on AI recommended' });
       }
 
-      // Credit gate: the whole plan must be affordable up front.
-      const estimate = estimatePlanCredits(perDay, durationDays, imageMode);
-      const { credits: balance } = await ensureCreditAccount(auth.userId);
-      if (balance < estimate) {
-        return res.status(402).json({
-          success: false,
-          error: `This plan needs about ${estimate} credits but you have ${balance}. Reduce the cadence/duration or top up.`,
-          estimated_credits: estimate, balance,
-        });
-      }
-
       const { rows } = await pool.query(
-        `INSERT INTO content_plans (user_id, name, topic, tone, per_day, ends_at, use_liked_style, generate_image, image_mode, ai_recommended, custom_instructions, estimated_credits, next_run_at)
-         VALUES ($1,$2,$3,$4,$5, NOW() + make_interval(days => $6), $7, $8, $9, $10, $11, $12, NOW())
+        `INSERT INTO content_plans (user_id, name, topic, tone, per_day, duration_days, use_liked_style, generate_image, image_mode, ai_recommended, custom_instructions, status, next_run_at, ends_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pricing',NULL,NULL)
          RETURNING *`,
         [auth.userId, name.slice(0, 120), String(b.topic || '').slice(0, 500), String(b.tone || 'engaging').slice(0, 40),
          perDay, durationDays, b.use_liked_style !== false, imageMode !== 'never', imageMode, aiRecommended,
-         String(b.custom_instructions || '').slice(0, 2000), estimate]
+         String(b.custom_instructions || '').slice(0, 2000)]
       );
-      return res.json({ success: true, plan: rows[0] });
+      void deps.pricePlan(rows[0]).catch(() => undefined);
+      return res.status(202).json({
+        success: true, plan: rows[0],
+        message: 'Your AI team is planning this and calculating the exact credit cost — you\'ll get a notification with the total.',
+      });
     } catch (err) {
       logger.error({ err }, 'content_plan_create_failed');
       return res.status(500).json({ success: false, error: 'Failed to create plan' });
+    }
+  });
+
+  // POST /api/content-plans/:id/start — only priced plans, only with enough
+  // balance for the calculated total.
+  router.post('/content-plans/:id/start', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    try {
+      const { rows } = await pool.query(`SELECT * FROM content_plans WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
+      if (!rows.length) return res.status(404).json({ success: false, error: 'Plan not found' });
+      const plan = rows[0];
+      if (plan.status === 'pricing') return res.status(409).json({ success: false, error: 'Still calculating the cost — wait for the notification.' });
+      if (plan.status !== 'priced') return res.status(400).json({ success: false, error: `Plan is ${plan.status}` });
+
+      const { credits: balance } = await ensureCreditAccount(auth.userId);
+      if (balance < Number(plan.estimated_credits || 0)) {
+        return res.status(402).json({
+          success: false,
+          error: `This plan costs ✦${plan.estimated_credits} but you have ✦${balance}. Top up or create a smaller plan.`,
+          estimated_credits: plan.estimated_credits, balance,
+        });
+      }
+      const { rows: updated } = await pool.query(
+        `UPDATE content_plans SET status='active', next_run_at=NOW(), ends_at=NOW() + make_interval(days => duration_days), updated_at=NOW()
+         WHERE id=$1 AND status='priced' RETURNING *`,
+        [plan.id]
+      );
+      return res.json({ success: true, plan: updated[0] });
+    } catch (err) {
+      logger.error({ err }, 'content_plan_start_failed');
+      return res.status(500).json({ success: false, error: 'Failed to start plan' });
     }
   });
 
@@ -397,6 +526,7 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
     try {
       const { rows } = await pool.query(`SELECT * FROM content_plans WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]);
       if (!rows.length) return res.status(404).json({ success: false, error: 'Plan not found' });
+      if (['pricing', 'priced'].includes(rows[0].status)) return res.status(400).json({ success: false, error: 'Start the plan first — it hasn\'t begun yet.' });
       await pool.query(`UPDATE content_plans SET runs_count=runs_count+1, last_run_at=NOW(), updated_at=NOW() WHERE id=$1`, [req.params.id]);
       // Background — the notification tells the user when it's done.
       void runPlanOnce(rows[0]).catch(() => undefined);

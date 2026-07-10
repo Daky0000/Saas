@@ -18,6 +18,8 @@ export const AGENT_DEFS: Record<string, { name: string; role: string; icon: stri
   meta_ads:         { name: 'Meta',    role: 'Paid Social Manager',   icon: '⊛', color: '#1877F2', memoryKeywords: ['meta','facebook','instagram','paid','campaign','budget','roas'] },
   promo:            { name: 'Promo',   role: 'Promotion & Media',     icon: '✹', color: '#E11D48', memoryKeywords: ['promo','promotion','offer','launch','visual','image','brand','campaign'] },
   quality:          { name: 'Vetta',   role: 'Quality Control',       icon: '✓', color: '#0891B2', memoryKeywords: ['brand','voice','tone','audience','goal'] },
+  planner:          { name: 'Atlas',   role: 'Content Planner',       icon: '▤', color: '#4F46E5', memoryKeywords: ['plan','schedule','campaign','goal','platform','content'] },
+  calculator:       { name: 'Ledger',  role: 'Credit Calculator',     icon: '∑', color: '#65A30D', memoryKeywords: [] },
 };
 
 export async function provisionUserAgents(userId: string): Promise<void> {
