@@ -1949,6 +1949,67 @@ await pool.query(`
 await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_user_idx ON campaign_members (user_id, campaign_id);`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_contact_idx ON campaign_members (contact_id);`).catch(() => undefined);
 
+// ── MCP server connections (Admin → MCP). Platform-level integrations that
+// speak the Model Context Protocol; env/headers hold secrets and are stored
+// encrypted. First adapter: MeiGen AI Design (gallery → mcp_media).
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    transport TEXT NOT NULL DEFAULT 'stdio' CHECK (transport IN ('stdio','http')),
+    command TEXT,
+    args JSONB NOT NULL DEFAULT '[]'::jsonb,
+    url TEXT,
+    env_encrypted TEXT,
+    headers_encrypted TEXT,
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    status TEXT NOT NULL DEFAULT 'unconfigured',
+    status_message TEXT,
+    last_checked_at TIMESTAMPTZ,
+    last_synced_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+
+// Media pulled from MCP servers (e.g. MeiGen discover gallery): image +
+// prompt + model. Powers the AI Studio Discover feed, personalization liked
+// images, and AI suggestions.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS mcp_media (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+    external_id TEXT NOT NULL,
+    title TEXT,
+    prompt TEXT,
+    model TEXT,
+    category TEXT,
+    image_url TEXT NOT NULL,
+    thumb_url TEXT,
+    likes_count INTEGER NOT NULL DEFAULT 0,
+    featured BOOLEAN NOT NULL DEFAULT false,
+    raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fetched_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (server_id, external_id)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS mcp_media_model_idx ON mcp_media (model);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS mcp_media_created_idx ON mcp_media (created_at DESC);`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS mcp_media_likes (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    media_id TEXT NOT NULL REFERENCES mcp_media(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, media_id)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS mcp_media_likes_user_idx ON mcp_media_likes (user_id, created_at DESC);`).catch(() => undefined);
+
 // Public API keys (Settings → API Keys). Only the SHA-256 hash is stored;
 // the full key is shown once at creation. Used by POST /api/v1/trigger.
 await pool.query(`

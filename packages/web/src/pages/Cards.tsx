@@ -3,25 +3,38 @@ import {
   Plus, Sparkles, Wand2,
   CheckCircle2, Loader2, RefreshCw, ChevronDown, Download, Edit3,
   AlertCircle, Layers, Trash2, Clock, Image, LayoutTemplate,
-  Heart, Eye, Copy, Play, X, Video, Maximize2,
-  RotateCcw, Lock, Share2, Languages, Mic,
+  Heart, Copy, Play, X, Video, Maximize2,
+  RotateCcw, Lock, Mic,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
 import { getApiBaseUrl } from '../utils/apiBase';
 
 // ── Discover types & constants ────────────────────────────────────────────────
 
-type ModelFilter = 'all' | 'flux' | 'seedream' | 'mystic' | 'google';
+type ModelFilter = 'all' | 'gpt' | 'gemini';
 type SortMode    = 'featured' | 'newest' | 'popular';
 type UseMode     = 'prompt' | 'ref';
 
 const MODEL_TABS: { id: ModelFilter; label: string; badge?: string }[] = [
-  { id: 'all',      label: 'All' },
-  { id: 'flux',     label: 'Flux' },
-  { id: 'seedream', label: 'Seedream', badge: 'NEW' },
-  { id: 'mystic',   label: 'Mystic' },
-  { id: 'google',   label: 'Google' },
+  { id: 'all',    label: 'All' },
+  { id: 'gpt',    label: 'GPT Image' },
+  { id: 'gemini', label: 'Gemini' },
 ];
+
+// One item in the Discover masonry — either media pulled from an MCP server
+// (MeiGen gallery) or a locally published admin template.
+type DiscoverItem = {
+  key: string;
+  source: 'mcp' | 'template';
+  id: string;
+  name: string;
+  prompt: string;
+  imageUrl: string | null;
+  model: string | null;
+  likeCount: number;
+  liked: boolean;
+  createdAt: string;
+};
 
 const ASPECT_RATIOS = ['1:1', '3:4', '4:5', '2:3', '9:16', '4:3', '5:4', '3:2', '16:9', '21:9', '9:21'] as const;
 
@@ -128,6 +141,13 @@ const KLING_IMAGE_MODEL_IDS  = new Set(IMAGE_MODELS_BY_PROVIDER.kling.map((m) =>
 const GOOGLE_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.google.map((m) => m.id));
 const OPENAI_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.openai.map((m) => m.id));
 
+// Image generation is limited to GPT (OpenAI) and Gemini (Google) models.
+// Add magnific / freepik / kling entries back here to re-enable those providers.
+const ENABLED_IMAGE_PROVIDERS: { id: ImageProvider; label: string }[] = [
+  { id: 'openai', label: 'GPT' },
+  { id: 'google', label: 'Gemini' },
+];
+
 type VideoProvider = 'magnific' | 'kling' | 'google';
 
 const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
@@ -155,8 +175,8 @@ const KLING_LAST_FRAME_MODELS = new Set(['kling-v2.6-pro', 'kling-v1.6-pro']);
 
 function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesign) => void; onCreditUsed?: () => void }) {
   const [genMode, setGenMode]                   = useState<GenMode>('image');
-  const [imageProvider, setImageProvider] = useState<ImageProvider>('magnific');
-  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS_BY_PROVIDER.magnific.find((m) => m.id === 'flux-kontext-pro') ?? IMAGE_MODELS_BY_PROVIDER.magnific[0]);
+  const [imageProvider, setImageProvider] = useState<ImageProvider>('openai');
+  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS_BY_PROVIDER.openai.find((m) => m.id === 'gpt-image-1') ?? IMAGE_MODELS_BY_PROVIDER.openai[0]);
   const [videoProvider, setVideoProvider] = useState<VideoProvider>('kling');
   const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS_BY_PROVIDER.kling[0]);
 
@@ -320,13 +340,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               {/* Provider tabs */}
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
               <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
-                {([
-                  { id: 'magnific' as ImageProvider, label: 'Magnific'  },
-                  { id: 'freepik'  as ImageProvider, label: 'Freepik'   },
-                  { id: 'kling'    as ImageProvider, label: 'Kling AI'  },
-                  { id: 'google'   as ImageProvider, label: 'Google AI' },
-                  { id: 'openai'   as ImageProvider, label: 'OpenAI'    },
-                ] as const).map((p) => (
+                {ENABLED_IMAGE_PROVIDERS.map((p) => (
                   <button key={p.id} type="button"
                     onClick={() => {
                       setImageProvider(p.id);
@@ -668,61 +682,64 @@ interface CardTemplate {
 
 // ── Image preview modal ───────────────────────────────────────────────────────
 
+// MeiGen-style detail view: image left, metadata panel right. No creator
+// identity — model badge, save/like, copy prompt, expandable PROMPT section,
+// "More like this" strip, and Use as Prompt / Use as Ref actions.
 function ImagePreviewModal({
-  tpl,
+  item,
   onClose,
   onUseAsPrompt,
   onUseAsRef,
+  onToggleLike,
+  onOpenSimilar,
 }: {
-  tpl: CardTemplate;
+  item: DiscoverItem;
   onClose: () => void;
   onUseAsPrompt: () => void;
   onUseAsRef: () => void;
+  onToggleLike: () => void;
+  onOpenSimilar: (id: string) => void;
 }) {
-  const [liked, setLiked]       = useState(false);
-  const [likeCount, setLikeCount] = useState(tpl.like_count ?? 0);
-  const [viewCount, setViewCount] = useState(tpl.view_count ?? 0);
-  const [copied, setCopied]     = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [similar, setSimilar] = useState<Array<{ id: string; image_url: string; thumb_url: string | null }>>([]);
 
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/card-templates/${tpl.id}/view`, {
-      method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
-    }).then(r => r.json()).then(d => { if (d.success) setViewCount(d.view_count ?? viewCount); }).catch(() => {});
+    setSimilar([]);
+    setPromptOpen(false);
+    if (item.source === 'template') {
+      fetch(`${getApiBaseUrl()}/api/card-templates/${item.id}/view`, {
+        method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
+      }).catch(() => {});
+    } else {
+      fetch(`${getApiBaseUrl()}/api/mcp/media/${item.id}`, { headers: { Authorization: `Bearer ${tok()}` } })
+        .then(r => r.json())
+        .then(d => { if (d.success && Array.isArray(d.similar)) setSimilar(d.similar); })
+        .catch(() => {});
+    }
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tpl.id]);
-
-  const toggleLike = () => {
-    fetch(`${getApiBaseUrl()}/api/card-templates/${tpl.id}/like`, {
-      method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
-    }).then(r => r.json()).then(d => {
-      if (d.success) { setLiked(d.liked); setLikeCount(d.like_count); }
-    }).catch(() => {});
-    setLiked(p => !p);
-    setLikeCount(p => liked ? p - 1 : p + 1);
-  };
+  }, [item.id]);
 
   const copyPrompt = () => {
-    navigator.clipboard.writeText(tpl.description || '').then(() => {
+    navigator.clipboard.writeText(item.prompt || '').then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 2000);
     }).catch(() => {});
   };
 
-  const avatarColor = `hsl(${tpl.name.charCodeAt(0) * 37 % 360}, 55%, 45%)`;
+  const promptText = item.prompt || '';
+  const promptTruncated = !promptOpen && promptText.length > 260;
+  const shownPrompt = promptTruncated ? `${promptText.slice(0, 260)}…` : promptText;
 
   return (
     <div className="fixed inset-0 z-50 flex bg-black/85 backdrop-blur-xl" onClick={onClose}>
 
       {/* Top-right controls (over the image area) */}
       <div className="absolute top-4 z-20 flex items-center gap-2" style={{ right: 'calc(288px + 16px)' }}>
-        <button type="button"
-          className="flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-semibold text-white transition">
-          <Download size={12} /> Save
-        </button>
-        {tpl.coverImageUrl && (
-          <a href={tpl.coverImageUrl} download target="_blank" rel="noreferrer"
+        {item.imageUrl && (
+          <a href={item.imageUrl} download target="_blank" rel="noreferrer"
             onClick={e => e.stopPropagation()}
             className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white transition">
             <Download size={13} />
@@ -737,8 +754,8 @@ function ImagePreviewModal({
 
       {/* Left: image */}
       <div className="flex-1 flex items-center justify-center p-8 md:p-16" onClick={e => e.stopPropagation()}>
-        {tpl.coverImageUrl ? (
-          <img src={tpl.coverImageUrl} alt={tpl.name}
+        {item.imageUrl ? (
+          <img src={item.imageUrl} alt={item.name}
             className="max-h-[85vh] max-w-full object-contain rounded-2xl shadow-2xl" />
         ) : (
           <div className="w-64 aspect-[3/4] rounded-2xl bg-slate-800 flex items-center justify-center text-white/20">
@@ -750,50 +767,61 @@ function ImagePreviewModal({
       {/* Right: info panel */}
       <div className="w-72 bg-white flex flex-col shrink-0 overflow-hidden" onClick={e => e.stopPropagation()}>
 
-        {/* Creator header */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white text-sm font-bold"
-            style={{ background: avatarColor }}>
-            {tpl.name.charAt(0).toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-slate-900 truncate">{tpl.name}</p>
-            <p className="text-[11px] text-slate-400 truncate">@{tpl.name.toLowerCase().replace(/\s+/g, '')}</p>
-          </div>
-          <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-            GPT Image
+        {/* Header: model badge + save */}
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
+          <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">
+            {item.model || 'AI generated'}
           </span>
+          <div className="flex items-center gap-3 text-xs text-slate-500">
+            <button type="button" onClick={onToggleLike}
+              className={`flex items-center gap-1 transition ${item.liked ? 'text-red-500' : 'hover:text-red-400'}`}>
+              <Heart size={13} className={item.liked ? 'fill-red-500' : ''} />
+              {item.likeCount.toLocaleString()}
+            </button>
+            <span className="text-[10px] text-slate-400">{timeAgo(item.createdAt)}</span>
+          </div>
         </div>
 
-        {/* Stats */}
-        <div className="flex items-center gap-4 px-4 py-2.5 border-b border-slate-100 text-xs text-slate-500">
-          <button type="button" onClick={toggleLike}
-            className={`flex items-center gap-1 transition ${liked ? 'text-red-500' : 'hover:text-red-400'}`}>
-            <Heart size={12} className={liked ? 'fill-red-500' : ''} />
-            {likeCount.toLocaleString()}
-          </button>
-          <span className="flex items-center gap-1"><Eye size={12} /> {viewCount.toLocaleString()}</span>
-          <span className="ml-auto text-[10px] text-slate-400">{timeAgo(tpl.createdAt)}</span>
+        {/* Scrollable body: prompt + similar */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Prompt</p>
+            {promptText ? (
+              <>
+                <p className="text-[12px] text-slate-700 leading-relaxed whitespace-pre-wrap">{shownPrompt}</p>
+                {promptText.length > 260 && (
+                  <button type="button" onClick={() => setPromptOpen(o => !o)}
+                    className="mt-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
+                    {promptOpen ? 'Show less' : 'Show more'}
+                  </button>
+                )}
+              </>
+            ) : (
+              <span className="text-[12px] text-slate-400 italic">No prompt available.</span>
+            )}
+          </div>
+
+          {similar.length > 0 && (
+            <div className="px-4 pb-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">More like this</p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {similar.map(s => (
+                  <button key={s.id} type="button" onClick={() => onOpenSimilar(s.id)}
+                    className="overflow-hidden rounded-lg bg-slate-100 aspect-square">
+                    <img src={s.thumb_url || s.image_url} alt="" loading="lazy" className="h-full w-full object-cover hover:scale-105 transition-transform" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Scrollable prompt */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 text-[12px] text-slate-700 leading-relaxed">
-          {tpl.description
-            ? tpl.description
-            : <span className="text-slate-400 italic">No prompt available.</span>
-          }
-        </div>
-
-        {/* Translate + Copy */}
+        {/* Copy prompt */}
         <div className="flex items-center gap-1 px-3 py-2 border-t border-slate-100">
-          <button type="button"
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:bg-slate-50 transition">
-            <Languages size={11} /> Translate
-          </button>
           <button type="button" onClick={copyPrompt}
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:bg-slate-50 transition">
             {copied ? <CheckCircle2 size={11} className="text-emerald-500" /> : <Copy size={11} />}
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? 'Copied to clipboard' : 'Copy Prompt'}
           </button>
         </div>
 
@@ -817,27 +845,30 @@ function ImagePreviewModal({
 
 // ── Discover card (masonry) ───────────────────────────────────────────────────
 
+// MeiGen-style card: just the image; hover reveals Use Idea + like. No
+// creator identity, no share/external buttons — by design.
 function DiscoverCard({
-  tpl,
+  item,
   onPreview,
   onUseIdea,
+  onToggleLike,
 }: {
-  tpl: CardTemplate;
+  item: DiscoverItem;
   onPreview: () => void;
   onUseIdea: (e: React.MouseEvent) => void;
+  onToggleLike: (e: React.MouseEvent) => void;
 }) {
-  const avatarColor = `hsl(${tpl.name.charCodeAt(0) * 37 % 360}, 55%, 45%)`;
-
   return (
     <div
       className="group relative cursor-pointer overflow-hidden rounded-xl bg-slate-900"
       onClick={onPreview}
     >
-      {tpl.coverImageUrl ? (
+      {item.imageUrl ? (
         <img
-          src={tpl.coverImageUrl}
-          alt={tpl.name}
-          className="w-full h-auto block transition-transform duration-300 group-hover:scale-[1.02]"
+          src={item.imageUrl}
+          alt={item.name}
+          loading="lazy"
+          className="w-full h-auto block bg-[#efe9df] transition-transform duration-300 group-hover:scale-[1.02]"
         />
       ) : (
         <div className="aspect-[4/5] flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900">
@@ -845,43 +876,17 @@ function DiscoverCard({
         </div>
       )}
 
-      {/* Bottom info — slides up on hover */}
-      <div className="absolute inset-x-0 bottom-0 translate-y-full group-hover:translate-y-0 transition-transform duration-200 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-10 pb-3 px-3">
-        {/* Creator row */}
-        <div className="flex items-center gap-2 mb-1.5">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white text-[10px] font-bold"
-            style={{ background: avatarColor }}>
-            {tpl.name.charAt(0).toUpperCase()}
-          </div>
-          <div className="min-w-0">
-            <p className="text-white text-[11px] font-bold leading-none truncate">{tpl.name}</p>
-            <p className="text-white/60 text-[10px] mt-0.5 truncate">@{tpl.name.toLowerCase().replace(/\s+/g, '')}</p>
-          </div>
-        </div>
-
-        {/* Stats */}
-        <div className="flex items-center gap-3 text-white/60 text-[10px] mb-2.5">
-          <span className="flex items-center gap-0.5"><Heart size={9} /> {(tpl.like_count ?? 0).toLocaleString()}</span>
-          <span className="flex items-center gap-0.5"><Eye size={9} /> {(tpl.view_count ?? 0).toLocaleString()}</span>
-          <span>{timeAgo(tpl.createdAt)}</span>
-        </div>
-
-        {/* Actions */}
+      {/* Bottom overlay — fades in on hover */}
+      <div className="absolute inset-x-0 bottom-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-12 pb-3 px-3">
         <div className="flex items-center justify-between">
           <button type="button" onClick={onUseIdea}
             className="flex items-center gap-1.5 rounded-full bg-white/90 hover:bg-white px-3 py-1.5 text-[11px] font-bold text-slate-900 transition">
             <RotateCcw size={10} /> Use Idea
           </button>
-          <div className="flex items-center gap-1.5">
-            <button type="button" onClick={e => e.stopPropagation()}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition">
-              <Layers size={12} />
-            </button>
-            <button type="button" onClick={e => e.stopPropagation()}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition">
-              <Share2 size={12} />
-            </button>
-          </div>
+          <button type="button" onClick={onToggleLike}
+            className={`flex h-7 w-7 items-center justify-center rounded-full transition ${item.liked ? 'bg-red-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+            <Heart size={12} className={item.liked ? 'fill-white' : ''} />
+          </button>
         </div>
       </div>
     </div>
@@ -993,13 +998,16 @@ function HistoryCard({ design, onDelete }: { design: UserDesign; onDelete: () =>
 
 // ── Generate panel (inline right sidebar) ────────────────────────────────────
 
+// Generation is limited to GPT (OpenAI) and Gemini (Google) models —
+// mirror ENABLED_IMAGE_PROVIDERS when re-enabling other providers.
 const PANEL_IMAGE_MODELS = [
-  { id: 'flux-2-turbo',     label: 'Flux 2 Turbo',     tier: 'Fast',    credits: 3,  desc: 'Fastest, great for drafts' },
-  { id: 'flux-2-klein',     label: 'Flux 2 Klein',     tier: 'Fast',    credits: 3,  desc: 'Fast with reference images' },
-  { id: 'seedream-v5-lite', label: 'Seedream 5 Lite',  tier: 'Fast',    credits: 4,  desc: 'New — high coherence', badge: 'NEW' },
-  { id: 'flux-kontext-pro', label: 'Flux Kontext Pro', tier: 'Quality', credits: 5,  desc: 'Best for context-aware edits', badge: 'Popular' },
-  { id: 'flux-2-pro',       label: 'Flux 2 Pro',       tier: 'Quality', credits: 5,  desc: 'High quality text-to-image' },
-  { id: 'mystic',           label: 'Mystic',            tier: 'Premium', credits: 8,  desc: "Magnific's flagship model" },
+  { id: 'gpt-image-1',            label: 'GPT Image 1',        tier: 'Quality', credits: 8, desc: 'Best instruction-following', badge: 'Popular' },
+  { id: 'dall-e-3',               label: 'DALL·E 3',           tier: 'Quality', credits: 6, desc: 'High quality — vivid or natural' },
+  { id: 'dall-e-2',               label: 'DALL·E 2',           tier: 'Fast',    credits: 3, desc: 'Fast, affordable generation' },
+  { id: 'google-gemini-flash',    label: 'Gemini Flash Image', tier: 'Fast',    credits: 3, desc: 'Fast multimodal generation' },
+  { id: 'google-gemini-nano-2',   label: 'Nano Banana 2',      tier: 'Quality', credits: 5, desc: 'Creative image generation', badge: 'NEW' },
+  { id: 'google-gemini-nano-pro', label: 'Nano Banana Pro',    tier: 'Premium', credits: 8, desc: 'Pro-grade creative generation' },
+  { id: 'google-imagen-4',        label: 'Imagen 4',           tier: 'Quality', credits: 6, desc: 'High-quality photorealistic' },
 ] as const;
 
 const EDIT_TOOLS = [
@@ -1034,7 +1042,7 @@ function GeneratePanel({
   const [prompt, setPrompt]             = useState(tpl.description || '');
   const [imgToPrompt, setImgToPrompt]   = useState<string | null>(useMode === 'prompt' ? tpl.coverImageUrl : null);
   const [refImage, setRefImage]         = useState<string | null>(useMode === 'ref'    ? tpl.coverImageUrl : null);
-  const [selectedModel, setSelectedModel] = useState<string>(PANEL_IMAGE_MODELS[3].id); // flux-kontext-pro default
+  const [selectedModel, setSelectedModel] = useState<string>(PANEL_IMAGE_MODELS[0].id); // gpt-image-1 default
   const [modelOpen, setModelOpen]       = useState(false);
   const [aspectRatio, setAspectRatio]   = useState('auto');
   const [resolution, setResolution]     = useState<'1k' | '2k' | '4k'>('2k');
@@ -1059,7 +1067,7 @@ function GeneratePanel({
   const [editGenerating, setEditGenerating] = useState(false);
   const [editError, setEditError]       = useState<string | null>(null);
 
-  const currentModelInfo = PANEL_IMAGE_MODELS.find(m => m.id === selectedModel) ?? PANEL_IMAGE_MODELS[3];
+  const currentModelInfo = PANEL_IMAGE_MODELS.find(m => m.id === selectedModel) ?? PANEL_IMAGE_MODELS[0];
   const currentEditTool  = EDIT_TOOLS.find(t => t.id === editTool) ?? EDIT_TOOLS[0];
 
   const handleImgToPromptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1098,7 +1106,10 @@ function GeneratePanel({
     setGenerating(true); setErrorMsg(null); setResultUrls([]);
     try {
       const ar = aspectRatio === 'auto' ? '1:1' : aspectRatio;
-      const res = await fetch(`${getApiBaseUrl()}/api/nova/generate-image`, {
+      const endpoint = GOOGLE_IMAGE_MODEL_IDS.has(selectedModel) ? '/api/google/generate-image'
+                     : OPENAI_IMAGE_MODEL_IDS.has(selectedModel) ? '/api/openai/generate-image'
+                     : '/api/nova/generate-image';
+      const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
         body: JSON.stringify({ prompt: prompt.trim(), model: selectedModel, aspect_ratio: ar, save: true }),
@@ -1545,13 +1556,13 @@ const Cards = () => {
   const [tab, setTab]               = useState<MainTab>('studio');
   const [modelFilter, setModelFilter] = useState<ModelFilter>('all');
   const [sortBy, setSortBy]         = useState<SortMode>('featured');
-  const [generateTpl, setGenerateTpl] = useState<CardTemplate | null>(null);
+  const [generateItem, setGenerateItem] = useState<DiscoverItem | null>(null);
   const [generateMode, setGenerateMode] = useState<UseMode>('prompt');
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [templates, setTemplates]   = useState<CardTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [previewTpl, setPreviewTpl] = useState<CardTemplate | null>(null);
+  const [previewItem, setPreviewItem] = useState<DiscoverItem | null>(null);
   const [creditRefreshKey, setCreditRefreshKey] = useState(0);
 
   const fetchDesigns = useCallback(async () => {
@@ -1580,21 +1591,93 @@ const Cards = () => {
   const handleDesignSaved = (_saved?: UserDesign) => { fetchDesigns(); };
   const handleCreditUsed = useCallback(() => setCreditRefreshKey((k) => k + 1), []);
 
-  const filteredTemplates = useMemo(() => {
-    let list = [...templates];
+  // MCP media (MeiGen gallery) — the primary Discover source.
+  const [mcpMedia, setMcpMedia] = useState<Array<Record<string, any>>>([]);
+  const [loadingMcp, setLoadingMcp] = useState(false);
+  useEffect(() => {
+    if (tab !== 'discover') return;
+    setLoadingMcp(true);
+    fetch(`${getApiBaseUrl()}/api/mcp/media?tab=${modelFilter}&sort=${sortBy}&limit=60`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setMcpMedia(d.media ?? []); })
+      .catch(() => {})
+      .finally(() => setLoadingMcp(false));
+  }, [tab, modelFilter, sortBy]);
+
+  const discoverItems = useMemo<DiscoverItem[]>(() => {
+    const fromMcp: DiscoverItem[] = mcpMedia.map((m) => ({
+      key: `mcp-${m.id}`, source: 'mcp', id: String(m.id),
+      name: m.title || m.model || 'AI image',
+      prompt: m.prompt || '',
+      imageUrl: m.image_url || m.thumb_url || null,
+      model: m.model || null,
+      likeCount: Number(m.likes_count ?? 0),
+      liked: Boolean(m.liked),
+      createdAt: m.created_at || new Date().toISOString(),
+    }));
+
+    let tpls = [...templates];
     if (modelFilter !== 'all') {
-      const labelMap: Record<ModelFilter, string> = {
-        all: '', flux: 'flux', seedream: 'seedream', mystic: 'mystic', google: 'google',
-      };
-      const key = labelMap[modelFilter];
-      list = list.filter((t) =>
-        (t.name + ' ' + (t.description ?? '')).toLowerCase().includes(key)
-      );
+      const key = modelFilter === 'gpt' ? 'gpt' : 'gemini';
+      tpls = tpls.filter((t) => (t.name + ' ' + (t.description ?? '')).toLowerCase().includes(key));
     }
-    if (sortBy === 'newest') list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    else if (sortBy === 'popular') list.sort((a, b) => ((b.view_count ?? 0) + (b.like_count ?? 0)) - ((a.view_count ?? 0) + (a.like_count ?? 0)));
-    return list;
-  }, [templates, modelFilter, sortBy]);
+    if (sortBy === 'newest') tpls.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    else if (sortBy === 'popular') tpls.sort((a, b) => ((b.view_count ?? 0) + (b.like_count ?? 0)) - ((a.view_count ?? 0) + (a.like_count ?? 0)));
+    const fromTemplates: DiscoverItem[] = tpls.map((t) => ({
+      key: `tpl-${t.id}`, source: 'template', id: t.id,
+      name: t.name, prompt: t.description || '',
+      imageUrl: t.coverImageUrl, model: null,
+      likeCount: t.like_count ?? 0, liked: false,
+      createdAt: t.createdAt,
+    }));
+
+    return [...fromMcp, ...fromTemplates];
+  }, [mcpMedia, templates, modelFilter, sortBy]);
+
+  const toggleItemLike = useCallback((item: DiscoverItem) => {
+    const endpoint = item.source === 'mcp'
+      ? `/api/mcp/media/${item.id}/like`
+      : `/api/card-templates/${item.id}/like`;
+    fetch(`${getApiBaseUrl()}${endpoint}`, { method: 'POST', headers: { Authorization: `Bearer ${tok()}` } })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.success) return;
+        const liked = Boolean(d.liked);
+        const count = Number(d.likes_count ?? d.like_count ?? 0);
+        if (item.source === 'mcp') {
+          setMcpMedia((prev) => prev.map((m) => String(m.id) === item.id ? { ...m, liked, likes_count: count } : m));
+        } else {
+          setTemplates((prev) => prev.map((t) => t.id === item.id ? { ...t, like_count: count } : t));
+        }
+        setPreviewItem((prev) => prev && prev.id === item.id ? { ...prev, liked, likeCount: count } : prev);
+      })
+      .catch(() => {});
+  }, []);
+
+  // A DiscoverItem viewed as the template shape the GeneratePanel expects.
+  const itemAsTemplate = (item: DiscoverItem): CardTemplate => ({
+    id: item.id, name: item.name, description: item.prompt,
+    designData: {}, coverImageUrl: item.imageUrl, isPublished: true,
+    createdAt: item.createdAt, updatedAt: item.createdAt,
+  });
+
+  const openSimilar = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/mcp/media/${id}`, { headers: { Authorization: `Bearer ${tok()}` } });
+      const d = await r.json();
+      if (!d.success || !d.media) return;
+      const m = d.media;
+      setPreviewItem({
+        key: `mcp-${m.id}`, source: 'mcp', id: String(m.id),
+        name: m.title || m.model || 'AI image', prompt: m.prompt || '',
+        imageUrl: m.image_url || m.thumb_url || null, model: m.model || null,
+        likeCount: Number(m.likes_count ?? 0), liked: Boolean(m.liked),
+        createdAt: m.created_at || new Date().toISOString(),
+      });
+    } catch { /* ignore */ }
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -1680,29 +1763,36 @@ const Cards = () => {
           <div className="flex gap-4 items-start">
             {/* Masonry gallery */}
             <div className="flex-1 min-w-0">
-              {loadingTemplates ? (
-                <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
-                  <Loader2 size={16} className="animate-spin" /> Loading templates…
+              {(loadingTemplates || loadingMcp) && discoverItems.length === 0 ? (
+                <div className={`gap-4 ${generateItem ? 'columns-2 sm:columns-2 lg:columns-3' : 'columns-2 sm:columns-3 lg:columns-4 xl:columns-5'}`}>
+                  {Array.from({ length: 10 }).map((_, i) => (
+                    <div key={i} className="break-inside-avoid mb-4 rounded-xl bg-[#efe9df] animate-pulse"
+                      style={{ height: `${180 + (i % 4) * 60}px` }} />
+                  ))}
                 </div>
-              ) : filteredTemplates.length === 0 ? (
+              ) : discoverItems.length === 0 ? (
                 <div className="rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center py-16 gap-3">
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
                     <LayoutTemplate size={24} className="text-slate-400" />
                   </div>
-                  <p className="font-bold text-slate-700">No templates yet</p>
-                  <p className="text-sm text-slate-400">Admin-published templates will appear here.</p>
+                  <p className="font-bold text-slate-700">Nothing here yet</p>
+                  <p className="text-sm text-slate-400">Connect the MeiGen MCP server in Admin → MCP to fill the Discover feed.</p>
                 </div>
               ) : (
-                <div className={`gap-4 ${generateTpl ? 'columns-2 sm:columns-2 lg:columns-3' : 'columns-2 sm:columns-3 lg:columns-4 xl:columns-5'}`}>
-                  {filteredTemplates.map((tpl) => (
-                    <div key={tpl.id} className="break-inside-avoid mb-4">
+                <div className={`gap-4 ${generateItem ? 'columns-2 sm:columns-2 lg:columns-3' : 'columns-2 sm:columns-3 lg:columns-4 xl:columns-5'}`}>
+                  {discoverItems.map((item) => (
+                    <div key={item.key} className="break-inside-avoid mb-4">
                       <DiscoverCard
-                        tpl={tpl}
-                        onPreview={() => setPreviewTpl(tpl)}
+                        item={item}
+                        onPreview={() => setPreviewItem(item)}
                         onUseIdea={(e) => {
                           e.stopPropagation();
-                          setGenerateTpl(tpl);
+                          setGenerateItem(item);
                           setGenerateMode('prompt');
+                        }}
+                        onToggleLike={(e) => {
+                          e.stopPropagation();
+                          toggleItemLike(item);
                         }}
                       />
                     </div>
@@ -1712,12 +1802,12 @@ const Cards = () => {
             </div>
 
             {/* Inline generate panel */}
-            {generateTpl && (
+            {generateItem && (
               <div className="w-80 shrink-0 sticky top-4">
                 <GeneratePanel
-                  tpl={generateTpl}
+                  tpl={itemAsTemplate(generateItem)}
                   useMode={generateMode}
-                  onClose={() => setGenerateTpl(null)}
+                  onClose={() => setGenerateItem(null)}
                   onGenerated={() => { fetchDesigns(); handleCreditUsed(); }}
                 />
               </div>
@@ -1765,20 +1855,22 @@ const Cards = () => {
       )}
 
       {/* Preview modal */}
-      {previewTpl && (
+      {previewItem && (
         <ImagePreviewModal
-          tpl={previewTpl}
-          onClose={() => setPreviewTpl(null)}
+          item={previewItem}
+          onClose={() => setPreviewItem(null)}
+          onToggleLike={() => toggleItemLike(previewItem)}
+          onOpenSimilar={(id) => void openSimilar(id)}
           onUseAsPrompt={() => {
-            setGenerateTpl(previewTpl);
+            setGenerateItem(previewItem);
             setGenerateMode('prompt');
-            setPreviewTpl(null);
+            setPreviewItem(null);
             setTab('discover');
           }}
           onUseAsRef={() => {
-            setGenerateTpl(previewTpl);
+            setGenerateItem(previewItem);
             setGenerateMode('ref');
-            setPreviewTpl(null);
+            setPreviewItem(null);
             setTab('discover');
           }}
         />

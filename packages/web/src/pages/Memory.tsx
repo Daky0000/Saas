@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Edit2,
   Globe,
+  Heart,
   Loader2,
   Plus,
   Sparkles,
@@ -431,6 +432,133 @@ function ScrapeModal({ onClose, onScraped }: ScrapeModalProps) {
   );
 }
 
+// ── Images: liked visuals + AI style suggestions ──────────────────────────────
+// Liked images become the user's visual style profile. Future auto-generated
+// posts, campaigns, and promotional media use them as style references, so
+// this lives with the rest of the personalization data.
+
+type StyleImage = {
+  id: string;
+  title: string | null;
+  prompt: string | null;
+  model: string | null;
+  image_url: string;
+  thumb_url: string | null;
+};
+
+function ImagesSection() {
+  const [liked, setLiked] = useState<StyleImage[]>([]);
+  const [suggestions, setSuggestions] = useState<StyleImage[]>([]);
+  const [basedOnLikes, setBasedOnLikes] = useState(false);
+  const [loadingImages, setLoadingImages] = useState(true);
+  const [likingId, setLikingId] = useState<string | null>(null);
+
+  const loadImages = async () => {
+    try {
+      const [likedRes, sugRes] = await Promise.all([
+        api<{ media: StyleImage[] }>('GET', '/api/mcp/media/liked'),
+        api<{ media: StyleImage[]; based_on_likes?: boolean }>('GET', '/api/mcp/media/suggestions'),
+      ]);
+      setLiked(likedRes.media ?? []);
+      setSuggestions(sugRes.media ?? []);
+      setBasedOnLikes(Boolean(sugRes.based_on_likes));
+    } catch { /* sections stay empty */ }
+    finally { setLoadingImages(false); }
+  };
+
+  useEffect(() => { void loadImages(); }, []);
+
+  const likeSuggestion = async (img: StyleImage) => {
+    setLikingId(img.id);
+    try {
+      await api('POST', `/api/mcp/media/${img.id}/like`);
+      setSuggestions((prev) => prev.filter((s) => s.id !== img.id));
+      setLiked((prev) => [img, ...prev]);
+    } catch { /* ignore */ }
+    finally { setLikingId(null); }
+  };
+
+  const unlike = async (img: StyleImage) => {
+    setLikingId(img.id);
+    try {
+      await api('POST', `/api/mcp/media/${img.id}/like`);
+      setLiked((prev) => prev.filter((s) => s.id !== img.id));
+    } catch { /* ignore */ }
+    finally { setLikingId(null); }
+  };
+
+  if (loadingImages) return null;
+
+  return (
+    <div className="space-y-6">
+      {/* Liked images */}
+      <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Heart size={14} className="text-red-500" />
+            <span className="text-sm font-bold text-gray-900">Images</span>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">{liked.length}</span>
+          </div>
+          <p className="text-[11px] text-gray-400">Your liked images define the visual style AI will use for future posts and campaigns</p>
+        </div>
+        {liked.length === 0 ? (
+          <p className="px-5 py-8 text-center text-sm text-gray-400">
+            No liked images yet. Like images in AI Studio → Discover, or from the suggestions below.
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 p-4 sm:grid-cols-4 md:grid-cols-5">
+            {liked.map((img) => (
+              <div key={img.id} className="group relative overflow-hidden rounded-xl bg-gray-100 aspect-square">
+                <img src={img.thumb_url || img.image_url} alt={img.title ?? ''} loading="lazy" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => void unlike(img)}
+                  disabled={likingId === img.id}
+                  title="Remove from liked"
+                  className="absolute top-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                >
+                  {likingId === img.id ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* AI Suggestions */}
+      {suggestions.length > 0 && (
+        <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-indigo-500" />
+              <span className="text-sm font-bold text-gray-900">AI Suggestions</span>
+            </div>
+            <p className="text-[11px] text-gray-400">
+              {basedOnLikes ? 'Similar styles to what you liked' : 'Popular styles to get you started'} — tap ♥ to add
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 p-4 sm:grid-cols-4 md:grid-cols-5">
+            {suggestions.slice(0, 15).map((img) => (
+              <div key={img.id} className="group relative overflow-hidden rounded-xl bg-gray-100 aspect-square">
+                <img src={img.thumb_url || img.image_url} alt={img.title ?? ''} loading="lazy" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => void likeSuggestion(img)}
+                  disabled={likingId === img.id}
+                  title="Add to liked images"
+                  className="absolute top-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                >
+                  {likingId === img.id ? <Loader2 size={11} className="animate-spin" /> : <Heart size={11} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Memory() {
   const [memories, setMemories] = useState<MemoryField[]>([]);
   const [loading, setLoading] = useState(true);
@@ -691,6 +819,8 @@ export default function Memory() {
         );
       })}
       </div>
+
+      <ImagesSection />
 
       {showGenerate && (
         <GenerateModal

@@ -58,6 +58,7 @@ import { registerApiKeyRoutes, registerPublicTriggerRoutes } from './server/publ
 import { registerFormsRoutes, registerPublicFormRoutes } from './server/formsRoutes.ts';
 import { registerSiteTrackingRoutes } from './server/trackingRoutes.ts';
 import { processStaleAgentCompilations } from './server/agentSharedContext.ts';
+import { registerMcpAdminRoutes, registerMcpMediaRoutes, seedDefaultMcpServers, processMcpMediaSync } from './server/mcpRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -410,6 +411,7 @@ const syncUserDesignMediaFn = (userId: string, design: any) => syncUserDesignMed
 ensureDatabase()
   .then(() => ensureSeedUsers())
   .then(() => ensureSeedPricingPlans())
+  .then(() => seedDefaultMcpServers(pool))
   .then(() => refreshStripe())
   .then(() => startSocialAutomationProcessor())
   .then(() => startTokenHealthMonitor())
@@ -865,6 +867,10 @@ app.use('/api/v1', registerPublicTriggerRoutes({ pool, fireAutomationTrigger: au
 // ── Lead-capture forms (authenticated CRUD; public form served at /f/:id) ──
 app.use('/api', registerFormsRoutes({ requireAuth, pool: pool! }));
 
+// ── MCP integrations: admin server management + user media feed ──
+app.use('/api/admin/mcp', registerMcpAdminRoutes({ requireAdmin, pool: pool!, encryptIntegrationSecret, decryptIntegrationSecret }));
+app.use('/api/mcp', registerMcpMediaRoutes({ requireAuth, pool: pool! }));
+
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ success: false, error: 'Not found' });
@@ -921,6 +927,10 @@ if (config.nodeEnv !== 'test') {
     // personalization edits. Daily, first run 20 minutes after boot.
     setTimeout(() => void processStaleAgentCompilations(pool, triggerAgentCompilation), 20 * 60 * 1000);
     setInterval(() => void processStaleAgentCompilations(pool, triggerAgentCompilation), 24 * 60 * 60 * 1000);
+
+    // Pull fresh media from enabled MCP servers (MeiGen gallery) every 6 hours.
+    setTimeout(() => void processMcpMediaSync(pool, decryptIntegrationSecret), 5 * 60 * 1000);
+    setInterval(() => void processMcpMediaSync(pool, decryptIntegrationSecret), 6 * 60 * 60 * 1000);
   });
 }
 

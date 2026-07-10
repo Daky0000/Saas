@@ -1,4 +1,4 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, Menu, Network, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
 import UserManagementPage from '../components/admin/UserManagementPage';
@@ -23,6 +23,7 @@ import AdminAuditLog from '../components/admin/AdminAuditLog';
 import AdminPlatformSettings from '../components/admin/AdminPlatformSettings';
 import AdminHiggsfield from '../components/admin/AdminHiggsfield';
 import AdminNavSettings from '../components/admin/AdminNavSettings';
+import AdminMCP from '../components/admin/AdminMCP';
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -56,7 +57,8 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'kling'
     | 'google'
     | 'openai'
-    | 'higgsfield';
+    | 'higgsfield'
+    | 'mcp';
 
   const TAB_PATHS: Record<AdminTab, string> = {
     users: '/admin/users',
@@ -86,6 +88,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     google: '/admin/google',
     openai: '/admin/openai',
     higgsfield: '/admin/higgsfield',
+    mcp: '/admin/mcp',
   };
 
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
@@ -116,6 +119,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'auth-providers', label: 'Login Providers', icon: KeyRound, active: true },
     { id: 'integrations', label: 'Integrations', icon: Waypoints, active: true },
     { id: 'media', label: 'Media', icon: Image, active: true },
+    { id: 'mcp', label: 'MCP', icon: Plug, active: true },
     { id: 'settings', label: 'Platform Settings', icon: SlidersHorizontal, active: true },
     { id: 'audit', label: 'Audit Log', icon: Waypoints, active: true },
     { id: 'nav-settings', label: 'Navigation', icon: Network, active: true },
@@ -419,6 +423,7 @@ const Admin = ({ currentUser }: AdminProps) => {
             {activeTab === 'ai-skills' && <AdminAISkills />}
             {activeTab === 'billing' && <AdminBillingDashboard />}
             {activeTab === 'apify' && <AdminApify />}
+            {activeTab === 'mcp' && <AdminMCP />}
             {activeTab === 'learn' && <AdminLearn />}
             {activeTab === 'agents' && <AdminAgents />}
             {activeTab === 'magnific' && <AdminMagnific />}

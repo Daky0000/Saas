@@ -249,6 +249,19 @@ test('routes: meta data-deletion callbacks answer on both old and new paths', as
   }
 });
 
+test('routes: MCP admin + media endpoints resolve', async () => {
+  const app = await loadApp();
+  for (const [method, path] of [
+    ['get', '/api/admin/mcp/servers'],
+    ['get', '/api/mcp/media'],
+    ['get', '/api/mcp/media/liked'],
+    ['get', '/api/mcp/media/suggestions'],
+  ] as const) {
+    const res = await (request(app) as any)[method](path);
+    assert.notEqual(res.status, 404, `${method.toUpperCase()} ${path} should exist (got 404)`);
+  }
+});
+
 test('routes: tracking snippet and pixel are publicly reachable', async () => {
   const app = await loadApp();
   const js = await request(app).get('/t.js?u=nobody');
