@@ -2,6 +2,7 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string } | null;
 
@@ -18,6 +19,68 @@ function computeNextRun(frequency: string): Date | null {
     case 'daily':  return new Date(now.getTime() + 86400_000);
     case 'weekly': return new Date(now.getTime() + 7 * 86400_000);
     default:       return null; // manual
+  }
+}
+
+// Creates the run record and executes the sync. Shared by the manual run
+// endpoint and the scheduler (which claims and reschedules the job itself).
+// Execution is currently the provider-adapter stub; real adapters plug in
+// here without touching either caller.
+async function startSyncRun(pool: Pool, job: any): Promise<string> {
+  const runId = randomUUID();
+  await pool.query(
+    `INSERT INTO connector_sync_runs (id,job_id,user_id,domain_slug,provider_slug,status)
+     VALUES ($1,$2,$3,$4,$5,'running')`,
+    [runId, job.id, job.user_id, job.domain_slug, job.provider_slug]
+  );
+  setImmediate(async () => {
+    try {
+      // Stub: simulate a sync. Real implementation calls provider adapter.
+      await new Promise(r => setTimeout(r, 500));
+      await pool.query(
+        `UPDATE connector_sync_runs SET status='completed', records_pulled=0, completed_at=NOW() WHERE id=$1`,
+        [runId]
+      );
+    } catch (err) {
+      await pool.query(
+        `UPDATE connector_sync_runs SET status='failed', error_message=$1, completed_at=NOW() WHERE id=$2`,
+        [err instanceof Error ? err.message : 'Unknown error', runId]
+      ).catch(() => undefined);
+    }
+  });
+  return runId;
+}
+
+// Periodic scan (server.ts scheduler): run every active job whose schedule is
+// due. The claim UPDATE atomically advances next_run_at so concurrent
+// instances (FOR UPDATE SKIP LOCKED) never double-run a job.
+export async function processDueConnectorSyncJobs(pool: Pool | null): Promise<void> {
+  if (!pool) return;
+  try {
+    const { rows: jobs } = await pool.query(
+      `UPDATE connector_sync_jobs SET last_run_at=NOW(), updated_at=NOW(),
+         next_run_at = NOW() + (CASE frequency
+           WHEN 'hourly' THEN INTERVAL '1 hour'
+           WHEN '6h'     THEN INTERVAL '6 hours'
+           WHEN 'daily'  THEN INTERVAL '1 day'
+           WHEN 'weekly' THEN INTERVAL '7 days'
+           ELSE INTERVAL '1 day' END)
+       WHERE id IN (
+         SELECT id FROM connector_sync_jobs
+         WHERE active=true AND frequency <> 'manual' AND next_run_at IS NOT NULL AND next_run_at <= NOW()
+         ORDER BY next_run_at LIMIT 20 FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`
+    );
+    for (const job of jobs) {
+      try {
+        await startSyncRun(pool, job);
+      } catch (err) {
+        logger.warn({ err, jobId: job.id }, 'connector_sync_scheduled_run_failed');
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'connector_sync_tick_failed');
   }
 }
 
@@ -101,37 +164,11 @@ export function registerConnectorSyncRoutes({ requireAuth, pool }: Deps): Router
     );
     if (!job) return void res.status(404).json({ error: 'Job not found' });
 
-    // Create a run record immediately
-    const runId = randomUUID();
-    const { rows: [run] } = await pool.query(
-      `INSERT INTO connector_sync_runs (id,job_id,user_id,domain_slug,provider_slug,status)
-       VALUES ($1,$2,$3,$4,$5,'running') RETURNING *`,
-      [runId, job.id, auth.userId, job.domain_slug, job.provider_slug]
-    );
-
-    // Update job last_run_at
     await pool.query(
       `UPDATE connector_sync_jobs SET last_run_at=NOW(), next_run_at=$1, updated_at=NOW() WHERE id=$2`,
       [computeNextRun(job.frequency), job.id]
     );
-
-    // Run the sync asynchronously (fire-and-forget simulation)
-    // Real implementation would dispatch to a BullMQ queue
-    setImmediate(async () => {
-      try {
-        // Stub: simulate a sync. Real implementation calls provider adapter.
-        await new Promise(r => setTimeout(r, 500));
-        await pool.query(
-          `UPDATE connector_sync_runs SET status='completed', records_pulled=0, completed_at=NOW() WHERE id=$1`,
-          [runId]
-        );
-      } catch (err) {
-        await pool.query(
-          `UPDATE connector_sync_runs SET status='failed', error_message=$1, completed_at=NOW() WHERE id=$2`,
-          [err instanceof Error ? err.message : 'Unknown error', runId]
-        );
-      }
-    });
+    const runId = await startSyncRun(pool, job);
 
     res.status(202).json({ run_id: runId, status: 'running', message: 'Sync started' });
   });

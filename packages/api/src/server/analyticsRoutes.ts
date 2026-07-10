@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { logger } from '../logger.ts';
 import type { AnalyticsDeps } from './analytics/helpers.ts';
 import { createSyncHelpers } from './analytics/syncHelpers.ts';
 import { registerSocialAccountRoutes } from './analytics/socialAccountRoutes.ts';
@@ -33,4 +34,54 @@ export function registerAnalyticsRoutes(deps: AnalyticsDeps): Router {
   registerAdapterRoutes(router, deps);
 
   return router;
+}
+
+// Periodic analytics scan: refreshes Instagram/Threads/Pinterest analytics for
+// every connected account so dashboards show current data without the user
+// opening the page (the on-demand sync buttons keep working on top of this).
+// Called from the server.ts scheduler block.
+export function buildAnalyticsAutoSync(deps: AnalyticsDeps): () => Promise<void> {
+  function decodeStoredIntegrationSecret(value: string | null | undefined): string {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try { return deps.decryptIntegrationSecret(raw); } catch { return ''; }
+  }
+  const syncHelpers = createSyncHelpers(deps.pool, decodeStoredIntegrationSecret);
+
+  return async function runAnalyticsAutoSync(): Promise<void> {
+    const pool = deps.pool;
+    if (!pool) return;
+    try {
+      const { rows: accounts } = await pool.query(
+        `SELECT user_id, id, account_id, account_name, handle, followers, profile_image,
+                access_token, access_token_encrypted, token_data, platform, account_type
+         FROM social_accounts
+         WHERE connected=true AND platform IN ('instagram','threads','pinterest')
+         ORDER BY user_id`
+      );
+      for (const acct of accounts as any[]) {
+        try {
+          if (acct.platform === 'instagram') {
+            await syncHelpers.syncInstagramAnalyticsAccount({ userId: acct.user_id, account: acct, days: 30 });
+          } else if (acct.platform === 'threads') {
+            if (acct.account_type && acct.account_type !== 'profile') continue;
+            const tokenConn = await deps.getPublishableSocialConnection(acct.user_id, 'threads');
+            if (!tokenConn || tokenConn.needs_reapproval || !tokenConn.access_token) continue;
+            await syncHelpers.syncThreadsAnalyticsAccount({
+              userId: acct.user_id,
+              account: { ...acct, access_token: tokenConn.access_token, access_token_encrypted: null },
+              days: 30,
+              maxPosts: 120,
+            });
+          } else {
+            await syncHelpers.syncPinterestAnalyticsAccount({ userId: acct.user_id, account: acct, days: 30, maxPins: 250 });
+          }
+        } catch (err) {
+          logger.warn({ err, platform: acct.platform, userId: acct.user_id }, 'analytics_auto_sync_account_failed');
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'analytics_auto_sync_failed');
+    }
+  };
 }

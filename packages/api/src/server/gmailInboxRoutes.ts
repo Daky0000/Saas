@@ -498,6 +498,30 @@ async function runGmailSync(
   }
 }
 
+// Periodic inbox scan (server.ts scheduler): re-syncs Gmail for every user
+// whose last successful sync is older than 6 hours, keeping the inbox agent
+// and CRM data fresh without a manual sync click. Users who never synced or
+// whose sync errored (needs reconnect) are left alone.
+export function buildGmailAutoSync(deps: Pick<GmailInboxDeps, 'pool' | 'getPlatformConfig' | 'encryptIntegrationSecret' | 'decryptIntegrationSecret'>): () => Promise<void> {
+  const { pool, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret } = deps;
+  return async function runGmailAutoSync(): Promise<void> {
+    if (!pool) return;
+    try {
+      const { rows } = await pool.query(
+        `SELECT user_id FROM gmail_sync_state
+         WHERE status='done' AND last_synced_at IS NOT NULL AND last_synced_at < NOW() - INTERVAL '6 hours'
+         ORDER BY last_synced_at LIMIT 10`
+      );
+      for (const row of rows) {
+        await runGmailSync(pool, row.user_id, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret)
+          .catch((err) => logger.warn({ err, userId: row.user_id }, 'gmail_auto_sync_user_failed'));
+      }
+    } catch (err) {
+      logger.error({ err }, 'gmail_auto_sync_failed');
+    }
+  };
+}
+
 // ── Router ─────────────────────────────────────────────────────────────────────
 
 export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {

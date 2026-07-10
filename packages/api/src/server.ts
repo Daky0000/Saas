@@ -43,12 +43,12 @@ import { registerCRMActivitiesRoutes } from './server/crmActivitiesRoutes.ts';
 import { registerCalendarRoutes } from './server/calendarRoutes.ts';
 import { registerConnectorRegistryRoutes } from './server/connectorRegistryRoutes.ts';
 import { registerConnectorPreferencesRoutes } from './server/connectorPreferencesRoutes.ts';
-import { registerConnectorSyncRoutes } from './server/connectorSyncRoutes.ts';
+import { registerConnectorSyncRoutes, processDueConnectorSyncJobs } from './server/connectorSyncRoutes.ts';
 import { registerCreditsRoutes } from './server/creditsRoutes.ts';
 import { registerApifyRoutes } from './server/apifyRoutes.ts';
 import { registerHiggsfieldRoutes } from './server/higgsfieldRoutes.ts';
 import { registerKlingRoutes } from './server/klingRoutes.ts';
-import { registerGmailInboxRoutes } from './server/gmailInboxRoutes.ts';
+import { registerGmailInboxRoutes, buildGmailAutoSync } from './server/gmailInboxRoutes.ts';
 import { registerGoogleRoutes } from './server/googleRoutes.ts';
 import { registerOpenAIRoutes } from './server/openaiRoutes.ts';
 import { registerAutomationRoutes } from './server/automationRoutes.ts';
@@ -74,7 +74,7 @@ import { buildWorkflowEngine } from './server/workflowRoutes.ts';
 import { registerAIChatRoutes } from './server/aiChatRoutes.ts';
 import { registerMagnificRoutes, getMagnificApiKey, getFreepikApiKey, magnificPost, pollMagnificTask, magnificGenerateImage, freepikGenerateImage, MAGNIFIC_BASE, FREEPIK_BASE, ASPECT_TO_WH, MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS, ASPECT_RATIO_MAP, FREEPIK_IMAGE_MODELS, proxyHeaders, sanitizeMagnificError } from './server/magnificRoutes.ts';
 import { buildNovaModule } from './server/novaRoutes.ts';
-import { registerAnalyticsRoutes } from './server/analyticsRoutes.ts';
+import { registerAnalyticsRoutes, buildAnalyticsAutoSync } from './server/analyticsRoutes.ts';
 import { buildDistributionModule } from './server/distributionRoutes.ts';
 import { registerAuthRoutes } from './server/authRoutes.ts';
 import { registerUserRoutes } from './server/userRoutes.ts';
@@ -901,6 +901,19 @@ if (config.nodeEnv !== 'test') {
     // Run due automation continuations (delay steps) every 2 minutes
     void automationEngine.processDueAutomationJobs();
     setInterval(() => void automationEngine.processDueAutomationJobs(), 2 * 60 * 1000);
+
+    // Run due connector sync jobs (hourly/6h/daily/weekly schedules) every 5 minutes
+    void processDueConnectorSyncJobs(pool);
+    setInterval(() => void processDueConnectorSyncJobs(pool), 5 * 60 * 1000);
+
+    // Periodic integration scans. First run is delayed so a deploy/restart
+    // doesn't immediately hammer external APIs; then every 6 hours.
+    const runAnalyticsAutoSync = buildAnalyticsAutoSync({ requireAuth, pool, decryptIntegrationSecret, getPublishableSocialConnection, getPlatformConfig });
+    const runGmailAutoSync = buildGmailAutoSync({ pool, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret });
+    setTimeout(() => void runAnalyticsAutoSync(), 10 * 60 * 1000);
+    setInterval(() => void runAnalyticsAutoSync(), 6 * 60 * 60 * 1000);
+    setTimeout(() => void runGmailAutoSync(), 15 * 60 * 1000);
+    setInterval(() => void runGmailAutoSync(), 6 * 60 * 60 * 1000);
   });
 }
 
