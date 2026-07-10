@@ -168,6 +168,26 @@ export function registerUserDesignRoutes({ requireAuth, hasDatabase, dbQuery, sy
     }
   });
 
+  // DELETE /api/designs — clear the user's entire history
+  router.delete('/designs', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (hasDatabase()) {
+        const result = await dbQuery('DELETE FROM user_designs WHERE user_id = $1', [auth.userId]);
+        return res.json({ success: true, deleted: result.rowCount ?? 0 });
+      }
+      let deleted = 0;
+      for (const [id, design] of inMemoryDesigns) {
+        if (design.user_id === auth.userId) { inMemoryDesigns.delete(id); deleted++; }
+      }
+      return res.json({ success: true, deleted });
+    } catch (error) {
+      logger.error('Clear designs error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to clear history' });
+    }
+  });
+
   // DELETE /api/designs/:id
   router.delete('/designs/:id', async (req: Request, res: Response) => {
     try {

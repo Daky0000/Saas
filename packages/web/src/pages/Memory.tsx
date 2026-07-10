@@ -560,6 +560,7 @@ function ImagesSection() {
 }
 
 export default function Memory() {
+  const [activeTab, setActiveTab] = useState<'about' | 'images'>('about');
   const [memories, setMemories] = useState<MemoryField[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -644,31 +645,55 @@ export default function Memory() {
             <HealthBar pct={healthPct} />
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        {activeTab === 'about' && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowScrape(true)}
+              className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+            >
+              <Globe size={14} />
+              Scrape
+            </button>
+            <button
+              type="button"
+              data-tour-id="btn-generate-memory"
+              onClick={() => setShowGenerate(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
+            >
+              <Sparkles size={14} />
+              Generate with AI
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 w-fit">
+        {([
+          { id: 'about' as const, label: 'About you', icon: <Brain size={13} /> },
+          { id: 'images' as const, label: 'Images', icon: <Heart size={13} /> },
+        ]).map((t) => (
           <button
+            key={t.id}
             type="button"
-            onClick={() => setShowScrape(true)}
-            className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+            onClick={() => setActiveTab(t.id)}
+            className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${
+              activeTab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
           >
-            <Globe size={14} />
-            Scrape
+            {t.icon} {t.label}
           </button>
-          <button
-            type="button"
-            data-tour-id="btn-generate-memory"
-            onClick={() => setShowGenerate(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
-          >
-            <Sparkles size={14} />
-            Generate with AI
-          </button>
-        </div>
+        ))}
       </div>
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
 
+      {activeTab === 'images' && <ImagesSection />}
+
+      {activeTab === 'about' && <>
       {/* Full scraped memory — pinned at top */}
       {memories.filter((m) => m.source === 'scraped' && m.title === '🌐 Full Scraped Memory').map((m) => (
         <div key={m.id} className="rounded-2xl border border-blue-200 bg-blue-50 overflow-hidden">
@@ -819,8 +844,7 @@ export default function Memory() {
         );
       })}
       </div>
-
-      <ImagesSection />
+      </>}
 
       {showGenerate && (
         <GenerateModal

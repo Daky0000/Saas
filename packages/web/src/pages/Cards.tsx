@@ -7,6 +7,7 @@ import {
   RotateCcw, Lock, Mic,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
+import ImageTextEditor from '../components/cards/ImageTextEditor';
 import { getApiBaseUrl } from '../utils/apiBase';
 
 // ── Discover types & constants ────────────────────────────────────────────────
@@ -692,6 +693,7 @@ function ImagePreviewModal({
   onUseAsRef,
   onToggleLike,
   onOpenSimilar,
+  onEditElement,
 }: {
   item: DiscoverItem;
   onClose: () => void;
@@ -699,6 +701,7 @@ function ImagePreviewModal({
   onUseAsRef: () => void;
   onToggleLike: () => void;
   onOpenSimilar: (id: string) => void;
+  onEditElement: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -826,16 +829,23 @@ function ImagePreviewModal({
         </div>
 
         {/* Action buttons */}
-        <div className="flex gap-2 px-4 py-3 border-t border-slate-100">
+        <div className="px-4 py-3 border-t border-slate-100 space-y-2">
+          <div className="flex gap-2">
+            <button type="button"
+              onClick={() => { onUseAsPrompt(); onClose(); }}
+              className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
+              <RotateCcw size={11} /> Use as Prompt
+            </button>
+            <button type="button"
+              onClick={() => { onUseAsRef(); onClose(); }}
+              className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
+              Use as Ref
+            </button>
+          </div>
           <button type="button"
-            onClick={() => { onUseAsPrompt(); onClose(); }}
-            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
-            <RotateCcw size={11} /> Use as Prompt
-          </button>
-          <button type="button"
-            onClick={() => { onUseAsRef(); onClose(); }}
-            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
-            Use as Ref
+            onClick={() => { onEditElement(); onClose(); }}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 py-2.5 text-[11px] font-bold text-indigo-600 hover:bg-indigo-100 transition">
+            <Edit3 size={11} /> Edit element
           </button>
         </div>
       </div>
@@ -1560,9 +1570,8 @@ const Cards = () => {
   const [generateMode, setGenerateMode] = useState<UseMode>('prompt');
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
-  const [templates, setTemplates]   = useState<CardTemplate[]>([]);
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [previewItem, setPreviewItem] = useState<DiscoverItem | null>(null);
+  const [editItem, setEditItem] = useState<DiscoverItem | null>(null);
   const [creditRefreshKey, setCreditRefreshKey] = useState(0);
 
   const fetchDesigns = useCallback(async () => {
@@ -1574,19 +1583,7 @@ const Cards = () => {
     finally { setLoadingDesigns(false); }
   }, []);
 
-  const fetchTemplates = useCallback(async () => {
-    setLoadingTemplates(true);
-    try {
-      const r = await fetch(`${getApiBaseUrl()}/api/card-templates/published`, {
-        headers: { Authorization: `Bearer ${tok()}` },
-      });
-      const d = await r.json();
-      if (d.success) setTemplates(d.templates ?? []);
-    } catch { /* ignore */ }
-    finally { setLoadingTemplates(false); }
-  }, []);
-
-  useEffect(() => { fetchDesigns(); fetchTemplates(); }, [fetchDesigns, fetchTemplates]);
+  useEffect(() => { fetchDesigns(); }, [fetchDesigns]);
 
   const handleDesignSaved = (_saved?: UserDesign) => { fetchDesigns(); };
   const handleCreditUsed = useCallback(() => setCreditRefreshKey((k) => k + 1), []);
@@ -1606,51 +1603,27 @@ const Cards = () => {
       .finally(() => setLoadingMcp(false));
   }, [tab, modelFilter, sortBy]);
 
-  const discoverItems = useMemo<DiscoverItem[]>(() => {
-    const fromMcp: DiscoverItem[] = mcpMedia.map((m) => ({
-      key: `mcp-${m.id}`, source: 'mcp', id: String(m.id),
-      name: m.title || m.model || 'AI image',
-      prompt: m.prompt || '',
-      imageUrl: m.image_url || m.thumb_url || null,
-      model: m.model || null,
-      likeCount: Number(m.likes_count ?? 0),
-      liked: Boolean(m.liked),
-      createdAt: m.created_at || new Date().toISOString(),
-    }));
-
-    let tpls = [...templates];
-    if (modelFilter !== 'all') {
-      const key = modelFilter === 'gpt' ? 'gpt' : 'gemini';
-      tpls = tpls.filter((t) => (t.name + ' ' + (t.description ?? '')).toLowerCase().includes(key));
-    }
-    if (sortBy === 'newest') tpls.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    else if (sortBy === 'popular') tpls.sort((a, b) => ((b.view_count ?? 0) + (b.like_count ?? 0)) - ((a.view_count ?? 0) + (a.like_count ?? 0)));
-    const fromTemplates: DiscoverItem[] = tpls.map((t) => ({
-      key: `tpl-${t.id}`, source: 'template', id: t.id,
-      name: t.name, prompt: t.description || '',
-      imageUrl: t.coverImageUrl, model: null,
-      likeCount: t.like_count ?? 0, liked: false,
-      createdAt: t.createdAt,
-    }));
-
-    return [...fromMcp, ...fromTemplates];
-  }, [mcpMedia, templates, modelFilter, sortBy]);
+  // Discover shows ONLY MeiGen (MCP) media — local admin templates were
+  // removed from this feed by request.
+  const discoverItems = useMemo<DiscoverItem[]>(() => mcpMedia.map((m) => ({
+    key: `mcp-${m.id}`, source: 'mcp', id: String(m.id),
+    name: m.title || m.model || 'AI image',
+    prompt: m.prompt || '',
+    imageUrl: m.image_url || m.thumb_url || null,
+    model: m.model || null,
+    likeCount: Number(m.likes_count ?? 0),
+    liked: Boolean(m.liked),
+    createdAt: m.created_at || new Date().toISOString(),
+  })), [mcpMedia]);
 
   const toggleItemLike = useCallback((item: DiscoverItem) => {
-    const endpoint = item.source === 'mcp'
-      ? `/api/mcp/media/${item.id}/like`
-      : `/api/card-templates/${item.id}/like`;
-    fetch(`${getApiBaseUrl()}${endpoint}`, { method: 'POST', headers: { Authorization: `Bearer ${tok()}` } })
+    fetch(`${getApiBaseUrl()}/api/mcp/media/${item.id}/like`, { method: 'POST', headers: { Authorization: `Bearer ${tok()}` } })
       .then((r) => r.json())
       .then((d) => {
         if (!d.success) return;
         const liked = Boolean(d.liked);
-        const count = Number(d.likes_count ?? d.like_count ?? 0);
-        if (item.source === 'mcp') {
-          setMcpMedia((prev) => prev.map((m) => String(m.id) === item.id ? { ...m, liked, likes_count: count } : m));
-        } else {
-          setTemplates((prev) => prev.map((t) => t.id === item.id ? { ...t, like_count: count } : t));
-        }
+        const count = Number(d.likes_count ?? 0);
+        setMcpMedia((prev) => prev.map((m) => String(m.id) === item.id ? { ...m, liked, likes_count: count } : m));
         setPreviewItem((prev) => prev && prev.id === item.id ? { ...prev, liked, likeCount: count } : prev);
       })
       .catch(() => {});
@@ -1763,7 +1736,7 @@ const Cards = () => {
           <div className="flex gap-4 items-start">
             {/* Masonry gallery */}
             <div className="flex-1 min-w-0">
-              {(loadingTemplates || loadingMcp) && discoverItems.length === 0 ? (
+              {loadingMcp && discoverItems.length === 0 ? (
                 <div className={`gap-4 ${generateItem ? 'columns-2 sm:columns-2 lg:columns-3' : 'columns-2 sm:columns-3 lg:columns-4 xl:columns-5'}`}>
                   {Array.from({ length: 10 }).map((_, i) => (
                     <div key={i} className="break-inside-avoid mb-4 rounded-xl bg-[#efe9df] animate-pulse"
@@ -1840,15 +1813,29 @@ const Cards = () => {
               </div>
             </div>
           ) : (
-            <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-4">
-              {myDesigns.map((d) => (
-                <div key={d.id} className="break-inside-avoid mb-4">
-                  <HistoryCard
-                    design={d}
-                    onDelete={() => setMyDesigns((prev) => prev.filter((x) => x.id !== d.id))}
-                  />
-                </div>
-              ))}
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!window.confirm(`Delete all ${myDesigns.length} items from your history? This cannot be undone.`)) return;
+                    void designService.clearAll().then(() => setMyDesigns([])).catch(() => {});
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 transition"
+                >
+                  <Trash2 size={12} /> Clear history
+                </button>
+              </div>
+              <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-4">
+                {myDesigns.map((d) => (
+                  <div key={d.id} className="break-inside-avoid mb-4">
+                    <HistoryCard
+                      design={d}
+                      onDelete={() => setMyDesigns((prev) => prev.filter((x) => x.id !== d.id))}
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -1873,6 +1860,20 @@ const Cards = () => {
             setPreviewItem(null);
             setTab('discover');
           }}
+          onEditElement={() => setEditItem(previewItem)}
+        />
+      )}
+
+      {/* Edit element — text-overlay soft builder */}
+      {editItem && (
+        <ImageTextEditor
+          imageUrl={editItem.source === 'mcp'
+            ? `${getApiBaseUrl()}/api/mcp/media/${editItem.id}/image`
+            : (editItem.imageUrl ?? '')}
+          fetchWithAuth={editItem.source === 'mcp'}
+          designName={`Edited — ${editItem.name}`.slice(0, 80)}
+          onClose={() => setEditItem(null)}
+          onSaved={() => fetchDesigns()}
         />
       )}
     </div>

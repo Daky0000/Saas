@@ -55,4 +55,9 @@ export const designService = {
   async delete(id: string): Promise<void> {
     assertSuccess(await api.del<{ success: boolean; error?: string }>(`/api/designs/${id}`));
   },
+
+  async clearAll(): Promise<number> {
+    const res = assertSuccess(await api.del<{ success: boolean; error?: string; deleted?: number }>('/api/designs'));
+    return res.deleted ?? 0;
+  },
 };

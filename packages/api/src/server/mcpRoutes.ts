@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
+import axios from 'axios';
 import { logger } from '../logger.ts';
 import { withMcpClient, listMcpTools, extractToolPayload, type McpServerConn } from './mcpClient.ts';
 
@@ -509,6 +510,27 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
     } catch (err) {
       logger.error({ err }, 'mcp_media_suggestions_failed');
       return res.status(500).json({ success: false, error: 'Failed to load suggestions' });
+    }
+  });
+
+  // GET /api/mcp/media/:id/image — same-origin image proxy. The "Edit
+  // element" editor composites the image onto a <canvas>; remote gallery
+  // hosts don't send CORS headers, which would taint the canvas and block
+  // saving. Streaming it from our origin avoids that.
+  router.get('/media/:id/image', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    try {
+      const { rows } = await pool.query(`SELECT image_url FROM mcp_media WHERE id=$1`, [req.params.id]);
+      const url = rows[0]?.image_url;
+      if (!url || !/^https?:\/\//i.test(url)) return res.status(404).json({ success: false, error: 'Not found' });
+      const upstream = await axios.get(url, { responseType: 'arraybuffer', timeout: 20_000, validateStatus: () => true });
+      if (upstream.status >= 400) return res.status(502).json({ success: false, error: 'Image unavailable' });
+      res.setHeader('Content-Type', String(upstream.headers['content-type'] || 'image/jpeg'));
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.send(Buffer.from(upstream.data));
+    } catch (err) {
+      logger.warn({ err }, 'mcp_media_image_proxy_failed');
+      return res.status(502).json({ success: false, error: 'Image unavailable' });
     }
   });
 
