@@ -1915,6 +1915,22 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS lead_forms_user_idx ON lead_forms (user_id);`).catch(() => undefined);
 
+// Website page views reported by the tracking pixel (/px.gif via /t.js).
+// contact_id is set when the visitor was correlated to a mailing contact
+// (cf_cid propagated by short-link redirects); anonymous views keep it NULL.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS page_view_events (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    contact_id TEXT,
+    url TEXT,
+    referrer TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS page_view_events_user_idx ON page_view_events (user_id, created_at DESC);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS page_view_events_contact_idx ON page_view_events (contact_id, created_at DESC);`).catch(() => undefined);
+
 // Public API keys (Settings → API Keys). Only the SHA-256 hash is stored;
 // the full key is shown once at creation. Used by POST /api/v1/trigger.
 await pool.query(`

@@ -200,7 +200,10 @@ function defaultStep(type: StepType): FlowStep {
 function labelForStep(step: FlowStep): string {
   const meta = NODE_META[step.type];
   const c = step.config;
-  if (step.type === 'trigger') return TRIGGER_OPTIONS.find(t => t.value === c.trigger)?.label ?? 'Choose starting point';
+  if (step.type === 'trigger') {
+    const label = TRIGGER_OPTIONS.find(t => t.value === c.trigger)?.label ?? 'Choose starting point';
+    return c.trigger === 'specific_date' && c.date ? `${label}: ${String(c.date)}` : label;
+  }
   if (step.type === 'delay') return `Wait ${c.amount ?? 1} ${c.unit ?? 'days'}`;
   if (step.type === 'send_email') return c.subject ? `Send: "${c.subject}"` : 'Configure email';
   if (step.type === 'send_sms') return c.message ? `SMS: ${String(c.message).slice(0, 30)}…` : 'Configure SMS';
@@ -253,12 +256,25 @@ function StepConfigPanel({
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {step.type === 'trigger' && (
-          <Field label="Starting point">
-            <select value={String(step.config.trigger ?? '')} onChange={e => set('trigger', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none">
-              <option value="">Choose a trigger…</option>
-              {TRIGGER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </Field>
+          <>
+            <Field label="Starting point">
+              <select value={String(step.config.trigger ?? '')} onChange={e => set('trigger', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none">
+                <option value="">Choose a trigger…</option>
+                {TRIGGER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
+            {step.config.trigger === 'specific_date' && (
+              <Field label="Run on date">
+                <input
+                  type="date"
+                  value={String(step.config.date ?? '')}
+                  onChange={e => set('date', e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-slate-400 leading-relaxed">On this date the flow runs once for every subscribed contact.</p>
+              </Field>
+            )}
+          </>
         )}
 
         {step.type === 'delay' && (
@@ -354,6 +370,7 @@ function StepConfigPanel({
               <EmailBuilder
                 subject={String(step.config.subject ?? '')}
                 previewText={String(step.config.preview ?? '')}
+                initialHtml={String(step.config.content ?? '') || undefined}
                 onSubjectChange={v => set('subject', v)}
                 onPreviewTextChange={v => set('preview', v)}
                 onSave={html => { onChange({ ...step, config: { ...step.config, content: html } }); setShowEmailBuilder(false); }}

@@ -244,3 +244,14 @@ test('routes: meta data-deletion callbacks answer on both old and new paths', as
     assert.equal(res.status, 400, `${path} should reach the handler`);
   }
 });
+
+test('routes: tracking snippet and pixel are publicly reachable', async () => {
+  const app = await loadApp();
+  const js = await request(app).get('/t.js?u=nobody');
+  assert.equal(js.status, 200);
+  assert.match(String(js.headers['content-type']), /javascript/);
+
+  const px = await request(app).get('/px.gif?u=nobody&url=https%3A%2F%2Fexample.com');
+  assert.equal(px.status, 200);
+  assert.match(String(px.headers['content-type']), /image\/gif/);
+});

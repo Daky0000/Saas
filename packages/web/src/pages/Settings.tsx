@@ -266,6 +266,8 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [keyMsg, setKeyMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [copiedSecret, setCopiedSecret] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState(false);
+  const trackingSnippet = `<script async src="${API_BASE_URL}/t.js?u=${currentUser?.id ?? ''}"></script>`;
 
   const loadApiKeys = async () => {
     setLoadingKeys(true);
@@ -747,6 +749,31 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
                 </div>
               ))}
             </div>
+          </SectionCard>
+
+          <SectionCard>
+            <h2 className="text-lg font-black text-slate-950">Website tracking</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Paste this snippet before the closing <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">&lt;/body&gt;</code> tag
+              on your website. It records page views from contacts who arrive via your tracked email links, powers the
+              "Views a page" automation trigger, and shows visits on the contact timeline.
+            </p>
+            <div className="mt-4 flex items-center gap-2">
+              <code className="flex-1 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-800 whitespace-nowrap">
+                {trackingSnippet}
+              </code>
+              <button
+                type="button"
+                onClick={() => { void navigator.clipboard.writeText(trackingSnippet); setCopiedSnippet(true); setTimeout(() => setCopiedSnippet(false), 2000); }}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white"
+              >
+                {copiedSnippet ? <Check size={12} /> : null} {copiedSnippet ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-400 leading-relaxed">
+              Visitors are matched to contacts automatically when they click a tracked link from your emails or campaigns.
+              Anonymous visits are still counted.
+            </p>
           </SectionCard>
         </div>
       )}

@@ -715,7 +715,17 @@ export function registerShortLinkRoutes({ pool, fireAutomationTrigger }: {
       }
       const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
       pool.query(`INSERT INTO funnel_events (id,campaign_id,event_type,url,referrer,utm_source,utm_medium,utm_campaign,utm_term,utm_content,ip,user_agent) VALUES (gen_random_uuid()::text,$1,'click',$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [rows[0].campaign_id, rows[0].full_url, req.headers.referer || null, rows[0].utm_source, rows[0].utm_medium, rows[0].utm_campaign, rows[0].utm_term || null, rows[0].utm_content || null, ip, req.headers['user-agent'] || null]).catch(() => undefined);
-      return res.redirect(302, rows[0].full_url);
+      // Carry the contact id to the destination so the site tracking snippet
+      // (/t.js) can correlate this visitor's future page views to the contact.
+      let dest = rows[0].full_url as string;
+      if (contactId && /^https?:\/\//i.test(dest)) {
+        try {
+          const u = new URL(dest);
+          u.searchParams.set('cf_cid', contactId);
+          dest = u.toString();
+        } catch { /* keep original url */ }
+      }
+      return res.redirect(302, dest);
     } catch (_err) { return res.redirect('/'); }
   });
 

@@ -509,10 +509,51 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
     }
   }
 
+  // specific_date trigger: once per day, run flows whose trigger step is
+  // configured with today's date (config.date = YYYY-MM-DD) for every
+  // subscribed contact. Deduped like birthdays via a deterministic job id.
+  let lastSpecificDateRunDate = '';
+  async function processSpecificDateTriggers(): Promise<void> {
+    if (!pool) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (lastSpecificDateRunDate === today) return;
+    lastSpecificDateRunDate = today;
+    try {
+      const { rows: automations } = await pool.query<AutomationRow>(
+        `SELECT id, user_id, name, trigger_type, status, steps, actions FROM mailing_automations WHERE status='active'`
+      );
+      const dueFlows = automations.filter((a) => {
+        if (!matchesTrigger(a, 'specific_date')) return false;
+        const triggerStep = (Array.isArray(a.steps) ? a.steps : []).find((s) => s?.type === 'trigger');
+        return String(triggerStep?.config?.date ?? '').slice(0, 10) === today;
+      });
+      if (!dueFlows.length) return;
+      for (const flow of dueFlows) {
+        const { rows: contacts } = await pool.query(
+          `SELECT id, email, first_name, last_name, phone FROM mailing_contacts
+           WHERE user_id=$1 AND subscribed=true`,
+          [flow.user_id]
+        );
+        for (const contact of contacts) {
+          const dedupeId = `sdate_${flow.id}_${contact.id}_${today}`;
+          const { rowCount } = await pool.query(
+            `INSERT INTO mailing_automation_jobs (id, user_id, automation_id, contact_id, contact, steps, run_at, status)
+             VALUES ($1,$2,$3,$4,$5,'[]'::jsonb,NOW(),'done') ON CONFLICT (id) DO NOTHING`,
+            [dedupeId, flow.user_id, flow.id, contact.id, JSON.stringify(contact)]
+          );
+          if (rowCount) await runAutomationForContact(flow.user_id, flow, contact);
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'automation_specific_date_tick_failed');
+    }
+  }
+
   // Called from the scheduler tick: claim and run due continuations.
   async function processDueAutomationJobs(): Promise<void> {
     if (!pool) return;
     void processBirthdayTriggers();
+    void processSpecificDateTriggers();
     try {
       const { rows: jobs } = await pool.query(
         `UPDATE mailing_automation_jobs SET status='processing', attempts=attempts+1, updated_at=NOW()

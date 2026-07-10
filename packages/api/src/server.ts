@@ -56,6 +56,7 @@ import { buildAutomationEngine } from './server/automationEngine.ts';
 import { recalcLeadScore } from './server/leadScoring.ts';
 import { registerApiKeyRoutes, registerPublicTriggerRoutes } from './server/publicApiRoutes.ts';
 import { registerFormsRoutes, registerPublicFormRoutes } from './server/formsRoutes.ts';
+import { registerSiteTrackingRoutes } from './server/trackingRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -192,6 +193,11 @@ app.get('/api/health', (_req, res) => res.json({
 // customers' external sites (helmet's frame-ancestors/X-Frame-Options would
 // block that, and cross-origin form POSTs would fail the CORS allowlist).
 app.use('/f', registerPublicFormRoutes({ pool, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
+
+// Website tracking snippet (/t.js) + pixel (/px.gif). Also mounted BEFORE
+// cors/helmet: both are loaded cross-origin from customers' sites and
+// helmet's Cross-Origin-Resource-Policy would block them.
+app.use(registerSiteTrackingRoutes({ pool, appUrl: config.appUrl, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 
 // ── Security & parsing middleware — must be before ALL routes ─────────────────
 app.use(

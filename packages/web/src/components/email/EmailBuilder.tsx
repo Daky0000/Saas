@@ -111,7 +111,48 @@ export function blocksToHtml(blocks: EmailBlock[]): string {
 <table class="ec" width="600" cellpadding="0" cellspacing="0" border="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08);">
 ${blocks.map(blockToHtml).join('\n')}
 </table></td></tr></table></center>
+${encodeBlocksComment(blocks)}
 </body></html>`;
+}
+
+// Round-trip support: the builder's block JSON is embedded in the exported HTML
+// as a base64 comment so reopening a saved email restores the editable blocks.
+function encodeBlocksComment(blocks: EmailBlock[]): string {
+  try {
+    return `<!--CFBLOCKS:${btoa(unescape(encodeURIComponent(JSON.stringify(blocks))))}-->`;
+  } catch {
+    return '';
+  }
+}
+
+export function htmlToBlocks(html: string | undefined | null): EmailBlock[] {
+  if (!html || !html.trim()) return [];
+  const m = html.match(/<!--CFBLOCKS:([A-Za-z0-9+/=]+)-->/);
+  if (m) {
+    try {
+      const parsed = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+      if (Array.isArray(parsed) && parsed.every(b => b && typeof b === 'object' && typeof b.type === 'string')) {
+        bumpUidPast(parsed as EmailBlock[]);
+        return parsed as EmailBlock[];
+      }
+    } catch { /* fall through to raw-HTML fallback */ }
+  }
+  // No marker (e.g. HTML written elsewhere): keep it editable as a raw HTML block.
+  const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const inner = (body ? body[1] : html).replace(/<!--CFBLOCKS:[A-Za-z0-9+/=]+-->/, '').trim();
+  if (!inner) return [];
+  return [{ id: uid(), type: 'html', content: inner, padding: 0 }];
+}
+
+function bumpUidPast(blocks: EmailBlock[]) {
+  const scan = (id: string) => {
+    const n = /^b(\d+)$/.exec(id);
+    if (n) _id = Math.max(_id, Number(n[1]) + 1);
+  };
+  for (const b of blocks) {
+    scan(b.id);
+    if (b.type === 'section') for (const col of b.columns) { scan(col.id); col.blocks.forEach(l => scan(l.id)); }
+  }
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -1115,9 +1156,9 @@ export interface EmailBuilderProps {
 export default function EmailBuilder({
   subject, previewText, segmentId = '', segments = [],
   onSubjectChange, onPreviewTextChange, onSegmentChange,
-  onSave, onClose, onSend, sending = false, hasContacts = true, initialHtml: _ih,
+  onSave, onClose, onSend, sending = false, hasContacts = true, initialHtml,
 }: EmailBuilderProps) {
-  const [blocks, setBlocks] = useState<EmailBlock[]>([]);
+  const [blocks, setBlocks] = useState<EmailBlock[]>(() => htmlToBlocks(initialHtml));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedColId, setSelectedColId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>('add');

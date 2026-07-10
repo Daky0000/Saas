@@ -259,7 +259,7 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
     try {
       const auth = requireAuth(req, res); if (!auth) return;
       const contactId = req.params.id;
-      const [contact, emailEvents, tagEvents, automationRuns] = await Promise.all([
+      const [contact, emailEvents, tagEvents, automationRuns, pageViews] = await Promise.all([
         pool.query(`SELECT created_at, source FROM mailing_contacts WHERE id=$1 AND user_id=$2`, [contactId, auth.userId]),
         pool.query(
           `SELECT e.event_type, e.created_at, e.metadata, c.name AS campaign_name
@@ -275,6 +275,11 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
           `SELECT j.status, j.run_at, j.created_at, a.name AS automation_name
            FROM mailing_automation_jobs j LEFT JOIN mailing_automations a ON a.id = j.automation_id
            WHERE j.contact_id=$1 AND j.user_id=$2 ORDER BY j.created_at DESC LIMIT 50`,
+          [contactId, auth.userId]
+        ).catch(() => ({ rows: [] as any[] })),
+        pool.query(
+          `SELECT url, referrer, created_at FROM page_view_events
+           WHERE contact_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 50`,
           [contactId, auth.userId]
         ).catch(() => ({ rows: [] as any[] })),
       ]);
@@ -300,6 +305,12 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
           label: `Automation: ${j.automation_name || 'flow'}`,
           detail: j.status === 'waiting' ? 'waiting for trigger' : j.status === 'pending' ? 'scheduled' : j.status,
           at: j.created_at,
+        })),
+        ...pageViews.rows.map((v: any): TimelineItem => ({
+          type: 'page_view',
+          label: 'Visited your website',
+          detail: v.url ? String(v.url).replace(/^https?:\/\//, '').slice(0, 80) : null,
+          at: v.created_at,
         })),
       ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 
