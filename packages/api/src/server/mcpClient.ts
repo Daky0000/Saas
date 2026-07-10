@@ -21,7 +21,8 @@ export interface McpServerConn {
   headers?: Record<string, string>;
 }
 
-const CONNECT_TIMEOUT_MS = 30_000;
+// Generous: the first stdio run may need npx to download the package.
+const CONNECT_TIMEOUT_MS = 90_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -40,9 +41,15 @@ export async function withMcpClient<T>(conn: McpServerConn, fn: (client: Client)
       requestInit: { headers: conn.headers && Object.keys(conn.headers).length ? conn.headers : undefined },
     });
   } else {
-    const command = String(conn.command || '').trim();
+    let command = String(conn.command || '').trim();
     if (!command) throw new Error('MCP server command is not configured');
-    const args = Array.isArray(conn.args) ? conn.args.map(String) : [];
+    let args = Array.isArray(conn.args) ? conn.args.map(String) : [];
+    // Windows: npx/npm/node package runners are .cmd shims that child_process
+    // can't spawn directly — route through cmd.exe.
+    if (process.platform === 'win32' && /^(npx|npm|pnpm|yarn)$/i.test(command)) {
+      args = ['/c', command, ...args];
+      command = 'cmd.exe';
+    }
     transport = new StdioClientTransport({
       command,
       args,

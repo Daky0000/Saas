@@ -249,6 +249,37 @@ test('routes: meta data-deletion callbacks answer on both old and new paths', as
   }
 });
 
+test('mcp: meigen gallery + inspiration markdown parse correctly (live-captured format)', async () => {
+  const { parseGalleryMarkdown, parseInspirationMarkdown } = await import('../src/server/mcpRoutes.ts');
+
+  const gallery = `Found 3 results for category: Photography:
+
+1. **#305** by FL⭕RA — Photography
+   ![Preview #305](https://images.meigen.ai/tweets/2021300975248736723/0.jpg)
+   Prompt: A detailed, high-fashion studio photograph of a woman posing gracefully...
+   Stats: 3143 likes, 400,448 views
+   ID: 2021300975248736723
+
+2. **#311** by Oogie — Photography
+   ![Preview #311](https://images.meigen.ai/tweets/2011304086847832089/0.jpg)
+   Prompt: Paparazzi-style extreme close-up photo of a woman...
+   Stats: 2163 likes, 100,053 views
+   ID: 2011304086847832089`;
+
+  const entries = parseGalleryMarkdown(gallery);
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].id, '2021300975248736723');
+  assert.equal(entries[0].image, 'https://images.meigen.ai/tweets/2021300975248736723/0.jpg');
+  assert.equal(entries[0].likes, 3143);
+  assert.match(entries[0].prompt, /high-fashion studio photograph/);
+  assert.equal(entries[1].likes, 2163);
+
+  const detail = '# Trending Prompt #691\n## Generated Images\n![Image 1](https://images.meigen.ai/tweets/x/0.jpg)\n## Full Prompt\n```\nA first-person point-of-view (POV) shot inside a modern supermarket aisle.\n```\n## Metadata\n- Author: M (@x)\n- Model: nanobanana\n- Likes: 224';
+  const parsed = parseInspirationMarkdown(detail);
+  assert.match(parsed.prompt, /^A first-person point-of-view/);
+  assert.equal(parsed.model, 'nanobanana');
+});
+
 test('routes: MCP admin + media endpoints resolve', async () => {
   const app = await loadApp();
   for (const [method, path] of [

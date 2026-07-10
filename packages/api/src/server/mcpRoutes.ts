@@ -31,12 +31,16 @@ interface UserDeps {
 
 const DEFAULT_MEIGEN_CONFIG = {
   adapter: 'meigen',
-  search_tool: 'search_gallery',
-  detail_tool: 'get_inspiration',
-  search_arg: 'keywords',
-  sync_keywords: ['portrait', 'product', 'poster', 'logo', '3d', 'anime', 'landscape', 'fashion', 'food', 'illustration', 'ui design', 'character'],
+  categories: ['Photography', 'Illustration & 3D', 'Product & Brand', 'Food & Drink', 'Poster Design', 'UI & Graphic'],
+  pages_per_category: 2,
+  page_size: 20,
+  sort_by: 'likes',
   allowed_models: ['gpt', 'gemini', 'nano banana', 'nanobanana', 'nano-banana', 'imagen'],
-  max_detail_lookups: 30,
+  // Model + full prompt come from get_inspiration; one call per new item.
+  max_detail_lookups: 80,
+  // Items whose model we couldn't resolve are kept (they appear under "All"
+  // but not under the GPT/Gemini tabs). Set false to drop them instead.
+  keep_unknown_models: true,
 };
 
 function decryptJson(decrypt: (s: string) => string, value: string | null | undefined): Record<string, string> {
@@ -62,37 +66,36 @@ async function buildConn(row: any, decrypt: (s: string) => string): Promise<McpS
 }
 
 // ── MeiGen gallery sync ───────────────────────────────────────────────────────
+//
+// The meigen MCP server returns human-readable markdown, not JSON. Verified
+// live output shapes:
+//
+//   search_gallery → "1. **#691** by 𝐌 — Product & Brand\n   ![Preview](url)\n
+//                     Prompt: …\n   Stats: 224 likes, 4,986 views\n   ID: 2015…"
+//   get_inspiration → "## Full Prompt\n```…```\n## Metadata\n- Model: nanobanana\n…"
 
-function normalizeGalleryItems(payload: unknown): any[] {
-  if (Array.isArray(payload)) return payload;
-  if (payload && typeof payload === 'object') {
-    const p = payload as Record<string, unknown>;
-    for (const key of ['results', 'items', 'entries', 'gallery', 'data', 'prompts']) {
-      if (Array.isArray(p[key])) return p[key] as any[];
-    }
+type GalleryEntry = { id: string; image: string; prompt: string; likes: number; title: string | null };
+
+export function parseGalleryMarkdown(text: string): GalleryEntry[] {
+  const entries: GalleryEntry[] = [];
+  for (const block of String(text).split(/\n(?=\d+\.\s+\*\*)/)) {
+    const id = block.match(/\bID:\s*(\S+)/)?.[1];
+    const image = block.match(/!\[[^\]]*\]\((https?:[^)\s]+)\)/)?.[1];
+    if (!id || !image) continue;
+    const title = block.match(/^\d+\.\s+\*\*(#?[^*]+)\*\*/)?.[1]?.trim() ?? null;
+    const prompt = (block.match(/Prompt:\s*([\s\S]*?)(?=\n\s*(?:Stats:|ID:))/)?.[1] ?? '').trim();
+    const likes = Number((block.match(/([\d,]+)\s+likes/)?.[1] ?? '0').replace(/,/g, '')) || 0;
+    entries.push({ id, image, prompt, likes, title });
   }
-  return [];
+  return entries;
 }
 
-function pickField(item: any, keys: string[]): string {
-  for (const k of keys) {
-    const v = item?.[k];
-    if (typeof v === 'string' && v.trim()) return v.trim();
-    if (typeof v === 'number') return String(v);
-  }
-  return '';
-}
-
-function pickImage(item: any): string {
-  const direct = pickField(item, ['image_url', 'imageUrl', 'image', 'preview', 'preview_url', 'thumbnail', 'thumbnail_url', 'url', 'cover']);
-  if (direct) return direct;
-  const arr = item?.images;
-  if (Array.isArray(arr) && arr.length) {
-    const first = arr[0];
-    if (typeof first === 'string') return first;
-    if (first && typeof first === 'object') return pickField(first, ['url', 'image_url', 'src', 'preview']);
-  }
-  return '';
+export function parseInspirationMarkdown(text: string): { prompt: string; model: string } {
+  const s = String(text);
+  return {
+    prompt: (s.match(/## Full Prompt\s*```([\s\S]*?)```/)?.[1] ?? '').trim(),
+    model: (s.match(/-\s*Model:\s*([^\n]+)/)?.[1] ?? '').trim(),
+  };
 }
 
 function modelAllowed(model: string, allowed: string[]): boolean {
@@ -112,58 +115,69 @@ export async function syncMeigenGallery(
   let stored = 0;
   let detailBudget = Number(cfg.max_detail_lookups) || 0;
 
+  // Items already enriched (model known) don't need another detail lookup.
+  const { rows: existingRows } = await pool.query(
+    `SELECT external_id, model FROM mcp_media WHERE server_id=$1`, [serverRow.id]
+  );
+  const existingModels = new Map<string, string | null>(existingRows.map((r: any) => [r.external_id, r.model]));
+
   await withMcpClient(conn, async (client) => {
-    for (const keyword of cfg.sync_keywords.slice(0, 20)) {
-      let items: any[] = [];
-      try {
-        const result = await client.callTool({ name: cfg.search_tool, arguments: { [cfg.search_arg]: keyword } });
-        items = normalizeGalleryItems(extractToolPayload(result));
-      } catch (err) {
-        errors.push(`search "${keyword}": ${err instanceof Error ? err.message : 'failed'}`);
-        continue;
-      }
-      for (const item of items) {
-        scanned++;
-        const externalId = pickField(item, ['id', 'entry_id', 'gallery_id', 'uuid', 'slug']);
-        const imageUrl = pickImage(item);
-        if (!externalId || !imageUrl) continue;
-        let prompt = pickField(item, ['prompt', 'prompt_text', 'description', 'text']);
-        const model = pickField(item, ['model', 'model_name', 'source', 'provider']);
-        if (!model || !modelAllowed(model, cfg.allowed_models)) continue;
-
-        // Gallery search results sometimes omit the full prompt — fetch it.
-        if (!prompt && cfg.detail_tool && detailBudget > 0) {
-          detailBudget--;
-          try {
-            const detail = await client.callTool({ name: cfg.detail_tool, arguments: { id: externalId } });
-            const dp = extractToolPayload(detail) as any;
-            prompt = pickField(dp ?? {}, ['prompt', 'prompt_text', 'description', 'text']);
-          } catch { /* keep without prompt */ }
-        }
-
+    for (const category of cfg.categories.slice(0, 8)) {
+      for (let page = 0; page < Math.max(1, Number(cfg.pages_per_category) || 1); page++) {
+        let items: GalleryEntry[] = [];
         try {
-          const inserted = await pool.query(
-            `INSERT INTO mcp_media (server_id, external_id, title, prompt, model, category, image_url, thumb_url, raw, fetched_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,NOW())
-             ON CONFLICT (server_id, external_id) DO UPDATE SET
-               title=COALESCE(NULLIF(EXCLUDED.title,''), mcp_media.title),
-               prompt=COALESCE(NULLIF(EXCLUDED.prompt,''), mcp_media.prompt),
-               model=COALESCE(NULLIF(EXCLUDED.model,''), mcp_media.model),
-               category=COALESCE(NULLIF(EXCLUDED.category,''), mcp_media.category),
-               image_url=EXCLUDED.image_url,
-               raw=EXCLUDED.raw, fetched_at=NOW()`,
-            [
-              serverRow.id, externalId,
-              pickField(item, ['title', 'name']) || null,
-              prompt || null, model, keyword,
-              imageUrl,
-              pickField(item, ['thumbnail', 'thumbnail_url', 'thumb', 'preview']) || null,
-              JSON.stringify(item).slice(0, 8000),
-            ]
-          );
-          if (inserted.rowCount) stored++;
+          const result = await client.callTool({
+            name: 'search_gallery',
+            arguments: { category, limit: Math.min(20, Number(cfg.page_size) || 20), offset: page * (Number(cfg.page_size) || 20), sortBy: cfg.sort_by || 'likes' },
+          });
+          items = parseGalleryMarkdown(String(extractToolPayload(result) ?? ''));
         } catch (err) {
-          errors.push(`store ${externalId}: ${err instanceof Error ? err.message : 'failed'}`);
+          errors.push(`browse "${category}" p${page}: ${err instanceof Error ? err.message : 'failed'}`);
+          continue;
+        }
+        if (!items.length) break; // past the end of this category
+
+        for (const item of items) {
+          scanned++;
+          let prompt = item.prompt;
+          let model = existingModels.get(item.id) ?? '';
+
+          // Full prompt + model live in the detail view — fetch for new items.
+          if (!model && detailBudget > 0) {
+            detailBudget--;
+            try {
+              const detail = await client.callTool({ name: 'get_inspiration', arguments: { imageId: item.id } });
+              const parsed = parseInspirationMarkdown(String(extractToolPayload(detail) ?? ''));
+              if (parsed.prompt) prompt = parsed.prompt;
+              if (parsed.model) model = parsed.model;
+            } catch { /* keep the truncated prompt */ }
+          }
+
+          if (model && !modelAllowed(model, cfg.allowed_models)) continue;
+          if (!model && !cfg.keep_unknown_models) continue;
+
+          try {
+            const inserted = await pool.query(
+              `INSERT INTO mcp_media (server_id, external_id, title, prompt, model, category, image_url, likes_count, featured, raw, fetched_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW())
+               ON CONFLICT (server_id, external_id) DO UPDATE SET
+                 title=COALESCE(NULLIF(EXCLUDED.title,''), mcp_media.title),
+                 prompt=CASE WHEN LENGTH(COALESCE(EXCLUDED.prompt,'')) > LENGTH(COALESCE(mcp_media.prompt,'')) THEN EXCLUDED.prompt ELSE mcp_media.prompt END,
+                 model=COALESCE(NULLIF(EXCLUDED.model,''), mcp_media.model),
+                 category=COALESCE(NULLIF(EXCLUDED.category,''), mcp_media.category),
+                 image_url=EXCLUDED.image_url,
+                 featured=EXCLUDED.featured,
+                 fetched_at=NOW()`,
+              [
+                serverRow.id, item.id, item.title, prompt || null, model || null, category,
+                item.image, item.likes, item.likes >= 1000,
+                JSON.stringify({ source_likes: item.likes }),
+              ]
+            );
+            if (inserted.rowCount) stored++;
+          } catch (err) {
+            errors.push(`store ${item.id}: ${err instanceof Error ? err.message : 'failed'}`);
+          }
         }
       }
     }
@@ -205,14 +219,42 @@ export async function processMcpMediaSync(pool: Pool | null, decrypt: (s: string
 }
 
 // Seed the MeiGen server row once so the admin only has to paste the token.
+// The MCP server ships as the `meigen` npm package (per the repo's mcpServers
+// config: command "npx", args ["-y","meigen@1.3.3"]).
 export async function seedDefaultMcpServers(pool: Pool | null): Promise<void> {
   if (!pool) return;
   await pool.query(
     `INSERT INTO mcp_servers (name, slug, transport, command, args, config, enabled, status, status_message)
-     VALUES ('MeiGen AI Design', 'meigen', 'stdio', 'npx', '["-y","meigen-ai-design-mcp"]'::jsonb, $1::jsonb, false, 'unconfigured', 'Add your MEIGEN_API_TOKEN and enable to start syncing')
+     VALUES ('MeiGen AI Design', 'meigen', 'stdio', 'npx', '["-y","meigen"]'::jsonb, $1::jsonb, false, 'unconfigured', 'Add your MeiGen API token and enable to start syncing')
      ON CONFLICT (slug) DO NOTHING`,
     [JSON.stringify(DEFAULT_MEIGEN_CONFIG)]
   ).catch(() => undefined);
+  // Repair rows seeded with the wrong package name (meigen-ai-design-mcp is
+  // the GitHub repo name; the npm package is just `meigen`).
+  await pool.query(
+    `UPDATE mcp_servers SET args='["-y","meigen"]'::jsonb, updated_at=NOW()
+     WHERE slug='meigen' AND args::text LIKE '%meigen-ai-design-mcp%'`
+  ).catch(() => undefined);
+  // Repair the v1 config shape (keyword search) — the live server browses by
+  // category with pagination instead.
+  await pool.query(
+    `UPDATE mcp_servers SET config=$1::jsonb, updated_at=NOW()
+     WHERE slug='meigen' AND config ? 'sync_keywords'`,
+    [JSON.stringify(DEFAULT_MEIGEN_CONFIG)]
+  ).catch(() => undefined);
+}
+
+// Map raw MCP transport failures to something an admin can act on.
+export function friendlyMcpError(err: unknown, conn: { transport: string; command?: string | null }): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/connection closed|-32000/i.test(raw)) {
+    return conn.transport === 'stdio'
+      ? `The MCP server process exited immediately (${raw}). Usually this means the command/package name is wrong, the package failed to download, or a required env var is missing. Check the Command + Arguments in Configure — for MeiGen it should be: npx -y meigen`
+      : `The MCP server closed the connection (${raw}). Check the server URL and auth headers.`;
+  }
+  if (/ENOENT/i.test(raw)) return `Command not found: "${conn.command}". Make sure it is installed on the server.`;
+  if (/timed out/i.test(raw)) return `${raw}. First run can be slow while npx downloads the package — try Test again.`;
+  return raw;
 }
 
 // ── Admin routes (mounted at /api/admin/mcp) ─────────────────────────────────
@@ -328,20 +370,25 @@ export function registerMcpAdminRoutes({ requireAdmin, pool, encryptIntegrationS
     try {
       const { rows } = await pool.query(`SELECT * FROM mcp_servers WHERE id=$1`, [req.params.id]);
       if (!rows.length) return res.status(404).json({ success: false, error: 'Server not found' });
-      const conn = await buildConn(rows[0], decryptIntegrationSecret);
-      const tools = await listMcpTools(conn);
-      await pool.query(
-        `UPDATE mcp_servers SET status='ok', status_message=$2, last_checked_at=NOW(), updated_at=NOW() WHERE id=$1`,
-        [req.params.id, `Connected — ${tools.length} tools`]
-      );
-      return res.json({ success: true, tools });
+      const row = rows[0];
+      const conn = await buildConn(row, decryptIntegrationSecret);
+      try {
+        const tools = await listMcpTools(conn);
+        await pool.query(
+          `UPDATE mcp_servers SET status='ok', status_message=$2, last_checked_at=NOW(), updated_at=NOW() WHERE id=$1`,
+          [req.params.id, `Connected — ${tools.length} tools`]
+        );
+        return res.json({ success: true, tools });
+      } catch (err) {
+        const message = friendlyMcpError(err, { transport: row.transport, command: row.command });
+        await pool.query(
+          `UPDATE mcp_servers SET status='error', status_message=$2, last_checked_at=NOW(), updated_at=NOW() WHERE id=$1`,
+          [req.params.id, message.slice(0, 300)]
+        ).catch(() => undefined);
+        return res.status(502).json({ success: false, error: message });
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Connection failed';
-      await pool.query(
-        `UPDATE mcp_servers SET status='error', status_message=$2, last_checked_at=NOW(), updated_at=NOW() WHERE id=$1`,
-        [req.params.id, message.slice(0, 300)]
-      ).catch(() => undefined);
-      return res.status(502).json({ success: false, error: message });
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Test failed' });
     }
   });
 
@@ -352,15 +399,19 @@ export function registerMcpAdminRoutes({ requireAdmin, pool, encryptIntegrationS
       const { rows } = await pool.query(`SELECT * FROM mcp_servers WHERE id=$1`, [req.params.id]);
       if (!rows.length) return res.status(404).json({ success: false, error: 'Server not found' });
       if (rows[0].config?.adapter !== 'meigen') return res.status(400).json({ success: false, error: 'This server has no media sync adapter' });
-      const result = await syncMeigenGallery(pool, rows[0], decryptIntegrationSecret);
-      return res.json({ success: true, ...result });
+      try {
+        const result = await syncMeigenGallery(pool, rows[0], decryptIntegrationSecret);
+        return res.json({ success: true, ...result });
+      } catch (err) {
+        const message = friendlyMcpError(err, { transport: rows[0].transport, command: rows[0].command });
+        await pool.query(
+          `UPDATE mcp_servers SET status='error', status_message=$2, updated_at=NOW() WHERE id=$1`,
+          [req.params.id, message.slice(0, 300)]
+        ).catch(() => undefined);
+        return res.status(502).json({ success: false, error: message });
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sync failed';
-      await pool.query(
-        `UPDATE mcp_servers SET status='error', status_message=$2, updated_at=NOW() WHERE id=$1`,
-        [req.params.id, message.slice(0, 300)]
-      ).catch(() => undefined);
-      return res.status(502).json({ success: false, error: message });
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Sync failed' });
     }
   });
 

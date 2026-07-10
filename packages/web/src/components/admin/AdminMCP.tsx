@@ -186,6 +186,9 @@ export default function AdminMCP() {
 }
 
 function ServerEditor({ server, onClose, onSaved }: { server: McpServer | null; onClose: () => void; onSaved: () => void }) {
+  // MeiGen needs exactly one secret; show a single labeled token field
+  // instead of the generic key/value editor.
+  const isMeigen = server?.slug === 'meigen' || (server?.config as any)?.adapter === 'meigen';
   const [name, setName] = useState(server?.name ?? '');
   const [slug, setSlug] = useState(server?.slug ?? '');
   const [transport, setTransport] = useState<'stdio' | 'http'>(server?.transport ?? 'stdio');
@@ -194,10 +197,20 @@ function ServerEditor({ server, onClose, onSaved }: { server: McpServer | null; 
   const [url, setUrl] = useState(server?.url ?? '');
   const [envRows, setEnvRows] = useState<EnvRow[]>(() => {
     const keys = Object.keys(server?.env_keys ?? {});
-    return keys.length ? keys.map(k => ({ key: k, value: '••••••' })) : [{ key: server ? '' : 'MEIGEN_API_TOKEN', value: '' }];
+    if (keys.length) return keys.map(k => ({ key: k, value: '••••••' }));
+    return [{ key: !server || isMeigen ? 'MEIGEN_API_TOKEN' : '', value: '' }];
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const meigenToken = envRows.find(r => r.key === 'MEIGEN_API_TOKEN');
+  const hasSavedMeigenToken = Boolean(server?.env_keys?.MEIGEN_API_TOKEN);
+  const setMeigenToken = (value: string) => {
+    setEnvRows(rows => {
+      const others = rows.filter(r => r.key !== 'MEIGEN_API_TOKEN');
+      return [{ key: 'MEIGEN_API_TOKEN', value }, ...others];
+    });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -265,28 +278,45 @@ function ServerEditor({ server, onClose, onSaved }: { server: McpServer | null; 
               <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://mcp.example.com/mcp" className={`${inputCls} mt-1.5 font-mono normal-case tracking-normal`} />
             </label>
           )}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Environment variables (secrets)</p>
-            <p className="mt-0.5 text-[11px] text-slate-400">Stored encrypted. Existing values show as •••••• — leave them unchanged to keep them.</p>
-            <div className="mt-2 space-y-2">
-              {envRows.map((row, i) => (
-                <div key={i} className="flex gap-2">
-                  <input value={row.key} onChange={e => setEnvRows(rows => rows.map((r, j) => j === i ? { ...r, key: e.target.value } : r))}
-                    placeholder="MEIGEN_API_TOKEN" className={`${inputCls} flex-1 font-mono text-xs`} />
-                  <input value={row.value} type="password" onChange={e => setEnvRows(rows => rows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}
-                    placeholder="value" className={`${inputCls} flex-1 font-mono text-xs`} />
-                  <button type="button" onClick={() => setEnvRows(rows => rows.filter((_, j) => j !== i))}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
-              <button type="button" onClick={() => setEnvRows(rows => [...rows, { key: '', value: '' }])}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-700">
-                <Plus size={12} /> Add variable
-              </button>
+          {isMeigen ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">MeiGen API token</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Paste the API key from <span className="font-semibold">meigen.ai → Settings → API Keys</span>. Stored encrypted.
+                {hasSavedMeigenToken ? ' A token is already saved — leave the •••••• untouched to keep it.' : ''}
+              </p>
+              <input
+                value={meigenToken?.value ?? ''}
+                type="password"
+                onChange={e => setMeigenToken(e.target.value)}
+                placeholder="meigen_sk_…"
+                className={`${inputCls} mt-2 font-mono text-xs`}
+              />
             </div>
-          </div>
+          ) : (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Environment variables (secrets)</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">Left field = variable name, right field = its secret value. Stored encrypted. Existing values show as •••••• — leave them unchanged to keep them.</p>
+              <div className="mt-2 space-y-2">
+                {envRows.map((row, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input value={row.key} onChange={e => setEnvRows(rows => rows.map((r, j) => j === i ? { ...r, key: e.target.value } : r))}
+                      placeholder="VARIABLE_NAME" className={`${inputCls} flex-1 font-mono text-xs`} />
+                    <input value={row.value} type="password" onChange={e => setEnvRows(rows => rows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}
+                      placeholder="secret value" className={`${inputCls} flex-1 font-mono text-xs`} />
+                    <button type="button" onClick={() => setEnvRows(rows => rows.filter((_, j) => j !== i))}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setEnvRows(rows => [...rows, { key: '', value: '' }])}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-700">
+                  <Plus size={12} /> Add variable
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
           <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
