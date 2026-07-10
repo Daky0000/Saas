@@ -275,6 +275,7 @@ export function registerBlogRoutes({
     if (status === 'published') void checkTaskActions(user.userId, 'publish_post');
 
     void fireWorkflowTriggers(user.userId, 'post_created', rows[0]);
+    if (status === 'scheduled') void fireWorkflowTriggers(user.userId, 'post_scheduled', rows[0]);
 
     if (status === 'published') {
       try {
@@ -315,6 +316,7 @@ export function registerBlogRoutes({
     const newSlug = rawSlug?.trim() || (title ? slugify(title) : cur.slug);
     const newStatus = status ?? cur.status;
     const willPublish = newStatus === 'published' && String(cur.status || '') !== 'published';
+    const willSchedule = newStatus === 'scheduled' && String(cur.status || '') !== 'scheduled';
     const published_at = newStatus === 'published' && !cur.published_at ? new Date().toISOString() : cur.published_at;
     const client = await pool!.connect();
     let rows: Array<Record<string, unknown>>;
@@ -370,6 +372,7 @@ export function registerBlogRoutes({
       }
       void fireWorkflowTriggers(user.userId, 'post_published', rows[0]);
     }
+    if (willSchedule) void fireWorkflowTriggers(user.userId, 'post_scheduled', rows[0]);
     clearCalendarCacheForUser(user.userId);
     return res.json({ success: true, post: rows[0] });
   });
@@ -401,9 +404,12 @@ export function registerBlogRoutes({
     if (owned.rows.length !== ids.length) return res.status(403).json({ success: false, error: 'Not authorized' });
 
     const result = await pool!.query(
-      `UPDATE blog_posts SET scheduled_at=$1, status='scheduled', updated_at=NOW() WHERE id = ANY($2) AND user_id=$3`,
+      `UPDATE blog_posts SET scheduled_at=$1, status='scheduled', updated_at=NOW() WHERE id = ANY($2) AND user_id=$3 RETURNING *`,
       [scheduledAt.toISOString(), ids, user.userId],
     );
+    for (const post of result.rows) {
+      void fireWorkflowTriggers(user.userId, 'post_scheduled', post);
+    }
 
     clearCalendarCacheForUser(user.userId);
     await recordAuditLog(user.userId, 'batch_reschedule', ids, { scheduled_at: scheduledAt.toISOString() });

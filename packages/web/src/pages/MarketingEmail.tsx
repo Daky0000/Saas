@@ -425,6 +425,21 @@ function AutomationsTab() {
         </button>
       </div>
 
+      {/* Same table as the visual flow builder — point users at the richer tool */}
+      <a
+        href="/marketing/automations"
+        className="flex items-center justify-between rounded-2xl border border-indigo-100 bg-indigo-50 px-5 py-3.5 transition-colors hover:bg-indigo-100"
+      >
+        <div className="flex items-center gap-3">
+          <Zap size={16} className="text-indigo-500 shrink-0" />
+          <p className="text-sm text-indigo-900">
+            <span className="font-bold">Need delays, branches, tags or SMS?</span>{' '}
+            Build multi-step flows in the visual automation builder.
+          </p>
+        </div>
+        <span className="shrink-0 text-sm font-bold text-indigo-600">Open builder →</span>
+      </a>
+
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl">
@@ -467,15 +482,24 @@ function AutomationsTab() {
             <Zap size={32} className="mb-3 opacity-30" />
             <p className="text-sm font-semibold">No automations yet</p>
           </div>
-        ) : automations.map(a => (
+        ) : automations.map(a => {
+          const stepCount = Array.isArray(a.steps) ? a.steps.filter((s: any) => s?.type !== 'trigger').length : 0;
+          const isFlow = stepCount > 0;
+          const firstSubject = Array.isArray(a.actions) ? (a.actions as { subject?: string }[])[0]?.subject : undefined;
+          return (
           <div key={a.id} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="text-sm font-bold text-slate-900">{a.name}</div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+                  <span className="truncate">{a.name}</span>
+                  {isFlow && <span className="shrink-0 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-black uppercase text-indigo-600">Flow</span>}
+                </div>
                 <div className="text-xs text-slate-500 mt-0.5">Trigger: {TRIGGER_LABELS[a.trigger_type] || a.trigger_type}</div>
-                {Array.isArray(a.actions) && (a.actions as { subject?: string }[])[0]?.subject && (
-                  <div className="text-xs text-slate-400 mt-0.5 truncate">"{(a.actions as { subject?: string }[])[0].subject}"</div>
-                )}
+                {isFlow ? (
+                  <div className="text-xs text-slate-400 mt-0.5">{stepCount} step{stepCount === 1 ? '' : 's'} · edit in the visual builder</div>
+                ) : firstSubject ? (
+                  <div className="text-xs text-slate-400 mt-0.5 truncate">"{firstSubject}"</div>
+                ) : null}
               </div>
               <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE_AUTO[a.status] ?? 'bg-slate-100 text-slate-600'}`}>{a.status}</span>
             </div>
@@ -483,10 +507,14 @@ function AutomationsTab() {
               <button onClick={() => void handleToggle(a)} className="flex-1 rounded-lg border border-slate-200 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
                 {a.status === 'active' ? 'Pause' : 'Activate'}
               </button>
+              {isFlow && (
+                <a href="/marketing/automations" className="rounded-lg border border-indigo-200 px-2.5 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">Edit flow</a>
+              )}
               <button onClick={() => void handleDelete(a.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 size={13} /></button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

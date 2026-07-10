@@ -1,5 +1,5 @@
 import express from 'express';
-import { FAST_MODEL } from '../ai-helpers.ts';
+import { FAST_MODEL, recordAIUsage, hasAICredits } from '../ai-helpers.ts';
 import type { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
@@ -139,7 +139,9 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
           } else if (node.subType === 'generate_ai_image') {
             const postTitle = String(triggerData.title ?? '');
             const postExcerpt = String(triggerData.excerpt ?? '');
-            if (postTitle) {
+            if (postTitle && !(await hasAICredits(userId))) {
+              addLog(node.id, 'generate_ai_image skipped: out of AI credits');
+            } else if (postTitle) {
               try {
                 const aiCfg = await getAIConfig();
                 const apiKey = resolveActiveKey(aiCfg);
@@ -153,6 +155,11 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                       `Write a vivid, detailed image generation prompt for a blog post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words.`
                     );
                     imagePrompt = resp.response.text().trim();
+                    void recordAIUsage({
+                      userId, feature: 'workflow_ai_image_prompt', provider: 'google', model: 'gemini-2.0-flash',
+                      inputTokens: resp.response.usageMetadata?.promptTokenCount ?? 0,
+                      outputTokens: resp.response.usageMetadata?.candidatesTokenCount ?? 0,
+                    });
                   } else {
                     const anthropic = new Anthropic({ apiKey });
                     const resp = await anthropic.messages.create({
@@ -164,6 +171,10 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                       }],
                     });
                     imagePrompt = (resp.content[0] as any)?.text?.trim() ?? '';
+                    void recordAIUsage({
+                      userId, feature: 'workflow_ai_image_prompt', provider: 'anthropic', model: FAST_MODEL,
+                      inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens,
+                    });
                   }
                   if (imagePrompt) {
                     await dbQuery(

@@ -79,7 +79,7 @@ const CONDITION_OPTIONS: { subType: ConditionSubType; label: string; desc: strin
 ];
 
 const ACTION_OPTIONS: { subType: ActionSubType; label: string; desc: string; icon: React.ReactNode; color: string }[] = [
-  { subType: 'generate_ai_image', label: 'Generate AI Image',    desc: 'Create an image using AI Studio',       icon: <Sparkles size={14} />, color: 'text-violet-600 bg-violet-50 border-violet-200' },
+  { subType: 'generate_ai_image', label: 'AI Image Prompt',      desc: 'Draft an image prompt with AI and notify you (uses credits)', icon: <Sparkles size={14} />, color: 'text-violet-600 bg-violet-50 border-violet-200' },
   { subType: 'auto_schedule',     label: 'Auto Schedule',         desc: 'Schedule the post automatically',       icon: <Calendar size={14} />, color: 'text-blue-600 bg-blue-50 border-blue-200' },
   { subType: 'send_notification', label: 'Send Notification',     desc: 'Send an in-app notification',           icon: <Bell size={14} />, color: 'text-amber-600 bg-amber-50 border-amber-200' },
   { subType: 'add_to_media',      label: 'Save to Media Library', desc: 'Add generated content to media library',icon: <Image size={14} />, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' },

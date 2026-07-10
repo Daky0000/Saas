@@ -221,3 +221,26 @@ test('credits: cost math matches real API prices with 3x margin', async () => {
   assert.equal(AI_PROFIT_MULTIPLIER, 3);
   assert.equal(CREDIT_USD, 0.01);
 });
+
+test('routes: distribution/automation endpoints resolve at /api/* (double-prefix regression)', async () => {
+  const app = await loadApp();
+  // Unauthenticated: a live route returns 401, a missing route returns 404.
+  for (const [method, path] of [
+    ['get', '/api/automation/logs'],
+    ['get', '/api/distribution/connected'],
+    ['get', '/api/distribution/status/some-post'],
+    ['post', '/api/automation/retry/some-log'],
+  ] as const) {
+    const res = await (request(app) as any)[method](path);
+    assert.notEqual(res.status, 404, `${method.toUpperCase()} ${path} should exist (got 404)`);
+  }
+});
+
+test('routes: meta data-deletion callbacks answer on both old and new paths', async () => {
+  const app = await loadApp();
+  for (const path of ['/api/meta/data-deletion', '/api/api/meta/data-deletion']) {
+    const res = await request(app).post(path).send({});
+    // 400 (signed_request required) proves the handler ran; 404 would mean broken
+    assert.equal(res.status, 400, `${path} should reach the handler`);
+  }
+});

@@ -57,6 +57,7 @@ export type MailingAutomation = {
   trigger_type: string;
   conditions: unknown[];
   actions: unknown[];
+  steps?: unknown[]; // flow-builder automations (Marketing → Automations)
   status: 'draft' | 'active' | 'paused';
   created_at: string;
   updated_at: string;

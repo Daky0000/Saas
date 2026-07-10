@@ -2417,8 +2417,8 @@ async function publishToplatform(
   }
 }
 
-// GET /api/distribution/connected
-router.get('/api/distribution/connected', async (req: Request, res: Response) => {
+// GET /api/distribution/connected (router mounted at /api — no prefix here)
+router.get('/distribution/connected', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -2454,7 +2454,7 @@ router.get('/api/distribution/connected', async (req: Request, res: Response) =>
 });
 
 // POST /api/distribution/publish
-router.post('/api/distribution/publish', async (req: Request, res: Response) => {
+router.post('/distribution/publish', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -2498,7 +2498,7 @@ router.post('/api/distribution/publish', async (req: Request, res: Response) => 
 });
 
 // GET /api/distribution/status/:postId
-router.get('/api/distribution/status/:postId', async (req: Request, res: Response) => {
+router.get('/distribution/status/:postId', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -2515,7 +2515,7 @@ router.get('/api/distribution/status/:postId', async (req: Request, res: Respons
 });
 
 // GET /api/automation/logs
-router.get('/api/automation/logs', async (req: Request, res: Response) => {
+router.get('/automation/logs', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -2533,7 +2533,7 @@ router.get('/api/automation/logs', async (req: Request, res: Response) => {
 });
 
 // POST /api/automation/retry/:logId
-router.post('/api/automation/retry/:logId', async (req: Request, res: Response) => {
+router.post('/automation/retry/:logId', async (req: Request, res: Response) => {
   try {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -2691,7 +2691,9 @@ const deleteBestEffortUserDataByMetaUserId = async (metaUserId: string): Promise
 };
 
 // POST /api/meta/data-deletion 鈥?Meta "Data Deletion Request URL"
-router.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
+// Accepts both paths: /api/meta/... (correct) and /api/api/meta/... (in case
+// the older double-prefixed URL is what's registered in the Meta dashboard).
+router.post(['/meta/data-deletion', '/api/meta/data-deletion'], async (req: Request, res: Response) => {
   try {
     const signedRequest = String((req.body as any)?.signed_request || '').trim();
     if (!signedRequest) return res.status(400).json({ success: false, error: 'signed_request required' });
@@ -2722,7 +2724,7 @@ router.post('/api/meta/data-deletion', async (req: Request, res: Response) => {
 });
 
 // GET /api/meta/data-deletion/status?code=... 鈥?used by our public status page
-router.get('/api/meta/data-deletion/status', async (req: Request, res: Response) => {
+router.get(['/meta/data-deletion/status', '/api/meta/data-deletion/status'], async (req: Request, res: Response) => {
   try {
     const code = String((req.query as any)?.code || '').trim();
     if (!code) return res.status(400).json({ success: false, error: 'code required' });
@@ -2748,7 +2750,7 @@ router.get('/api/meta/data-deletion/status', async (req: Request, res: Response)
 // Meta Deauthorize Callback (uninstall)
 
 // POST /api/meta/deauthorize 鈥?Meta "Deauthorize Callback URL"
-router.post('/api/meta/deauthorize', async (req: Request, res: Response) => {
+router.post(['/meta/deauthorize', '/api/meta/deauthorize'], async (req: Request, res: Response) => {
   try {
     const signedRequest = String((req.body as any)?.signed_request || '').trim();
     if (!signedRequest) return res.status(400).json({ success: false, error: 'signed_request required' });
