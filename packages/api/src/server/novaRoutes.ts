@@ -44,9 +44,15 @@ const USER_AGENT_MODELS: Record<string, string> = {
   nova: FAST_MODEL,
   aria: FAST_MODEL,
   flux: FAST_MODEL,
+  promo: FAST_MODEL,
 };
 
 const USER_AGENT_PROMPTS: Record<string, string> = {
+  promo: `You are Promo, the Promotion & Media Planner on a user's marketing team.
+Your job is to generate 2-3 promotional content proposals — offers, launches, seasonal pushes — each pairing sharp copy with a described featured visual.
+Use the user's liked-image style profile (agent_memory) when present so visuals match their taste.
+Each proposal must name the promotion angle, the copy hook, and the featured-image concept.`,
+
   daky: `You are Daky, a creative content writer AI agent working for a user's social media marketing team.
 Your job is to generate 2-3 concrete content proposals based on the user's brand profile, active platforms, and marketing goals.
 Each proposal should be a ready-to-use content piece or a clearly actionable content brief.
@@ -580,6 +586,15 @@ export function buildNovaModule(deps: NovaDeps): { router: Router; runScheduledA
       await safe('active_workflows', async () => {
         const { rows } = await dbQuery(`SELECT name, description, is_active FROM agent_workflows WHERE agent_key = $1 AND is_active = true LIMIT 5`, [agentKey]);
         return rows;
+      });
+    }
+    if (agentKey === 'promo' || agentKey === 'nova') {
+      // The user's liked Discover images are their visual style profile.
+      await safe('liked_image_styles', async () => {
+        const { rows } = await dbQuery(
+          `SELECT m.model, m.prompt FROM mcp_media_likes l JOIN mcp_media m ON m.id = l.media_id
+           WHERE l.user_id = $1 ORDER BY l.created_at DESC LIMIT 5`, [userId]);
+        return rows.map((r: any) => `[${r.model || 'ai'}] ${String(r.prompt || '').slice(0, 180)}`);
       });
     }
     await safe('past_decisions', async () => {

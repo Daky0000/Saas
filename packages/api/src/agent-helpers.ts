@@ -16,6 +16,7 @@ export const AGENT_DEFS: Record<string, { name: string; role: string; icon: stri
   ad_copy:          { name: 'Ads',     role: 'Ad Copy',               icon: '◆', color: '#EA580C', memoryKeywords: ['ad','copy','meta','google','facebook','conversion','cta'] },
   thumbnail_design: { name: 'Thumb',   role: 'Thumbnail Design',      icon: '▣', color: '#9333EA', memoryKeywords: ['thumbnail','youtube','visual','design','creative','click'] },
   meta_ads:         { name: 'Meta',    role: 'Paid Social Manager',   icon: '⊛', color: '#1877F2', memoryKeywords: ['meta','facebook','instagram','paid','campaign','budget','roas'] },
+  promo:            { name: 'Promo',   role: 'Promotion & Media',     icon: '✹', color: '#E11D48', memoryKeywords: ['promo','promotion','offer','launch','visual','image','brand','campaign'] },
 };
 
 export async function provisionUserAgents(userId: string): Promise<void> {

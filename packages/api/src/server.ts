@@ -59,6 +59,8 @@ import { registerFormsRoutes, registerPublicFormRoutes } from './server/formsRou
 import { registerSiteTrackingRoutes } from './server/trackingRoutes.ts';
 import { processStaleAgentCompilations } from './server/agentSharedContext.ts';
 import { registerMcpAdminRoutes, registerMcpMediaRoutes, seedDefaultMcpServers, processMcpMediaSync } from './server/mcpRoutes.ts';
+import { buildMailer } from './server/mailer.ts';
+import { buildContentPlanEngine, registerContentPlanRoutes } from './server/contentPlanRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -177,6 +179,13 @@ const PORT = config.port;
 // Automation engine executes the flows built in Marketing → Automations.
 // Built before all routes so public forms, webhooks, and mailing can fire triggers.
 const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl });
+
+// Unified platform mailer: switch between the hosting provider's SMTP inbox
+// (Admin → Platform Settings → smtp) and Resend via the `email` config.
+const mailer = buildMailer({ getPlatformConfig, getResendConfig });
+
+// Auto-content plans: background generation of promo content + featured images.
+const contentPlanEngine = buildContentPlanEngine({ pool: pool!, createNotification, sendPlatformEmail: mailer.sendPlatformEmail });
 
 // Request IDs first so even health checks carry x-request-id
 app.use(requestIdMiddleware);
@@ -871,6 +880,9 @@ app.use('/api', registerFormsRoutes({ requireAuth, pool: pool! }));
 app.use('/api/admin/mcp', registerMcpAdminRoutes({ requireAdmin, pool: pool!, encryptIntegrationSecret, decryptIntegrationSecret }));
 app.use('/api/mcp', registerMcpMediaRoutes({ requireAuth, pool: pool! }));
 
+// ── Auto-content plans (background promo content generation) ──
+app.use('/api', registerContentPlanRoutes({ requireAuth, pool: pool!, createNotification, runPlanOnce: contentPlanEngine.runPlanOnce }));
+
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ success: false, error: 'Not found' });
@@ -931,6 +943,10 @@ if (config.nodeEnv !== 'test') {
     // Pull fresh media from enabled MCP servers (MeiGen gallery) every 6 hours.
     setTimeout(() => void processMcpMediaSync(pool, decryptIntegrationSecret), 5 * 60 * 1000);
     setInterval(() => void processMcpMediaSync(pool, decryptIntegrationSecret), 6 * 60 * 60 * 1000);
+
+    // Run due auto-content plans (e.g. 3 promo pieces/day) every 10 minutes.
+    void contentPlanEngine.processDueContentPlans();
+    setInterval(() => void contentPlanEngine.processDueContentPlans(), 10 * 60 * 1000);
   });
 }
 

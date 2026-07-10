@@ -287,6 +287,8 @@ test('routes: MCP admin + media endpoints resolve', async () => {
     ['get', '/api/mcp/media'],
     ['get', '/api/mcp/media/liked'],
     ['get', '/api/mcp/media/suggestions'],
+    ['get', '/api/content-plans'],
+    ['post', '/api/content-plans'],
   ] as const) {
     const res = await (request(app) as any)[method](path);
     assert.notEqual(res.status, 404, `${method.toUpperCase()} ${path} should exist (got 404)`);

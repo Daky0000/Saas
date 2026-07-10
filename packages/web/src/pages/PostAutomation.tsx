@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, Sparkles, Sliders, RefreshCw, AlertCircle, CheckCheck, Clock, Loader2 } from 'lucide-react';
 import ScheduleCalendar from '../components/calendar/ScheduleCalendar';
 import SocialTemplatesTab from '../components/automation/SocialTemplatesTab';
+import AutoContentPlans from '../components/automation/AutoContentPlans';
 import { API_BASE_URL } from '../utils/apiBase';
 
 type PublishLog = {
@@ -145,7 +146,7 @@ export default function PostAutomation() {
   const [bestTime, setBestTime] = useState(true);
   const [approvalRequired, setApprovalRequired] = useState(false);
   const [dailySummary, setDailySummary] = useState(true);
-  const [activeTab, setActiveTab] = useState<'general' | 'calendar' | 'social' | 'log'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'autocontent' | 'calendar' | 'social' | 'log'>('general');
 
   return (
     <div className="space-y-6 pb-8">
@@ -160,6 +161,7 @@ export default function PostAutomation() {
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Automation sections">
         {[
           { id: 'general' as const, label: 'General' },
+          { id: 'autocontent' as const, label: 'Auto-Content' },
           { id: 'calendar' as const, label: 'Calendar' },
           { id: 'social' as const, label: 'Social Templates' },
           { id: 'log' as const, label: 'Log' },
@@ -270,6 +272,8 @@ export default function PostAutomation() {
           </div>
         </div>
       ) : null}
+
+      {activeTab === 'autocontent' ? <AutoContentPlans /> : null}
 
       {activeTab === 'calendar' ? <ScheduleCalendar /> : null}
 

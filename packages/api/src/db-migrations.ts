@@ -2010,6 +2010,46 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS mcp_media_likes_user_idx ON mcp_media_likes (user_id, created_at DESC);`).catch(() => undefined);
 
+// ── Auto-content plans: "create promo content with a featured image N times a
+// day until <date>". Processed in the background by contentPlanRoutes.ts;
+// each run produces a draft blog post (+ generated featured image) and an
+// in-app notification. content_plan_runs is the per-piece audit trail.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS content_plans (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    topic TEXT NOT NULL DEFAULT '',
+    tone TEXT NOT NULL DEFAULT 'engaging',
+    per_day INTEGER NOT NULL DEFAULT 3 CHECK (per_day BETWEEN 1 AND 6),
+    ends_at TIMESTAMPTZ,
+    use_liked_style BOOLEAN NOT NULL DEFAULT true,
+    generate_image BOOLEAN NOT NULL DEFAULT true,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','completed')),
+    runs_count INTEGER NOT NULL DEFAULT 0,
+    last_run_at TIMESTAMPTZ,
+    next_run_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS content_plans_due_idx ON content_plans (next_run_at) WHERE status='active';`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS content_plan_runs (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    plan_id TEXT NOT NULL REFERENCES content_plans(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blog_post_id TEXT,
+    title TEXT,
+    image_url TEXT,
+    status TEXT NOT NULL DEFAULT 'done',
+    error TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS content_plan_runs_plan_idx ON content_plan_runs (plan_id, created_at DESC);`).catch(() => undefined);
+
 // Public API keys (Settings → API Keys). Only the SHA-256 hash is stored;
 // the full key is shown once at creation. Used by POST /api/v1/trigger.
 await pool.query(`
