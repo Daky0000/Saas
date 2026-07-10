@@ -20,7 +20,20 @@ export type TextLayer = {
   sizePct: number;   // font size as % of image display width
   color: string;
   bold: boolean;
+  fontFamily?: string; // key into FONT_FAMILIES
 };
+
+export const FONT_FAMILIES: Record<string, { label: string; css: string }> = {
+  'sans-serif': { label: 'Sans — Inter',    css: 'Inter, Arial, sans-serif' },
+  serif:        { label: 'Serif — Georgia', css: 'Georgia, "Times New Roman", serif' },
+  display:      { label: 'Display — Impact',css: 'Impact, "Arial Black", sans-serif' },
+  script:       { label: 'Script',          css: '"Brush Script MT", "Segoe Script", cursive' },
+  monospace:    { label: 'Mono — Courier',  css: '"Courier New", monospace' },
+};
+
+function fontCss(layer: TextLayer): string {
+  return FONT_FAMILIES[layer.fontFamily ?? 'sans-serif']?.css ?? FONT_FAMILIES['sans-serif'].css;
+}
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
@@ -72,7 +85,7 @@ export default function ImageTextEditor({
   const selected = layers.find((l) => l.id === selectedId) ?? null;
 
   const addLayer = () => {
-    const layer: TextLayer = { id: uid(), text: 'Your text here', xPct: 30, yPct: 42, sizePct: 6, color: '#ffffff', bold: true };
+    const layer: TextLayer = { id: uid(), text: 'Your text here', xPct: 30, yPct: 42, sizePct: 6, color: '#ffffff', bold: true, fontFamily: 'sans-serif' };
     setLayers((prev) => [...prev, layer]);
     setSelectedId(layer.id);
   };
@@ -128,7 +141,7 @@ export default function ImageTextEditor({
       ctx.drawImage(img, 0, 0);
       for (const layer of layers) {
         const fontPx = Math.max(8, (layer.sizePct / 100) * canvas.width);
-        ctx.font = `${layer.bold ? '700' : '400'} ${fontPx}px Inter, Arial, sans-serif`;
+        ctx.font = `${layer.bold ? '700' : '400'} ${fontPx}px ${fontCss(layer)}`;
         ctx.fillStyle = layer.color;
         ctx.textBaseline = 'top';
         const x = (layer.xPct / 100) * canvas.width;
@@ -177,7 +190,7 @@ export default function ImageTextEditor({
                   top: `${layer.yPct}%`,
                   color: layer.color,
                   fontWeight: layer.bold ? 700 : 400,
-                  fontFamily: 'Inter, Arial, sans-serif',
+                  fontFamily: fontCss(layer),
                 }}
                 ref={(el) => {
                   // Font size relative to the displayed image width so the
@@ -231,8 +244,20 @@ export default function ImageTextEditor({
                 />
               </div>
               <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Font</label>
+                <select
+                  value={selected.fontFamily ?? 'sans-serif'}
+                  onChange={(e) => updateSelected({ fontFamily: e.target.value })}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-400"
+                >
+                  {Object.entries(FONT_FAMILIES).map(([key, f]) => (
+                    <option key={key} value={key} style={{ fontFamily: f.css }}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Size — {selected.sizePct.toFixed(1)}%</label>
-                <input type="range" min={2} max={20} step={0.5} value={selected.sizePct}
+                <input type="range" min={1.5} max={20} step={0.5} value={selected.sizePct}
                   onChange={(e) => updateSelected({ sizePct: Number(e.target.value) })}
                   className="mt-1 w-full accent-indigo-500" />
               </div>

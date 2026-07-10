@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import axios from 'axios';
 import { logger } from '../logger.ts';
+import { hasAICredits, chargeAICredits } from '../ai-helpers.ts';
 import { withMcpClient, listMcpTools, extractToolPayload, type McpServerConn } from './mcpClient.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -531,6 +532,92 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
     } catch (err) {
       logger.warn({ err }, 'mcp_media_image_proxy_failed');
       return res.status(502).json({ success: false, error: 'Image unavailable' });
+    }
+  });
+
+  // POST /api/mcp/media/:id/make-editable — "Edit element": turn the image's
+  // baked-in text into editable layers. Two Gemini vision calls:
+  //  1. extract every text block (content, position, size, color, style)
+  //  2. regenerate the image with the text removed (clean background)
+  // Returns the layers + the cleaned image as a data URL (canvas-safe, no
+  // extra hosting). Falls back to the original image if cleanup fails.
+  router.post('/media/:id/make-editable', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    try {
+      const { rows } = await pool.query(`SELECT image_url FROM mcp_media WHERE id=$1`, [req.params.id]);
+      const url = rows[0]?.image_url;
+      if (!url) return res.status(404).json({ success: false, error: 'Not found' });
+
+      if (!(await hasAICredits(auth.userId))) return res.status(402).json({ success: false, error: 'Out of AI credits' });
+
+      const googleKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY
+        || (await pool.query(`SELECT config FROM platform_configs WHERE platform='google'`).then(r => r.rows[0]?.config?.api_key ?? null).catch(() => null));
+      if (!googleKey) return res.status(503).json({ success: false, error: 'Google AI is not configured (needed for text extraction)' });
+
+      const img = await axios.get(url, { responseType: 'arraybuffer', timeout: 20_000 });
+      const mime = String(img.headers['content-type'] || 'image/jpeg');
+      const b64 = Buffer.from(img.data).toString('base64');
+      const GOOGLE_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+      const imagePart = { inlineData: { mimeType: mime, data: b64 } };
+
+      // 1. Extract text blocks
+      let layers: any[] = [];
+      try {
+        const extract = await axios.post(
+          `${GOOGLE_BASE}/models/gemini-2.0-flash:generateContent`,
+          {
+            contents: [{ parts: [imagePart, { text: `Detect every piece of visible text in this image. Respond ONLY with a JSON array (no markdown): [{"text": "the exact text", "x_pct": left edge as % of image width (0-100), "y_pct": top edge as % of image height (0-100), "size_pct": font height as % of image WIDTH (typically 2-15), "color": "#rrggbb of the text", "bold": true/false, "style": "sans-serif"|"serif"|"script"|"display"|"monospace"}]. Return [] if there is no text.` }] }],
+            generationConfig: { temperature: 0 },
+          },
+          { headers: { 'x-goog-api-key': googleKey, 'Content-Type': 'application/json' }, timeout: 45_000 }
+        );
+        const text: string = extract.data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') ?? '';
+        const jsonStr = text.slice(text.indexOf('['), text.lastIndexOf(']') + 1);
+        const parsed = JSON.parse(jsonStr);
+        if (Array.isArray(parsed)) {
+          layers = parsed
+            .filter((l: any) => l && typeof l.text === 'string' && l.text.trim())
+            .slice(0, 20)
+            .map((l: any, i: number) => ({
+              id: `x${i}`,
+              text: String(l.text).slice(0, 500),
+              xPct: Math.min(96, Math.max(0, Number(l.x_pct) || 0)),
+              yPct: Math.min(96, Math.max(0, Number(l.y_pct) || 0)),
+              sizePct: Math.min(20, Math.max(1.5, Number(l.size_pct) || 5)),
+              color: /^#[0-9a-fA-F]{6}$/.test(String(l.color)) ? l.color : '#ffffff',
+              bold: Boolean(l.bold),
+              fontFamily: ['serif', 'script', 'display', 'monospace'].includes(String(l.style)) ? String(l.style) : 'sans-serif',
+            }));
+        }
+      } catch (err) {
+        logger.warn({ err }, 'make_editable_extract_failed');
+      }
+
+      // 2. Remove the text from the image (only worth it if there was text)
+      let cleanedImage: string | null = null;
+      if (layers.length > 0) {
+        try {
+          const clean = await axios.post(
+            `${GOOGLE_BASE}/models/gemini-2.0-flash-exp:generateContent`,
+            {
+              contents: [{ parts: [imagePart, { text: 'Remove ALL text from this image. Reconstruct the background seamlessly where the text was, keeping everything else identical. Output only the edited image.' }] }],
+              generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+            },
+            { headers: { 'x-goog-api-key': googleKey, 'Content-Type': 'application/json' }, timeout: 90_000 }
+          );
+          const parts: any[] = clean.data?.candidates?.[0]?.content?.parts ?? [];
+          const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+          if (imgPart) cleanedImage = `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
+        } catch (err) {
+          logger.warn({ err }, 'make_editable_clean_failed');
+        }
+      }
+
+      await chargeAICredits(auth.userId, cleanedImage ? 5 : 2, 'edit_element_extract', { media_id: req.params.id }).catch(() => undefined);
+      return res.json({ success: true, layers, cleaned_image: cleanedImage, text_found: layers.length > 0 });
+    } catch (err) {
+      logger.error({ err }, 'make_editable_failed');
+      return res.status(500).json({ success: false, error: 'Could not analyze the image' });
     }
   });
 

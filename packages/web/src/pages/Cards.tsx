@@ -7,7 +7,7 @@ import {
   RotateCcw, Lock, Mic,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
-import ImageTextEditor from '../components/cards/ImageTextEditor';
+import ImageTextEditor, { type TextLayer } from '../components/cards/ImageTextEditor';
 import { getApiBaseUrl } from '../utils/apiBase';
 
 // ── Discover types & constants ────────────────────────────────────────────────
@@ -1571,8 +1571,35 @@ const Cards = () => {
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [previewItem, setPreviewItem] = useState<DiscoverItem | null>(null);
-  const [editItem, setEditItem] = useState<DiscoverItem | null>(null);
+  const [editSession, setEditSession] = useState<{ item: DiscoverItem; imageUrl: string; fetchWithAuth: boolean; layers: TextLayer[] } | null>(null);
+  const [editPreparing, setEditPreparing] = useState(false);
   const [creditRefreshKey, setCreditRefreshKey] = useState(0);
+
+  // "Edit element": AI lifts the image's baked-in text into editable layers
+  // and produces a text-free background; the editor opens with both.
+  const startEditElement = useCallback(async (item: DiscoverItem) => {
+    setEditPreparing(true);
+    const proxied = `${getApiBaseUrl()}/api/mcp/media/${item.id}/image`;
+    try {
+      const r = await fetch(`${getApiBaseUrl()}/api/mcp/media/${item.id}/make-editable`, {
+        method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
+      });
+      const d = await r.json();
+      const layers: TextLayer[] = d?.success && Array.isArray(d.layers) ? d.layers : [];
+      if (d?.success && d.cleaned_image) {
+        setEditSession({ item, imageUrl: d.cleaned_image, fetchWithAuth: false, layers });
+      } else {
+        // No cleaned background (no text found, or cleanup failed) — edit
+        // over the original image instead.
+        setEditSession({ item, imageUrl: proxied, fetchWithAuth: true, layers });
+      }
+      setCreditRefreshKey((k) => k + 1);
+    } catch {
+      setEditSession({ item, imageUrl: proxied, fetchWithAuth: true, layers: [] });
+    } finally {
+      setEditPreparing(false);
+    }
+  }, []);
 
   const fetchDesigns = useCallback(async () => {
     setLoadingDesigns(true);
@@ -1860,19 +1887,29 @@ const Cards = () => {
             setPreviewItem(null);
             setTab('discover');
           }}
-          onEditElement={() => setEditItem(previewItem)}
+          onEditElement={() => void startEditElement(previewItem)}
         />
       )}
 
-      {/* Edit element — text-overlay soft builder */}
-      {editItem && (
+      {/* Edit element — extraction progress */}
+      {editPreparing && (
+        <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-black/85 backdrop-blur-xl">
+          <Loader2 size={28} className="animate-spin text-white/70" />
+          <div className="text-center">
+            <p className="text-sm font-bold text-white">Turning image into editable content…</p>
+            <p className="mt-1 text-xs text-white/50">Detecting text and rebuilding the background. This can take up to a minute.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Edit element — text editor with the extracted layers */}
+      {editSession && (
         <ImageTextEditor
-          imageUrl={editItem.source === 'mcp'
-            ? `${getApiBaseUrl()}/api/mcp/media/${editItem.id}/image`
-            : (editItem.imageUrl ?? '')}
-          fetchWithAuth={editItem.source === 'mcp'}
-          designName={`Edited — ${editItem.name}`.slice(0, 80)}
-          onClose={() => setEditItem(null)}
+          imageUrl={editSession.imageUrl}
+          fetchWithAuth={editSession.fetchWithAuth}
+          initialLayers={editSession.layers}
+          designName={`Edited — ${editSession.item.name}`.slice(0, 80)}
+          onClose={() => setEditSession(null)}
           onSaved={() => fetchDesigns()}
         />
       )}
