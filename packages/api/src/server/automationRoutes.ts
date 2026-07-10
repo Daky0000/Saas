@@ -108,6 +108,33 @@ export function registerAutomationRoutes({ requireAuth, pool, runAutomationForCo
     }
   });
 
+  // GET /api/automations/:id/runs — recent activity for one flow: scheduled
+  // continuations, waiting holds, completions, and failures from the durable
+  // jobs table, joined with the contact for display.
+  router.get('/automations/:id/runs', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      const { rows: owned } = await pool.query(
+        `SELECT 1 FROM mailing_automations WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]
+      );
+      if (!owned.length) return res.status(404).json({ success: false, error: 'Automation not found' });
+      const { rows } = await pool.query(
+        `SELECT j.id, j.status, j.wait_trigger, j.run_at, j.attempts, j.last_error, j.created_at, j.updated_at,
+                COALESCE(c.email, j.contact->>'email') AS contact_email
+         FROM mailing_automation_jobs j
+         LEFT JOIN mailing_contacts c ON c.id = j.contact_id
+         WHERE j.automation_id=$1 AND j.user_id=$2
+         ORDER BY j.updated_at DESC LIMIT 50`,
+        [req.params.id, auth.userId]
+      );
+      return res.json({ success: true, runs: rows });
+    } catch (err) {
+      logger.error({ err }, 'automation_runs_failed');
+      return res.status(500).json({ success: false, error: 'Failed to fetch runs' });
+    }
+  });
+
   // DELETE /api/automations/:id
   router.delete('/automations/:id', async (req: Request, res: Response) => {
     try {

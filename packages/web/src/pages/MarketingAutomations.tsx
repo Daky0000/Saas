@@ -4,12 +4,14 @@ import {
   Clock,
   GitBranch,
   GitMerge,
+  History,
   Loader2,
   Mail,
   MessageSquare,
   MoreHorizontal,
   Percent,
   Play,
+  RefreshCw,
   Plus,
   Settings,
   Shuffle,
@@ -734,6 +736,7 @@ function FlowBuilder({
   const [steps, setSteps] = useState<FlowStep[]>(flow.steps.length ? flow.steps : [defaultStep('trigger')]);
   const [selectedStep, setSelectedStep] = useState<FlowStep | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
 
   const updateStep = useCallback((updated: FlowStep) => {
     function walk(list: FlowStep[]): FlowStep[] {
@@ -809,6 +812,12 @@ function FlowBuilder({
           className="flex-1 bg-transparent text-sm font-semibold text-slate-900 focus:outline-none placeholder:text-slate-400"
           placeholder="Automation name…"
         />
+        {flow.id && (
+          <button type="button" onClick={() => { setShowActivity(v => !v); setSelectedStep(null); }}
+            className={`flex h-7 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors ${showActivity ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+            <History size={12} /> Activity
+          </button>
+        )}
         <button type="button" onClick={handleSave} disabled={saving}
           className="flex h-7 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors">
           {saving ? <Loader2 size={12} className="animate-spin" /> : null}
@@ -842,6 +851,95 @@ function FlowBuilder({
             />
           </div>
         )}
+
+        {/* Activity panel */}
+        {showActivity && !selectedStep && flow.id && (
+          <ActivityPanel flowId={flow.id} onClose={() => setShowActivity(false)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity panel — recent runs from the durable jobs table
+// ─────────────────────────────────────────────────────────────────────────────
+
+type FlowRun = {
+  id: string;
+  status: 'pending' | 'waiting' | 'processing' | 'done' | 'failed';
+  wait_trigger: string | null;
+  run_at: string;
+  attempts: number;
+  last_error: string | null;
+  updated_at: string;
+  contact_email: string | null;
+};
+
+const RUN_BADGE: Record<string, { label: string; cls: string }> = {
+  done:       { label: 'Completed', cls: 'bg-emerald-50 text-emerald-600' },
+  pending:    { label: 'Scheduled', cls: 'bg-amber-50 text-amber-600' },
+  waiting:    { label: 'Waiting',   cls: 'bg-blue-50 text-blue-600' },
+  processing: { label: 'Running',   cls: 'bg-slate-100 text-slate-600' },
+  failed:     { label: 'Failed',    cls: 'bg-red-50 text-red-600' },
+};
+
+function ActivityPanel({ flowId, onClose }: { flowId: string; onClose: () => void }) {
+  const [runs, setRuns] = useState<FlowRun[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setError(null);
+    apiGet<{ success: boolean; runs: FlowRun[] }>(`/api/automations/${flowId}/runs`)
+      .then(d => setRuns(d.runs ?? []))
+      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load activity'));
+  }, [flowId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="w-80 shrink-0 border-l border-slate-200 bg-white overflow-hidden flex flex-col">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <History size={14} className="text-slate-400" />
+          <span className="text-sm font-bold text-slate-900">Recent activity</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={load} className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100" title="Refresh">
+            <RefreshCw size={12} />
+          </button>
+          <button type="button" onClick={onClose} className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100">
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {error && <p className="px-4 py-6 text-xs text-red-500">{error}</p>}
+        {!error && runs === null && (
+          <div className="flex justify-center py-10"><Loader2 size={16} className="animate-spin text-slate-300" /></div>
+        )}
+        {!error && runs !== null && runs.length === 0 && (
+          <p className="px-4 py-8 text-center text-xs text-slate-400 leading-relaxed">
+            No runs yet. Runs appear here when the trigger fires,
+            a step schedules a delay, or a contact finishes the flow.
+          </p>
+        )}
+        {!error && runs !== null && runs.map(r => {
+          const badge = RUN_BADGE[r.status] ?? { label: r.status, cls: 'bg-slate-100 text-slate-600' };
+          return (
+            <div key={r.id} className="border-b border-slate-50 px-4 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-xs font-semibold text-slate-800">{r.contact_email || 'Unknown contact'}</span>
+                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${badge.cls}`}>{badge.label}</span>
+              </div>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                {r.status === 'waiting' && r.wait_trigger ? `Waiting for: ${r.wait_trigger} · ` : ''}
+                {r.status === 'pending' ? `Resumes ${new Date(r.run_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : new Date(r.updated_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </p>
+              {r.last_error && <p className="mt-1 truncate text-[11px] text-red-500" title={r.last_error}>{r.last_error}</p>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
