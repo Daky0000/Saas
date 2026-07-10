@@ -2034,6 +2034,10 @@ await pool.query(`
   );
 `).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS content_plans_due_idx ON content_plans (next_run_at) WHERE status='active';`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS custom_instructions TEXT NOT NULL DEFAULT '';`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS image_mode TEXT NOT NULL DEFAULT 'auto';`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS ai_recommended BOOLEAN NOT NULL DEFAULT false;`).catch(() => undefined);
+await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS estimated_credits INTEGER NOT NULL DEFAULT 0;`).catch(() => undefined);
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS content_plan_runs (

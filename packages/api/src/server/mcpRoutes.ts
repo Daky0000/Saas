@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import axios from 'axios';
 import { logger } from '../logger.ts';
 import { hasAICredits, chargeAICredits } from '../ai-helpers.ts';
+import { invalidateSharedContext } from './agentSharedContext.ts';
 import { withMcpClient, listMcpTools, extractToolPayload, type McpServerConn } from './mcpClient.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -496,18 +497,9 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
          LIMIT 40`,
         [auth.userId]
       );
-      // No likes yet → fall back to overall featured/popular items.
-      if (!rows.length) {
-        const { rows: fallback } = await pool.query(
-          `SELECT m.id, m.title, m.prompt, m.model, m.category, m.image_url, m.thumb_url, m.likes_count, 0 AS score
-           FROM mcp_media m
-           WHERE m.id NOT IN (SELECT media_id FROM mcp_media_likes WHERE user_id=$1)
-           ORDER BY m.featured DESC, m.likes_count DESC, m.created_at DESC LIMIT 40`,
-          [auth.userId]
-        );
-        return res.json({ success: true, media: fallback, based_on_likes: false });
-      }
-      return res.json({ success: true, media: rows, based_on_likes: true });
+      // Suggestions are strictly similarity-based: no likes yet → nothing to
+      // suggest (the UI points the user at Discover instead).
+      return res.json({ success: true, media: rows, based_on_likes: rows.length > 0 });
     } catch (err) {
       logger.error({ err }, 'mcp_media_suggestions_failed');
       return res.status(500).json({ success: false, error: 'Failed to load suggestions' });
@@ -666,6 +658,7 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
         await pool.query(`UPDATE mcp_media SET likes_count=likes_count+1 WHERE id=$1`, [req.params.id]);
         liked = true;
       }
+      invalidateSharedContext(auth.userId); // likes shape the visual style profile
       const { rows } = await pool.query(`SELECT likes_count FROM mcp_media WHERE id=$1`, [req.params.id]);
       return res.json({ success: true, liked, likes_count: rows[0]?.likes_count ?? 0 });
     } catch (err) {

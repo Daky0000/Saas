@@ -420,12 +420,19 @@ function AppSidebar({
             <button
               type="button"
               data-tour-id="nav-content"
-              onClick={() => { setPostsMenuOpen((p) => !p); go('posts'); }}
+              onClick={() => { setPostsMenuOpen(true); go('posts'); }}
               className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
             >
               <FileText size={15} className="shrink-0" />
               <span className="flex-1 text-left">Content</span>
-              <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
+              <span
+                role="button"
+                aria-label="Toggle submenu"
+                onClick={(e) => { e.stopPropagation(); setPostsMenuOpen((p) => !p); }}
+                className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60"
+              >
+                <ChevronDown size={12} className={`text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
+              </span>
             </button>
             {postsMenuOpen && (
               <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
@@ -582,7 +589,7 @@ function AppSidebar({
             <>
               <button
                 type="button"
-                onClick={() => { setCrmMenuOpen(p => !p); go('crm-pipeline'); }}
+                onClick={() => { setCrmMenuOpen(true); go('crm-pipeline'); }}
                 className={cls(
                   currentPage === 'crm-companies' ||
                   currentPage === 'crm-pipeline' ||
@@ -592,7 +599,9 @@ function AppSidebar({
               >
                 <Building2 size={15} className="shrink-0" />
                 <span className="flex-1 text-left">CRM</span>
-                <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
+                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setCrmMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
+                </span>
               </button>
               {crmMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
@@ -616,7 +625,7 @@ function AppSidebar({
               <button
                 type="button"
                 data-tour-id="nav-marketing"
-                onClick={() => { setMarketingMenuOpen(p => !p); go('marketing'); }}
+                onClick={() => { setMarketingMenuOpen(true); go('marketing'); }}
                 className={cls(
                   currentPage === 'marketing' ||
                   currentPage === 'marketing-contacts' ||
@@ -629,7 +638,9 @@ function AppSidebar({
               >
                 <Megaphone size={15} className="shrink-0" />
                 <span className="flex-1 text-left">Marketing</span>
-                <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
+                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setMarketingMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
+                </span>
               </button>
               {marketingMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
@@ -663,7 +674,7 @@ function AppSidebar({
             <>
               <button
                 type="button"
-                onClick={() => { setConnectorMenuOpen(p => !p); go('connector-hub'); }}
+                onClick={() => { setConnectorMenuOpen(true); go('connector-hub'); }}
                 className={cls(
                   currentPage === 'connector-hub' ||
                   currentPage === 'connector-setup' ||
@@ -672,7 +683,9 @@ function AppSidebar({
               >
                 <Layers size={15} className="shrink-0" />
                 <span className="flex-1 text-left">Connectors</span>
-                <ChevronDown size={12} className={`shrink-0 text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
+                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setConnectorMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
+                </span>
               </button>
               {connectorMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">

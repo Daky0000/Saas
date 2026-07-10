@@ -22,7 +22,21 @@ import { logger } from '../logger.ts';
 //    compiled_skill briefs in sync with user_memories edits.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Personalization cache: every agent decision starts from this context, so
+// it's assembled once and reused for 10 minutes. Anything that changes
+// personalization (memory CRUD, brand-profile save, image likes) calls
+// invalidateSharedContext so agents see the change immediately.
+const contextCache = new Map<string, { context: string; expires: number }>();
+const CONTEXT_TTL_MS = 10 * 60 * 1000;
+
+export function invalidateSharedContext(userId: string): void {
+  contextCache.delete(userId);
+}
+
 export async function buildSharedAgentContext(userId: string): Promise<string> {
+  const cached = contextCache.get(userId);
+  if (cached && cached.expires > Date.now()) return cached.context;
+
   const parts: string[] = [];
   const safe = async (fn: () => Promise<void>) => { try { await fn(); } catch { /* section skipped */ } };
 
@@ -80,7 +94,32 @@ export async function buildSharedAgentContext(userId: string): Promise<string> {
     if (rows.length) parts.push(`Recent agent proposals: ${rows.map((r: any) => `${r.agent_key}: "${r.title}" (${r.status})`).join('; ')}`);
   });
 
-  return parts.join('\n');
+  // Personalization memories — the "About you" data every agent must respect.
+  await safe(async () => {
+    const { rows } = await dbQuery(
+      `SELECT category, title, content FROM user_memories WHERE user_id=$1 AND title <> '🌐 Full Scraped Memory'
+       ORDER BY category, sort_order, created_at LIMIT 12`,
+      [userId]
+    );
+    if (rows.length) parts.push(`About the user (personalization):\n${rows.map((r: any) => `- [${r.category}] ${r.title}: ${String(r.content).slice(0, 160)}`).join('\n')}`);
+  });
+
+  // Liked-image style profile — the user's visual taste.
+  await safe(async () => {
+    const { rows } = await dbQuery(
+      `SELECT m.model, m.prompt FROM mcp_media_likes l JOIN mcp_media m ON m.id=l.media_id
+       WHERE l.user_id=$1 ORDER BY l.created_at DESC LIMIT 3`,
+      [userId]
+    );
+    if (rows.length) parts.push(`Visual styles the user likes: ${rows.map((r: any) => `[${r.model || 'ai'}] ${String(r.prompt || '').slice(0, 120)}`).join(' | ')}`);
+  });
+
+  const context = parts.join('\n');
+  contextCache.set(userId, { context, expires: Date.now() + CONTEXT_TTL_MS });
+  if (contextCache.size > 2000) {
+    for (const [k, v] of contextCache) if (v.expires < Date.now()) contextCache.delete(k);
+  }
+  return context;
 }
 
 // Store a cross-agent insight in the global channel; keeps only the newest 20

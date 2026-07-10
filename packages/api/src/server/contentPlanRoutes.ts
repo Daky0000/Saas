@@ -5,7 +5,7 @@ import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
 import { dbQuery } from '../db.ts';
-import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, chargeAICredits, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
+import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +33,16 @@ const GOOGLE_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || `post-${Date.now()}`;
+}
+
+// Credit estimate for a whole plan — shown before starting and enforced at
+// creation. Per piece: ~2 credits copy + 1 QA review; images add 3 each
+// (image_mode 'auto' assumes roughly two thirds of pieces get one).
+export function estimatePlanCredits(perDay: number, durationDays: number, imageMode: string): number {
+  const pieces = Math.max(1, perDay) * Math.max(1, durationDays);
+  const perPieceText = 3;
+  const perPieceImage = imageMode === 'always' ? 3 : imageMode === 'never' ? 0 : 2;
+  return pieces * (perPieceText + perPieceImage);
 }
 
 // ── Featured image generation (Gemini first, OpenAI fallback) ────────────────
@@ -119,42 +129,83 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
       const apiKey = resolveActiveKey(aiCfg);
       if (!apiKey) throw new Error('AI not configured');
 
-      const [sharedCtx, styleProfile] = await Promise.all([
+      const [sharedCtx, styleProfile, socials] = await Promise.all([
         buildSharedAgentContext(plan.user_id).catch(() => ''),
         plan.use_liked_style ? likedStyleProfile(plan.user_id) : Promise.resolve(''),
+        pool.query(`SELECT DISTINCT platform FROM social_accounts WHERE user_id=$1 AND connected=true`, [plan.user_id])
+          .then(r => r.rows.map((x: any) => String(x.platform))).catch(() => [] as string[]),
       ]);
+      const platformLine = socials.length
+        ? `Target platforms (the user's connected socials): ${socials.join(', ')}. Write for these channels.`
+        : 'No social platforms connected yet — write a platform-neutral promotional post.';
+
+      const topicLine = plan.ai_recommended
+        ? `Choose the promotional angle YOURSELF: from the user's personalization (memories, brand, goals, audience) pick the content most likely to achieve their goals right now. Do not pick randomly — justify the choice to yourself from their data.`
+        : `Create content about: ${plan.topic || 'the user\'s brand and offers'}.`;
+
+      const imageMode = String(plan.image_mode || (plan.generate_image ? 'auto' : 'never'));
+      const imageLine = imageMode === 'never'
+        ? 'This piece will not have a featured image.'
+        : imageMode === 'always'
+          ? 'This piece MUST include a featured image — provide image_prompt.'
+          : 'Decide whether this piece needs a featured image for its target platforms (set needs_image accordingly). Not every post needs one.';
 
       const model = aiCfg.provider === 'google'
         ? (GEMINI_MODELS.includes(aiCfg.model) ? aiCfg.model : 'gemini-2.0-flash')
         : FAST_MODEL;
       const raw = await callAINonStreaming(
         aiCfg.provider, apiKey, model,
-        `You are Promo, the Promotion & Media Planner on a marketing team. You create scroll-stopping promotional content.${sharedCtx ? `\n\nWorkspace context:\n${sharedCtx}` : ''}${styleProfile ? `\n\n${styleProfile}` : ''}`,
-        `Create ONE promotional content piece about: ${plan.topic || 'the user\'s brand and offers'}.
+        `You are Promo, the Promotion & Media Planner on a marketing team. You create scroll-stopping promotional content.${sharedCtx ? `\n\nWorkspace context (personalization — always respect it):\n${sharedCtx}` : ''}${styleProfile ? `\n\n${styleProfile}` : ''}${plan.custom_instructions ? `\n\nUSER'S STANDING INSTRUCTIONS FOR THIS PLAN (highest priority):\n${String(plan.custom_instructions).slice(0, 1500)}` : ''}`,
+        `${topicLine}
+${platformLine}
+${imageLine}
 Tone: ${plan.tone}. Piece #${(plan.runs_count ?? 0) + 1} of an ongoing series — vary the angle from typical previous pieces.
-Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 sentence hook", "content": "the full post body, 150-350 words, HTML paragraphs allowed", "image_prompt": "a vivid image-generation prompt for the featured visual, under 60 words"}`,
-        1200,
+Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 sentence hook", "content": "the full post body, 150-350 words, HTML paragraphs allowed", "needs_image": true/false, "image_prompt": "vivid image-generation prompt under 60 words (empty string if needs_image is false)"}`,
+        1400,
         { userId: plan.user_id, feature: 'content_plan' }
       );
 
-      let piece: { title?: string; excerpt?: string; content?: string; image_prompt?: string } = {};
+      let piece: { title?: string; excerpt?: string; content?: string; needs_image?: boolean; image_prompt?: string } = {};
       try {
         piece = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
       } catch { piece = { title: `Promo — ${new Date().toLocaleDateString()}`, content: raw }; }
+
+      // Quality gate: Vetta reviews the piece against the personalization and
+      // the user's instructions before anything is saved.
+      try {
+        const qaRaw = await callAINonStreaming(
+          aiCfg.provider, apiKey, model,
+          `You are Vetta, the Quality Control agent. Review marketing content against the user's brand, audience, goals and instructions. Fix what's weak; keep what works.${sharedCtx ? `\n\nUser context:\n${sharedCtx}` : ''}${plan.custom_instructions ? `\n\nUser's instructions: ${String(plan.custom_instructions).slice(0, 800)}` : ''}`,
+          `Review this piece and respond ONLY with JSON {"approved": true/false, "title": "...", "excerpt": "...", "content": "..."} — return the fields improved if needed, unchanged if already strong.\n\n${JSON.stringify({ title: piece.title, excerpt: piece.excerpt, content: piece.content })}`,
+          1400,
+          { userId: plan.user_id, feature: 'content_plan_qa' }
+        );
+        const qa = JSON.parse(qaRaw.slice(qaRaw.indexOf('{'), qaRaw.lastIndexOf('}') + 1));
+        if (qa && typeof qa === 'object') {
+          if (typeof qa.title === 'string' && qa.title.trim()) piece.title = qa.title;
+          if (typeof qa.excerpt === 'string' && qa.excerpt.trim()) piece.excerpt = qa.excerpt;
+          if (typeof qa.content === 'string' && qa.content.trim()) piece.content = qa.content;
+        }
+      } catch (err) { logger.warn({ err, planId: plan.id }, 'content_plan_qa_skipped'); }
+
       const title = String(piece.title || 'Promotional post').slice(0, 200);
 
       let imageUrl: string | null = null;
-      if (plan.generate_image && piece.image_prompt) {
+      const wantsImage = imageMode === 'always' || (imageMode === 'auto' && piece.needs_image !== false && Boolean(piece.image_prompt));
+      if (wantsImage && piece.image_prompt) {
         imageUrl = await generateFeaturedImage(String(piece.image_prompt));
         if (imageUrl) await chargeAICredits(plan.user_id, 3, 'content_plan_image', { plan_id: plan.id }).catch(() => undefined);
       }
 
+      // Scheduled (not draft) so the piece shows on the calendar; the 3-hour
+      // buffer is the review window before it goes out.
       const postId = randomUUID();
+      const scheduledAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
       await pool.query(
-        `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, featured_image, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'draft')`,
+        `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, featured_image, status, scheduled_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8)`,
         [postId, plan.user_id, title, `${slugify(title)}-${postId.slice(0, 6)}`,
-         String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '']
+         String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString()]
       );
       await pool.query(
         `INSERT INTO content_plan_runs (id, plan_id, user_id, blog_post_id, title, image_url, status)
@@ -164,7 +215,7 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       await createNotification(
         plan.user_id, 'content_generated',
         `New promo content ready: ${title}`,
-        `"${plan.name}" created a draft post${imageUrl ? ' with a featured image' : ''}. Review it in Content → Posts.`,
+        `"${plan.name}" created a post${imageUrl ? ' with a featured image' : ''}, scheduled for ${scheduledAt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} — it's on your calendar. Review or reschedule it in Content → Posts.`,
         { plan_id: plan.id, blog_post_id: postId }
       );
     } catch (err) {
@@ -254,6 +305,21 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
     }
   });
 
+  // GET /api/content-plans/estimate — credit cost + current balance for the UI
+  router.get('/content-plans/estimate', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res); if (!auth) return;
+    try {
+      const perDay = Math.min(6, Math.max(1, parseInt(String(req.query.per_day ?? 3), 10) || 3));
+      const durationDays = Math.min(90, Math.max(1, parseInt(String(req.query.duration_days ?? 30), 10) || 30));
+      const imageMode = ['always', 'never', 'auto'].includes(String(req.query.image_mode)) ? String(req.query.image_mode) : 'auto';
+      const credits = estimatePlanCredits(perDay, durationDays, imageMode);
+      const { credits: balance } = await ensureCreditAccount(auth.userId);
+      return res.json({ success: true, estimated_credits: credits, balance, sufficient: balance >= credits });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Estimate failed' });
+    }
+  });
+
   router.post('/content-plans', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     try {
@@ -262,12 +328,30 @@ export function registerContentPlanRoutes(deps: Deps & { runPlanOnce: (plan: any
       if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
       const perDay = Math.min(6, Math.max(1, parseInt(String(b.per_day ?? 3), 10) || 3));
       const durationDays = Math.min(90, Math.max(1, parseInt(String(b.duration_days ?? 30), 10) || 30));
+      const imageMode = ['always', 'never', 'auto'].includes(String(b.image_mode)) ? String(b.image_mode) : 'auto';
+      const aiRecommended = Boolean(b.ai_recommended);
+      if (!aiRecommended && !String(b.topic || '').trim()) {
+        return res.status(400).json({ success: false, error: 'Describe what to promote, or switch on AI recommended' });
+      }
+
+      // Credit gate: the whole plan must be affordable up front.
+      const estimate = estimatePlanCredits(perDay, durationDays, imageMode);
+      const { credits: balance } = await ensureCreditAccount(auth.userId);
+      if (balance < estimate) {
+        return res.status(402).json({
+          success: false,
+          error: `This plan needs about ${estimate} credits but you have ${balance}. Reduce the cadence/duration or top up.`,
+          estimated_credits: estimate, balance,
+        });
+      }
+
       const { rows } = await pool.query(
-        `INSERT INTO content_plans (user_id, name, topic, tone, per_day, ends_at, use_liked_style, generate_image, next_run_at)
-         VALUES ($1,$2,$3,$4,$5, NOW() + make_interval(days => $6), $7, $8, NOW())
+        `INSERT INTO content_plans (user_id, name, topic, tone, per_day, ends_at, use_liked_style, generate_image, image_mode, ai_recommended, custom_instructions, estimated_credits, next_run_at)
+         VALUES ($1,$2,$3,$4,$5, NOW() + make_interval(days => $6), $7, $8, $9, $10, $11, $12, NOW())
          RETURNING *`,
         [auth.userId, name.slice(0, 120), String(b.topic || '').slice(0, 500), String(b.tone || 'engaging').slice(0, 40),
-         perDay, durationDays, b.use_liked_style !== false, b.generate_image !== false]
+         perDay, durationDays, b.use_liked_style !== false, imageMode !== 'never', imageMode, aiRecommended,
+         String(b.custom_instructions || '').slice(0, 2000), estimate]
       );
       return res.json({ success: true, plan: rows[0] });
     } catch (err) {

@@ -449,7 +449,6 @@ type StyleImage = {
 function ImagesSection() {
   const [liked, setLiked] = useState<StyleImage[]>([]);
   const [suggestions, setSuggestions] = useState<StyleImage[]>([]);
-  const [basedOnLikes, setBasedOnLikes] = useState(false);
   const [loadingImages, setLoadingImages] = useState(true);
   const [likingId, setLikingId] = useState<string | null>(null);
 
@@ -461,7 +460,6 @@ function ImagesSection() {
       ]);
       setLiked(likedRes.media ?? []);
       setSuggestions(sugRes.media ?? []);
-      setBasedOnLikes(Boolean(sugRes.based_on_likes));
     } catch { /* sections stay empty */ }
     finally { setLoadingImages(false); }
   };
@@ -525,8 +523,14 @@ function ImagesSection() {
         )}
       </div>
 
-      {/* AI Suggestions */}
-      {suggestions.length > 0 && (
+      {/* AI Suggestions — strictly based on liked styles */}
+      {suggestions.length === 0 && liked.length === 0 ? null : suggestions.length === 0 ? (
+        <div className="rounded-2xl border border-gray-200 bg-white px-5 py-6 text-center">
+          <Sparkles size={16} className="mx-auto text-gray-300" />
+          <p className="mt-2 text-sm font-bold text-gray-700">AI Suggestions</p>
+          <p className="mt-1 text-xs text-gray-400">No similar styles found yet — new gallery media syncs regularly, check back soon.</p>
+        </div>
+      ) : (
         <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
             <div className="flex items-center gap-2">
@@ -534,7 +538,7 @@ function ImagesSection() {
               <span className="text-sm font-bold text-gray-900">AI Suggestions</span>
             </div>
             <p className="text-[11px] text-gray-400">
-              {basedOnLikes ? 'Similar styles to what you liked' : 'Popular styles to get you started'} — tap ♥ to add
+              Similar styles to what you liked — tap ♥ to add
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 p-4 sm:grid-cols-4 md:grid-cols-5">

@@ -4,6 +4,7 @@ import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.ts';
 import { FAST_MODEL } from '../ai-helpers.ts';
+import { invalidateSharedContext } from './agentSharedContext.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -83,6 +84,7 @@ export function registerMemoryAgentRoutes({
         [auth.userId, category.trim(), title.trim(), content.trim(), source]
       );
       triggerAgentCompilation(auth.userId).catch(() => undefined);
+      invalidateSharedContext(auth.userId);
       createNotification(auth.userId, 'memory_saved',
         'Memory saved',
         `"${title.trim()}" added to your personalization memory.`,
@@ -110,6 +112,7 @@ export function registerMemoryAgentRoutes({
       );
       if (!row.rows[0]) return res.status(404).json({ success: false, error: 'Memory not found' });
       triggerAgentCompilation(auth.userId).catch(() => undefined);
+      invalidateSharedContext(auth.userId);
       return res.json({ success: true, memory: row.rows[0] });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
@@ -124,6 +127,7 @@ export function registerMemoryAgentRoutes({
     try {
       await dbQuery(`DELETE FROM user_memories WHERE id=$1 AND user_id=$2`, [id, auth.userId]);
       triggerAgentCompilation(auth.userId).catch(() => undefined);
+      invalidateSharedContext(auth.userId);
       return res.json({ success: true });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
@@ -157,6 +161,7 @@ export function registerMemoryAgentRoutes({
     const auth = requireAuth(req, res);
     if (!auth) return;
     triggerAgentCompilation(auth.userId).catch(() => undefined);
+      invalidateSharedContext(auth.userId);
     return res.json({ success: true, message: 'Compilation started' });
   });
 

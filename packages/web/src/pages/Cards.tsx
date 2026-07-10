@@ -7,7 +7,6 @@ import {
   RotateCcw, Lock, Mic,
 } from 'lucide-react';
 import { UserDesign, designService } from '../services/designService';
-import ImageTextEditor, { type TextLayer } from '../components/cards/ImageTextEditor';
 import { getApiBaseUrl } from '../utils/apiBase';
 
 // ── Discover types & constants ────────────────────────────────────────────────
@@ -693,7 +692,6 @@ function ImagePreviewModal({
   onUseAsRef,
   onToggleLike,
   onOpenSimilar,
-  onEditElement,
 }: {
   item: DiscoverItem;
   onClose: () => void;
@@ -701,7 +699,6 @@ function ImagePreviewModal({
   onUseAsRef: () => void;
   onToggleLike: () => void;
   onOpenSimilar: (id: string) => void;
-  onEditElement: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -829,23 +826,16 @@ function ImagePreviewModal({
         </div>
 
         {/* Action buttons */}
-        <div className="px-4 py-3 border-t border-slate-100 space-y-2">
-          <div className="flex gap-2">
-            <button type="button"
-              onClick={() => { onUseAsPrompt(); onClose(); }}
-              className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
-              <RotateCcw size={11} /> Use as Prompt
-            </button>
-            <button type="button"
-              onClick={() => { onUseAsRef(); onClose(); }}
-              className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
-              Use as Ref
-            </button>
-          </div>
+        <div className="flex gap-2 px-4 py-3 border-t border-slate-100">
           <button type="button"
-            onClick={() => { onEditElement(); onClose(); }}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 py-2.5 text-[11px] font-bold text-indigo-600 hover:bg-indigo-100 transition">
-            <Edit3 size={11} /> Edit element
+            onClick={() => { onUseAsPrompt(); onClose(); }}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
+            <RotateCcw size={11} /> Use as Prompt
+          </button>
+          <button type="button"
+            onClick={() => { onUseAsRef(); onClose(); }}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2.5 text-[11px] font-bold text-white hover:bg-slate-800 transition">
+            Use as Ref
           </button>
         </div>
       </div>
@@ -1571,35 +1561,7 @@ const Cards = () => {
   const [myDesigns, setMyDesigns]   = useState<UserDesign[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [previewItem, setPreviewItem] = useState<DiscoverItem | null>(null);
-  const [editSession, setEditSession] = useState<{ item: DiscoverItem; imageUrl: string; fetchWithAuth: boolean; layers: TextLayer[] } | null>(null);
-  const [editPreparing, setEditPreparing] = useState(false);
   const [creditRefreshKey, setCreditRefreshKey] = useState(0);
-
-  // "Edit element": AI lifts the image's baked-in text into editable layers
-  // and produces a text-free background; the editor opens with both.
-  const startEditElement = useCallback(async (item: DiscoverItem) => {
-    setEditPreparing(true);
-    const proxied = `${getApiBaseUrl()}/api/mcp/media/${item.id}/image`;
-    try {
-      const r = await fetch(`${getApiBaseUrl()}/api/mcp/media/${item.id}/make-editable`, {
-        method: 'POST', headers: { Authorization: `Bearer ${tok()}` },
-      });
-      const d = await r.json();
-      const layers: TextLayer[] = d?.success && Array.isArray(d.layers) ? d.layers : [];
-      if (d?.success && d.cleaned_image) {
-        setEditSession({ item, imageUrl: d.cleaned_image, fetchWithAuth: false, layers });
-      } else {
-        // No cleaned background (no text found, or cleanup failed) — edit
-        // over the original image instead.
-        setEditSession({ item, imageUrl: proxied, fetchWithAuth: true, layers });
-      }
-      setCreditRefreshKey((k) => k + 1);
-    } catch {
-      setEditSession({ item, imageUrl: proxied, fetchWithAuth: true, layers: [] });
-    } finally {
-      setEditPreparing(false);
-    }
-  }, []);
 
   const fetchDesigns = useCallback(async () => {
     setLoadingDesigns(true);
@@ -1887,30 +1849,6 @@ const Cards = () => {
             setPreviewItem(null);
             setTab('discover');
           }}
-          onEditElement={() => void startEditElement(previewItem)}
-        />
-      )}
-
-      {/* Edit element — extraction progress */}
-      {editPreparing && (
-        <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-black/85 backdrop-blur-xl">
-          <Loader2 size={28} className="animate-spin text-white/70" />
-          <div className="text-center">
-            <p className="text-sm font-bold text-white">Turning image into editable content…</p>
-            <p className="mt-1 text-xs text-white/50">Detecting text and rebuilding the background. This can take up to a minute.</p>
-          </div>
-        </div>
-      )}
-
-      {/* Edit element — text editor with the extracted layers */}
-      {editSession && (
-        <ImageTextEditor
-          imageUrl={editSession.imageUrl}
-          fetchWithAuth={editSession.fetchWithAuth}
-          initialLayers={editSession.layers}
-          designName={`Edited — ${editSession.item.name}`.slice(0, 80)}
-          onClose={() => setEditSession(null)}
-          onSaved={() => fetchDesigns()}
         />
       )}
     </div>

@@ -158,13 +158,40 @@ export default function AutoContentPlans() {
 function CreatePlanModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('Monthly promo push');
   const [topic, setTopic] = useState('');
+  const [aiRecommended, setAiRecommended] = useState(false);
+  const [customInstructions, setCustomInstructions] = useState('');
   const [tone, setTone] = useState('engaging');
   const [perDay, setPerDay] = useState(3);
   const [durationDays, setDurationDays] = useState(30);
+  const [imageMode, setImageMode] = useState<'auto' | 'always' | 'never'>('auto');
   const [useLikedStyle, setUseLikedStyle] = useState(true);
-  const [genImage, setGenImage] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [estimate, setEstimate] = useState<{ estimated_credits: number; balance: number; sufficient: boolean } | null>(null);
+  const [socials, setSocials] = useState<string[] | null>(null);
+
+  // Connected socials — the content is written for these channels.
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/v1/social/accounts`, { headers: hdrs() })
+      .then(r => r.json())
+      .then(d => {
+        const accounts = Array.isArray(d?.accounts) ? d.accounts : Array.isArray(d?.data) ? d.data : [];
+        const platforms = [...new Set(accounts.filter((a: any) => a.connected !== false).map((a: any) => String(a.platform)))] as string[];
+        setSocials(platforms);
+      })
+      .catch(() => setSocials([]));
+  }, []);
+
+  // Live credit estimate — recalculated whenever the settings change.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      fetch(`${API_BASE_URL}/api/content-plans/estimate?per_day=${perDay}&duration_days=${durationDays}&image_mode=${imageMode}`, { headers: hdrs() })
+        .then(r => r.json())
+        .then(d => { if (d.success) setEstimate({ estimated_credits: d.estimated_credits, balance: d.balance, sufficient: d.sufficient }); })
+        .catch(() => {});
+    }, 200);
+    return () => clearTimeout(t);
+  }, [perDay, durationDays, imageMode]);
 
   const create = async () => {
     setSaving(true);
@@ -172,7 +199,11 @@ function CreatePlanModal({ onClose, onCreated }: { onClose: () => void; onCreate
     try {
       const r = await fetch(`${API_BASE_URL}/api/content-plans`, {
         method: 'POST', headers: hdrs(),
-        body: JSON.stringify({ name, topic, tone, per_day: perDay, duration_days: durationDays, use_liked_style: useLikedStyle, generate_image: genImage }),
+        body: JSON.stringify({
+          name, topic, tone, per_day: perDay, duration_days: durationDays,
+          image_mode: imageMode, ai_recommended: aiRecommended,
+          custom_instructions: customInstructions, use_liked_style: useLikedStyle,
+        }),
       });
       const d = await r.json();
       if (!d.success) throw new Error(d.error || 'Failed to create plan');
@@ -186,24 +217,64 @@ function CreatePlanModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
   const inputCls = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-400';
   const labelCls = 'text-xs font-semibold uppercase tracking-wide text-slate-500';
+  const canStart = !saving && name.trim() && (aiRecommended || topic.trim()) && estimate?.sufficient !== false;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="text-lg font-black text-slate-950">New Auto-Content plan</h3>
           <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><X size={18} /></button>
         </div>
         <div className="space-y-4 px-6 py-5">
           {err && <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+
+          {/* Connected socials notice */}
+          {socials !== null && (
+            socials.length > 0 ? (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                <p className="text-xs text-indigo-900">
+                  <span className="font-bold">Your connected socials: {socials.join(', ')}.</span>{' '}
+                  Content will be created for these channels. To target more, {' '}
+                  <a href="/integrations" className="font-bold underline">connect socials on the Integrations page</a>.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-xs text-amber-900">
+                  <span className="font-bold">No socials connected yet</span> — content will be platform-neutral.{' '}
+                  <a href="/integrations" className="font-bold underline">Connect your socials on the Integrations page</a> so pieces are written for your channels.
+                </p>
+              </div>
+            )
+          )}
+
           <label className={`block ${labelCls}`}>Plan name
             <input value={name} onChange={e => setName(e.target.value)} className={`${inputCls} mt-1.5 normal-case font-normal tracking-normal`} />
           </label>
-          <label className={`block ${labelCls}`}>What to promote
-            <textarea rows={2} value={topic} onChange={e => setTopic(e.target.value)}
-              placeholder="e.g. Our summer collection launch, weekly offers, brand awareness…"
+
+          <label className={`flex items-center gap-3 rounded-xl border px-4 py-3 cursor-pointer ${aiRecommended ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-slate-50'}`}>
+            <input type="checkbox" checked={aiRecommended} onChange={e => setAiRecommended(e.target.checked)} className="accent-indigo-500" />
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-slate-700">AI recommended</span>
+              <span className="block text-[11px] text-slate-500">Leave the topic to your AI team — it picks what will work best from your personalization (Memory → About you), not random content.</span>
+            </span>
+          </label>
+
+          {!aiRecommended && (
+            <label className={`block ${labelCls}`}>What to promote
+              <textarea rows={2} value={topic} onChange={e => setTopic(e.target.value)}
+                placeholder="e.g. Our summer collection launch, weekly offers, brand awareness…"
+                className={`${inputCls} mt-1.5 normal-case font-normal tracking-normal resize-none`} />
+            </label>
+          )}
+
+          <label className={`block ${labelCls}`}>Custom instructions <span className="normal-case font-normal text-slate-400">(optional)</span>
+            <textarea rows={2} value={customInstructions} onChange={e => setCustomInstructions(e.target.value)}
+              placeholder="Anything the AI must follow — e.g. always mention free shipping, never use emojis, end with a question…"
               className={`${inputCls} mt-1.5 normal-case font-normal tracking-normal resize-none`} />
           </label>
+
           <div className="grid grid-cols-3 gap-3">
             <label className={`block ${labelCls}`}>Per day
               <select value={perDay} onChange={e => setPerDay(Number(e.target.value))} className={`${inputCls} mt-1.5 normal-case font-normal tracking-normal`}>
@@ -225,22 +296,38 @@ function CreatePlanModal({ onClose, onCreated }: { onClose: () => void; onCreate
               </select>
             </label>
           </div>
-          <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
-            <input type="checkbox" checked={genImage} onChange={e => setGenImage(e.target.checked)} className="accent-indigo-500" />
-            <span className="flex items-center gap-2 text-sm font-semibold text-slate-700"><ImageIcon size={14} className="text-slate-400" /> Generate a featured image for each piece</span>
+
+          <label className={`block ${labelCls}`}>Featured images
+            <select value={imageMode} onChange={e => setImageMode(e.target.value as 'auto' | 'always' | 'never')} className={`${inputCls} mt-1.5 normal-case font-normal tracking-normal`}>
+              <option value="auto">AI decides per post (default)</option>
+              <option value="always">Every post gets one</option>
+              <option value="never">No images</option>
+            </select>
           </label>
+
           <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
             <input type="checkbox" checked={useLikedStyle} onChange={e => setUseLikedStyle(e.target.checked)} className="accent-indigo-500" />
-            <span className="text-sm font-semibold text-slate-700">Match my liked images' visual style</span>
+            <span className="flex items-center gap-2 text-sm font-semibold text-slate-700"><ImageIcon size={14} className="text-slate-400" /> Match my liked images' visual style</span>
           </label>
-          <p className="text-[11px] text-slate-400 leading-relaxed">
-            Uses your AI credits (roughly 1-2 for copy + 3 per image). Pieces land as drafts in Content → Posts;
-            you'll get a notification for each one and an email when the plan completes.
-          </p>
+
+          {/* Credit estimate */}
+          {estimate && (
+            <div className={`rounded-xl border px-4 py-3 ${estimate.sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+              <p className={`text-sm font-bold ${estimate.sufficient ? 'text-emerald-800' : 'text-red-700'}`}>
+                Estimated total: ✦{estimate.estimated_credits.toLocaleString()} credits
+                <span className="ml-2 font-semibold opacity-75">(you have ✦{estimate.balance.toLocaleString()})</span>
+              </p>
+              <p className={`mt-0.5 text-[11px] ${estimate.sufficient ? 'text-emerald-700' : 'text-red-600'}`}>
+                {estimate.sufficient
+                  ? `${perDay * durationDays} pieces — quality-checked by Vetta before each one is scheduled on your calendar.`
+                  : 'Not enough credits for this plan — reduce the cadence or duration, or top up first.'}
+              </p>
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
           <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button>
-          <button type="button" onClick={() => void create()} disabled={saving || !name.trim()}
+          <button type="button" onClick={() => void create()} disabled={!canStart}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2 text-sm font-bold text-white disabled:opacity-40">
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Start plan
           </button>

@@ -19,6 +19,7 @@ import {
 } from './magnificRoutes.ts';
 import { FAST_MODEL, recordAIUsage, chargeAICredits, hasAICredits } from '../ai-helpers.ts';
 import { triggerAgentCompilation } from '../agent-helpers.ts';
+import { invalidateSharedContext } from './agentSharedContext.ts';
 
 const logger = pino();
 
@@ -48,6 +49,10 @@ const USER_AGENT_MODELS: Record<string, string> = {
 };
 
 const USER_AGENT_PROMPTS: Record<string, string> = {
+  quality: `You are Vetta, the Quality Control agent on a user's marketing team.
+Your job is to review content the other agents produced against the user's brand voice, audience, and goals before it reaches the user.
+You flag off-brand tone, factual overreach, weak hooks, and anything that would underperform — and you propose the concrete fix, not just the complaint.`,
+
   promo: `You are Promo, the Promotion & Media Planner on a user's marketing team.
 Your job is to generate 2-3 promotional content proposals — offers, launches, seasonal pushes — each pairing sharp copy with a described featured visual.
 Use the user's liked-image style profile (agent_memory) when present so visuals match their taste.
@@ -1081,6 +1086,7 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
       );
       // Brand profile feeds every agent's compiled skill brief — resync them.
       triggerAgentCompilation(auth.userId).catch(() => undefined);
+      invalidateSharedContext(auth.userId);
       return res.json({ success: true, profile: rows[0] });
     } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
   });
