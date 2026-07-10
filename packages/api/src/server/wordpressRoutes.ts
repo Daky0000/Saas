@@ -27,7 +27,7 @@ export function registerWordPressRoutes(deps: WordPressDeps): Router {
   } = deps;
   const router = Router();
 
-router.post('/api/wordpress/connect', async (req: Request, res: Response) => {
+router.post('/wordpress/connect', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -139,7 +139,7 @@ router.post('/api/wordpress/connect', async (req: Request, res: Response) => {
 });
 
 // GET /api/wordpress/status (checks Make webhook first, then direct WordPress API)
-router.get('/api/wordpress/status', async (req: Request, res: Response) => {
+router.get('/wordpress/status', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -160,7 +160,7 @@ router.get('/api/wordpress/status', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/wordpress/disconnect (removes both Make webhook and direct API connection)
-router.delete('/api/wordpress/disconnect', async (req: Request, res: Response) => {
+router.delete('/wordpress/disconnect', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -204,7 +204,7 @@ const MAKE_TEST_PAYLOAD = {
   status: 'draft',
 };
 
-router.post('/api/wordpress/connect-webhook', async (req: Request, res: Response) => {
+router.post('/wordpress/connect-webhook', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -263,7 +263,7 @@ router.post('/api/wordpress/connect-webhook', async (req: Request, res: Response
 });
 
 // DELETE /api/wordpress/disconnect-webhook
-router.delete('/api/wordpress/disconnect-webhook', async (req: Request, res: Response) => {
+router.delete('/wordpress/disconnect-webhook', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -278,7 +278,7 @@ router.delete('/api/wordpress/disconnect-webhook', async (req: Request, res: Res
 });
 
 // POST /api/wordpress/publish-webhook 뿯붿?send payload to stored Make webhook
-router.post('/api/wordpress/publish-webhook', async (req: Request, res: Response) => {
+router.post('/wordpress/publish-webhook', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -327,7 +327,7 @@ router.post('/api/wordpress/publish-webhook', async (req: Request, res: Response
 });
 
 // GET /api/wordpress/categories
-router.get('/api/wordpress/categories', async (req: Request, res: Response) => {
+router.get('/wordpress/categories', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -351,7 +351,7 @@ router.get('/api/wordpress/categories', async (req: Request, res: Response) => {
 });
 
 // GET /api/wordpress/tags
-router.get('/api/wordpress/tags', async (req: Request, res: Response) => {
+router.get('/wordpress/tags', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -376,7 +376,7 @@ router.get('/api/wordpress/tags', async (req: Request, res: Response) => {
 
 // POST /api/wordpress/publish 뿯붿?create post (optionally upload featured image, set meta)
 // GET /api/wordpress/posts — import/list posts from WordPress
-router.get('/api/wordpress/posts', async (req: Request, res: Response) => {
+router.get('/wordpress/posts', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -400,7 +400,7 @@ router.get('/api/wordpress/posts', async (req: Request, res: Response) => {
 });
 
 // GET /api/wordpress/posts/:id — fetch a single post
-router.get('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
+router.get('/wordpress/posts/:id', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -422,7 +422,7 @@ router.get('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
 });
 
 // PATCH /api/wordpress/posts/:id — update a post
-router.patch('/api/wordpress/posts/:id', async (req: Request, res: Response) => {
+router.patch('/wordpress/posts/:id', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -454,7 +454,7 @@ router.patch('/api/wordpress/posts/:id', async (req: Request, res: Response) => 
 });
 
 // POST /api/wordpress/media/upload — upload media to WordPress
-router.post('/api/wordpress/media/upload', async (req: Request, res: Response) => {
+router.post('/wordpress/media/upload', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -500,7 +500,7 @@ router.post('/api/wordpress/media/upload', async (req: Request, res: Response) =
 });
 
 // POST /api/wordpress/publish 붿?create post (optionally upload featured image, set meta)
-router.post('/api/wordpress/publish', async (req: Request, res: Response) => {
+router.post('/wordpress/publish', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;

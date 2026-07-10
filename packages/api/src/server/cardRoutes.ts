@@ -29,7 +29,7 @@ export function registerCardTemplateRoutes(deps: CardTemplateDeps): Router {
   const { requireAuth, requireAdmin, hasDatabase, dbQuery, pool, inMemoryCardTemplatesById, syncCardTemplateMedia } = deps;
   const router = Router();
 
-router.get('/api/card-templates', async (req: Request, res: Response) => {
+router.get('/card-templates', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -64,7 +64,7 @@ router.get('/api/card-templates', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/api/card-templates/published', async (req: Request, res: Response) => {
+router.get('/card-templates/published', async (req: Request, res: Response) => {
   try {
     let templates: DbCardTemplate[] = [];
 
@@ -98,7 +98,7 @@ router.get('/api/card-templates/published', async (req: Request, res: Response) 
   }
 });
 
-router.post('/api/card-templates', async (req: Request, res: Response) => {
+router.post('/card-templates', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -149,7 +149,7 @@ router.post('/api/card-templates', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/api/card-templates/:id', async (req: Request, res: Response) => {
+router.put('/card-templates/:id', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -243,7 +243,7 @@ router.put('/api/card-templates/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/api/card-templates/:id/publish', async (req: Request, res: Response) => {
+router.post('/card-templates/:id/publish', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -324,7 +324,7 @@ router.post('/api/card-templates/:id/publish', async (req: Request, res: Respons
   }
 });
 
-router.post('/api/card-templates/:id/unpublish', async (req: Request, res: Response) => {
+router.post('/card-templates/:id/unpublish', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -352,7 +352,7 @@ router.post('/api/card-templates/:id/unpublish', async (req: Request, res: Respo
   }
 });
 
-router.delete('/api/card-templates/:id', async (req: Request, res: Response) => {
+router.delete('/card-templates/:id', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;

@@ -230,6 +230,10 @@ test('routes: distribution/automation endpoints resolve at /api/* (double-prefix
     ['get', '/api/distribution/connected'],
     ['get', '/api/distribution/status/some-post'],
     ['post', '/api/automation/retry/some-log'],
+    ['get', '/api/card-templates'],
+    ['get', '/api/card-templates/published'],
+    ['get', '/api/pricing/plans'],
+    ['get', '/api/wordpress/status'],
   ] as const) {
     const res = await (request(app) as any)[method](path);
     assert.notEqual(res.status, 404, `${method.toUpperCase()} ${path} should exist (got 404)`);

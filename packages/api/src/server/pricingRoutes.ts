@@ -30,7 +30,7 @@ export function registerPricingRoutes(deps: PricingDeps): Router {
   const { requireAdmin, hasDatabase, dbQuery, stripe, inMemoryPricingPlansById } = deps;
   const router = Router();
 
-router.get('/api/pricing/plans', async (req: Request, res: Response) => {
+router.get('/pricing/plans', async (req: Request, res: Response) => {
   try {
     let plans: DbPricingPlan[] = [];
 
@@ -69,7 +69,7 @@ router.get('/api/pricing/plans', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/api/pricing/plans', async (req: Request, res: Response) => {
+router.post('/pricing/plans', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -159,7 +159,7 @@ router.post('/api/pricing/plans', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
+router.put('/pricing/plans/:id', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -258,7 +258,7 @@ router.put('/api/pricing/plans/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/api/pricing/plans/:id', async (req: Request, res: Response) => {
+router.delete('/pricing/plans/:id', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -284,7 +284,7 @@ router.delete('/api/pricing/plans/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/api/pricing/plans/:id/status', async (req: Request, res: Response) => {
+router.patch('/pricing/plans/:id/status', async (req: Request, res: Response) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
