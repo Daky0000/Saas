@@ -53,12 +53,25 @@ export async function compileAgentSkill(userId: string, agentKey: string): Promi
       memoryRows = rows;
     }
 
-    if (memoryRows.length === 0) {
+    // Brand profile is personalization too — keep the briefs in sync with it.
+    let brandLine = '';
+    try {
+      const { rows: brandRows } = await dbQuery(
+        `SELECT brand_name, niche, tone, audience, goals, website FROM brand_profiles WHERE user_id=$1`,
+        [userId]
+      );
+      const b = brandRows[0];
+      if (b && (b.brand_name || b.niche)) {
+        brandLine = `[brand] Profile: ${b.brand_name || 'unnamed'}${b.niche ? ` — ${b.niche}` : ''}${b.tone ? `, tone ${b.tone}` : ''}${b.audience ? `, audience: ${b.audience}` : ''}${Array.isArray(b.goals) && b.goals.length ? `, goals: ${b.goals.join('; ')}` : ''}${b.website ? `, ${b.website}` : ''}`;
+      }
+    } catch { /* brand profile optional */ }
+
+    if (memoryRows.length === 0 && !brandLine) {
       await dbQuery(`UPDATE user_agents SET compiled_skill='', last_compiled_at=NOW() WHERE user_id=$1 AND agent_key=$2`, [userId, agentKey]);
       return;
     }
 
-    const memText = memoryRows.map((r: any) => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
+    const memText = [brandLine, ...memoryRows.map((r: any) => `[${r.category}] ${r.title}: ${r.content}`)].filter(Boolean).join('\n');
     const aiCfgCompile = await getAIConfig();
     const compileKey = resolveActiveKey(aiCfgCompile);
     const compileFastModel = aiCfgCompile.provider === 'google'

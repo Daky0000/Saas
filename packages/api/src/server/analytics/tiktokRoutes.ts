@@ -4,25 +4,24 @@ import { logger } from '../../logger.ts';
 import type { AnalyticsDeps } from './helpers.ts';
 import { fetchTikTokUserProfile } from './helpers.ts';
 
-export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret }: AnalyticsDeps): void {
-  // POST /social/tiktok/sync
-  router.post('/social/tiktok/sync', async (req: Request, res: Response) => {
-    try {
-      const auth = requireAuth(req, res);
-      if (!auth) return;
-      if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+// Per-user sync, shared by the POST /social/tiktok/sync route and the
+// periodic analytics auto-sync in analyticsRoutes.ts.
+export async function syncTikTokAnalyticsForUser(
+  { pool, decryptIntegrationSecret }: Pick<AnalyticsDeps, 'pool' | 'decryptIntegrationSecret'>,
+  userId: string
+): Promise<{ found: number; synced: number; errors: string[] }> {
+  if (!pool) return { found: 0, synced: 0, errors: ['DB not ready'] };
 
-      const accountRes = await pool.query(
-        `SELECT id, account_id, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
-         FROM social_accounts WHERE user_id=$1 AND platform='tiktok' AND connected=true`,
-        [auth.userId]
-      );
-      if (accountRes.rows.length === 0) return res.status(404).json({ success: false, error: 'No connected TikTok account found' });
+  const accountRes = await pool.query(
+    `SELECT id, account_id, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
+     FROM social_accounts WHERE user_id=$1 AND platform='tiktok' AND connected=true`,
+    [userId]
+  );
 
-      let synced = 0;
-      const errors: string[] = [];
+  let synced = 0;
+  const errors: string[] = [];
 
-      for (const acct of accountRes.rows as any[]) {
+  for (const acct of accountRes.rows as any[]) {
         let token = '';
         if (acct.access_token_encrypted) {
           try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ }
@@ -52,7 +51,7 @@ export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryp
                  is_verified = EXCLUDED.is_verified,
                  raw_response= EXCLUDED.raw_response,
                  synced_at   = NOW()`,
-              [auth.userId, acct.id, followers, following, postsCount, totalLikes, bio, isVerified, JSON.stringify(u)]
+              [userId, acct.id, followers, following, postsCount, totalLikes, bio, isVerified, JSON.stringify(u)]
             );
             const displayName = typeof u.display_name === 'string' && u.display_name.trim() ? u.display_name.trim() : null;
             const username    = typeof u.username    === 'string' && u.username.trim()    ? u.username.trim()    : null;
@@ -119,7 +118,7 @@ export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryp
                    embed_link = EXCLUDED.embed_link, height = EXCLUDED.height, width = EXCLUDED.width,
                    fetched_at = NOW(), raw_data = EXCLUDED.raw_data`,
                 [
-                  auth.userId, acct.id, String(v.id),
+                  userId, acct.id, String(v.id),
                   typeof v.title === 'string' ? v.title.slice(0, 500) : null,
                   typeof v.cover_image_url === 'string' ? v.cover_image_url : null,
                   typeof v.share_url === 'string' ? v.share_url : null,
@@ -142,7 +141,19 @@ export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryp
         }
       }
 
-      return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+  return { found: accountRes.rows.length, synced, errors };
+}
+
+export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret }: AnalyticsDeps): void {
+  // POST /social/tiktok/sync
+  router.post('/social/tiktok/sync', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+      const result = await syncTikTokAnalyticsForUser({ pool, decryptIntegrationSecret }, auth.userId);
+      if (result.found === 0) return res.status(404).json({ success: false, error: 'No connected TikTok account found' });
+      return res.json({ success: true, synced: result.synced, errors: result.errors.length > 0 ? result.errors : undefined });
     } catch (err) {
       logger.error('TikTok sync error:', err);
       return res.status(500).json({ success: false, error: 'TikTok sync failed' });

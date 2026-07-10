@@ -18,6 +18,70 @@ import {
   extractLinkedInPostMediaType,
 } from '../distribution/linkedinHelpers.ts';
 
+// Per-user sync, shared by the POST /social/linkedin/sync route and the
+// periodic analytics auto-sync in analyticsRoutes.ts.
+export async function syncLinkedInAnalyticsForUser(
+  { pool, decryptIntegrationSecret }: Pick<AnalyticsDeps, 'pool' | 'decryptIntegrationSecret'>,
+  userId: string
+): Promise<{ found: number; synced: number; errors: string[] }> {
+  if (!pool) return { found: 0, synced: 0, errors: ['DB not ready'] };
+
+  const accountRes = await pool.query(
+    `SELECT id, account_id, access_token, access_token_encrypted, token_data
+     FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND connected=true`,
+    [userId]
+  );
+
+  let synced = 0;
+  const errors: string[] = [];
+  for (const acct of accountRes.rows as any[]) {
+    let token = '';
+    if (acct.access_token_encrypted) { try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ } }
+    if (!token) token = String(acct.access_token || '').trim();
+    if (!token) { errors.push('No access token available'); continue; }
+
+    try {
+      const profileResp = await axios.get('https://api.linkedin.com/v2/me', { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true, timeout: 15000 });
+      if (profileResp.status === 200 && profileResp.data?.id) {
+        const profile = profileResp.data;
+        const firstName = profile.localizedFirstName || profile.firstName?.localized?.[Object.keys(profile.firstName?.localized || {})[0]] || '';
+        const lastName = profile.localizedLastName || profile.lastName?.localized?.[Object.keys(profile.lastName?.localized || {})[0]] || '';
+        await pool.query(
+          `INSERT INTO linkedin_profile_stats (id, user_id, social_account_id, platform, first_name, last_name, headline, profile_picture_url, raw_response, synced_at)
+           VALUES (gen_random_uuid()::text, $1, $2, 'linkedin', $3, $4, $5, $6, $7::jsonb, NOW())
+           ON CONFLICT (social_account_id) DO UPDATE SET
+             first_name = COALESCE(EXCLUDED.first_name, linkedin_profile_stats.first_name),
+             last_name = COALESCE(EXCLUDED.last_name, linkedin_profile_stats.last_name),
+             headline = COALESCE(EXCLUDED.headline, linkedin_profile_stats.headline),
+             profile_picture_url = COALESCE(EXCLUDED.profile_picture_url, linkedin_profile_stats.profile_picture_url),
+             raw_response = EXCLUDED.raw_response, synced_at = NOW()`,
+          [userId, acct.id, firstName, lastName, profile.headline?.localized?.[Object.keys(profile.headline?.localized || {})[0]] || null, profile.profilePicture?.displayImage || null, JSON.stringify(profile)]
+        );
+        await pool.query(`UPDATE social_accounts SET account_name = $1 WHERE id = $2`, [`${firstName} ${lastName}`.trim(), acct.id]);
+        synced++;
+      }
+    } catch (profileErr: any) { errors.push(`Profile sync failed: ${profileErr.message}`); }
+
+    try {
+      const postsResp = await axios.get('https://api.linkedin.com/v2/ugcPosts', { params: { q: 'authors', authors: `urn:li:person:${acct.account_id}`, count: 100 }, headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true, timeout: 15000 });
+      if (postsResp.status === 200 && postsResp.data?.elements) {
+        for (const post of postsResp.data.elements) {
+          if (!post.id) continue;
+          const createdAt = post.created?.time ? new Date(post.created.time).toISOString() : null;
+          await pool.query(
+            `INSERT INTO linkedin_post_metrics (id, user_id, social_account_id, post_id, text, post_url, media_type, created_at, fetched_at, raw_data)
+             VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
+             ON CONFLICT (social_account_id, post_id) DO UPDATE SET text = EXCLUDED.text, post_url = EXCLUDED.post_url, media_type = EXCLUDED.media_type, fetched_at = NOW(), raw_data = EXCLUDED.raw_data`,
+            [userId, acct.id, String(post.id), post.specificContent?.com?.linkedin?.ugcPost?.content?.com?.linkedin?.ugcPost?.shareCommentary?.text?.slice(0, 5000) || null, `https://www.linkedin.com/feed/update/${post.id}`, post.specificContent?.com?.linkedin?.ugcPost?.content?.media?.length > 0 ? 'media' : 'text', createdAt, JSON.stringify(post)]
+          );
+          synced++;
+        }
+      }
+    } catch (postsErr: any) { errors.push(`Posts sync failed: ${postsErr.message}`); }
+  }
+  return { found: accountRes.rows.length, synced, errors };
+}
+
 export function registerLinkedInAnalyticsRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret, getPublishableSocialConnection }: AnalyticsDeps): void {
   async function getLinkedInAuthContext(userId: string) {
     const conn = await getPublishableSocialConnection(userId, 'linkedin');
@@ -43,62 +107,9 @@ export function registerLinkedInAnalyticsRoutes(router: Router, { requireAuth, p
       const auth = requireAuth(req, res);
       if (!auth) return;
       if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
-
-      const accountRes = await pool.query(
-        `SELECT id, account_id, access_token, access_token_encrypted, token_data
-         FROM social_accounts WHERE user_id=$1 AND platform='linkedin' AND connected=true`,
-        [auth.userId]
-      );
-      if (accountRes.rows.length === 0) return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
-
-      let synced = 0;
-      const errors: string[] = [];
-      for (const acct of accountRes.rows as any[]) {
-        let token = '';
-        if (acct.access_token_encrypted) { try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ } }
-        if (!token) token = String(acct.access_token || '').trim();
-        if (!token) { errors.push('No access token available'); continue; }
-
-        try {
-          const profileResp = await axios.get('https://api.linkedin.com/v2/me', { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true, timeout: 15000 });
-          if (profileResp.status === 200 && profileResp.data?.id) {
-            const profile = profileResp.data;
-            const firstName = profile.localizedFirstName || profile.firstName?.localized?.[Object.keys(profile.firstName?.localized || {})[0]] || '';
-            const lastName = profile.localizedLastName || profile.lastName?.localized?.[Object.keys(profile.lastName?.localized || {})[0]] || '';
-            await pool.query(
-              `INSERT INTO linkedin_profile_stats (id, user_id, social_account_id, platform, first_name, last_name, headline, profile_picture_url, raw_response, synced_at)
-               VALUES (gen_random_uuid()::text, $1, $2, 'linkedin', $3, $4, $5, $6, $7::jsonb, NOW())
-               ON CONFLICT (social_account_id) DO UPDATE SET
-                 first_name = COALESCE(EXCLUDED.first_name, linkedin_profile_stats.first_name),
-                 last_name = COALESCE(EXCLUDED.last_name, linkedin_profile_stats.last_name),
-                 headline = COALESCE(EXCLUDED.headline, linkedin_profile_stats.headline),
-                 profile_picture_url = COALESCE(EXCLUDED.profile_picture_url, linkedin_profile_stats.profile_picture_url),
-                 raw_response = EXCLUDED.raw_response, synced_at = NOW()`,
-              [auth.userId, acct.id, firstName, lastName, profile.headline?.localized?.[Object.keys(profile.headline?.localized || {})[0]] || null, profile.profilePicture?.displayImage || null, JSON.stringify(profile)]
-            );
-            await pool.query(`UPDATE social_accounts SET account_name = $1 WHERE id = $2`, [`${firstName} ${lastName}`.trim(), acct.id]);
-            synced++;
-          }
-        } catch (profileErr: any) { errors.push(`Profile sync failed: ${profileErr.message}`); }
-
-        try {
-          const postsResp = await axios.get('https://api.linkedin.com/v2/ugcPosts', { params: { q: 'authors', authors: `urn:li:person:${acct.account_id}`, count: 100 }, headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true, timeout: 15000 });
-          if (postsResp.status === 200 && postsResp.data?.elements) {
-            for (const post of postsResp.data.elements) {
-              if (!post.id) continue;
-              const createdAt = post.created?.time ? new Date(post.created.time).toISOString() : null;
-              await pool.query(
-                `INSERT INTO linkedin_post_metrics (id, user_id, social_account_id, post_id, text, post_url, media_type, created_at, fetched_at, raw_data)
-                 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
-                 ON CONFLICT (social_account_id, post_id) DO UPDATE SET text = EXCLUDED.text, post_url = EXCLUDED.post_url, media_type = EXCLUDED.media_type, fetched_at = NOW(), raw_data = EXCLUDED.raw_data`,
-                [auth.userId, acct.id, String(post.id), post.specificContent?.com?.linkedin?.ugcPost?.content?.com?.linkedin?.ugcPost?.shareCommentary?.text?.slice(0, 5000) || null, `https://www.linkedin.com/feed/update/${post.id}`, post.specificContent?.com?.linkedin?.ugcPost?.content?.media?.length > 0 ? 'media' : 'text', createdAt, JSON.stringify(post)]
-              );
-              synced++;
-            }
-          }
-        } catch (postsErr: any) { errors.push(`Posts sync failed: ${postsErr.message}`); }
-      }
-      return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+      const result = await syncLinkedInAnalyticsForUser({ pool, decryptIntegrationSecret }, auth.userId);
+      if (result.found === 0) return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
+      return res.json({ success: true, synced: result.synced, errors: result.errors.length > 0 ? result.errors : undefined });
     } catch (err) {
       logger.error('LinkedIn sync error:', err);
       return res.status(500).json({ success: false, error: 'LinkedIn sync failed' });

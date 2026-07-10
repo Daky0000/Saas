@@ -18,6 +18,7 @@ import {
   FREEPIK_IMAGE_MODELS,
 } from './magnificRoutes.ts';
 import { FAST_MODEL, recordAIUsage, chargeAICredits, hasAICredits } from '../ai-helpers.ts';
+import { triggerAgentCompilation } from '../agent-helpers.ts';
 
 const logger = pino();
 
@@ -1063,6 +1064,8 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
          Array.isArray(goals) ? goals : [], Array.isArray(platforms) ? platforms : [],
          website, extra_notes, Boolean(setup_done)],
       );
+      // Brand profile feeds every agent's compiled skill brief — resync them.
+      triggerAgentCompilation(auth.userId).catch(() => undefined);
       return res.json({ success: true, profile: rows[0] });
     } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
   });

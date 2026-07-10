@@ -5,6 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
 import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits } from '../ai-helpers.ts';
+import { buildSharedAgentContext, recordAgentInsight } from './agentSharedContext.ts';
 
 const OUT_OF_CREDITS_MSG = "You're out of AI credits for this month. Upgrade your plan or wait for your monthly reset to keep using AI features.";
 
@@ -1022,9 +1023,10 @@ Rules:
         allMemory = rows as any[];
       }
 
-      const [{ rows: agentRows }, { rows: templateRows }] = await Promise.all([
+      const [{ rows: agentRows }, { rows: templateRows }, sharedContext] = await Promise.all([
         dbQuery(`SELECT agent_key, compiled_skill FROM user_agents WHERE user_id=$1`, [auth.userId]),
         dbQuery(`SELECT agent_key, base_prompt FROM agent_templates WHERE agent_key = ANY($1)`, [enabledAgents.map((a) => a.key)]),
+        buildSharedAgentContext(auth.userId).catch(() => ''),
       ]);
       const skillMap: Record<string, string> = {};
       for (const r of agentRows as any[]) skillMap[r.agent_key] = r.compiled_skill;
@@ -1042,7 +1044,7 @@ Rules:
           const def = AGENT_DEFS[agent.key];
           const basePrompt = templateMap[agent.key] || (def ? `You are ${def.name}, ${def.role} on the Dakyworld Hub marketing team.` : `You are ${agent.name}.`);
           const skill = skillMap[agent.key] || '';
-          const agentSystem = `${basePrompt}${skill ? `\n\nWhat you know about this user:\n${skill}` : ''}\n\nYour specific task: ${agent.task}\n\nGive a concise expert analysis (3-5 sentences or a brief bullet list). No intros or sign-offs. Pure insight.`;
+          const agentSystem = `${basePrompt}${skill ? `\n\nWhat you know about this user:\n${skill}` : ''}${sharedContext ? `\n\nLive workspace context (shared with the whole team):\n${sharedContext}` : ''}\n\nYour specific task: ${agent.task}\n\nGive a concise expert analysis (3-5 sentences or a brief bullet list). No intros or sign-offs. Pure insight.`;
 
           const analysis = await callAINonStreaming(aiCfg.provider, apiKey, agentFastModel, agentSystem, lastUserMsg.slice(0, 1000), 350);
           agentResults.push({ key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, task: agent.task, analysis });
@@ -1063,9 +1065,10 @@ Rules:
         .map((r) => `**${r.name}:** ${r.analysis}`)
         .join('\n\n');
 
-      const synthSystem = `${AI_SYSTEM_PROMPT_DEFAULT.replace('{USER_MEMORY}', userMemBlock)}\n\n${AI_CORE_RULES}`;
+      const synthSystem = `${AI_SYSTEM_PROMPT_DEFAULT.replace('{USER_MEMORY}', userMemBlock)}${sharedContext ? `\n\n## LIVE WORKSPACE\n${sharedContext}` : ''}\n\n${AI_CORE_RULES}`;
       const synthPrompt = `${lastUserMsg}\n\n---\nYour specialist team has analyzed this:\n\n${teamContext}\n\nSynthesize their insights into one unified, decisive recommendation. Be the orchestrator — build on their analyses, don't just repeat them.`;
 
+      let synthesisText = '';
       if (aiCfg.provider === 'google') {
         const effectiveModel = resolveGeminiModel(aiCfg.model);
         const genAI = new GoogleGenerativeAI(apiKey);
@@ -1073,7 +1076,7 @@ Rules:
         const gStream = await gModel.generateContentStream(synthPrompt);
         for await (const chunk of gStream.stream) {
           const text = chunk.text();
-          if (text) send({ type: 'text', text });
+          if (text) { synthesisText += text; send({ type: 'text', text }); }
         }
       } else {
         const anthropicClient = new Anthropic({ apiKey });
@@ -1089,6 +1092,7 @@ Rules:
         });
         for await (const chunk of finalStream) {
           if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            synthesisText += chunk.delta.text;
             send({ type: 'text', text: chunk.delta.text });
           }
         }
@@ -1097,6 +1101,15 @@ Rules:
       send({ type: 'done' });
       const agentNames = enabledAgents.map((a: any) => a.name).join(', ');
       createNotification(auth.userId, 'plan_executed', 'Agent team finished', `Your marketing team (${agentNames}) completed their analysis.`, { agentCount: enabledAgents.length }).catch(() => undefined);
+      // Persist the team's conclusion to the global agent memory channel so
+      // scheduled agent runs (and future chat sessions) build on it.
+      if (synthesisText.trim()) {
+        void recordAgentInsight(
+          auth.userId,
+          `chat_${new Date().toISOString().slice(0, 10)}_${Date.now() % 86400000}`,
+          `Team session (${agentNames}) on "${String(lastUserMsg).slice(0, 120)}": ${synthesisText.slice(0, 600)}`
+        );
+      }
       res.end();
     } catch (e: any) {
       if (!res.headersSent) return res.status(500).json({ success: false, error: e?.message || 'Execute plan failed' });

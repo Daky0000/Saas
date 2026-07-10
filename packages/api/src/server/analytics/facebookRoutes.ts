@@ -3,33 +3,32 @@ import type { Router, Request, Response } from 'express';
 import { logger } from '../../logger.ts';
 import type { AnalyticsDeps } from './helpers.ts';
 
-export function registerFacebookRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret }: AnalyticsDeps): void {
-  const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
 
-  // POST /social/facebook/sync
-  router.post('/social/facebook/sync', async (req: Request, res: Response) => {
-    try {
-      const auth = requireAuth(req, res);
-      if (!auth) return;
-      if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+// Per-user sync, shared by the POST /social/facebook/sync route and the
+// periodic analytics auto-sync in analyticsRoutes.ts.
+export async function syncFacebookAnalyticsForUser(
+  { pool, decryptIntegrationSecret }: Pick<AnalyticsDeps, 'pool' | 'decryptIntegrationSecret'>,
+  userId: string
+): Promise<{ found: number; synced: number; errors: string[] }> {
+  if (!pool) return { found: 0, synced: 0, errors: ['DB not ready'] };
 
-      const accountRes = await pool.query(
-        `SELECT id, account_id, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
-         FROM social_accounts WHERE user_id=$1 AND platform='facebook' AND connected=true`,
-        [auth.userId]
-      );
-      if (accountRes.rows.length === 0) return res.status(404).json({ success: false, error: 'No connected Facebook account found' });
+  const accountRes = await pool.query(
+    `SELECT id, account_id, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
+     FROM social_accounts WHERE user_id=$1 AND platform='facebook' AND connected=true`,
+    [userId]
+  );
 
-      let synced = 0;
-      const errors: string[] = [];
+  let synced = 0;
+  const errors: string[] = [];
 
-      for (const acct of accountRes.rows as any[]) {
-        let token = '';
-        if (acct.access_token_encrypted) { try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ } }
-        if (!token) token = String(acct.access_token || '').trim();
-        if (!token) { errors.push('No access token available'); continue; }
+  for (const acct of accountRes.rows as any[]) {
+    let token = '';
+    if (acct.access_token_encrypted) { try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ } }
+    if (!token) token = String(acct.access_token || '').trim();
+    if (!token) { errors.push('No access token available'); continue; }
 
-        const pageId = String(acct.account_id);
+    const pageId = String(acct.account_id);
 
         try {
           const pageResp = await axios.get(`${GRAPH_BASE}/${pageId}`, {
@@ -53,7 +52,7 @@ export function registerFacebookRoutes(router: Router, { requireAuth, pool, decr
                  bio = COALESCE(EXCLUDED.bio, facebook_page_stats.bio),
                  picture_url = COALESCE(EXCLUDED.picture_url, facebook_page_stats.picture_url),
                  raw_response = EXCLUDED.raw_response, synced_at = NOW()`,
-              [auth.userId, acct.id, followers, pageLikes, bio, pictureUrl, JSON.stringify(p)]
+              [userId, acct.id, followers, pageLikes, bio, pictureUrl, JSON.stringify(p)]
             );
             const displayName = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : null;
             await pool.query(
@@ -104,7 +103,7 @@ export function registerFacebookRoutes(router: Router, { requireAuth, pool, decr
                    shares = EXCLUDED.shares, likes_count = EXCLUDED.likes_count,
                    comments_count = EXCLUDED.comments_count, engagement = EXCLUDED.engagement,
                    fetched_at = NOW(), raw_data = EXCLUDED.raw_data`,
-                [auth.userId, acct.id, String(post.id), typeof post.message === 'string' ? post.message.slice(0, 5000) : null, typeof post.picture === 'string' ? post.picture : null, typeof post.story === 'string' ? post.story : null, typeof post.type === 'string' ? post.type : null, typeof post.permalink_url === 'string' ? post.permalink_url : null, shares, likes, comments, engagement, createdAt, JSON.stringify(post)]
+                [userId, acct.id, String(post.id), typeof post.message === 'string' ? post.message.slice(0, 5000) : null, typeof post.picture === 'string' ? post.picture : null, typeof post.story === 'string' ? post.story : null, typeof post.type === 'string' ? post.type : null, typeof post.permalink_url === 'string' ? post.permalink_url : null, shares, likes, comments, engagement, createdAt, JSON.stringify(post)]
               );
               synced++;
             }
@@ -115,7 +114,19 @@ export function registerFacebookRoutes(router: Router, { requireAuth, pool, decr
         }
       }
 
-      return res.json({ success: true, synced, errors: errors.length > 0 ? errors : undefined });
+  return { found: accountRes.rows.length, synced, errors };
+}
+
+export function registerFacebookRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret }: AnalyticsDeps): void {
+  // POST /social/facebook/sync
+  router.post('/social/facebook/sync', async (req: Request, res: Response) => {
+    try {
+      const auth = requireAuth(req, res);
+      if (!auth) return;
+      if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+      const result = await syncFacebookAnalyticsForUser({ pool, decryptIntegrationSecret }, auth.userId);
+      if (result.found === 0) return res.status(404).json({ success: false, error: 'No connected Facebook account found' });
+      return res.json({ success: true, synced: result.synced, errors: result.errors.length > 0 ? result.errors : undefined });
     } catch (err) {
       logger.error('Facebook sync error:', err);
       return res.status(500).json({ success: false, error: 'Facebook sync failed' });

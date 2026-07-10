@@ -57,6 +57,7 @@ import { recalcLeadScore } from './server/leadScoring.ts';
 import { registerApiKeyRoutes, registerPublicTriggerRoutes } from './server/publicApiRoutes.ts';
 import { registerFormsRoutes, registerPublicFormRoutes } from './server/formsRoutes.ts';
 import { registerSiteTrackingRoutes } from './server/trackingRoutes.ts';
+import { processStaleAgentCompilations } from './server/agentSharedContext.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
@@ -914,6 +915,12 @@ if (config.nodeEnv !== 'test') {
     setInterval(() => void runAnalyticsAutoSync(), 6 * 60 * 60 * 1000);
     setTimeout(() => void runGmailAutoSync(), 15 * 60 * 1000);
     setInterval(() => void runGmailAutoSync(), 6 * 60 * 60 * 1000);
+
+    // Recompile agent skill briefs for users whose memories/brand changed
+    // since the last compile — keeps the 14 agents in sync with
+    // personalization edits. Daily, first run 20 minutes after boot.
+    setTimeout(() => void processStaleAgentCompilations(pool, triggerAgentCompilation), 20 * 60 * 1000);
+    setInterval(() => void processStaleAgentCompilations(pool, triggerAgentCompilation), 24 * 60 * 60 * 1000);
   });
 }
 

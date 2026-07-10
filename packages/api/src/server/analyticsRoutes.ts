@@ -8,7 +8,9 @@ import { registerFacebookRoutes } from './analytics/facebookRoutes.ts';
 import { registerInstagramRoutes } from './analytics/instagramRoutes.ts';
 import { registerPinterestRoutes } from './analytics/pinterestRoutes.ts';
 import { registerThreadsRoutes } from './analytics/threadsRoutes.ts';
-import { registerLinkedInAnalyticsRoutes } from './analytics/linkedinAnalyticsRoutes.ts';
+import { registerLinkedInAnalyticsRoutes, syncLinkedInAnalyticsForUser } from './analytics/linkedinAnalyticsRoutes.ts';
+import { syncFacebookAnalyticsForUser } from './analytics/facebookRoutes.ts';
+import { syncTikTokAnalyticsForUser } from './analytics/tiktokRoutes.ts';
 import { registerAdapterRoutes } from './analytics/adapterRoutes.ts';
 
 export type { AnalyticsDeps };
@@ -36,9 +38,10 @@ export function registerAnalyticsRoutes(deps: AnalyticsDeps): Router {
   return router;
 }
 
-// Periodic analytics scan: refreshes Instagram/Threads/Pinterest analytics for
-// every connected account so dashboards show current data without the user
-// opening the page (the on-demand sync buttons keep working on top of this).
+// Periodic analytics scan: refreshes analytics for every connected account on
+// all six analytics platforms (Instagram, Threads, Pinterest, Facebook,
+// TikTok, LinkedIn) so dashboards show current data without the user opening
+// the page (the on-demand sync buttons keep working on top of this).
 // Called from the server.ts scheduler block.
 export function buildAnalyticsAutoSync(deps: AnalyticsDeps): () => Promise<void> {
   function decodeStoredIntegrationSecret(value: string | null | undefined): string {
@@ -51,6 +54,8 @@ export function buildAnalyticsAutoSync(deps: AnalyticsDeps): () => Promise<void>
   return async function runAnalyticsAutoSync(): Promise<void> {
     const pool = deps.pool;
     if (!pool) return;
+
+    // Per-account platforms (Instagram/Threads/Pinterest use account rows directly)
     try {
       const { rows: accounts } = await pool.query(
         `SELECT user_id, id, account_id, account_name, handle, followers, profile_image,
@@ -78,6 +83,26 @@ export function buildAnalyticsAutoSync(deps: AnalyticsDeps): () => Promise<void>
           }
         } catch (err) {
           logger.warn({ err, platform: acct.platform, userId: acct.user_id }, 'analytics_auto_sync_account_failed');
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'analytics_auto_sync_failed');
+    }
+
+    // Per-user platforms (Facebook/TikTok/LinkedIn sync all of a user's accounts at once)
+    try {
+      const { rows: userRows } = await pool.query(
+        `SELECT DISTINCT user_id, platform FROM social_accounts
+         WHERE connected=true AND platform IN ('facebook','tiktok','linkedin')
+         ORDER BY user_id`
+      );
+      for (const row of userRows as any[]) {
+        try {
+          if (row.platform === 'facebook') await syncFacebookAnalyticsForUser(deps, row.user_id);
+          else if (row.platform === 'tiktok') await syncTikTokAnalyticsForUser(deps, row.user_id);
+          else await syncLinkedInAnalyticsForUser(deps, row.user_id);
+        } catch (err) {
+          logger.warn({ err, platform: row.platform, userId: row.user_id }, 'analytics_auto_sync_user_failed');
         }
       }
     } catch (err) {
