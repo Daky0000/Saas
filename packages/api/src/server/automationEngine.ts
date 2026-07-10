@@ -278,8 +278,16 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
         if (!nums.length) return false;
         return nums.reduce((s, n) => s + n, 0) / nums.length >= Number(value || 0);
       }
+      case 'purchase': {
+        // last_purchase_at is recorded when a purchase event arrives via POST /api/v1/trigger.
+        if (!pool || !contact.id) return false;
+        const { rows } = await pool.query(
+          `SELECT 1 FROM mailing_contacts WHERE user_id=$1 AND id=$2 AND custom_data->>'last_purchase_at' IS NOT NULL LIMIT 1`,
+          [userId, contact.id]
+        ).catch(() => ({ rows: [] as unknown[] }));
+        return rows.length > 0;
+      }
       default:
-        // purchase has no data source yet — branch to "No".
         logger.info({ conditionType: type }, 'automation_condition_unsupported');
         return false;
     }
@@ -614,11 +622,56 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
     }
   }
 
+  // email_unopened trigger ("Doesn't open email (30 days)"): once per day,
+  // find subscribed contacts who received an email 30+ days ago and have not
+  // opened anything in the last 30 days. Fires once per contact per flow.
+  let lastUnopenedRunDate = '';
+  async function processEmailUnopenedTriggers(): Promise<void> {
+    if (!pool) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (lastUnopenedRunDate === today) return;
+    lastUnopenedRunDate = today;
+    try {
+      const { rows: automations } = await pool.query<AutomationRow>(
+        `SELECT id, user_id, name, trigger_type, status, steps, actions FROM mailing_automations WHERE status='active'`
+      );
+      const unopenedFlows = automations.filter((a) => matchesTrigger(a, 'email_unopened'));
+      if (!unopenedFlows.length) return;
+      for (const flow of unopenedFlows) {
+        const { rows: contacts } = await pool.query(
+          `SELECT c.id, c.email, c.first_name, c.last_name, c.phone
+           FROM mailing_contacts c
+           WHERE c.user_id=$1 AND c.subscribed=true
+             AND EXISTS (SELECT 1 FROM mailing_email_events d
+                         WHERE d.user_id=c.user_id AND d.contact_id=c.id AND d.event_type='delivered'
+                           AND d.created_at <= NOW() - INTERVAL '30 days')
+             AND NOT EXISTS (SELECT 1 FROM mailing_email_events o
+                             WHERE o.user_id=c.user_id AND o.contact_id=c.id AND o.event_type='open'
+                               AND o.created_at >= NOW() - INTERVAL '30 days')
+           LIMIT 500`,
+          [flow.user_id]
+        );
+        for (const contact of contacts) {
+          const dedupeId = `unopened_${flow.id}_${contact.id}`;
+          const { rowCount } = await pool.query(
+            `INSERT INTO mailing_automation_jobs (id, user_id, automation_id, contact_id, contact, steps, run_at, status)
+             VALUES ($1,$2,$3,$4,$5,'[]'::jsonb,NOW(),'done') ON CONFLICT (id) DO NOTHING`,
+            [dedupeId, flow.user_id, flow.id, contact.id, JSON.stringify(contact)]
+          );
+          if (rowCount) await runAutomationForContact(flow.user_id, flow, contact);
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'automation_unopened_tick_failed');
+    }
+  }
+
   // Called from the scheduler tick: claim and run due continuations.
   async function processDueAutomationJobs(): Promise<void> {
     if (!pool) return;
     void processBirthdayTriggers();
     void processSpecificDateTriggers();
+    void processEmailUnopenedTriggers();
     try {
       const { rows: jobs } = await pool.query(
         `UPDATE mailing_automation_jobs SET status='processing', attempts=attempts+1, updated_at=NOW()

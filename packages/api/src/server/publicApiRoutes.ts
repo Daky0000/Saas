@@ -167,6 +167,13 @@ export function registerPublicTriggerRoutes({ pool, fireAutomationTrigger }: Tri
         }
         void fireAutomationTrigger(userId, 'tag_added', { id: contact.id, email: contact.email }).catch(() => undefined);
       }
+      if (event === 'purchase') {
+        // Recorded so the automation if_else "purchase" condition can evaluate it.
+        await pool.query(
+          `UPDATE mailing_contacts SET custom_data = COALESCE(custom_data,'{}'::jsonb) || jsonb_build_object('last_purchase_at', NOW()::text), updated_at=NOW() WHERE id=$1`,
+          [contact.id]
+        ).catch(() => undefined);
+      }
       void recalcLeadScore(pool, userId, contact.id);
       void fireAutomationTrigger(userId, event, { id: contact.id, email: contact.email }).catch(() => undefined);
 
