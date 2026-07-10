@@ -129,17 +129,23 @@ export function buildContentPlanEngine({ pool, createNotification, sendPlatformE
 
   async function runPlanOnce(plan: any): Promise<void> {
     const runId = randomUUID();
+    // Recorded as 'running' immediately so the Activity log shows progress
+    // while the piece is being generated.
+    await pool.query(
+      `INSERT INTO content_plan_runs (id, plan_id, user_id, status) VALUES ($1,$2,$3,'running')`,
+      [runId, plan.id, plan.user_id]
+    ).catch(() => undefined);
     try {
       if (!(await hasAICredits(plan.user_id))) {
         await pool.query(
-          `INSERT INTO content_plan_runs (id, plan_id, user_id, status, error) VALUES ($1,$2,$3,'skipped','Out of AI credits')`,
-          [runId, plan.id, plan.user_id]
+          `UPDATE content_plan_runs SET status='skipped', error='Out of AI credits' WHERE id=$1`,
+          [runId]
         );
         return;
       }
       const aiCfg = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfg);
-      if (!apiKey) throw new Error('AI not configured');
+      if (!apiKey) throw new Error('AI not configured — set the platform AI key in Admin → AI Assistant → Configuration');
 
       const [sharedCtx, styleProfile, socials] = await Promise.all([
         buildSharedAgentContext(plan.user_id).catch(() => ''),
@@ -220,9 +226,8 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
          String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString()]
       );
       await pool.query(
-        `INSERT INTO content_plan_runs (id, plan_id, user_id, blog_post_id, title, image_url, status)
-         VALUES ($1,$2,$3,$4,$5,$6,'done')`,
-        [runId, plan.id, plan.user_id, postId, title, imageUrl]
+        `UPDATE content_plan_runs SET status='done', blog_post_id=$2, title=$3, image_url=$4, error=NULL WHERE id=$1`,
+        [runId, postId, title, imageUrl]
       );
       await createNotification(
         plan.user_id, 'content_generated',
@@ -234,9 +239,8 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       const message = err instanceof Error ? err.message : 'Generation failed';
       logger.warn({ err, planId: plan.id }, 'content_plan_run_failed');
       await pool.query(
-        `INSERT INTO content_plan_runs (id, plan_id, user_id, status, error) VALUES ($1,$2,$3,'failed',$4)
-         ON CONFLICT (id) DO NOTHING`,
-        [runId, plan.id, plan.user_id, message.slice(0, 300)]
+        `UPDATE content_plan_runs SET status='failed', error=$2 WHERE id=$1`,
+        [runId, message.slice(0, 300)]
       ).catch(() => undefined);
     }
   }

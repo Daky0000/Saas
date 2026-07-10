@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Image as ImageIcon, Loader2, Pause, Play, Plus, Sparkles, Trash2, Wand2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Image as ImageIcon, Loader2, Pause, Play, Plus, Sparkles, Trash2, Wand2, X, XCircle } from 'lucide-react';
 import { API_BASE_URL } from '../../utils/apiBase';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,11 +48,40 @@ const STATUS_LABEL: Record<Plan['status'], string> = {
   completed: 'completed',
 };
 
+type PlanRun = {
+  id: string;
+  status: 'running' | 'done' | 'failed' | 'skipped';
+  title: string | null;
+  image_url: string | null;
+  blog_post_id: string | null;
+  error: string | null;
+  created_at: string;
+};
+
 export default function AutoContentPlans() {
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [runs, setRuns] = useState<Record<string, PlanRun[]>>({});
+
+  const loadRuns = useCallback(async (planId: string) => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/content-plans/${planId}/runs`, { headers: hdrs() });
+      const d = await r.json();
+      if (d.success) setRuns((prev) => ({ ...prev, [planId]: d.runs ?? [] }));
+    } catch { /* ignore */ }
+  }, []);
+
+  // Live progress: refresh the expanded plan's log every 5s (a run in
+  // progress shows as "Generating…" until it finishes or fails).
+  useEffect(() => {
+    if (!expandedId) return;
+    void loadRuns(expandedId);
+    const t = setInterval(() => void loadRuns(expandedId), 5000);
+    return () => clearInterval(t);
+  }, [expandedId, loadRuns]);
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +120,7 @@ export default function AutoContentPlans() {
         const r = await fetch(`${API_BASE_URL}/api/content-plans/${plan.id}/run`, { method: 'POST', headers: hdrs() });
         const d = await r.json();
         setMsg({ ok: Boolean(d.success), text: d.message || d.error || 'Started' });
+        if (d.success) { setExpandedId(plan.id); void loadRuns(plan.id); }
       }
       await load();
     } catch (e) {
@@ -179,8 +209,53 @@ export default function AutoContentPlans() {
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500">
                     <Trash2 size={13} />
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId((cur) => cur === p.id ? null : p.id)}
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition ${expandedId === p.id ? 'border-slate-300 bg-slate-100 text-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    Activity <ChevronDown size={11} className={`transition-transform ${expandedId === p.id ? 'rotate-180' : ''}`} />
+                  </button>
                 </div>
               </div>
+
+              {/* Activity log */}
+              {expandedId === p.id && (
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  {!runs[p.id] ? (
+                    <div className="flex justify-center py-4"><Loader2 size={14} className="animate-spin text-slate-300" /></div>
+                  ) : runs[p.id].length === 0 ? (
+                    <p className="py-3 text-center text-xs text-slate-400">No runs yet — the first piece generates at the scheduled slot, or use Generate now.</p>
+                  ) : (
+                    <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                      {runs[p.id].map((r) => (
+                        <div key={r.id} className="flex items-start gap-2.5 rounded-lg bg-slate-50 px-3 py-2">
+                          <span className="mt-0.5 shrink-0">
+                            {r.status === 'running' ? <Loader2 size={12} className="animate-spin text-indigo-500" />
+                              : r.status === 'done' ? <Check size={12} className="text-emerald-500" />
+                              : r.status === 'skipped' ? <AlertTriangle size={12} className="text-amber-500" />
+                              : <XCircle size={12} className="text-red-500" />}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="truncate text-xs font-semibold text-slate-800">
+                                {r.status === 'running' ? 'Generating piece…' : r.title || (r.status === 'done' ? 'Piece created' : r.status === 'skipped' ? 'Skipped' : 'Failed')}
+                              </p>
+                              <span className="shrink-0 text-[10px] text-slate-400">
+                                {new Date(r.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            {r.error && <p className="mt-0.5 text-[11px] leading-snug text-red-600">{r.error}</p>}
+                            {r.status === 'done' && (
+                              <p className="mt-0.5 text-[11px] text-slate-400">{r.image_url ? 'With featured image · ' : ''}Scheduled — see Content → Posts / Calendar</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
