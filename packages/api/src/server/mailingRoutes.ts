@@ -703,7 +703,9 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
       );
       if (!rows.length) return res.status(404).send('Invalid unsubscribe link.');
       void recalcLeadScore(pool, rows[0].user_id, rows[0].id);
-      return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>${rows[0].email} has been unsubscribed.</p></body></html>`);
+      // Escape — the email is user-controlled and this page is public (XSS).
+      const safeEmail = String(rows[0].email).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>${safeEmail} has been unsubscribed.</p></body></html>`);
     } catch (err) {
       logger.error('Unsubscribe error:', err);
       return res.status(500).send('Something went wrong.');

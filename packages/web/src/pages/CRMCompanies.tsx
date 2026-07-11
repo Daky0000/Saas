@@ -9,6 +9,7 @@ import {
 import CreateTaskModal from '../components/tasks/CreateTaskModal';
 import RichTextEditor from '../components/RichTextEditor';
 import ScheduleMeetingModal from '../components/crm/ScheduleMeetingModal';
+import DOMPurify from 'dompurify';
 
 const API = '/api/crm';
 const tok = () => localStorage.getItem('auth_token') ?? '';
@@ -209,7 +210,7 @@ function ActivityItem({ act }: { act: Activity }) {
         {act.body && (
           <div className="mt-1">
             {isNote && expanded
-              ? <div className="text-xs text-gray-500 prose prose-xs max-w-none" dangerouslySetInnerHTML={{ __html: act.body }} />
+              ? <div className="text-xs text-gray-500 prose prose-xs max-w-none" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(act.body) }} />
               : <p className={`text-xs text-gray-500 ${!expanded ? 'line-clamp-2' : ''}`}>{bodyPlain}</p>
             }
             {(bodyPlain?.length ?? 0) > 120 && (
@@ -349,7 +350,7 @@ function NoteItem({ note, onUpdate, onDelete }: {
             ) : (
               <>
                 {currentBody
-                  ? <div className="prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: currentBody }} />
+                  ? <div className="prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(currentBody) }} />
                   : <p className="text-xs text-gray-400 italic">No content</p>}
                 <div className="flex items-center gap-3 mt-2.5">
                   <button onClick={e => { e.stopPropagation(); setEditBody(currentBody); setEditing(true); }}

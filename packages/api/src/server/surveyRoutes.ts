@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
+import { publicApiLimiter } from '../middleware/rateLimiter.ts';
 
 type AuthResult = { userId: string; email?: string } | null;
 
@@ -203,7 +204,7 @@ export function registerPublicSurveyRoutes({ pool, fireAutomationTrigger }: {
   });
 
   // POST /api/public/surveys/:id/respond — submit a response
-  router.post('/:id/respond', async (req: Request, res: Response) => {
+  router.post('/:id/respond', publicApiLimiter, async (req: Request, res: Response) => {
     try {
       const { answers, email } = req.body as { answers: { question_id: string; value: unknown }[]; email?: string };
       const { rows: sr } = await pool.query('SELECT * FROM surveys WHERE id=$1 AND status=$2', [req.params.id, 'active']);

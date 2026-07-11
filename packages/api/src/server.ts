@@ -176,6 +176,11 @@ async function refreshStripe(): Promise<void> {
 const app = express();
 const PORT = config.port;
 
+// Behind Railway's proxy: without this, req.ip is the proxy for every
+// request, so per-IP rate limits (login, public API, pixel) would be shared
+// globally instead of per client.
+app.set('trust proxy', 1);
+
 // Automation engine executes the flows built in Marketing → Automations.
 // Built before all routes so public forms, webhooks, and mailing can fire triggers.
 const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl });

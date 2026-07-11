@@ -2,6 +2,7 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { publicApiLimiter } from '../middleware/rateLimiter.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Website visitor tracking (page_view trigger).
@@ -70,7 +71,8 @@ new Image(1,1).src=${JSON.stringify(base)}+'/px.gif?u='+encodeURIComponent(${JSO
   });
 
   // GET /px.gif — records the page view; always answers with the pixel.
-  router.get('/px.gif', async (req: Request, res: Response) => {
+  // Rate-limited per IP so a hostile loop can't flood page_view_events.
+  router.get('/px.gif', publicApiLimiter, async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'image/gif');
     res.setHeader('Cache-Control', 'no-store, private');
     res.send(GIF_1PX);
