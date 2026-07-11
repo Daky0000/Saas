@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '../utils/apiBase';
 
-const ANALYTICS_FALLBACK_API_BASE_URL = 'https://contentflow-api-production.up.railway.app';
+const ANALYTICS_FALLBACK_API_BASE_URL = 'https://marketing.dakyworld.com';
 
 function getToken() {
   return localStorage.getItem('auth_token') || '';

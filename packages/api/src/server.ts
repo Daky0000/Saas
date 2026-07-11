@@ -267,7 +267,7 @@ app.use(
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
         connectSrc: [
           "'self'",
-          'https://contentflow-api-production.up.railway.app',
+          config.appUrl,
           'https://www.google-analytics.com',
         ],
         frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.facebook.com'],
@@ -804,7 +804,7 @@ app.use('/api/public/surveys', registerPublicSurveyRoutes({ pool: pool!, fireAut
 // ─── Leads & Google Sheets ──────────────────────────────────────────────────
 const GS_CLIENT_ID = process.env.GOOGLE_SHEETS_CLIENT_ID || '';
 const GS_CLIENT_SECRET = process.env.GOOGLE_SHEETS_CLIENT_SECRET || '';
-const GS_REDIRECT = (process.env.API_URL || 'https://contentflow-api-production.up.railway.app').replace(/\/$/, '') + '/api/google-sheets/callback';
+const GS_REDIRECT = (process.env.API_URL || config.appUrl).replace(/\/$/, '') + '/api/google-sheets/callback';
 const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
 const leadsDeps = { requireAuth, pool: pool!, frontendUrl: FRONTEND_URL, gsClientId: GS_CLIENT_ID, gsClientSecret: GS_CLIENT_SECRET, gsRedirect: GS_REDIRECT };
 app.use('/api/leads', registerLeadsRoutes(leadsDeps));

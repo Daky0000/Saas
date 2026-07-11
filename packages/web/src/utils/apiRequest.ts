@@ -1,6 +1,6 @@
 import { API_BASE_URL } from './apiBase';
 
-const DEFAULT_FALLBACK_API_BASE_URL = 'https://contentflow-api-production.up.railway.app';
+const DEFAULT_FALLBACK_API_BASE_URL = 'https://marketing.dakyworld.com';
 
 export const safeJsonParse = <T = any>(text: string): T | null => {
   try {

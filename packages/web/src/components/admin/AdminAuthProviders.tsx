@@ -40,7 +40,7 @@ const AUTH_PROVIDERS: AuthProviderDef[] = [
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'xxxx.apps.googleusercontent.com', type: 'text', helpText: 'OAuth 2.0 Client ID from Google Cloud Console → APIs & Services → Credentials.' },
       { id: 'clientSecret', label: 'Client secret', placeholder: 'GOCSPX-...', type: 'password', helpText: 'Keep this secret. Never expose it to the browser.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://contentflow-api-production.up.railway.app/auth/google/callback', type: 'text', helpText: 'Must be added to the authorised redirect URIs in your Google Cloud app.' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://marketing.dakyworld.com/auth/google/callback', type: 'text', helpText: 'Must be added to the authorised redirect URIs in your Google Cloud app.' },
     ],
   },
   {
@@ -53,7 +53,7 @@ const AUTH_PROVIDERS: AuthProviderDef[] = [
     fields: [
       { id: 'clientId', label: 'Client ID', placeholder: 'Ov23li...', type: 'text', helpText: 'Client ID from your GitHub OAuth App settings.' },
       { id: 'clientSecret', label: 'Client secret', placeholder: 'GitHub client secret', type: 'password', helpText: 'Used server-side to exchange the authorization code.' },
-      { id: 'redirectUri', label: 'Callback URL', placeholder: 'https://contentflow-api-production.up.railway.app/auth/github/callback', type: 'text', helpText: 'Must match the callback URL registered in your GitHub OAuth App.' },
+      { id: 'redirectUri', label: 'Callback URL', placeholder: 'https://marketing.dakyworld.com/auth/github/callback', type: 'text', helpText: 'Must match the callback URL registered in your GitHub OAuth App.' },
     ],
   },
   {
@@ -67,7 +67,7 @@ const AUTH_PROVIDERS: AuthProviderDef[] = [
       { id: 'clientId', label: 'Application (client) ID', placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', type: 'text', helpText: 'Found in Azure Portal → App registrations.' },
       { id: 'clientSecret', label: 'Client secret value', placeholder: 'Azure client secret', type: 'password', helpText: 'Generate under Certificates & secrets → New client secret.' },
       { id: 'tenantId', label: 'Tenant ID', placeholder: 'common', type: 'text', helpText: 'Use "common" for personal + work accounts, or your Azure tenant GUID.' },
-      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://contentflow-api-production.up.railway.app/auth/microsoft/callback', type: 'text', helpText: 'Must be added to the Redirect URIs in Azure App registration.' },
+      { id: 'redirectUri', label: 'Redirect URI', placeholder: 'https://marketing.dakyworld.com/auth/microsoft/callback', type: 'text', helpText: 'Must be added to the Redirect URIs in Azure App registration.' },
     ],
   },
 ];

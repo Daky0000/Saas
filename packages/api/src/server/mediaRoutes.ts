@@ -39,7 +39,7 @@ function getMediaServerBase(): string {
     process.env.BACKEND_PUBLIC_URL ||
     process.env.PUBLIC_API_URL ||
     process.env.VITE_API_BASE_URL ||
-    'https://contentflow-api-production.up.railway.app'
+    config.appUrl
   ).replace(/\/$/, '');
 }
 
