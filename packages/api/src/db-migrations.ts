@@ -1,6 +1,13 @@
 import type { Pool } from 'pg';
 import { logger } from './logger.ts';
 
+// The "User One" 1M-credit top-up is a test-environment convenience. It must
+// be explicitly opted into: without this flag, a production signup that
+// happens to be named "User One" would receive free credits on every deploy.
+export function isTestUserCreditGrantEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ENABLE_TEST_USER_CREDITS === 'true';
+}
+
 export async function runDatabaseMigrations(pool: Pool): Promise<void> {
 await pool.query(`
   CREATE TABLE IF NOT EXISTS users (
@@ -2048,18 +2055,21 @@ await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS pricing_bre
 await pool.query(`ALTER TABLE content_plans ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 30;`).catch(() => undefined);
 
 // Test account: keep "User One" topped up at 1,000,000 credits (re-applied
-// on deploy if the lazy monthly reset knocked it down).
-await pool.query(`
-  INSERT INTO user_credits (user_id, credits)
-  SELECT id, 1000000 FROM users WHERE full_name='User One' OR username='User One' OR username='userone'
-  ON CONFLICT (user_id) DO UPDATE SET credits=GREATEST(user_credits.credits, 1000000), updated_at=NOW();
-`).catch(() => undefined);
-await pool.query(`
-  INSERT INTO credit_ledger (id, user_id, delta, balance_after, reason)
-  SELECT gen_random_uuid()::text, id, 1000000, 1000000, 'test_user_grant_1m'
-  FROM users WHERE (full_name='User One' OR username='User One' OR username='userone')
-    AND NOT EXISTS (SELECT 1 FROM credit_ledger cl WHERE cl.reason='test_user_grant_1m');
-`).catch(() => undefined);
+// on deploy if the lazy monthly reset knocked it down). Opt-in only — see
+// isTestUserCreditGrantEnabled.
+if (isTestUserCreditGrantEnabled()) {
+  await pool.query(`
+    INSERT INTO user_credits (user_id, credits)
+    SELECT id, 1000000 FROM users WHERE full_name='User One' OR username='User One' OR username='userone'
+    ON CONFLICT (user_id) DO UPDATE SET credits=GREATEST(user_credits.credits, 1000000), updated_at=NOW();
+  `).catch(() => undefined);
+  await pool.query(`
+    INSERT INTO credit_ledger (id, user_id, delta, balance_after, reason)
+    SELECT gen_random_uuid()::text, id, 1000000, 1000000, 'test_user_grant_1m'
+    FROM users WHERE (full_name='User One' OR username='User One' OR username='userone')
+      AND NOT EXISTS (SELECT 1 FROM credit_ledger cl WHERE cl.reason='test_user_grant_1m');
+  `).catch(() => undefined);
+}
 
 await pool.query(`
   CREATE TABLE IF NOT EXISTS content_plan_runs (

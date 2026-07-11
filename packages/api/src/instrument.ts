@@ -1,0 +1,20 @@
+import * as Sentry from '@sentry/node';
+import { config } from './config.ts';
+
+// Error monitoring. Must be imported before the rest of the server so
+// Sentry's default integrations (uncaught exceptions, unhandled rejections)
+// register first. Entirely a no-op unless SENTRY_DSN is set — every
+// Sentry.capture* call is safe to make when init was never called.
+export const sentryEnabled = Boolean(config.sentryDsn);
+
+if (sentryEnabled) {
+  Sentry.init({
+    dsn: config.sentryDsn,
+    environment: config.nodeEnv,
+    // Errors only — tracing stays off so enabling monitoring never adds
+    // per-request overhead or surprise event volume.
+    tracesSampleRate: 0,
+  });
+}
+
+export { Sentry };

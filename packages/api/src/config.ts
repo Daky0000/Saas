@@ -67,6 +67,8 @@ const envSchema = z.object({
   SOCIAL_TOKEN_SAFETY_MARGIN_DAYS: z.coerce.number().default(10),
   // Serving static assets (e.g. on Railway combined deploy)
   SERVE_STATIC: z.string().optional(),
+  // Error monitoring — when unset, Sentry is a no-op
+  SENTRY_DSN: z.string().optional(),
   // Facebook / Meta webhook
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
   FACEBOOK_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
@@ -138,6 +140,7 @@ export const config = {
   twitterMonthlyWriteLimit: Math.max(env.TWITTER_MONTHLY_WRITE_LIMIT, env.X_MONTHLY_WRITE_LIMIT),
   socialTokenSafetyMarginDays: env.SOCIAL_TOKEN_SAFETY_MARGIN_DAYS,
   serveStatic: env.SERVE_STATIC === 'true',
+  sentryDsn: env.SENTRY_DSN ?? '',
   metaWebhookVerifyToken: env.META_WEBHOOK_VERIFY_TOKEN ?? env.FACEBOOK_WEBHOOK_VERIFY_TOKEN ?? '',
   facebookAppSecret: env.FACEBOOK_APP_SECRET ?? env.META_APP_SECRET ?? '',
 } as const;

@@ -176,6 +176,9 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
       const r = await fetch(`${API}/sync/jobs/${jobId}/run`, { method: 'POST', headers: authHeaders() });
       if (r.ok) {
         setTimeout(loadAll, 800);
+      } else {
+        const body = await r.json().catch(() => null);
+        alert(body?.error || 'Sync could not be started.');
       }
     } finally { setTriggering(null); }
   };

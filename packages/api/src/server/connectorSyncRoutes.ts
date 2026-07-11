@@ -2,7 +2,6 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
-import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string } | null;
 
@@ -22,66 +21,18 @@ function computeNextRun(frequency: string): Date | null {
   }
 }
 
-// Creates the run record and executes the sync. Shared by the manual run
-// endpoint and the scheduler (which claims and reschedules the job itself).
-// Execution is currently the provider-adapter stub; real adapters plug in
-// here without touching either caller.
-async function startSyncRun(pool: Pool, job: any): Promise<string> {
-  const runId = randomUUID();
-  await pool.query(
-    `INSERT INTO connector_sync_runs (id,job_id,user_id,domain_slug,provider_slug,status)
-     VALUES ($1,$2,$3,$4,$5,'running')`,
-    [runId, job.id, job.user_id, job.domain_slug, job.provider_slug]
-  );
-  setImmediate(async () => {
-    try {
-      // Stub: simulate a sync. Real implementation calls provider adapter.
-      await new Promise(r => setTimeout(r, 500));
-      await pool.query(
-        `UPDATE connector_sync_runs SET status='completed', records_pulled=0, completed_at=NOW() WHERE id=$1`,
-        [runId]
-      );
-    } catch (err) {
-      await pool.query(
-        `UPDATE connector_sync_runs SET status='failed', error_message=$1, completed_at=NOW() WHERE id=$2`,
-        [err instanceof Error ? err.message : 'Unknown error', runId]
-      ).catch(() => undefined);
-    }
-  });
-  return runId;
-}
+// Provider adapters are not built yet. Until they are, sync must not
+// pretend to run: fabricated "completed" runs would tell users their data is
+// synced when nothing happened. Job CRUD stays available so configured jobs
+// start running the moment adapters ship.
+export const SYNC_NOT_AVAILABLE_MESSAGE =
+  'Connector sync is not available yet — provider adapters are still in development. Your job is saved and will run automatically once they ship.';
 
-// Periodic scan (server.ts scheduler): run every active job whose schedule is
-// due. The claim UPDATE atomically advances next_run_at so concurrent
-// instances (FOR UPDATE SKIP LOCKED) never double-run a job.
-export async function processDueConnectorSyncJobs(pool: Pool | null): Promise<void> {
-  if (!pool) return;
-  try {
-    const { rows: jobs } = await pool.query(
-      `UPDATE connector_sync_jobs SET last_run_at=NOW(), updated_at=NOW(),
-         next_run_at = NOW() + (CASE frequency
-           WHEN 'hourly' THEN INTERVAL '1 hour'
-           WHEN '6h'     THEN INTERVAL '6 hours'
-           WHEN 'daily'  THEN INTERVAL '1 day'
-           WHEN 'weekly' THEN INTERVAL '7 days'
-           ELSE INTERVAL '1 day' END)
-       WHERE id IN (
-         SELECT id FROM connector_sync_jobs
-         WHERE active=true AND frequency <> 'manual' AND next_run_at IS NOT NULL AND next_run_at <= NOW()
-         ORDER BY next_run_at LIMIT 20 FOR UPDATE SKIP LOCKED
-       )
-       RETURNING *`
-    );
-    for (const job of jobs) {
-      try {
-        await startSyncRun(pool, job);
-      } catch (err) {
-        logger.warn({ err, jobId: job.id }, 'connector_sync_scheduled_run_failed');
-      }
-    }
-  } catch (err) {
-    logger.error({ err }, 'connector_sync_tick_failed');
-  }
+// Periodic scan (server.ts scheduler). Intentionally a no-op until provider
+// adapters exist — see SYNC_NOT_AVAILABLE_MESSAGE. Jobs keep their schedules;
+// nothing is claimed or recorded.
+export async function processDueConnectorSyncJobs(_pool: Pool | null): Promise<void> {
+  return;
 }
 
 export function registerConnectorSyncRoutes({ requireAuth, pool }: Deps): Router {
@@ -157,20 +108,15 @@ export function registerConnectorSyncRoutes({ requireAuth, pool }: Deps): Router
   });
 
   // ── Trigger sync run manually ─────────────────────────────────────────────────
+  // 501 until provider adapters exist — a simulated run would record a
+  // "completed" sync that never moved any data.
   router.post('/sync/jobs/:id/run', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     const { rows: [job] } = await pool.query(
-      `SELECT * FROM connector_sync_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]
+      `SELECT id FROM connector_sync_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, auth.userId]
     );
     if (!job) return void res.status(404).json({ error: 'Job not found' });
-
-    await pool.query(
-      `UPDATE connector_sync_jobs SET last_run_at=NOW(), next_run_at=$1, updated_at=NOW() WHERE id=$2`,
-      [computeNextRun(job.frequency), job.id]
-    );
-    const runId = await startSyncRun(pool, job);
-
-    res.status(202).json({ run_id: runId, status: 'running', message: 'Sync started' });
+    res.status(501).json({ error: SYNC_NOT_AVAILABLE_MESSAGE });
   });
 
   // ── Get sync run history ──────────────────────────────────────────────────────

@@ -226,7 +226,16 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
           return;
         }
       } else {
-        logger.warn('Resend webhook: no signing secret configured — processing unverified event');
+        // Without a signing secret the sender cannot be authenticated, and a
+        // forged bounce/complaint suppresses a real contact. Never process
+        // unverified events in production unless explicitly opted in.
+        const isProduction = (process.env.NODE_ENV ?? config.nodeEnv) === 'production';
+        const allowUnverified = process.env.RESEND_WEBHOOK_ALLOW_UNVERIFIED === 'true';
+        if (isProduction && !allowUnverified) {
+          logger.error('Resend webhook: no signing secret configured — discarding event. Set resend.webhookSecret (platform config) or RESEND_WEBHOOK_SECRET.');
+          return;
+        }
+        logger.warn('Resend webhook: no signing secret configured — processing unverified event (non-production only)');
       }
 
       const type = String(req.body?.type || '');

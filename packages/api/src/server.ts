@@ -1,4 +1,7 @@
-﻿import { Resend } from 'resend';
+﻿// Sentry first: its uncaught-exception / unhandled-rejection integrations
+// must register before anything else runs. No-op unless SENTRY_DSN is set.
+import { Sentry, sentryEnabled } from './instrument.ts';
+import { Resend } from 'resend';
 import Stripe from 'stripe';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
@@ -170,6 +173,25 @@ async function refreshStripe(): Promise<void> {
   } catch (err) {
     logger.error('Unhandled error:', err);
     // DB not ready yet — ignore, keep current value
+  }
+}
+
+// Logged once at boot in production: flags configuration gaps that won't
+// break startup but will silently degrade a live deployment.
+async function runProductionReadinessChecks(): Promise<void> {
+  if (config.nodeEnv !== 'production') return;
+  if (!sentryEnabled) {
+    logger.warn({ check: 'sentry' }, 'launch_check: SENTRY_DSN is not set — production errors will only reach the logs');
+  }
+  if (stripe && !STRIPE_WEBHOOK_SECRET) {
+    logger.warn({ check: 'stripe_webhook' }, 'launch_check: Stripe is configured without a webhook secret — subscription lifecycle events will be rejected');
+  }
+  const resendCfg = await getResendConfig().catch(() => null);
+  if (resendCfg?.apiKey && !(await getPlatformConfig('resend').catch(() => ({} as Record<string, string>))).webhookSecret && !process.env.RESEND_WEBHOOK_SECRET) {
+    logger.warn({ check: 'resend_webhook' }, 'launch_check: Resend is configured without a webhook signing secret — engagement events (opens/clicks/bounces) will be discarded');
+  }
+  if (process.env.ENABLE_TEST_USER_CREDITS === 'true') {
+    logger.warn({ check: 'test_credits' }, 'launch_check: ENABLE_TEST_USER_CREDITS is on — the "User One" account is granted 1,000,000 credits on every deploy');
   }
 }
 
@@ -427,6 +449,7 @@ ensureDatabase()
   .then(() => ensureSeedPricingPlans())
   .then(() => seedDefaultMcpServers(pool))
   .then(() => refreshStripe())
+  .then(() => runProductionReadinessChecks())
   .then(() => startSocialAutomationProcessor())
   .then(() => startTokenHealthMonitor())
   .catch((err) => {
@@ -901,6 +924,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Centralized error handling (must be last)
+if (sentryEnabled) Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 // Start server
