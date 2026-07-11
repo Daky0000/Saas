@@ -730,7 +730,11 @@ function decodeStoredIntegrationSecret(value: string | null | undefined): string
   try {
     return decryptIntegrationSecret(raw);
   } catch (err) {
-    logger.error('Unhandled error:', err);
+    // Deterministic data-state problem: the value was encrypted under a
+    // different INTEGRATIONS_ENCRYPTION_KEY or is corrupted — it will never
+    // decrypt. Warn (not error) so recurring background syncs don't page;
+    // getPublishableSocialConnection flags the account for reconnection.
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'stored_secret_decrypt_failed');
     return '';
   }
 }
@@ -916,6 +920,18 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     integrationFallback?.refreshToken ||
     ''
   ).trim();
+
+  // Stored token exists but is undecryptable (key rotation/corruption) and no
+  // fallback worked: permanently unusable. Flag once so the UI prompts the
+  // user to reconnect instead of every background sync failing silently.
+  if (match && !match.needs_reapproval && !accessToken && match.access_token_encrypted && !decryptedAccess) {
+    void markSocialAccountNeedsReapproval({
+      platformId,
+      accountId: match.account_id,
+      userId,
+      reason: 'stored_token_decrypt_failed',
+    }).catch(() => undefined);
+  }
   let tokenData = {
     ...(match?.token_data || {}),
     ...(refreshToken ? { refresh_token: refreshToken } : {}),
