@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { safeAxios, assertSafePublicUrl } from '../ssrf-guard.ts';
 
 export interface WordPressDeps {
   requireAuth: (req: Request, res: Response) => { userId: string; role: string; tokenVersion: number | null } | null;
@@ -214,11 +215,17 @@ router.post('/wordpress/connect-webhook', async (req: Request, res: Response) =>
     if (!url || !isValidWebhookUrl(url)) {
       return res.status(400).json({ success: false, error: 'A valid webhook URL (https:// or http://) is required.' });
     }
+    try {
+      await assertSafePublicUrl(url);
+    } catch {
+      return res.status(400).json({ success: false, error: 'That webhook URL is not allowed (it points to a private or reserved address).' });
+    }
 
     // Validate webhook by sending test request (do not log URL)
     let responseStatus: number;
     try {
-      const axRes = await axios.post(url, MAKE_TEST_PAYLOAD, {
+      const axRes = await safeAxios({
+        method: 'POST', url, data: MAKE_TEST_PAYLOAD,
         headers: { 'Content-Type': 'application/json' },
         timeout: 15000,
         validateStatus: () => true,
@@ -304,11 +311,19 @@ router.post('/wordpress/publish-webhook', async (req: Request, res: Response) =>
       return res.status(400).json({ success: false, error: 'Title or content is required' });
     }
 
-    const axiosRes = await axios.post(webhookUrl, payload, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000,
-      validateStatus: () => true,
-    });
+    let axiosRes;
+    try {
+      // Re-validate at send time: the stored URL is trusted, but re-check
+      // guards against a rebind to an internal host.
+      axiosRes = await safeAxios({
+        method: 'POST', url: webhookUrl, data: payload,
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000,
+        validateStatus: () => true,
+      });
+    } catch {
+      return res.status(400).json({ success: false, error: 'The stored webhook URL is no longer allowed.' });
+    }
 
     if (axiosRes.status < 200 || axiosRes.status >= 300) {
       return res.status(502).json({

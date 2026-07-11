@@ -305,3 +305,25 @@ test('routes: tracking snippet and pixel are publicly reachable', async () => {
   assert.equal(px.status, 200);
   assert.match(String(px.headers['content-type']), /image\/gif/);
 });
+
+test('ssrf: private/reserved/metadata targets are blocked; public hosts allowed', async () => {
+  const { isPrivateAddress, assertSafePublicUrl } = await import('../src/ssrf-guard.ts');
+
+  // Direct IP checks
+  for (const ip of ['127.0.0.1', '10.0.0.5', '172.16.9.9', '192.168.1.1', '169.254.169.254',
+                    '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fc00::1', '::ffff:127.0.0.1']) {
+    assert.equal(isPrivateAddress(ip), true, `${ip} must be private`);
+  }
+  for (const ip of ['8.8.8.8', '1.1.1.1', '93.184.216.34', '2606:4700:4700::1111']) {
+    assert.equal(isPrivateAddress(ip), false, `${ip} must be public`);
+  }
+
+  // URL-level guard rejects bad schemes, literals, and metadata
+  for (const bad of ['http://127.0.0.1/', 'http://169.254.169.254/latest/meta-data/',
+                     'http://10.0.0.1/', 'http://localhost:8080/', 'file:///etc/passwd',
+                     'gopher://x', 'http://[::1]/', 'http://user:pass@8.8.8.8/']) {
+    await assert.rejects(assertSafePublicUrl(bad), undefined, `${bad} must be rejected`);
+  }
+  // A well-known public host resolves and passes
+  await assert.doesNotReject(assertSafePublicUrl('https://example.com/'));
+});

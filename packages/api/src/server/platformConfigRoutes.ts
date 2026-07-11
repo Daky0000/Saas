@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import { randomBytes } from 'crypto';
 import { Resend } from 'resend';
 import { logger } from '../logger.ts';
+import { safeAxios } from '../ssrf-guard.ts';
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
 
@@ -292,7 +293,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         case 'zapier': {
           const { webhookUrl } = credentials;
           if (!webhookUrl?.startsWith('https://')) throw new Error('Invalid webhook URL');
-          const resp = await axios.post(webhookUrl, { test: true, source: 'ContentFlow' }, { validateStatus: () => true, timeout: 8000 });
+          const resp = await safeAxios({ method: 'POST', url: webhookUrl, data: { test: true, source: 'ContentFlow' }, validateStatus: () => true, timeout: 8000 });
           if (resp.status < 400) return res.json({ success: true });
           throw new Error(`Webhook returned status ${resp.status}`);
         }

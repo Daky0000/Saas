@@ -516,7 +516,9 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
       const { rows } = await pool.query(`SELECT image_url FROM mcp_media WHERE id=$1`, [req.params.id]);
       const url = rows[0]?.image_url;
       if (!url || !/^https?:\/\//i.test(url)) return res.status(404).json({ success: false, error: 'Not found' });
-      const upstream = await axios.get(url, { responseType: 'arraybuffer', timeout: 20_000, validateStatus: () => true });
+      // SSRF-guarded: gallery image URLs come from an external MCP server, so
+      // treat them as untrusted and block private/metadata targets.
+      const upstream = await safeAxios({ method: 'GET', url, responseType: 'arraybuffer', timeout: 20_000, validateStatus: () => true });
       if (upstream.status >= 400) return res.status(502).json({ success: false, error: 'Image unavailable' });
       res.setHeader('Content-Type', String(upstream.headers['content-type'] || 'image/jpeg'));
       res.setHeader('Cache-Control', 'private, max-age=86400');
@@ -546,7 +548,8 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
         || (await pool.query(`SELECT config FROM platform_configs WHERE platform='google'`).then(r => r.rows[0]?.config?.api_key ?? null).catch(() => null));
       if (!googleKey) return res.status(503).json({ success: false, error: 'Google AI is not configured (needed for text extraction)' });
 
-      const img = await axios.get(url, { responseType: 'arraybuffer', timeout: 20_000 });
+      const img = await safeAxios({ method: 'GET', url, responseType: 'arraybuffer', timeout: 20_000, validateStatus: () => true });
+      if (img.status >= 400) return res.status(502).json({ success: false, error: 'Image unavailable' });
       const mime = String(img.headers['content-type'] || 'image/jpeg');
       const b64 = Buffer.from(img.data).toString('base64');
       const GOOGLE_BASE = 'https://generativelanguage.googleapis.com/v1beta';

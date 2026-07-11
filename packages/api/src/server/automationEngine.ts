@@ -4,6 +4,7 @@ import { Resend } from 'resend';
 import axios from 'axios';
 import { logger } from '../logger.ts';
 import { isValidWebhookUrl } from '../integration-helpers.ts';
+import { safeAxios } from '../ssrf-guard.ts';
 import { recalcLeadScore } from './leadScoring.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -453,17 +454,19 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
             logger.warn({ automationId, url }, 'automation_webhook_invalid_url');
             break;
           }
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
           try {
-            await fetch(url, {
+            // SSRF-guarded: rejects private/reserved/metadata targets and pins
+            // the connection to a safe IP through redirects.
+            await safeAxios({
               method: 'POST',
+              url,
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ automation_id: automationId, contact }),
-              signal: controller.signal,
+              data: { automation_id: automationId, contact },
+              timeout: WEBHOOK_TIMEOUT_MS,
+              validateStatus: () => true,
             });
-          } finally {
-            clearTimeout(timer);
+          } catch (err) {
+            logger.warn({ err, automationId }, 'automation_webhook_blocked_or_failed');
           }
           break;
         }
