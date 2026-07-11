@@ -2992,18 +2992,21 @@ await pool.query(`
 await pool.query(`
   CREATE TABLE IF NOT EXISTS user_agents (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- users.id is TEXT; a UUID column here made the FK (and the whole CREATE)
+    -- fail silently on every boot, so this table never existed in production
+    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     agent_key        TEXT NOT NULL,
     compiled_skill   TEXT NOT NULL DEFAULT '',
     last_compiled_at TIMESTAMPTZ,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, agent_key)
   );
-`).catch(() => undefined);
+`).catch((err) => logger.error({ err }, 'migration_failed: user_agents'));
 await pool.query(`
   CREATE TABLE IF NOT EXISTS agent_activity (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- users.id is TEXT — see user_agents above
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     agent_key     TEXT NOT NULL,
     agent_name    TEXT NOT NULL DEFAULT '',
     activity_type TEXT NOT NULL DEFAULT 'report',
@@ -3012,7 +3015,7 @@ await pool.query(`
     is_read       BOOLEAN NOT NULL DEFAULT false,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
-`).catch(() => undefined);
+`).catch((err) => logger.error({ err }, 'migration_failed: agent_activity'));
 await pool.query(`CREATE INDEX IF NOT EXISTS agent_activity_user_idx ON agent_activity (user_id, created_at DESC);`).catch(() => undefined);
 // Seed default agent templates (skip if already exist)
 await pool.query(`
