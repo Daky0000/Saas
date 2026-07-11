@@ -68,7 +68,7 @@ async function getPlatformKey(platform: string, field = 'api_key'): Promise<stri
 
 async function storeGeneratedImage(base64Data: string, mimeType: string): Promise<string> {
   try {
-    const imgbbKey = process.env.IMGBB_API_KEY || (await getPlatformKey('google', 'imgbb_api_key'));
+    const imgbbKey = (await getPlatformKey('google', 'imgbb_api_key')) || process.env.IMGBB_API_KEY;
     if (imgbbKey) {
       const params = new URLSearchParams({ key: imgbbKey, image: base64Data });
       const resp = await axios.post('https://api.imgbb.com/1/upload', params.toString(), {
@@ -83,7 +83,8 @@ async function storeGeneratedImage(base64Data: string, mimeType: string): Promis
 
 export async function generateFeaturedImage(prompt: string): Promise<string | null> {
   // Gemini image (fast, cheap)
-  const googleKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || (await getPlatformKey('google'));
+  // Admin-configured key wins; env is fallback only
+  const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   if (googleKey) {
     try {
       const resp = await axios.post(
@@ -97,7 +98,7 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
     } catch (e) { logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_gemini_image_failed'); }
   }
   // OpenAI fallback
-  const openaiKey = process.env.OPENAI_API_KEY || (await getPlatformKey('openai'));
+  const openaiKey = (await getPlatformKey('openai')) || process.env.OPENAI_API_KEY;
   if (openaiKey) {
     try {
       const resp = await axios.post(

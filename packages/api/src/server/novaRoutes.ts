@@ -394,12 +394,13 @@ export function buildNovaModule(deps: NovaDeps): { router: Router; runScheduledA
   const AGENT_NAMES: Record<string, string> = Object.fromEntries(Object.entries(AGENT_DEFS).map(([k, v]) => [k, v.name]));
 
   async function getReplicateApiKey(): Promise<string> {
-    const envKey = process.env.REPLICATE_API_TOKEN;
-    if (envKey) return envKey;
+    // Admin-configured key wins; env is fallback only
     try {
       const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'replicate' LIMIT 1`);
-      return cfg.rows[0]?.config?.apiKey ?? '';
-    } catch (_err) { return ''; }
+      const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
+      if (dbKey) return dbKey;
+    } catch (_err) { /* fall through to env */ }
+    return process.env.REPLICATE_API_TOKEN || '';
   }
 
   async function gatherPlatformSnapshot(agentKey: string): Promise<Record<string, any>> {
@@ -1731,15 +1732,16 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     if (!admin) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
     try {
-      const envKey: string = process.env.REPLICATE_API_TOKEN ?? '';
-      if (envKey) {
-        const masked = envKey.length > 8 ? `${'*'.repeat(envKey.length - 4)}${envKey.slice(-4)}` : '****';
-        return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'env' });
-      }
+      // Mirror getReplicateApiKey resolution: DB config first, env fallback
       const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='replicate' LIMIT 1`);
       const key: string = r.rows[0]?.config?.apiKey ?? '';
-      const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
-      return res.json({ success: true, hasKey: !!key, maskedKey: masked, source: 'db' });
+      if (key) {
+        const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : '****';
+        return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'db' });
+      }
+      const envKey: string = process.env.REPLICATE_API_TOKEN ?? '';
+      const masked = envKey.length > 8 ? `${'*'.repeat(envKey.length - 4)}${envKey.slice(-4)}` : (envKey ? '****' : '');
+      return res.json({ success: true, hasKey: !!envKey, maskedKey: masked, source: envKey ? 'env' : 'db' });
     } catch (e: any) { return res.status(500).json({ error: e.message }); }
   });
 

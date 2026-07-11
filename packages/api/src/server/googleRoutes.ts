@@ -36,21 +36,19 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
   const router = express.Router();
 
   async function getGoogleApiKey(): Promise<string | null> {
-    if (process.env.GOOGLE_API_KEY)  return process.env.GOOGLE_API_KEY;
-    if (process.env.GEMINI_API_KEY)  return process.env.GEMINI_API_KEY;
+    // Admin-configured key (AI Assistant → Google AI) wins; env is fallback only
     try {
       const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
-      return r.rows[0]?.config?.api_key ?? null;
-    } catch (_err) { return null; }
+      const dbKey = r.rows[0]?.config?.api_key;
+      if (dbKey) return dbKey;
+    } catch (_err) { /* fall through to env */ }
+    return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || null;
   }
 
   async function storeGoogleImage(base64Data: string, mimeType: string): Promise<string> {
     try {
-      let imgbbKey: string | null = process.env.IMGBB_API_KEY ?? null;
-      if (!imgbbKey) {
-        const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
-        imgbbKey = r.rows[0]?.config?.imgbb_api_key ?? null;
-      }
+      const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
+      const imgbbKey: string | null = r.rows[0]?.config?.imgbb_api_key || process.env.IMGBB_API_KEY || null;
       if (imgbbKey) {
         const params = new URLSearchParams({ key: imgbbKey, image: base64Data });
         const resp = await axios.post('https://api.imgbb.com/1/upload', params.toString(), {

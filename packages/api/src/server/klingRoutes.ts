@@ -41,14 +41,15 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
   }
 
   async function getKlingKeys(): Promise<{ ak: string; sk: string } | null> {
-    const envAk = process.env.KLING_ACCESS_KEY?.trim();
-    const envSk = process.env.KLING_SECRET_KEY?.trim();
-    if (envAk && envSk) return { ak: envAk, sk: envSk };
+    // Admin-configured keys (AI Assistant → Kling AI) win; env is fallback only
     try {
       const r = await pool.query(`SELECT config FROM platform_configs WHERE platform='kling' LIMIT 1`);
       const cfg = r.rows[0]?.config;
       if (cfg?.accessKey && cfg?.secretKey) return { ak: cfg.accessKey, sk: cfg.secretKey };
     } catch (_err) { /* ignore */ }
+    const envAk = process.env.KLING_ACCESS_KEY?.trim();
+    const envSk = process.env.KLING_SECRET_KEY?.trim();
+    if (envAk && envSk) return { ak: envAk, sk: envSk };
     return null;
   }
 
@@ -92,6 +93,15 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
     if (!admin) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
     try {
+      // Mirror getKlingKeys resolution: DB config first, env fallback
+      const r = await pool.query(`SELECT config FROM platform_configs WHERE platform='kling' LIMIT 1`);
+      const cfg = r.rows[0]?.config ?? {};
+      const ak: string = cfg.accessKey ?? ''; const sk: string = cfg.secretKey ?? '';
+      if (ak && sk) {
+        return res.json({ success: true, hasKey: true, source: 'db',
+          maskedAk: ak.length > 4 ? `${'*'.repeat(ak.length - 4)}${ak.slice(-4)}` : '****',
+          maskedSk: sk.length > 4 ? `${'*'.repeat(sk.length - 4)}${sk.slice(-4)}` : '****' });
+      }
       const envAk = process.env.KLING_ACCESS_KEY?.trim();
       const envSk = process.env.KLING_SECRET_KEY?.trim();
       if (envAk && envSk) {
@@ -99,12 +109,7 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
           maskedAk: `${'*'.repeat(Math.max(0, envAk.length - 4))}${envAk.slice(-4)}`,
           maskedSk: `${'*'.repeat(Math.max(0, envSk.length - 4))}${envSk.slice(-4)}` });
       }
-      const r = await pool.query(`SELECT config FROM platform_configs WHERE platform='kling' LIMIT 1`);
-      const cfg = r.rows[0]?.config ?? {};
-      const ak: string = cfg.accessKey ?? ''; const sk: string = cfg.secretKey ?? '';
-      return res.json({ success: true, hasKey: !!(ak && sk), source: 'db',
-        maskedAk: ak.length > 4 ? `${'*'.repeat(ak.length - 4)}${ak.slice(-4)}` : (ak ? '****' : ''),
-        maskedSk: sk.length > 4 ? `${'*'.repeat(sk.length - 4)}${sk.slice(-4)}` : (sk ? '****' : '') });
+      return res.json({ success: true, hasKey: false, source: 'db', maskedAk: '', maskedSk: '' });
     } catch (e: any) { return res.status(500).json({ error: e.message }); }
   });
 

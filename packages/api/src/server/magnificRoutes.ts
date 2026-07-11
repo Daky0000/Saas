@@ -105,22 +105,23 @@ export function proxyHeaders(extra: Record<string, string> = {}): Record<string,
 }
 
 export async function getMagnificApiKey(pool: Pool | null): Promise<string> {
-  const envKey = process.env.MAGNIFIC_API_KEY;
-  if (envKey) return envKey;
+  // Admin-configured key (AI Assistant → Magnific AI) wins; env is fallback only
   try {
     const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`);
-    return cfg.rows[0]?.config?.apiKey ?? '';
-  } catch (_err) { return ''; }
+    const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
+    if (dbKey) return dbKey;
+  } catch (_err) { /* fall through to env */ }
+  return process.env.MAGNIFIC_API_KEY || '';
 }
 
 export async function getFreepikApiKey(pool: Pool | null): Promise<string> {
-  const envKey = process.env.FREEPIK_API_KEY;
-  if (envKey) return envKey;
+  // Admin-configured key wins; env fallback; Magnific key as last resort
   try {
     const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'freepik' LIMIT 1`);
     const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
     if (dbKey) return dbKey;
   } catch (_err) { /* ignore */ }
+  if (process.env.FREEPIK_API_KEY) return process.env.FREEPIK_API_KEY;
   return getMagnificApiKey(pool);
 }
 
@@ -350,15 +351,16 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     if (!admin) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
     try {
-      const envKey: string = process.env.FREEPIK_API_KEY ?? '';
-      if (envKey) {
-        const masked = envKey.length > 8 ? `${'*'.repeat(envKey.length - 4)}${envKey.slice(-4)}` : '****';
-        return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'env' });
-      }
+      // Mirror getFreepikApiKey resolution: DB config first, env fallback
       const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='freepik' LIMIT 1`);
       const key: string = r.rows[0]?.config?.apiKey ?? '';
-      const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
-      return res.json({ success: true, hasKey: !!key, maskedKey: masked, source: 'db' });
+      if (key) {
+        const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : '****';
+        return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'db' });
+      }
+      const envKey: string = process.env.FREEPIK_API_KEY ?? '';
+      const masked = envKey.length > 8 ? `${'*'.repeat(envKey.length - 4)}${envKey.slice(-4)}` : (envKey ? '****' : '');
+      return res.json({ success: true, hasKey: !!envKey, maskedKey: masked, source: envKey ? 'env' : 'db' });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
