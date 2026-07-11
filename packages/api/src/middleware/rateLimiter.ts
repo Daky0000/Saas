@@ -1,4 +1,4 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Store, Options, IncrementResponse } from 'express-rate-limit';
 import IORedis from 'ioredis';
 
@@ -73,7 +73,9 @@ export const publicApiLimiter = rateLimit({
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.headers.authorization || req.ip),
+  // ipKeyGenerator buckets IPv6 clients by /56 subnet — raw req.ip would let
+  // IPv6 users rotate addresses within their allocation to bypass the limit.
+  keyGenerator: (req) => String(req.headers.authorization || '').trim() || ipKeyGenerator(req.ip ?? ''),
   message: { success: false, error: 'Rate limit exceeded — max 120 requests per minute' },
   ...makeStore('rl:pubapi', PUBLIC_API_WINDOW_MS),
 });

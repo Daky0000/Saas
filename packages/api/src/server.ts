@@ -923,8 +923,17 @@ app.use((req: Request, res: Response) => {
   res.status(404).json({ success: false, error: 'Not found' });
 });
 
-// Centralized error handling (must be last)
-if (sentryEnabled) Sentry.setupExpressErrorHandler(app);
+// Centralized error handling (must be last).
+// Manual Sentry capture instead of setupExpressErrorHandler: that helper
+// expects OTel instrumentation, which can't hook a bundled express (we ship
+// one esbuild file) and logs a boot warning. Capture-then-forward is all we
+// need for errors-only monitoring.
+if (sentryEnabled) {
+  app.use((err: unknown, _req: Request, _res: Response, next: NextFunction) => {
+    Sentry.captureException(err);
+    next(err);
+  });
+}
 app.use(errorHandler);
 
 // Start server
