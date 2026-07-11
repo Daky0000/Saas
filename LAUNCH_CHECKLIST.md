@@ -42,8 +42,10 @@ production scopes. For each platform you market:
 
 ## 5. Database
 
-- [ ] Confirm Railway Postgres automated backups are enabled; note the retention window.
-- [ ] Do one restore drill (restore to a scratch instance, check row counts).
+- [ ] Railway backups are gated behind the Pro plan (verified July 2026: currently ZERO backups exist). Either upgrade to Pro (recommended — native backups + PITR) or configure the offsite fallback below. Ideally both.
+- [ ] Offsite fallback: `.github/workflows/db-backup.yml` runs a nightly encrypted `pg_dump` to a GitHub artifact (30-day retention). To activate, add two repo Actions secrets: `DATABASE_PUBLIC_URL` (Railway Postgres public connection URL — enable public networking on the DB service) and `BACKUP_PASSPHRASE` (32+ random chars, **keep a copy outside GitHub**). Then trigger the workflow manually once and confirm it goes green.
+- [ ] NOTE: this repo is **public** — backups are encrypted for that reason. Decide deliberately whether the source itself should be public; if not, GitHub → Settings → change visibility to private.
+- [ ] Do one restore drill (restore to a scratch instance, check row counts). Decrypt/restore commands are in the workflow file header.
 - [ ] Confirm `ENABLE_TEST_USER_CREDITS` is **unset** in production (the "User One" 1M-credit grant is off by default; the flag exists for dev/test only).
 - [ ] If a test "User One" account exists in the production DB with granted credits, zero it out or delete the account.
 
