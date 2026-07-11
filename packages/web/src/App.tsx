@@ -5,7 +5,6 @@ import {
   Bell,
   Bot,
   Building2,
-  CheckCircle2,
   ChevronDown,
   CreditCard,
   FileText,
@@ -16,6 +15,7 @@ import {
   Megaphone,
   Menu,
   Plus,
+  Rocket,
   Shield,
   Sparkles,
   Star,
@@ -288,8 +288,15 @@ function AppSidebar({
         setUserMenuOpen(false);
       }
     }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setUserMenuOpen(false);
+    }
     document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handle);
+      document.removeEventListener('keydown', handleKey);
+    };
   }, [userMenuOpen]);
 
   useEffect(() => {
@@ -366,6 +373,8 @@ function AppSidebar({
   const wsInitial = wsName[0].toUpperCase();
   const displayName = currentOrg?.name ?? authUser?.name ?? 'My Workspace';
   const userInitial = displayName[0].toUpperCase();
+  const planLabel = authUser?.planName?.trim() || 'Free';
+  const isFreePlan = planLabel.toLowerCase() === 'free';
 
   const cls = (active: boolean) =>
     `flex w-full items-center gap-2.5 border-l-2 py-[7px] pl-4 pr-3 text-[13px] font-medium transition-colors ${
@@ -727,67 +736,90 @@ function AppSidebar({
         <NotificationBell />
       </div>
 
-      {/* ── Settings ── */}
-      <div className="border-t border-gray-100">
-        <button type="button" onClick={() => go('settings')} className={cls(currentPage === 'settings')}>
-          <Settings size={15} className="shrink-0" />
-          <span className="flex-1 text-left">Settings</span>
-          {profileNeedsAttention && <AlertCircle size={12} className="text-red-500 shrink-0" />}
-        </button>
-      </div>
-
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
       {/* ── User card + dropdown ── */}
       <div ref={userMenuRef} className="relative px-3 pb-3 pt-1">
         {userMenuOpen && (
-          <div className="absolute bottom-full left-0 right-0 mb-1 rounded-2xl border border-gray-200 bg-white py-1.5 shadow-xl z-50 overflow-hidden">
+          <div role="menu" className="absolute bottom-full left-0 right-0 mb-1 rounded-2xl border border-gray-200 bg-white py-1.5 shadow-xl z-50 overflow-hidden">
             <div className="flex items-center gap-2.5 px-3.5 py-2.5">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white text-[11px] font-black select-none">
-                {wsInitial}
-              </div>
+              {authUser?.avatar ? (
+                <img src={authUser.avatar} alt="" className="h-7 w-7 shrink-0 rounded-lg object-cover" />
+              ) : (
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white text-[11px] font-black select-none">
+                  {wsInitial}
+                </div>
+              )}
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold text-gray-900 truncate">{displayName}</p>
-                <p className="text-[10px] uppercase tracking-widest text-gray-400">{authUser?.planName ?? 'Free'} Plan</p>
+                {authUser?.email
+                  ? <p className="text-[10px] text-gray-400 truncate">{authUser.email}</p>
+                  : <p className="text-[10px] uppercase tracking-widest text-gray-400">{planLabel} Plan</p>}
               </div>
-              <CheckCircle2 size={13} className="text-indigo-500 shrink-0" />
+              <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-indigo-600">{planLabel}</span>
             </div>
             <div className="mx-3 h-px bg-gray-100" />
-            <button type="button" onClick={() => go('billing')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
-              <Star size={14} className="shrink-0" /> Upgrade
-            </button>
-            <button type="button" onClick={() => go('memory')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            {isFreePlan ? (
+              <button type="button" role="menuitem" onClick={() => go('billing')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+                <Star size={14} className="shrink-0" /> Upgrade
+              </button>
+            ) : (
+              <button type="button" role="menuitem" onClick={() => go('billing')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                <CreditCard size={14} className="shrink-0 text-gray-400" /> Billing
+              </button>
+            )}
+            <button type="button" role="menuitem" onClick={() => go('memory')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <Sparkles size={14} className="shrink-0 text-gray-400" /> Personalization
             </button>
-            <button type="button" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <User size={14} className="shrink-0 text-gray-400" /> Profile
+            <button type="button" role="menuitem" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <User size={14} className="shrink-0 text-gray-400" />
+              <span className="flex-1 text-left">Profile</span>
+              {profileNeedsAttention && (
+                <span className="flex shrink-0 items-center gap-1 text-[10px] font-semibold text-red-500">
+                  <AlertCircle size={12} /> Incomplete
+                </span>
+              )}
             </button>
-            <button type="button" onClick={() => { go('workspace'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            <button type="button" role="menuitem" onClick={() => go('workspace')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <Building2 size={14} className="shrink-0 text-gray-400" /> Workspace
             </button>
-            <button type="button" onClick={() => { go('settings'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            <button type="button" role="menuitem" onClick={() => go('settings')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <Settings size={14} className="shrink-0 text-gray-400" /> Settings
             </button>
             <div className="mx-3 my-1 h-px bg-gray-100" />
-            <button type="button" onClick={() => { setHelpOpen(true); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            <button type="button" role="menuitem" onClick={() => { window.open('/changelog', '_blank', 'noopener'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <Rocket size={14} className="shrink-0 text-gray-400" /> What's new
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setHelpOpen(true); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
               <HelpCircle size={14} className="shrink-0 text-gray-400" /> Help
             </button>
-            <button type="button" onClick={() => { handleLogout(); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors">
+            <button type="button" role="menuitem" onClick={() => { handleLogout(); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors">
               <LogOut size={14} className="shrink-0" /> Log out
             </button>
           </div>
         )}
         <button
           type="button"
+          aria-haspopup="menu"
+          aria-expanded={userMenuOpen}
           onClick={() => setUserMenuOpen((v) => !v)}
           className="flex w-full items-center gap-2.5 rounded-xl bg-gray-50 px-3 py-2.5 hover:bg-gray-100 transition-colors"
         >
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white text-[11px] font-black select-none">
-            {userInitial}
+          <div className="relative h-7 w-7 shrink-0">
+            {authUser?.avatar ? (
+              <img src={authUser.avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
+            ) : (
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white text-[11px] font-black select-none">
+                {userInitial}
+              </div>
+            )}
+            {profileNeedsAttention && (
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
+            )}
           </div>
           <div className="min-w-0 flex-1 text-left">
             <p className="text-[12px] font-semibold text-gray-900 leading-tight truncate">{displayName}</p>
-            <p className="text-[10px] uppercase tracking-widest text-gray-400 leading-tight">Free Plan</p>
+            <p className="text-[10px] uppercase tracking-widest text-gray-400 leading-tight">{planLabel} Plan</p>
           </div>
           <ChevronDown size={13} className={`shrink-0 text-gray-400 transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`} />
         </button>
