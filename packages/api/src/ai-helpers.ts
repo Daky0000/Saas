@@ -272,19 +272,44 @@ export async function callAINonStreaming(
       return resp.content[0]?.type === 'text' ? resp.content[0].text : '';
     }
   } catch (err: any) {
-    const msg: string = err?.message || String(err);
-    if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('too many requests')) {
-      if (provider === 'google') {
-        throw new Error('Google API quota exceeded. The free tier has a limit of 0 for this project — enable billing at aistudio.google.com to use Gemini.');
-      } else {
-        throw new Error('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.');
-      }
-    }
-    if (msg.includes('401') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('unauthorized')) {
-      throw new Error(`Invalid ${provider === 'google' ? 'Google' : 'Anthropic'} API key. Please check your key and try again.`);
-    }
-    throw err;
+    throw classifyAIProviderError(provider, model, err);
   }
+}
+
+// Turn a provider SDK error into an actionable admin-facing message.
+// Classify by HTTP status first (the Anthropic SDK exposes err.status); fall
+// back to targeted message patterns for the Google SDK, which only throws
+// generic Errors. Never match on the bare word "invalid" — Anthropic billing
+// and validation errors are typed "invalid_request_error" and were being
+// misreported as a bad API key.
+export function classifyAIProviderError(provider: 'anthropic' | 'google', model: string, err: any): Error {
+  const status: number | undefined = typeof err?.status === 'number' ? err.status : undefined;
+  const msg: string = err?.message || String(err);
+  const lower = msg.toLowerCase();
+  const providerName = provider === 'google' ? 'Google' : 'Anthropic';
+
+  if (status === 429 || lower.includes('quota') || lower.includes('rate limit') || lower.includes('too many requests')) {
+    if (provider === 'google') {
+      return new Error('Google API quota exceeded. The free tier has a limit of 0 for this project — enable billing at aistudio.google.com to use Gemini.');
+    }
+    return new Error('Anthropic rate limit exceeded. Check your usage limits at console.anthropic.com.');
+  }
+  if (lower.includes('credit balance')) {
+    return new Error('Your Anthropic account has insufficient credits — the API key is fine. Add credits at console.anthropic.com → Billing.');
+  }
+  if (status === 401 || lower.includes('authentication_error') || lower.includes('api key not valid') || lower.includes('invalid x-api-key') || lower.includes('unauthorized')) {
+    return new Error(`Invalid ${providerName} API key. Please check your key and try again.`);
+  }
+  if (status === 403 || lower.includes('permission_error')) {
+    return new Error(`The ${providerName} API key is valid but lacks permission for model "${model}". Check the key's workspace/model access.`);
+  }
+  if (status === 404 || lower.includes('not_found_error') || lower.includes('is not found')) {
+    return new Error(`Model "${model}" is not available on ${providerName} — pick a different model in Admin → AI Assistant → Configuration.`);
+  }
+  if (status === 529 || lower.includes('overloaded')) {
+    return new Error(`${providerName} is temporarily overloaded — try again in a moment.`);
+  }
+  return err instanceof Error ? err : new Error(msg);
 }
 
 export function decryptAIKey(encryptedKey: string): string {
