@@ -1,6 +1,6 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, LayoutDashboard, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, LayoutDashboard, LogOut, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { AppUser } from '../utils/userSession';
+import { AppUser, clearStoredUser } from '../utils/userSession';
 import AdminOverview from '../components/admin/AdminOverview';
 import UserManagementPage from '../components/admin/UserManagementPage';
 import PricingManagement from '../components/admin/PricingManagement';
@@ -345,16 +345,30 @@ const Admin = ({ currentUser }: AdminProps) => {
         </div>
       </nav>
 
-      <div className="border-t border-slate-200 px-4 py-4">
+      <div className="space-y-2 border-t border-slate-200 px-4 py-4">
         <button
           type="button"
           onClick={() => {
             window.history.pushState({}, document.title, '/dashboard');
             window.dispatchEvent(new PopStateEvent('popstate'));
           }}
-          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
         >
           Return to Dakyworld Hub
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            localStorage.removeItem('auth_session');
+            localStorage.removeItem('auth_token');
+            clearStoredUser();
+            // Hard redirect so all in-memory app state is reset
+            window.location.assign('/login');
+          }}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
+        >
+          <LogOut size={15} />
+          Log out
         </button>
       </div>
     </>
