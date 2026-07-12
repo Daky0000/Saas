@@ -39,6 +39,9 @@ const DEFAULT_MEIGEN_CONFIG = {
   pages_per_category: 2,
   page_size: 20,
   sort_by: 'likes',
+  // First sync pass per category — pulls newly posted items so the gallery
+  // stays current instead of re-fetching the same all-time-popular set.
+  recency_sort: 'latest',
   allowed_models: ['gpt', 'gemini', 'nano banana', 'nanobanana', 'nano-banana', 'imagen'],
   // Model + full prompt come from get_inspiration; one call per new item.
   max_detail_lookups: 80,
@@ -125,18 +128,26 @@ export async function syncMeigenGallery(
   );
   const existingModels = new Map<string, string | null>(existingRows.map((r: any) => [r.external_id, r.model]));
 
+  // Two passes per category: a recency pass first (so items newly posted on
+  // MeiGen actually enter the crawl window — sorting only by likes re-fetches
+  // the same all-time-popular set forever), then the quality pass by likes.
+  const sortPasses = Array.from(new Set([String(cfg.recency_sort || 'latest'), String(cfg.sort_by || 'likes')]));
+
   await withMcpClient(conn, async (client) => {
+    for (const sortBy of sortPasses) {
     for (const category of cfg.categories.slice(0, 8)) {
-      for (let page = 0; page < Math.max(1, Number(cfg.pages_per_category) || 1); page++) {
+      // The recency pass only needs the first page — new posts are at the top.
+      const pages = sortBy === cfg.sort_by ? Math.max(1, Number(cfg.pages_per_category) || 1) : 1;
+      for (let page = 0; page < pages; page++) {
         let items: GalleryEntry[] = [];
         try {
           const result = await client.callTool({
             name: 'search_gallery',
-            arguments: { category, limit: Math.min(20, Number(cfg.page_size) || 20), offset: page * (Number(cfg.page_size) || 20), sortBy: cfg.sort_by || 'likes' },
+            arguments: { category, limit: Math.min(20, Number(cfg.page_size) || 20), offset: page * (Number(cfg.page_size) || 20), sortBy },
           });
           items = parseGalleryMarkdown(String(extractToolPayload(result) ?? ''));
         } catch (err) {
-          errors.push(`browse "${category}" p${page}: ${err instanceof Error ? err.message : 'failed'}`);
+          errors.push(`browse "${category}" ${sortBy} p${page}: ${err instanceof Error ? err.message : 'failed'}`);
           continue;
         }
         if (!items.length) break; // past the end of this category
@@ -184,6 +195,7 @@ export async function syncMeigenGallery(
           }
         }
       }
+    }
     }
   });
 
@@ -441,9 +453,12 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
       if (tab === 'gpt') { where = `LOWER(m.model) LIKE '%gpt%'`; }
       else if (tab === 'gemini') { where = `(LOWER(m.model) LIKE '%gemini%' OR LOWER(m.model) LIKE '%nano%' OR LOWER(m.model) LIKE '%imagen%')`; }
 
+      // Default view surfaces fresh arrivals (last 7 days) first, then the
+      // featured/popular ranking — otherwise the same old top-liked items sit
+      // on top forever and the gallery looks frozen.
       const order = sort === 'newest' ? 'm.created_at DESC'
         : sort === 'popular' ? 'm.likes_count DESC, m.created_at DESC'
-        : 'm.featured DESC, m.likes_count DESC, m.created_at DESC';
+        : `(m.created_at > NOW() - INTERVAL '7 days') DESC, m.featured DESC, m.likes_count DESC, m.created_at DESC`;
 
       params.push(limit, offset);
       const { rows } = await pool.query(
