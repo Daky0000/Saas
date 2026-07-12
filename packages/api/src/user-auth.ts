@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { dbQuery, hasDatabase, normalizeEmail, normalizeUsername, pool } from './db.ts';
+import { decryptPlatformConfig } from './integration-helpers.ts';
 
 const JWT_SECRET = config.jwtSecret;
 
@@ -69,10 +70,10 @@ export const inMemoryPlatformConfigs = new Map<string, PlatformConfigRow>();
 export async function getPlatformConfig(platform: string): Promise<Record<string, string>> {
   if (hasDatabase()) {
     const result = await dbQuery('SELECT config FROM platform_configs WHERE platform = $1', [platform]);
-    if (result.rows.length > 0) return result.rows[0].config as Record<string, string>;
+    if (result.rows.length > 0) return decryptPlatformConfig(result.rows[0].config) as Record<string, string>;
     return {};
   }
-  return inMemoryPlatformConfigs.get(platform)?.config ?? {};
+  return decryptPlatformConfig(inMemoryPlatformConfigs.get(platform)?.config) as Record<string, string>;
 }
 
 export async function isPlatformEnabled(platform: string): Promise<boolean> {

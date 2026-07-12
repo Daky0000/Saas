@@ -112,7 +112,7 @@ import {
   requireAuth, checkTokenVersion, requireAdmin, requireOrgMembership,
 } from './user-auth.ts';
 import {
-  encryptIntegrationSecret, decryptIntegrationSecret, getIntegrationRowBySlug,
+  encryptIntegrationSecret, decryptIntegrationSecret, decryptPlatformConfig, getIntegrationRowBySlug,
   logIntegrationEvent, upsertUserIntegration,
   encryptWordPressPassword, decryptWordPressPassword, normalizeWordPressSiteUrl,
   getWordPressConnection, getMakeWebhookConnection,
@@ -163,9 +163,10 @@ async function refreshStripe(): Promise<void> {
     );
     const row = r.rows[0];
     if (!row) return; // no admin config yet — keep env var fallback
-    if (row.enabled && row.config?.secretKey) {
-      stripe = new Stripe(row.config.secretKey, { apiVersion: '2025-05-28.basil' as any });
-      STRIPE_WEBHOOK_SECRET = row.config.webhookSecret || '';
+    const stripeCfg = decryptPlatformConfig(row.config);
+    if (row.enabled && stripeCfg?.secretKey) {
+      stripe = new Stripe(stripeCfg.secretKey, { apiVersion: '2025-05-28.basil' as any });
+      STRIPE_WEBHOOK_SECRET = stripeCfg.webhookSecret || '';
     } else if (!row.enabled) {
       stripe = null;
       STRIPE_WEBHOOK_SECRET = '';

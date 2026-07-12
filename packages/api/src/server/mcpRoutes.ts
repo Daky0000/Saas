@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import axios from 'axios';
 import { logger } from '../logger.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { hasAICredits, chargeAICredits } from '../ai-helpers.ts';
 import { invalidateSharedContext } from './agentSharedContext.ts';
 import { withMcpClient, listMcpTools, extractToolPayload, type McpServerConn } from './mcpClient.ts';
@@ -545,7 +546,7 @@ export function registerMcpMediaRoutes({ requireAuth, pool }: UserDeps): Router 
       if (!(await hasAICredits(auth.userId))) return res.status(402).json({ success: false, error: 'Out of AI credits' });
 
       const googleKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY
-        || (await pool.query(`SELECT config FROM platform_configs WHERE platform='google'`).then(r => r.rows[0]?.config?.api_key ?? null).catch(() => null));
+        || (await pool.query(`SELECT config FROM platform_configs WHERE platform='google'`).then(r => decryptPlatformConfig(r.rows[0]?.config)?.api_key ?? null).catch(() => null));
       if (!googleKey) return res.status(503).json({ success: false, error: 'Google AI is not configured (needed for text extraction)' });
 
       const img = await safeAxios({ method: 'GET', url, responseType: 'arraybuffer', timeout: 20_000, validateStatus: () => true });

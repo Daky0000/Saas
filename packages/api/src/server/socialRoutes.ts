@@ -4,6 +4,7 @@ import { Router } from 'express';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
 import { ensureWordPressSocialAccount } from '../integration-helpers.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 import { getVisibleUserPlatformSlugs } from '../platform-helpers.ts';
 
 // ─── Deps ─────────────────────────────────────────────────────────────────────
@@ -1301,6 +1302,7 @@ router.patch('/admin/platform-configs/:platform/toggle', async (req: Request, re
           [platform, Boolean(enabled)]
         );
       }
+      void recordAuditLog(admin.id, 'admin_platform_toggled', [], { platform, enabled: Boolean(enabled) });
       return res.json({ success: true, enabled: Boolean(enabled) });
     }
     return res.json({ success: true, enabled: Boolean(enabled) });

@@ -2,6 +2,7 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import axios from 'axios';
 import { logger } from '../logger.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -19,7 +20,7 @@ export function registerApifyRoutes({ requireAdmin, hasDatabase, dbQuery }: Apif
       const r = await dbQuery<{ config: Record<string, string> }>(
         `SELECT config FROM platform_configs WHERE platform = 'apify' AND enabled = true LIMIT 1`
       );
-      return (r.rows[0] as any)?.config?.apiKey ?? null;
+      return decryptPlatformConfig((r.rows[0] as any)?.config)?.apiKey ?? null;
     } catch (_err) { return null; }
   }
 

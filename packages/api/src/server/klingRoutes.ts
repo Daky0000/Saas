@@ -5,6 +5,8 @@ import type { Pool } from 'pg';
 import axios from 'axios';
 import { randomUUID, createHmac } from 'crypto';
 import { logger } from '../logger.ts';
+import { recordAuditLog } from '../link-metadata.ts';
+import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -44,7 +46,7 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
     // Admin-configured keys (AI Assistant → Kling AI) win; env is fallback only
     try {
       const r = await pool.query(`SELECT config FROM platform_configs WHERE platform='kling' LIMIT 1`);
-      const cfg = r.rows[0]?.config;
+      const cfg = decryptPlatformConfig(r.rows[0]?.config);
       if (cfg?.accessKey && cfg?.secretKey) return { ak: cfg.accessKey, sk: cfg.secretKey };
     } catch (_err) { /* ignore */ }
     const envAk = process.env.KLING_ACCESS_KEY?.trim();
@@ -95,7 +97,7 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
     try {
       // Mirror getKlingKeys resolution: DB config first, env fallback
       const r = await pool.query(`SELECT config FROM platform_configs WHERE platform='kling' LIMIT 1`);
-      const cfg = r.rows[0]?.config ?? {};
+      const cfg = decryptPlatformConfig(r.rows[0]?.config);
       const ak: string = cfg.accessKey ?? ''; const sk: string = cfg.secretKey ?? '';
       if (ak && sk) {
         return res.json({ success: true, hasKey: true, source: 'db',
@@ -124,8 +126,9 @@ export function registerKlingRoutes({ requireAuth, requireAdmin, hasDatabase, po
       await pool.query(
         `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ('kling', $1, true, NOW())
          ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
-        [JSON.stringify({ accessKey: accessKey.trim(), secretKey: secretKey.trim() })]
+        [JSON.stringify(encryptPlatformConfig({ accessKey: accessKey.trim(), secretKey: secretKey.trim() }))]
       );
+      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'kling' });
       return res.json({ success: true });
     } catch (e: any) { return res.status(500).json({ error: e.message }); }
   });

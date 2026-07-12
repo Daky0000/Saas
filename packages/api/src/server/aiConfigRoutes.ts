@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { logger } from '../logger.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 import { AI_SYSTEM_PROMPT_DEFAULT } from './aiChatRoutes.ts';
 
 const AI_CONFIG_PLATFORM = 'ai_assistant';
@@ -176,6 +177,12 @@ export function registerAIConfigRoutes(deps: AIConfigDeps): Router {
           updated_at: new Date().toISOString(),
         });
       }
+
+      void recordAuditLog((admin as any).id, 'admin_ai_config_updated', [], {
+        model: newModel, provider: newProvider,
+        anthropicKeyChanged: Boolean(apiKey && !String(apiKey).startsWith('\u2022\u2022')),
+        googleKeyChanged: Boolean(googleApiKey && !String(googleApiKey).startsWith('\u2022\u2022')),
+      });
 
       const rawAnthropicKey = newEncryptedKey ? decryptAIKey(newEncryptedKey) : (process.env.ANTHROPIC_API_KEY || '');
       const rawGoogleKey = newGoogleEncryptedKey ? decryptAIKey(newGoogleEncryptedKey) : (process.env.GOOGLE_AI_API_KEY || '');

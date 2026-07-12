@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
+import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 import pino from 'pino';
 import type { Pool } from 'pg';
 import {
@@ -397,7 +399,7 @@ export function buildNovaModule(deps: NovaDeps): { router: Router; runScheduledA
     // Admin-configured key wins; env is fallback only
     try {
       const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'replicate' LIMIT 1`);
-      const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
+      const dbKey: string = decryptPlatformConfig(cfg.rows[0]?.config)?.apiKey ?? '';
       if (dbKey) return dbKey;
     } catch (_err) { /* fall through to env */ }
     return process.env.REPLICATE_API_TOKEN || '';
@@ -1734,7 +1736,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     try {
       // Mirror getReplicateApiKey resolution: DB config first, env fallback
       const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='replicate' LIMIT 1`);
-      const key: string = r.rows[0]?.config?.apiKey ?? '';
+      const key: string = decryptPlatformConfig(r.rows[0]?.config)?.apiKey ?? '';
       if (key) {
         const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : '****';
         return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'db' });
@@ -1755,8 +1757,9 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
       await pool!.query(
         `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ('replicate', $1, true, NOW())
          ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
-        [JSON.stringify({ apiKey: apiKey.trim() })],
+        [JSON.stringify(encryptPlatformConfig({ apiKey: apiKey.trim() }))],
       );
+      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'replicate' });
       return res.json({ success: true });
     } catch (e: any) { return res.status(500).json({ error: e.message }); }
   });

@@ -5,6 +5,8 @@ import axios from 'axios';
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { recordAuditLog } from '../link-metadata.ts';
+import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -39,7 +41,7 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
     // Admin-configured key (AI Assistant → Google AI) wins; env is fallback only
     try {
       const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
-      const dbKey = r.rows[0]?.config?.api_key;
+      const dbKey = decryptPlatformConfig(r.rows[0]?.config)?.api_key;
       if (dbKey) return dbKey;
     } catch (_err) { /* fall through to env */ }
     return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || null;
@@ -48,7 +50,7 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
   async function storeGoogleImage(base64Data: string, mimeType: string): Promise<string> {
     try {
       const r = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['google']);
-      const imgbbKey: string | null = r.rows[0]?.config?.imgbb_api_key || process.env.IMGBB_API_KEY || null;
+      const imgbbKey: string | null = decryptPlatformConfig(r.rows[0]?.config)?.imgbb_api_key || process.env.IMGBB_API_KEY || null;
       if (imgbbKey) {
         const params = new URLSearchParams({ key: imgbbKey, image: base64Data });
         const resp = await axios.post('https://api.imgbb.com/1/upload', params.toString(), {
@@ -98,7 +100,8 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
 
   // PUT /api/admin/google/config
   router.put('/admin/google/config', async (req: Request, res: Response) => {
-    if (!await requireAdmin(req, res)) return;
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
     const { apiKey, imgbbKey } = req.body as { apiKey?: string; imgbbKey?: string };
     try {
       const patch: Record<string, string> = {};
@@ -108,9 +111,10 @@ export function registerGoogleRoutes({ requireAuth, requireAdmin, hasDatabase, d
         await dbQuery(
           `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ($1, $2::jsonb, true, NOW())
            ON CONFLICT (platform) DO UPDATE SET config = platform_configs.config || $2::jsonb, enabled=true, updated_at=NOW()`,
-          ['google', JSON.stringify(patch)]
+          ['google', JSON.stringify(encryptPlatformConfig(patch))]
         );
       }
+      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'google', fields: Object.keys(patch) });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -22,7 +23,7 @@ export function registerHiggsfieldRoutes({ requireAdmin, hasDatabase, dbQuery }:
       const r = await dbQuery<{ config: Record<string, string> }>(
         `SELECT config FROM platform_configs WHERE platform = 'higgsfield' AND enabled = true LIMIT 1`
       );
-      const cfg = (r.rows[0] as any)?.config;
+      const cfg = decryptPlatformConfig((r.rows[0] as any)?.config);
       const apiId = cfg?.apiId ?? '';
       const apiSecret = cfg?.apiSecret ?? '';
       if (!apiId || !apiSecret) return null;

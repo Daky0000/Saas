@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import type Stripe from 'stripe';
 import { logger } from '../logger.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 
 type DbPricingPlan = {
   id: string;
@@ -75,6 +76,7 @@ router.post('/pricing/plans', async (req: Request, res: Response) => {
     if (!admin) return;
 
     const { name, description, price, billingPeriod, features, discountPercentage, isOnSale } = req.body;
+    void recordAuditLog((admin as any).id, 'admin_pricing_plan_created', [], { name });
     if (!name || !description || price === undefined) {
       return res
         .status(400)
@@ -166,6 +168,7 @@ router.put('/pricing/plans/:id', async (req: Request, res: Response) => {
 
     const { id } = req.params;
     const { name, description, price, billingPeriod, features, isActive, discountPercentage, isOnSale } = req.body;
+    void recordAuditLog((admin as any).id, 'admin_pricing_plan_updated', [], { planId: id, name });
 
     if (!name || !description || price === undefined) {
       return res

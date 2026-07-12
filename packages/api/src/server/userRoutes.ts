@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { logger } from '../logger.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 
 // ─── Local types ──────────────────────────────────────────────────────────────
 
@@ -230,6 +231,8 @@ export function registerUserRoutes(deps: UserRouteDeps): Router {
       } else {
         await dbQuery('DELETE FROM users WHERE id = $1', [id]);
       }
+      void recordAuditLog((admin as any).id, 'admin_user_deleted', [], { targetUserId: id });
+      void recordAuditLog((admin as any).id, 'admin_user_deleted', [], { targetUserId: id });
       return res.json({ success: true });
     } catch (error) {
       logger.error('Delete user error:', error);
@@ -250,6 +253,8 @@ export function registerUserRoutes(deps: UserRouteDeps): Router {
       } else {
         await dbQuery('UPDATE users SET status = $1 WHERE id = $2', [nextStatus, id]);
       }
+      void recordAuditLog((admin as any).id, 'admin_user_status_changed', [], { targetUserId: id, status: nextStatus });
+      void recordAuditLog((admin as any).id, 'admin_user_status_changed', [], { targetUserId: id, status: nextStatus });
       return res.json({ success: true });
     } catch (error) {
       logger.error('Patch user status error:', error);
@@ -270,6 +275,8 @@ export function registerUserRoutes(deps: UserRouteDeps): Router {
       } else {
         await dbQuery('UPDATE users SET role = $1 WHERE id = $2', [nextRole, id]);
       }
+      void recordAuditLog((admin as any).id, 'admin_user_role_changed', [], { targetUserId: id, role: nextRole });
+      void recordAuditLog((admin as any).id, 'admin_user_role_changed', [], { targetUserId: id, role: nextRole });
       return res.json({ success: true });
     } catch (error) {
       logger.error('Patch user role error:', error);

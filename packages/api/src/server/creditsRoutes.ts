@@ -2,6 +2,7 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { ensureCreditAccount, chargeAICredits, grantCredits } from '../ai-helpers.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -87,6 +88,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
         resolvedId = r.rows[0].id;
       }
       const balance = await grantCredits(resolvedId!, amt, 'admin_grant', { granted_by: (admin as any).id ?? 'admin' });
+      void recordAuditLog((admin as any).id, 'admin_credits_granted', [], { targetUserId: resolvedId, amount: amt });
       return res.json({ success: true, user_id: resolvedId, credits: balance });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
@@ -109,6 +111,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
          ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $1, updated_at = NOW()`,
         [amt]
       );
+      void recordAuditLog((admin as any).id, 'admin_credits_granted_all', [], { amount: amt, updated: result.rowCount });
       return res.json({ success: true, updated: result.rowCount });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });

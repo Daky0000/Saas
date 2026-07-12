@@ -6,6 +6,8 @@ import { randomBytes } from 'crypto';
 import { Resend } from 'resend';
 import { logger } from '../logger.ts';
 import { safeAxios } from '../ssrf-guard.ts';
+import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
+import { recordAuditLog } from '../link-metadata.ts';
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
 
@@ -65,11 +67,11 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
 
       if (hasDatabase()) {
         const result = await dbQuery('SELECT platform, config, enabled, updated_at FROM platform_configs ORDER BY platform');
-        return res.json({ success: true, configs: result.rows.map((r: any) => ({ ...r, config: maskConfig(r.config) })) });
+        return res.json({ success: true, configs: result.rows.map((r: any) => ({ ...r, config: maskConfig(decryptPlatformConfig(r.config)) })) });
       }
       return res.json({
         success: true,
-        configs: Array.from(inMemoryPlatformConfigs.values()).map((r) => ({ ...r, config: maskConfig(r.config) })),
+        configs: Array.from(inMemoryPlatformConfigs.values()).map((r) => ({ ...r, config: maskConfig(decryptPlatformConfig(r.config)) })),
       });
     } catch (error) {
       logger.error('Get platform configs error:', error);
@@ -85,9 +87,11 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       if (hasDatabase()) {
         const result = await dbQuery('SELECT platform, config, enabled, updated_at FROM platform_configs WHERE platform = $1', [platform]);
         if (result.rows.length === 0) return res.json({ success: true, config: null });
-        return res.json({ success: true, config: result.rows[0] });
+        const row: any = result.rows[0];
+        return res.json({ success: true, config: { ...row, config: decryptPlatformConfig(row.config) } });
       }
-      return res.json({ success: true, config: inMemoryPlatformConfigs.get(platform) ?? null });
+      const memRow = inMemoryPlatformConfigs.get(platform);
+      return res.json({ success: true, config: memRow ? { ...memRow, config: decryptPlatformConfig(memRow.config) } : null });
     } catch (error) {
       logger.error('Get platform config error:', error);
       return res.status(500).json({ success: false, error: 'Failed to fetch platform config' });
@@ -122,20 +126,28 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         if (Boolean(clientId && redirectUri && (!secretRequired || secretValue))) finalEnabled = true;
       }
 
+      // Secret fields are encrypted at rest; reads decrypt transparently
+      const storedConfig = encryptPlatformConfig(normalizedConfig);
+
       if (hasDatabase()) {
         const updateRes = await dbQuery(
           `UPDATE platform_configs SET config = $2, enabled = $3, updated_at = NOW() WHERE platform = $1`,
-          [platform, JSON.stringify(normalizedConfig), finalEnabled]
+          [platform, JSON.stringify(storedConfig), finalEnabled]
         );
         if (updateRes.rowCount === 0) {
           await dbQuery(
             `INSERT INTO platform_configs (platform, config, enabled, updated_at) VALUES ($1, $2, $3, NOW())`,
-            [platform, JSON.stringify(normalizedConfig), finalEnabled]
+            [platform, JSON.stringify(storedConfig), finalEnabled]
           );
         }
       } else {
-        inMemoryPlatformConfigs.set(platform, { platform, config: normalizedConfig, enabled: finalEnabled, updated_at: now });
+        inMemoryPlatformConfigs.set(platform, { platform, config: storedConfig as Record<string, string>, enabled: finalEnabled, updated_at: now });
       }
+
+      // Audit the change (field names only — never values)
+      void recordAuditLog(admin.id, 'admin_platform_config_updated', [], {
+        platform, enabled: finalEnabled, fields: Object.keys(normalizedConfig),
+      });
 
       if (platform === 'stripe') void refreshStripe();
       return res.json({ success: true, message: 'Platform config saved' });

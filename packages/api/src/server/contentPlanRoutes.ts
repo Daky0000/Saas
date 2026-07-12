@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { dbQuery } from '../db.ts';
 import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
@@ -62,7 +63,7 @@ export function estimatePlanCredits(perDay: number, durationDays: number, imageM
 async function getPlatformKey(platform: string, field = 'api_key'): Promise<string | null> {
   try {
     const r = await dbQuery<{ config: Record<string, string> }>(`SELECT config FROM platform_configs WHERE platform=$1`, [platform]);
-    return r.rows[0]?.config?.[field] ?? null;
+    return decryptPlatformConfig(r.rows[0]?.config)?.[field] ?? null;
   } catch { return null; }
 }
 

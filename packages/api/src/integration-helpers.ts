@@ -26,6 +26,51 @@ export function decryptIntegrationSecret(encrypted: string): string {
   return decipher.update(data).toString('utf8') + decipher.final('utf8');
 }
 
+// ── Platform-config secrets at rest ──────────────────────────────────────────
+// Secret-looking fields in platform_configs.config are AES-encrypted with a
+// version marker. Reads decrypt transparently; values without the marker
+// (rows saved before encryption shipped) pass through unchanged, so existing
+// configs keep working until re-saved.
+const PLATFORM_SECRET_PREFIX = 'encv1:';
+const PLATFORM_SECRET_FIELD = /(secret|token|password|api_?key|access_?key|signing_?key)/i;
+
+export function isSecretPlatformField(key: string): boolean {
+  return PLATFORM_SECRET_FIELD.test(String(key || ''));
+}
+
+export function encryptPlatformConfig(config: Record<string, any> | null | undefined): Record<string, any> {
+  if (!config || typeof config !== 'object') return {};
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (typeof v === 'string' && v && isSecretPlatformField(k) && !v.startsWith(PLATFORM_SECRET_PREFIX)) {
+      out[k] = PLATFORM_SECRET_PREFIX + encryptIntegrationSecret(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+export function decryptPlatformConfig(config: Record<string, any> | null | undefined): Record<string, any> {
+  if (!config || typeof config !== 'object') return {};
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (typeof v === 'string' && v.startsWith(PLATFORM_SECRET_PREFIX)) {
+      try {
+        out[k] = decryptIntegrationSecret(v.slice(PLATFORM_SECRET_PREFIX.length));
+      } catch (err) {
+        // Encrypted under a different INTEGRATIONS_ENCRYPTION_KEY — surface as
+        // unconfigured rather than passing ciphertext to a provider API.
+        logger.warn({ field: k, err: err instanceof Error ? err.message : String(err) }, 'platform_config_decrypt_failed');
+        out[k] = '';
+      }
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export async function getIntegrationRowBySlug(slug: string): Promise<{ id: number; slug: string; name: string | null; type: string | null } | null> {
   if (!pool) return null;
   const s = String(slug || '').trim().toLowerCase();

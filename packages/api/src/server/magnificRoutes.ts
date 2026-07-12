@@ -3,6 +3,8 @@ import type { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { logger } from '../logger.ts';
+import { recordAuditLog } from '../link-metadata.ts';
+import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 import { chargeAICredits } from '../ai-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
@@ -108,7 +110,7 @@ export async function getMagnificApiKey(pool: Pool | null): Promise<string> {
   // Admin-configured key (AI Assistant → Magnific AI) wins; env is fallback only
   try {
     const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`);
-    const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
+    const dbKey: string = decryptPlatformConfig(cfg.rows[0]?.config)?.apiKey ?? '';
     if (dbKey) return dbKey;
   } catch (_err) { /* fall through to env */ }
   return process.env.MAGNIFIC_API_KEY || '';
@@ -118,7 +120,7 @@ export async function getFreepikApiKey(pool: Pool | null): Promise<string> {
   // Admin-configured key wins; env fallback; Magnific key as last resort
   try {
     const cfg = await pool!.query(`SELECT config FROM platform_configs WHERE platform = 'freepik' LIMIT 1`);
-    const dbKey: string = cfg.rows[0]?.config?.apiKey ?? '';
+    const dbKey: string = decryptPlatformConfig(cfg.rows[0]?.config)?.apiKey ?? '';
     if (dbKey) return dbKey;
   } catch (_err) { /* ignore */ }
   if (process.env.FREEPIK_API_KEY) return process.env.FREEPIK_API_KEY;
@@ -270,7 +272,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
     try {
       const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='magnific' LIMIT 1`);
-      const key: string = r.rows[0]?.config?.apiKey ?? '';
+      const key: string = decryptPlatformConfig(r.rows[0]?.config)?.apiKey ?? '';
       const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : (key ? '****' : '');
       return res.json({ success: true, hasKey: !!key, maskedKey: masked });
     } catch (e: any) {
@@ -290,8 +292,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         `INSERT INTO platform_configs (platform, config, enabled, updated_at)
          VALUES ('magnific', $1, true, NOW())
          ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
-        [JSON.stringify({ apiKey: apiKey.trim() })]
+        [JSON.stringify(encryptPlatformConfig({ apiKey: apiKey.trim() }))]
       );
+      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'magnific' });
       return res.json({ success: true });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
@@ -353,7 +356,7 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
     try {
       // Mirror getFreepikApiKey resolution: DB config first, env fallback
       const r = await pool!.query(`SELECT config FROM platform_configs WHERE platform='freepik' LIMIT 1`);
-      const key: string = r.rows[0]?.config?.apiKey ?? '';
+      const key: string = decryptPlatformConfig(r.rows[0]?.config)?.apiKey ?? '';
       if (key) {
         const masked = key.length > 8 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : '****';
         return res.json({ success: true, hasKey: true, maskedKey: masked, source: 'db' });
@@ -378,8 +381,9 @@ export function registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase,
         `INSERT INTO platform_configs (platform, config, enabled, updated_at)
          VALUES ('freepik', $1, true, NOW())
          ON CONFLICT (platform) DO UPDATE SET config=$1, enabled=true, updated_at=NOW()`,
-        [JSON.stringify({ apiKey: apiKey.trim() })]
+        [JSON.stringify(encryptPlatformConfig({ apiKey: apiKey.trim() }))]
       );
+      void recordAuditLog((admin as any).id, 'admin_provider_key_updated', [], { platform: 'freepik' });
       return res.json({ success: true });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
