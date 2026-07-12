@@ -159,7 +159,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   media: '/media',
   analytics: '/analytics',
   pricing: '/pricing',
-  admin: '/admin/users',
+  admin: '/admin/overview',
   profile: '/profile',
   memory: '/memory',
   integrations: '/integrations',

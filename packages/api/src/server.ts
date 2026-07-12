@@ -284,6 +284,62 @@ app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any)
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 
+// ── Admin Overview: platform KPIs + launch-readiness checks ──────────────────
+// Powers the Admin → Overview tab. Every metric is queried defensively so a
+// missing optional table renders as null instead of failing the whole page.
+app.get('/api/admin/overview', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const count = async (sql: string): Promise<number | null> => {
+    try {
+      const { rows } = await dbQuery<{ n: string }>(sql);
+      return rows[0] ? Number(rows[0].n) : 0;
+    } catch { return null; }
+  };
+
+  const [
+    usersTotal, usersNew7d, subsActive, revenueCents30d, creditsSpent7d,
+    postsPublished7d, emailsSent7d, contactsTotal, designsTotal,
+  ] = await Promise.all([
+    count(`SELECT COUNT(*) AS n FROM users`),
+    count(`SELECT COUNT(*) AS n FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
+    count(`SELECT COUNT(*) AS n FROM subscriptions WHERE status IN ('active','trialing')`),
+    count(`SELECT COALESCE(SUM(total_cents),0) AS n FROM billing_invoices WHERE status='paid' AND paid_at >= NOW() - INTERVAL '30 days'`),
+    count(`SELECT COALESCE(SUM(-delta),0) AS n FROM credit_ledger WHERE delta < 0 AND created_at >= NOW() - INTERVAL '7 days'`),
+    count(`SELECT COUNT(*) AS n FROM publishing_logs WHERE status='published' AND created_at >= NOW() - INTERVAL '7 days'`),
+    count(`SELECT COUNT(*) AS n FROM mailing_email_events WHERE event_type='delivered' AND created_at >= NOW() - INTERVAL '7 days'`),
+    count(`SELECT COUNT(*) AS n FROM mailing_contacts`),
+    count(`SELECT COUNT(*) AS n FROM user_designs`),
+  ]);
+
+  const resendCfg = await getPlatformConfig('resend').catch(() => ({} as Record<string, string>));
+  const resendConfigured = Boolean(resendCfg.apiKey || process.env.RESEND_API_KEY);
+  const resendWebhookSecret = Boolean(resendCfg.webhookSecret || process.env.RESEND_WEBHOOK_SECRET);
+
+  const checks = [
+    { id: 'db', label: 'Database connected', ok: dbReady, detail: dbReady ? 'Postgres ready' : String(dbInitError || 'not ready') },
+    { id: 'sentry', label: 'Error monitoring (Sentry)', ok: sentryEnabled, detail: sentryEnabled ? 'SENTRY_DSN configured' : 'SENTRY_DSN not set — errors only reach logs' },
+    { id: 'stripe', label: 'Stripe configured', ok: Boolean(stripe), detail: stripe ? 'API key present' : 'No Stripe key — checkout disabled' },
+    { id: 'stripe_webhook', label: 'Stripe webhook secret', ok: !stripe || Boolean(STRIPE_WEBHOOK_SECRET), detail: !stripe ? 'n/a until Stripe is configured' : STRIPE_WEBHOOK_SECRET ? 'Signature verification active' : 'Missing — subscription events will be rejected' },
+    { id: 'resend', label: 'Email sending (Resend)', ok: resendConfigured, detail: resendConfigured ? 'API key present' : 'No Resend key — campaigns and password resets disabled' },
+    { id: 'resend_webhook', label: 'Resend webhook secret', ok: !resendConfigured || resendWebhookSecret, detail: !resendConfigured ? 'n/a until Resend is configured' : resendWebhookSecret ? 'Signed engagement events' : 'Missing — opens/clicks/bounces discarded in production' },
+    { id: 'test_credits', label: 'Test-credit grant disabled', ok: process.env.ENABLE_TEST_USER_CREDITS !== 'true', detail: process.env.ENABLE_TEST_USER_CREDITS === 'true' ? 'ENABLE_TEST_USER_CREDITS is ON — turn off in production' : 'Off (production-safe)' },
+  ];
+
+  res.json({
+    success: true,
+    environment: config.nodeEnv,
+    appUrl: config.appUrl,
+    stats: {
+      usersTotal, usersNew7d, subsActive,
+      revenueCents30d, creditsSpent7d, postsPublished7d,
+      emailsSent7d, contactsTotal, designsTotal,
+    },
+    checks,
+  });
+});
+
 // Diagnostics — admin-only so deployment internals aren't public.
 app.get('/api/debug/db', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res);

@@ -1,6 +1,7 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, LayoutDashboard, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppUser } from '../utils/userSession';
+import AdminOverview from '../components/admin/AdminOverview';
 import UserManagementPage from '../components/admin/UserManagementPage';
 import PricingManagement from '../components/admin/PricingManagement';
 import AdminCardsManagement from '../components/admin/AdminCardsManagement';
@@ -31,6 +32,7 @@ type AdminProps = {
 
 const Admin = ({ currentUser }: AdminProps) => {
   type AdminTab =
+    | 'overview'
     | 'users'
     | 'pricing'
     | 'cards'
@@ -61,6 +63,7 @@ const Admin = ({ currentUser }: AdminProps) => {
     | 'mcp';
 
   const TAB_PATHS: Record<AdminTab, string> = {
+    overview: '/admin/overview',
     users: '/admin/users',
     pricing: '/admin/pricing',
     cards: '/admin/cards',
@@ -95,7 +98,12 @@ const Admin = ({ currentUser }: AdminProps) => {
     Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as AdminTab])
   );
 
-  const getInitialTab = (): AdminTab => PATH_TO_TAB[window.location.pathname] ?? 'users';
+  const getInitialTab = (): AdminTab => {
+    const fromPath = PATH_TO_TAB[window.location.pathname];
+    if (fromPath) return fromPath;
+    // Bare /admin lands on Overview; unknown subpaths keep the old default
+    return window.location.pathname === '/admin' || window.location.pathname === '/admin/' ? 'overview' : 'users';
+  };
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
@@ -111,6 +119,7 @@ const Admin = ({ currentUser }: AdminProps) => {
   };
 
   const adminItems = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard, active: true },
     { id: 'users', label: 'User Management', icon: Users, active: true, tourId: 'admin-tab-users' },
     { id: 'pricing', label: 'Pricing Plans', icon: DollarSign, active: true },
     { id: 'cards', label: 'Card Templates', icon: Image, active: true },
@@ -412,6 +421,7 @@ const Admin = ({ currentUser }: AdminProps) => {
           </header>
 
           <main className="px-4 py-6 md:px-6">
+            {activeTab === 'overview' && <AdminOverview />}
             {activeTab === 'users' && <UserManagementPage currentAdminRole={currentAdminRole} />}
             {activeTab === 'pricing' && <PricingManagement />}
             {activeTab === 'cards' && <AdminCardsManagement />}
