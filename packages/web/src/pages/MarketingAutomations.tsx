@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
 import EmailBuilder from '../components/email/EmailBuilder';
+import InfoTip from '../components/InfoTip';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -259,7 +260,7 @@ function StepConfigPanel({
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {step.type === 'trigger' && (
           <>
-            <Field label="Starting point">
+            <Field label="Starting point" hint="The event that kicks this flow off. When it happens to a contact, they enter the flow and the steps below run for them automatically.">
               <select value={String(step.config.trigger ?? '')} onChange={e => set('trigger', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-400 focus:outline-none">
                 <option value="">Choose a trigger…</option>
                 {TRIGGER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -281,7 +282,7 @@ function StepConfigPanel({
 
         {step.type === 'delay' && (
           <>
-            <Field label="Wait for">
+            <Field label="Wait for" hint="Pauses the flow for this long before the next step — e.g. wait 2 days after the welcome email before sending a follow-up.">
               <div className="flex gap-2">
                 <input type="number" min={1} value={Number(step.config.amount ?? 1)} onChange={e => set('amount', parseInt(e.target.value, 10) || 1)} className="w-20 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
                 <select value={String(step.config.unit ?? 'days')} onChange={e => set('unit', e.target.value)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
@@ -296,7 +297,7 @@ function StepConfigPanel({
         )}
 
         {step.type === 'wait_trigger' && (
-          <Field label="Wait until">
+          <Field label="Wait until" hint="Holds the contact here until they do this — e.g. wait until they open the email before moving on.">
             <select value={String(step.config.trigger ?? '')} onChange={e => set('trigger', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
               <option value="">Choose condition…</option>
               {TRIGGER_OPTIONS.filter(t => !['api', 'manual', 'birthday', 'specific_date'].includes(t.value)).map(o => (
@@ -308,7 +309,7 @@ function StepConfigPanel({
 
         {step.type === 'if_else' && (
           <>
-            <Field label="Condition type">
+            <Field label="Condition type" hint="Splits the flow in two. Contacts matching this condition go down the Yes path; everyone else goes down the No path.">
               <select value={String(step.config.condition_type ?? 'tag')} onChange={e => set('condition_type', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
                 <option value="tag">Has tag</option>
                 <option value="email_opened">Opened last email</option>
@@ -521,10 +522,13 @@ function CampaignSelect({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{label}</label>
+      <label className="flex items-center gap-1 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+        {label}
+        {hint && <InfoTip text={hint} />}
+      </label>
       {children}
     </div>
   );
