@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Compass, Loader2 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
+
+const PAGE_SIZE = 48;
 
 type DiscoverItem = {
   discover_id: string;
@@ -19,22 +21,46 @@ type DiscoverItem = {
 export default function Discover() {
   const [items, setItems] = useState<DiscoverItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<DiscoverItem | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
+  const fetchPage = useCallback((offset: number, append: boolean) => {
     const token = localStorage.getItem('auth_token') ?? '';
-    fetch(`${API_BASE_URL}/api/discover`, {
+    (append ? setLoadingMore : setLoading)(true);
+    fetch(`${API_BASE_URL}/api/discover?limit=${PAGE_SIZE}&offset=${offset}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((data) => {
-        if (data.success) setItems(data.items ?? []);
-        else setError(data.error ?? 'Failed to load');
+        if (!data.success) { if (!append) setError(data.error ?? 'Failed to load'); return; }
+        const page: DiscoverItem[] = data.items ?? [];
+        setItems((prev) => {
+          if (!append) return page;
+          const seen = new Set(prev.map((i) => i.discover_id));
+          return [...prev, ...page.filter((i) => !seen.has(i.discover_id))];
+        });
+        setHasMore(Boolean(data.hasMore ?? page.length === PAGE_SIZE));
       })
-      .catch(() => setError('Failed to load discover feed'))
-      .finally(() => setLoading(false));
+      .catch(() => { if (!append) setError('Failed to load discover feed'); })
+      .finally(() => (append ? setLoadingMore : setLoading)(false));
   }, []);
+
+  useEffect(() => { fetchPage(0, false); }, [fetchPage]);
+
+  // Auto-load the next page when scrolling near the bottom
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !loadingMore && !loading) fetchPage(items.length, true);
+    }, { rootMargin: '400px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, items.length, loadingMore, loading, fetchPage]);
 
   const getDisplayName = (item: DiscoverItem) =>
     item.creator_name || item.creator_username || 'Anonymous';
@@ -130,7 +156,21 @@ export default function Discover() {
             })}
           </div>
 
-          <p className="text-center text-xs text-gray-400">{items.length} creation{items.length !== 1 ? 's' : ''} in the feed</p>
+          {hasMore ? (
+            <div ref={sentinelRef} className="flex justify-center py-4">
+              <button
+                type="button"
+                onClick={() => fetchPage(items.length, true)}
+                disabled={loadingMore}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-6 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-60"
+              >
+                {loadingMore && <Loader2 size={14} className="animate-spin" />}
+                {loadingMore ? 'Loading…' : 'Show more'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-center text-xs text-gray-400">{items.length} creation{items.length !== 1 ? 's' : ''} in the feed</p>
+          )}
         </>
       )}
 

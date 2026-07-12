@@ -1577,20 +1577,53 @@ const Cards = () => {
   const handleDesignSaved = (_saved?: UserDesign) => { fetchDesigns(); };
   const handleCreditUsed = useCallback(() => setCreditRefreshKey((k) => k + 1), []);
 
-  // MCP media (MeiGen gallery) — the primary Discover source.
+  // MCP media (MeiGen gallery) — the primary Discover source. Paged: first
+  // page on tab/filter change, further pages via Show more / infinite scroll.
+  const MCP_PAGE_SIZE = 60;
   const [mcpMedia, setMcpMedia] = useState<Array<Record<string, any>>>([]);
   const [loadingMcp, setLoadingMcp] = useState(false);
-  useEffect(() => {
-    if (tab !== 'discover') return;
-    setLoadingMcp(true);
-    fetch(`${getApiBaseUrl()}/api/mcp/media?tab=${modelFilter}&sort=${sortBy}&limit=60`, {
+  const [loadingMoreMcp, setLoadingMoreMcp] = useState(false);
+  const [mcpHasMore, setMcpHasMore] = useState(false);
+  const mcpSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  const fetchMcpPage = useCallback((offset: number, append: boolean) => {
+    (append ? setLoadingMoreMcp : setLoadingMcp)(true);
+    fetch(`${getApiBaseUrl()}/api/mcp/media?tab=${modelFilter}&sort=${sortBy}&limit=${MCP_PAGE_SIZE}&offset=${offset}`, {
       headers: { Authorization: `Bearer ${tok()}` },
     })
       .then((r) => r.json())
-      .then((d) => { if (d.success) setMcpMedia(d.media ?? []); })
+      .then((d) => {
+        if (!d.success) return;
+        const page: Array<Record<string, any>> = d.media ?? [];
+        setMcpMedia((prev) => {
+          if (!append) return page;
+          const seen = new Set(prev.map((m) => String(m.id)));
+          return [...prev, ...page.filter((m) => !seen.has(String(m.id)))];
+        });
+        setMcpHasMore(page.length === MCP_PAGE_SIZE);
+      })
       .catch(() => {})
-      .finally(() => setLoadingMcp(false));
-  }, [tab, modelFilter, sortBy]);
+      .finally(() => (append ? setLoadingMoreMcp : setLoadingMcp)(false));
+  }, [modelFilter, sortBy]);
+
+  useEffect(() => {
+    if (tab !== 'discover') return;
+    fetchMcpPage(0, false);
+  }, [tab, fetchMcpPage]);
+
+  // Auto-load the next page when the sentinel below the grid scrolls into view
+  useEffect(() => {
+    if (tab !== 'discover' || !mcpHasMore) return;
+    const el = mcpSentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !loadingMoreMcp && !loadingMcp) {
+        fetchMcpPage(mcpMedia.length, true);
+      }
+    }, { rootMargin: '400px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [tab, mcpHasMore, mcpMedia.length, loadingMoreMcp, loadingMcp, fetchMcpPage]);
 
   // Discover shows ONLY MeiGen (MCP) media — local admin templates were
   // removed from this feed by request.
@@ -1759,6 +1792,18 @@ const Cards = () => {
                       />
                     </div>
                   ))}
+                </div>
+              )}
+              {mcpHasMore && discoverItems.length > 0 && (
+                <div ref={mcpSentinelRef} className="flex justify-center py-5">
+                  <button
+                    type="button"
+                    onClick={() => fetchMcpPage(mcpMedia.length, true)}
+                    disabled={loadingMoreMcp}
+                    className="rounded-full border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    {loadingMoreMcp ? 'Loading…' : 'Show more'}
+                  </button>
                 </div>
               )}
             </div>

@@ -1808,6 +1808,8 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
     try {
+      const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || '48'), 10) || 48));
+      const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
       const { rows } = await pool!.query(
         `SELECT df.id AS discover_id, df.pushed_at, mg.id AS generation_id, mg.prompt, mg.model,
                 mg.result_url, mg.created_at, u.id AS creator_id, u.full_name AS creator_name,
@@ -1815,9 +1817,10 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
          FROM discover_feed df
          JOIN magnific_generations mg ON mg.id = df.generation_id
          LEFT JOIN users u ON u.id = mg.user_id
-         WHERE df.visible = true ORDER BY df.pushed_at DESC LIMIT 100`,
+         WHERE df.visible = true ORDER BY df.pushed_at DESC LIMIT $1 OFFSET $2`,
+        [limit, offset]
       );
-      return res.json({ success: true, items: rows });
+      return res.json({ success: true, items: rows, hasMore: rows.length === limit });
     } catch (e: any) { return res.status(500).json({ error: e.message }); }
   });
 
