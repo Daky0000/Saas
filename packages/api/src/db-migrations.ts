@@ -4258,6 +4258,39 @@ await pool.query(`
   )
 `).catch(() => undefined);
 
+// ── Hubtel messaging: SMS delivery log + OTP verification requests ─────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS sms_logs (
+    id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id             TEXT REFERENCES users(id) ON DELETE SET NULL,
+    recipient           TEXT NOT NULL,
+    sender_id           TEXT,
+    content             TEXT NOT NULL,
+    context             TEXT NOT NULL DEFAULT 'manual',
+    status              TEXT NOT NULL DEFAULT 'sent',
+    provider            TEXT NOT NULL DEFAULT 'hubtel',
+    provider_message_id TEXT,
+    provider_response   JSONB,
+    created_at          TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS sms_logs_created_idx ON sms_logs (created_at DESC)`).catch(() => undefined);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS otp_requests (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id     TEXT REFERENCES users(id) ON DELETE CASCADE,
+    phone       TEXT NOT NULL,
+    request_id  TEXT NOT NULL,
+    prefix      TEXT,
+    status      TEXT NOT NULL DEFAULT 'sent',
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    verified_at TIMESTAMPTZ
+  )
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS otp_requests_user_idx ON otp_requests (user_id, created_at DESC)`).catch(() => undefined);
+await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT FALSE`).catch(() => undefined);
+
 // ── CRM: meeting-specific columns on activities ────────────────────────────────
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ`).catch(() => undefined);
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS recurrence TEXT`).catch(() => undefined);

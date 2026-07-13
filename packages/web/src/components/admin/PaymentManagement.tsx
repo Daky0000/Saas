@@ -25,6 +25,19 @@ interface HubtelConfig {
   clientId: string;
   clientSecret: string;
   merchantAccountNumber: string;
+  senderId: string;
+}
+
+interface SmsLog {
+  id: string;
+  recipient: string;
+  sender_id: string | null;
+  content: string;
+  context: string;
+  status: 'sent' | 'failed';
+  provider_response: { error?: string } | null;
+  created_at: string;
+  user_email: string | null;
 }
 
 interface PaymentStats {
@@ -102,7 +115,7 @@ const SetupStep = ({
 // ── Main Component ────────────────────────────────────────────────────────────
 
 const PaymentManagement = () => {
-  const [config, setConfig] = useState<HubtelConfig>({ clientId: '', clientSecret: '', merchantAccountNumber: '' });
+  const [config, setConfig] = useState<HubtelConfig>({ clientId: '', clientSecret: '', merchantAccountNumber: '', senderId: '' });
   const [showSecret, setShowSecret] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [configSaving, setConfigSaving] = useState(false);
@@ -113,6 +126,50 @@ const PaymentManagement = () => {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [txLoading, setTxLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | PaymentTransaction['status']>('all');
+
+  // ── Messaging (SMS & OTP) state ─────────────────────────────────────────────
+  const [smsTo, setSmsTo] = useState('');
+  const [smsContent, setSmsContent] = useState('Test message from your ContentFlow admin console.');
+  const [smsSending, setSmsSending] = useState(false);
+  const [smsResult, setSmsResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [smsLogs, setSmsLogs] = useState<SmsLog[]>([]);
+  const [smsLogsLoading, setSmsLogsLoading] = useState(true);
+
+  const loadSmsLogs = async () => {
+    setSmsLogsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/hubtel/sms/logs`, { headers: authHeaders() });
+      const data = await res.json() as { success: boolean; logs: SmsLog[] };
+      if (data.success) setSmsLogs(data.logs ?? []);
+    } catch { /* ignore */ } finally {
+      setSmsLogsLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadSmsLogs(); }, []);
+
+  const sendTestSms = async () => {
+    setSmsSending(true);
+    setSmsResult(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/hubtel/sms/test`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ to: smsTo, content: smsContent }),
+      });
+      const data = await res.json() as { success: boolean; error?: string };
+      if (data.success) {
+        setSmsResult({ ok: true, message: `Test SMS sent to ${smsTo}. Check the handset — delivery usually takes a few seconds.` });
+      } else {
+        setSmsResult({ ok: false, message: data.error || `Send failed (${res.status})` });
+      }
+      void loadSmsLogs();
+    } catch (err) {
+      setSmsResult({ ok: false, message: err instanceof Error ? err.message : 'Send failed' });
+    } finally {
+      setSmsSending(false);
+    }
+  };
 
   // ── Load config ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -126,6 +183,7 @@ const PaymentManagement = () => {
             clientId: data.config.config.clientId || '',
             clientSecret: data.config.config.clientSecret || '',
             merchantAccountNumber: data.config.config.merchantAccountNumber || '',
+            senderId: data.config.config.senderId || '',
           });
         }
       } catch { /* ignore */ } finally {
@@ -190,7 +248,7 @@ const PaymentManagement = () => {
       <div>
         <h1 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Payments</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Configure Hubtel as your payment gateway and monitor all transactions.
+          Configure Hubtel as your payment gateway and SMS/OTP messaging provider, and monitor all activity.
         </p>
       </div>
 
@@ -337,19 +395,36 @@ const PaymentManagement = () => {
               </label>
             </div>
 
-            <label className="block space-y-2">
-              <span className="text-sm font-semibold text-slate-800">Merchant Account Number</span>
-              <input
-                type="text"
-                value={config.merchantAccountNumber}
-                onChange={(e) => setConfig((c) => ({ ...c, merchantAccountNumber: e.target.value }))}
-                placeholder="e.g. 2024XXXX"
-                className="h-12 w-full max-w-xs rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
-              />
-              <p className="text-xs text-slate-500">
-                Your Hubtel merchant account number (visible on your Hubtel profile page).
-              </p>
-            </label>
+            <div className="grid gap-5 md:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-800">Merchant Account Number</span>
+                <input
+                  type="text"
+                  value={config.merchantAccountNumber}
+                  onChange={(e) => setConfig((c) => ({ ...c, merchantAccountNumber: e.target.value }))}
+                  placeholder="e.g. 2024XXXX"
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+                />
+                <p className="text-xs text-slate-500">
+                  Your Hubtel merchant account number (visible on your Hubtel profile page).
+                </p>
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-800">SMS Sender ID</span>
+                <input
+                  type="text"
+                  value={config.senderId}
+                  maxLength={11}
+                  onChange={(e) => setConfig((c) => ({ ...c, senderId: e.target.value }))}
+                  placeholder="e.g. Dakyworld"
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+                />
+                <p className="text-xs text-slate-500">
+                  Approved sender name for SMS &amp; OTP (max 11 characters). Register it in your Hubtel dashboard first.
+                </p>
+              </label>
+            </div>
 
             {configError && (
               <p className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -374,6 +449,130 @@ const PaymentManagement = () => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── Messaging: SMS & OTP ─────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-black text-slate-900">Messaging — SMS &amp; OTP</h2>
+            <p className="mt-0.5 text-sm text-slate-500">
+              Uses the same Hubtel credentials. OTP phone verification is available to the app at{' '}
+              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">/api/hubtel/otp/send</code> and{' '}
+              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">/api/hubtel/otp/verify</code>.
+            </p>
+          </div>
+          {config.senderId ? (
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              <CheckCircle2 size={13} /> Sender: {config.senderId}
+            </span>
+          ) : (
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              <AlertCircle size={13} /> Add a Sender ID above
+            </span>
+          )}
+        </div>
+
+        {/* Test SMS */}
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+          <div className="text-sm font-bold text-slate-900">Send a test SMS</div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Confirms your credentials and sender ID against the live Hubtel SMS API. Standard SMS rates apply.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-[220px_1fr_auto]">
+            <input
+              type="tel"
+              value={smsTo}
+              onChange={(e) => setSmsTo(e.target.value)}
+              placeholder="e.g. 0241234567"
+              className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+            />
+            <input
+              type="text"
+              value={smsContent}
+              onChange={(e) => setSmsContent(e.target.value)}
+              maxLength={160}
+              className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+            />
+            <button
+              type="button"
+              onClick={() => void sendTestSms()}
+              disabled={smsSending || !smsTo.trim() || !isConfigured || !config.senderId}
+              className="h-11 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+            >
+              {smsSending ? 'Sending…' : 'Send test SMS'}
+            </button>
+          </div>
+          {smsResult && (
+            <p className={`mt-3 flex items-start gap-2 rounded-xl px-4 py-3 text-sm ${smsResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+              {smsResult.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}
+              {smsResult.message}
+            </p>
+          )}
+        </div>
+
+        {/* Recent SMS activity */}
+        <div className="mt-6">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-bold text-slate-900">Recent SMS activity</div>
+            <button
+              type="button"
+              onClick={() => void loadSmsLogs()}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50"
+            >
+              <RefreshCw size={14} className={smsLogsLoading ? 'animate-spin' : ''} />
+            </button>
+          </div>
+          {smsLogsLoading ? (
+            <div className="space-y-2">
+              {[1, 2].map((n) => <div key={n} className="h-12 animate-pulse rounded-xl bg-slate-50" />)}
+            </div>
+          ) : smsLogs.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-400">
+              No SMS sent yet. OTP sends and test messages will appear here.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-100">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    <th className="px-4 py-2.5">To</th>
+                    <th className="px-4 py-2.5">Message</th>
+                    <th className="px-4 py-2.5">Type</th>
+                    <th className="px-4 py-2.5">Status</th>
+                    <th className="px-4 py-2.5">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {smsLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50/60">
+                      <td className="px-4 py-3 font-mono text-xs text-slate-700">{log.recipient}</td>
+                      <td className="max-w-[280px] px-4 py-3">
+                        <span className="block truncate text-slate-600">{log.content}</span>
+                        {log.status === 'failed' && log.provider_response?.error && (
+                          <span className="block truncate text-xs text-red-500">{log.provider_response.error}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{log.context}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.status === 'sent' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700"><CheckCircle2 size={11} /> Sent</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600"><XCircle size={11} /> Failed</span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
+                        {new Date(log.created_at).toLocaleString('en-GH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Transactions ─────────────────────────────────────────────────────── */}
