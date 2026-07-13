@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { TrendingUp, Users, DollarSign, BarChart2, Search, ChevronLeft, ChevronRight, ExternalLink, AlertCircle } from 'lucide-react';
+import { API_BASE_URL } from '../../utils/apiBase';
 
-const API_BASE = (import.meta as any).env?.VITE_API_URL ?? '';
+const API_BASE = API_BASE_URL;
 
 function fetchJson<T>(path: string): Promise<T> {
   const token = localStorage.getItem('auth_token');
@@ -56,6 +57,73 @@ type Customer = {
 };
 
 type Plan = { id: string; name: string };
+
+// Server payloads use snake_case and nest metrics; map them to the view models
+// above so a shape drift fails here (visibly) instead of mid-render.
+type MetricsResponse = {
+  metrics?: {
+    mrr?: number; arr?: number; arpu?: number;
+    active_subscriptions?: number; new_this_month?: number; canceled_this_month?: number;
+  };
+  plan_breakdown?: { plan_name: string; subscriber_count: number; mrr_contribution: string | number }[];
+  recent_invoices?: {
+    id?: string; invoice_number?: string; email?: string; total_cents?: number;
+    currency?: string; status?: string; created_at?: string; paid_at?: string;
+    hosted_invoice_url?: string | null;
+  }[];
+};
+
+function mapMetrics(d: MetricsResponse): Metrics {
+  const m = d.metrics ?? {};
+  return {
+    // mrr/arr/arpu arrive in currency units; fmt() renders cents, so scale up
+    mrr: Math.round((Number(m.mrr) || 0) * 100),
+    arr: Math.round((Number(m.arr) || 0) * 100),
+    arpu: Math.round((Number(m.arpu) || 0) * 100),
+    activeSubscriptions: m.active_subscriptions ?? 0,
+    newThisMonth: m.new_this_month ?? 0,
+    canceledThisMonth: m.canceled_this_month ?? 0,
+    planBreakdown: (d.plan_breakdown ?? []).map((r) => ({
+      planName: r.plan_name,
+      count: r.subscriber_count,
+      mrr: Math.round((Number(r.mrr_contribution) || 0) * 100),
+    })),
+    recentInvoices: (d.recent_invoices ?? []).map((r) => ({
+      id: r.id ?? r.invoice_number ?? `${r.email}-${r.created_at}`,
+      userEmail: r.email ?? '—',
+      amount: r.total_cents ?? 0,
+      currency: r.currency ?? 'usd',
+      status: r.status ?? 'unknown',
+      createdAt: r.created_at ?? r.paid_at ?? '',
+      hostedUrl: r.hosted_invoice_url ?? null,
+    })),
+  };
+}
+
+type CustomerRow = {
+  id: string; email: string; full_name: string | null; plan_id: string | null;
+  plan_name: string | null; price: string | number | null; billing_period: string | null;
+  subscription_status: string | null; current_period_end: string | null;
+  cancel_at_period_end: boolean | null;
+};
+
+function mapCustomer(r: CustomerRow): Customer {
+  const price = Number(r.price) || 0;
+  const mrrCents = r.subscription_status === 'active'
+    ? Math.round((r.billing_period === 'yearly' ? price / 12 : price) * 100)
+    : 0;
+  return {
+    userId: r.id,
+    email: r.email,
+    name: r.full_name ?? '',
+    planName: r.plan_name,
+    planId: r.plan_id,
+    status: r.subscription_status,
+    mrr: mrrCents,
+    currentPeriodEnd: r.current_period_end,
+    cancelAtPeriodEnd: Boolean(r.cancel_at_period_end),
+  };
+}
 
 function fmt(cents: number, currency = 'usd') {
   return new Intl.NumberFormat('en-US', {
@@ -112,8 +180,8 @@ export default function AdminBillingDashboard() {
 
   useEffect(() => {
     setLoadingMetrics(true);
-    fetchJson<Metrics>('/api/admin/billing/metrics')
-      .then(setMetrics)
+    fetchJson<MetricsResponse>('/api/admin/billing/metrics')
+      .then((d) => setMetrics(mapMetrics(d)))
       .catch((e) => setError(e.message))
       .finally(() => setLoadingMetrics(false));
 
@@ -124,11 +192,12 @@ export default function AdminBillingDashboard() {
 
   useEffect(() => {
     setLoadingCustomers(true);
-    const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+    // Server paginates with limit/offset, not page numbers
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String((page - 1) * PAGE_SIZE) });
     if (search) params.set('search', search);
-    fetchJson<{ customers: Customer[]; total: number }>(`/api/admin/billing/customers?${params}`)
+    fetchJson<{ customers: CustomerRow[]; total: number }>(`/api/admin/billing/customers?${params}`)
       .then((d) => {
-        setCustomers(d.customers ?? []);
+        setCustomers((d.customers ?? []).map(mapCustomer));
         setTotalCustomers(d.total ?? 0);
       })
       .catch(() => {})

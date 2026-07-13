@@ -947,7 +947,7 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     const token = localStorage.getItem('auth_token') ?? '';
-    fetch('/api/platform/nav-settings', { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE_URL}/api/platform/nav-settings`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : { disabled: [] })
       .then(d => setDisabledNav(new Set(d.disabled ?? [])))
       .catch(() => {});

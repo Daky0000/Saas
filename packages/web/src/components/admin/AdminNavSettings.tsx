@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 const tok = () => localStorage.getItem('auth_token') ?? '';
 const jsonHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` });
@@ -62,7 +63,7 @@ export default function AdminNavSettings() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    fetch('/api/platform/nav-settings', { headers: authHeaders() })
+    fetch(`${API_BASE_URL}/api/platform/nav-settings`, { headers: authHeaders() })
       .then(r => r.json())
       .then(d => { setDisabled(new Set(d.disabled ?? [])); })
       .catch(() => {})
@@ -89,7 +90,7 @@ export default function AdminNavSettings() {
   const save = async () => {
     setSaving(true);
     try {
-      await fetch('/api/admin/nav-settings', {
+      await fetch(`${API_BASE_URL}/api/admin/nav-settings`, {
         method: 'PUT',
         headers: jsonHeaders(),
         body: JSON.stringify({ disabled: Array.from(disabled) }),

@@ -65,7 +65,7 @@ export function registerBillingRoutes({
       const sub = (subRows as any[])[0] || null;
 
       const { rows: usageRows } = await dbQuery(
-        `SELECT COUNT(*)::int AS posts_this_period FROM social_posts WHERE user_id=$1 AND created_at >= date_trunc('month', NOW())`,
+        `SELECT COUNT(*)::int AS posts_this_period FROM publishing_logs WHERE user_id=$1 AND status='published' AND created_at >= date_trunc('month', NOW())`,
         [auth.userId],
       ).catch(() => ({ rows: [{ posts_this_period: 0 }] }));
 
@@ -241,6 +241,8 @@ export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
           COUNT(*) FILTER (WHERE s.status = 'active')::int AS active_subscriptions,
           COUNT(*) FILTER (WHERE s.status = 'past_due')::int AS past_due_subscriptions,
           COUNT(*) FILTER (WHERE s.status = 'canceled')::int AS canceled_subscriptions,
+          COUNT(*) FILTER (WHERE s.created_at >= date_trunc('month', NOW()))::int AS new_this_month,
+          COUNT(*) FILTER (WHERE s.status = 'canceled' AND s.canceled_at >= date_trunc('month', NOW()))::int AS canceled_this_month,
           SUM(p.price) FILTER (WHERE s.status = 'active' AND p.billing_period = 'monthly') AS monthly_revenue,
           SUM(p.price / 12) FILTER (WHERE s.status = 'active' AND p.billing_period = 'yearly') AS yearly_revenue_monthly
         FROM subscriptions s
@@ -258,7 +260,8 @@ export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
         ORDER BY mrr_contribution DESC NULLS LAST
       `);
       const { rows: recentTxn } = await dbQuery(`
-        SELECT bi.invoice_number, bi.total_cents, bi.currency, bi.paid_at, bi.status, u.email
+        SELECT bi.id, bi.invoice_number, bi.total_cents, bi.currency, bi.paid_at, bi.status,
+               bi.hosted_invoice_url, bi.created_at, u.email
         FROM billing_invoices bi JOIN users u ON u.id=bi.user_id
         ORDER BY bi.created_at DESC LIMIT 10
       `);
@@ -279,6 +282,8 @@ export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
           active_subscriptions: activeCount,
           past_due: s.past_due_subscriptions || 0,
           canceled: s.canceled_subscriptions || 0,
+          new_this_month: s.new_this_month || 0,
+          canceled_this_month: s.canceled_this_month || 0,
         },
         plan_breakdown: planBreakdown,
         recent_invoices: recentTxn,
@@ -302,7 +307,7 @@ export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
       const params: unknown[] = [limit, offset];
       if (search) params.push(`%${search}%`);
       const { rows: customers } = await dbQuery(
-        `SELECT u.id, u.email, u.full_name, u.created_at,
+        `SELECT u.id, u.email, u.full_name, u.created_at, u.plan_id,
           p.name AS plan_name, p.price, p.billing_period,
           s.status AS subscription_status, s.current_period_end, s.cancel_at_period_end
          FROM users u
