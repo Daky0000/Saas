@@ -20,12 +20,22 @@ type RequireAuthFn = (req: Request, res: Response) => AuthResult;
 type RequireAdminFn = (req: Request, res: Response) => Promise<AuthResult>;
 type DbQueryFn = <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
 
+type PaystackPlanCheckoutFn = (params: {
+  userId: string;
+  email: string;
+  customerName: string | null;
+  plan: { id: string; name: string; price: number; billing_period: string };
+  appUrl: string;
+}) => Promise<{ url: string } | null>;
+
 type BillingDeps = {
   requireAuth: RequireAuthFn;
   hasDatabase: () => boolean;
   dbQuery: DbQueryFn;
   stripe: Stripe | null;
   getOrCreateStripeCustomer: (userId: string, email: string, name: string | null) => Promise<string>;
+  // Fallback checkout provider while Stripe activation is pending
+  paystackPlanCheckout?: PaystackPlanCheckoutFn;
 };
 
 /**
@@ -40,6 +50,7 @@ export function registerBillingRoutes({
   dbQuery,
   stripe,
   getOrCreateStripeCustomer,
+  paystackPlanCheckout,
 }: BillingDeps): Router {
   const router = express.Router();
 
@@ -106,11 +117,11 @@ export function registerBillingRoutes({
     }
   });
 
-  // POST /checkout — create Stripe Checkout session for a plan
+  // POST /checkout — provider-aware plan checkout: Stripe when the plan has a
+  // Stripe price, otherwise Paystack (active while Stripe activation pends).
   router.post('/checkout', validateBody(checkoutSchema), async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured on this server.' });
     const { planId, period = 'monthly' } = req.body as { planId: string; period?: 'monthly' | 'yearly' };
     if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
     try {
@@ -120,30 +131,43 @@ export function registerBillingRoutes({
       );
       if (!(planRows as any[]).length) return res.status(404).json({ success: false, error: 'Plan not found' });
       const plan = (planRows as any[])[0];
-      const stripePriceId = period === 'yearly' ? (plan.stripe_annual_price_id || plan.stripe_price_id) : plan.stripe_price_id;
-      if (!stripePriceId) return res.status(400).json({ success: false, error: 'This plan is not yet configured for Stripe payments. Please contact support.' });
 
       const { rows: userRows } = await dbQuery(`SELECT email, full_name FROM users WHERE id=$1`, [auth.userId]);
       if (!(userRows as any[]).length) return res.status(404).json({ success: false, error: 'User not found' });
       const userRow = (userRows as any[])[0];
-
-      const stripeCustomerId = await getOrCreateStripeCustomer(auth.userId, userRow.email, userRow.full_name);
       const appUrl = process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com';
 
-      const session = await stripe.checkout.sessions.create({
-        customer: stripeCustomerId,
-        mode: 'subscription',
-        line_items: [{ price: stripePriceId, quantity: 1 }],
-        success_url: `${appUrl}/billing?session_id={CHECKOUT_SESSION_ID}&success=1`,
-        cancel_url: `${appUrl}/pricing`,
-        metadata: { user_id: auth.userId, plan_id: planId },
-        subscription_data: { metadata: { user_id: auth.userId, plan_id: planId } },
-        allow_promotion_codes: true,
-      });
+      const stripePriceId = period === 'yearly' ? (plan.stripe_annual_price_id || plan.stripe_price_id) : plan.stripe_price_id;
+      if (stripe && stripePriceId) {
+        const stripeCustomerId = await getOrCreateStripeCustomer(auth.userId, userRow.email, userRow.full_name);
+        const session = await stripe.checkout.sessions.create({
+          customer: stripeCustomerId,
+          mode: 'subscription',
+          line_items: [{ price: stripePriceId, quantity: 1 }],
+          success_url: `${appUrl}/billing?session_id={CHECKOUT_SESSION_ID}&success=1`,
+          cancel_url: `${appUrl}/pricing`,
+          metadata: { user_id: auth.userId, plan_id: planId },
+          subscription_data: { metadata: { user_id: auth.userId, plan_id: planId } },
+          allow_promotion_codes: true,
+        });
+        return res.json({ success: true, url: session.url, provider: 'stripe' });
+      }
 
-      res.json({ success: true, url: session.url });
+      if (paystackPlanCheckout) {
+        const result = await paystackPlanCheckout({
+          userId: auth.userId,
+          email: userRow.email,
+          customerName: userRow.full_name,
+          plan: { id: plan.id, name: plan.name, price: Number(plan.price), billing_period: plan.billing_period },
+          appUrl,
+        });
+        if (result?.url) return res.json({ success: true, url: result.url, provider: 'paystack' });
+      }
+
+      if (!stripe) return res.status(503).json({ success: false, error: 'No payment provider is configured on this server.' });
+      return res.status(400).json({ success: false, error: 'This plan is not yet configured for payments. Please contact support.' });
     } catch (e: any) {
-      logger.error({ err: e }, 'stripe_checkout_error');
+      logger.error({ err: e }, 'checkout_error');
       res.status(500).json({ success: false, error: e.message || 'Failed to create checkout session' });
     }
   });

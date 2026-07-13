@@ -28,6 +28,13 @@ interface HubtelConfig {
   senderId: string;
 }
 
+interface PaystackConfig {
+  secretKey: string;
+  publicKey: string;
+  currency: string;
+  fxRate: string;
+}
+
 interface SmsLog {
   id: string;
   recipient: string;
@@ -126,6 +133,76 @@ const PaymentManagement = () => {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [txLoading, setTxLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | PaymentTransaction['status']>('all');
+
+  // ── Paystack state ──────────────────────────────────────────────────────────
+  const [psConfig, setPsConfig] = useState<PaystackConfig>({ secretKey: '', publicKey: '', currency: 'GHS', fxRate: '1' });
+  const [psLoading, setPsLoading] = useState(true);
+  const [psSaving, setPsSaving] = useState(false);
+  const [psShowSecret, setPsShowSecret] = useState(false);
+  const [psError, setPsError] = useState<string | null>(null);
+  const [psSuccess, setPsSuccess] = useState(false);
+  const [psTesting, setPsTesting] = useState(false);
+  const [psTestResult, setPsTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      setPsLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/paystack`, { headers: authHeaders() });
+        const data = await res.json() as { success: boolean; config: { config: Partial<PaystackConfig> } | null };
+        if (data.success && data.config?.config) {
+          setPsConfig({
+            secretKey: data.config.config.secretKey || '',
+            publicKey: data.config.config.publicKey || '',
+            currency: data.config.config.currency || 'GHS',
+            fxRate: String(data.config.config.fxRate ?? '1'),
+          });
+        }
+      } catch { /* ignore */ } finally {
+        setPsLoading(false);
+      }
+    };
+    void load();
+  }, []);
+
+  const savePaystack = async () => {
+    setPsSaving(true);
+    setPsError(null);
+    setPsSuccess(false);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/paystack`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ config: psConfig, enabled: Boolean(psConfig.secretKey) }),
+      });
+      const data = await res.json() as { success: boolean; error?: string };
+      if (!data.success) throw new Error(data.error || 'Failed to save');
+      setPsSuccess(true);
+      setTimeout(() => setPsSuccess(false), 4000);
+    } catch (err) {
+      setPsError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setPsSaving(false);
+    }
+  };
+
+  const testPaystack = async () => {
+    setPsTesting(true);
+    setPsTestResult(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/paystack/test`, { method: 'POST', headers: authHeaders() });
+      const data = await res.json() as { success: boolean; mode?: string; totalTransactions?: number | null; error?: string };
+      if (data.success) {
+        setPsTestResult({ ok: true, message: `Connected — ${data.mode === 'live' ? 'LIVE' : 'test'} key accepted${typeof data.totalTransactions === 'number' ? `, ${data.totalTransactions} transactions on the account` : ''}.` });
+      } else {
+        setPsTestResult({ ok: false, message: data.error || `Test failed (${res.status})` });
+      }
+    } catch (err) {
+      setPsTestResult({ ok: false, message: err instanceof Error ? err.message : 'Test failed' });
+    } finally {
+      setPsTesting(false);
+    }
+  };
 
   // ── Messaging (SMS & OTP) state ─────────────────────────────────────────────
   const [smsTo, setSmsTo] = useState('');
@@ -248,7 +325,7 @@ const PaymentManagement = () => {
       <div>
         <h1 className="text-2xl font-black tracking-[-0.03em] text-slate-950">Payments</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Configure Hubtel as your payment gateway and SMS/OTP messaging provider, and monitor all activity.
+          Configure Hubtel (payments + SMS/OTP) and Paystack (card &amp; mobile-money checkout), and monitor all activity.
         </p>
       </div>
 
@@ -445,6 +522,162 @@ const PaymentManagement = () => {
                 className="rounded-2xl bg-slate-950 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
               >
                 {configSaving ? 'Saving…' : 'Save credentials'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Paystack ─────────────────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#00c3f7] text-lg font-black text-white">
+              P
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-slate-900">Paystack</h2>
+              <p className="text-sm text-slate-500">
+                Card &amp; mobile-money checkout. Used automatically for plan purchases when Stripe is not active.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {psConfig.secretKey && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <CheckCircle2 size={13} /> Configured
+              </span>
+            )}
+            <a
+              href="https://paystack.com/docs/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+            >
+              <ExternalLink size={13} /> Paystack Docs
+            </a>
+          </div>
+        </div>
+
+        {psLoading ? (
+          <div className="space-y-3">
+            {[1, 2].map((n) => <div key={n} className="h-12 animate-pulse rounded-2xl bg-slate-100" />)}
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="grid gap-5 md:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-800">Secret Key</span>
+                <div className="relative">
+                  <input
+                    type={psShowSecret ? 'text' : 'password'}
+                    value={psConfig.secretKey}
+                    onChange={(e) => setPsConfig((c) => ({ ...c, secretKey: e.target.value }))}
+                    placeholder="sk_test_… or sk_live_…"
+                    className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 pr-12 text-sm text-slate-800 outline-none focus:border-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPsShowSecret((s) => !s)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {psShowSecret ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">Paystack Dashboard → Settings → API Keys &amp; Webhooks.</p>
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-800">Public Key</span>
+                <input
+                  type="text"
+                  value={psConfig.publicKey}
+                  onChange={(e) => setPsConfig((c) => ({ ...c, publicKey: e.target.value }))}
+                  placeholder="pk_test_… or pk_live_…"
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+                />
+                <p className="text-xs text-slate-500">Optional — only needed for inline/popup checkout later.</p>
+              </label>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-800">Charge Currency</span>
+                <select
+                  value={psConfig.currency}
+                  onChange={(e) => setPsConfig((c) => ({ ...c, currency: e.target.value }))}
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+                >
+                  {['GHS', 'NGN', 'USD', 'ZAR', 'KES'].map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <p className="text-xs text-slate-500">Must be enabled on your Paystack account.</p>
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-800">Plan Price Multiplier (FX)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={psConfig.fxRate}
+                  onChange={(e) => setPsConfig((c) => ({ ...c, fxRate: e.target.value }))}
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none focus:border-slate-400"
+                />
+                <p className="text-xs text-slate-500">
+                  Plan prices are multiplied by this before charging. Example: plans priced in USD, charging GHS → set your USD→GHS rate (e.g. 15.5). Leave 1 to charge face value.
+                </p>
+              </label>
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-600">Webhook URL — add this in Paystack Dashboard → Settings → API Keys &amp; Webhooks</div>
+              <div className="mt-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                <code className="flex-1 break-all font-mono text-xs text-slate-700">{`${API_BASE_URL}/api/payments/paystack/webhook`}</code>
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard.writeText(`${API_BASE_URL}/api/payments/paystack/webhook`)}
+                  className="shrink-0 rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Plan activation happens on the <code className="rounded bg-slate-100 px-1">charge.success</code> event — without the webhook, payments still verify on redirect but activation may lag.
+              </p>
+            </div>
+
+            {psError && (
+              <p className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+                <AlertCircle size={16} /> {psError}
+              </p>
+            )}
+            {psSuccess && (
+              <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                <CheckCircle2 size={16} /> Paystack credentials saved.
+              </p>
+            )}
+            {psTestResult && (
+              <p className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${psTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                {psTestResult.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />} {psTestResult.message}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => void testPaystack()}
+                disabled={psTesting || !psConfig.secretKey}
+                className="rounded-2xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              >
+                {psTesting ? 'Testing…' : 'Test connection'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void savePaystack()}
+                disabled={psSaving || !psConfig.secretKey}
+                className="rounded-2xl bg-slate-950 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+              >
+                {psSaving ? 'Saving…' : 'Save Paystack'}
               </button>
             </div>
           </div>

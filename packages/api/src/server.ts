@@ -65,6 +65,7 @@ import { registerMcpAdminRoutes, registerMcpMediaRoutes, seedDefaultMcpServers, 
 import { buildMailer } from './server/mailer.ts';
 import { buildContentPlanEngine, registerContentPlanRoutes } from './server/contentPlanRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
+import { registerPaystackRoutes, buildPaystackPlanCheckout } from './server/paystackRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
 import { registerDbAuditRoutes } from './server/dbAuditRoutes.ts';
@@ -600,6 +601,8 @@ app.use('/api', registerUserDesignRoutes({ requireAuth, hasDatabase, dbQuery, sy
 
 // ─── Hubtel Payment Routes ─────────────────────────────────────────────────────
 app.use('/api', registerHubtelRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, getPlatformConfig }));
+// ─── Paystack Payment Routes ───────────────────────────────────────────────────
+app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, getPlatformConfig }));
 // GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
   app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
   try {
@@ -886,7 +889,10 @@ app.use('/api', registerAIChatRoutes({ requireAuth, getAIConfig, resolveActiveKe
 
 // ─── Billing Routes ────────────────────────────────────────────────────────────
 
-const billingRouter = registerBillingRoutes({ requireAuth, hasDatabase, dbQuery, stripe, getOrCreateStripeCustomer });
+const billingRouter = registerBillingRoutes({
+  requireAuth, hasDatabase, dbQuery, stripe, getOrCreateStripeCustomer,
+  paystackPlanCheckout: buildPaystackPlanCheckout({ dbQuery, getPlatformConfig }),
+});
 app.use('/api/v1/billing', billingRouter);
 app.use('/api/billing', deprecatedApiPath('/api/v1/billing'), billingRouter);
 app.use('/api', registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery, stripe }));
