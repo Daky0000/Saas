@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import NotificationBell from './components/NotificationBell';
 import OnboardingWizard from './components/OnboardingWizard';
+import { onboardingService } from './services/onboardingService';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
 import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
 import HelpModal from './components/HelpModal';
@@ -953,6 +954,22 @@ function App() {
       .catch(() => {});
   }, [isAuthenticated]);
 
+  // First-run onboarding — completion is tracked server-side so the wizard never
+  // re-shows on a new device; localStorage is only a fast-path cache.
+  useEffect(() => {
+    if (!isAuthenticated || showOnboarding) return;
+    if (localStorage.getItem('dw_onboarded')) return;
+    let canceled = false;
+    onboardingService.status()
+      .then((s) => {
+        if (canceled) return;
+        if (s.completed || s.skipped) { localStorage.setItem('dw_onboarded', '1'); return; }
+        setShowOnboarding(true);
+      })
+      .catch(() => undefined);
+    return () => { canceled = true; };
+  }, [isAuthenticated, showOnboarding]);
+
   useEffect(() => {
     let canceled = false;
 
@@ -1074,7 +1091,6 @@ function App() {
     setIsAuthenticated(true);
     const storedUser = setStoredUser(user);
     setAuthUser(storedUser);
-    if (!localStorage.getItem('dw_onboarded')) setShowOnboarding(true);
     navigateToPage(getDefaultPageForUser(storedUser), true);
   };
 
@@ -1268,6 +1284,7 @@ function App() {
       {/* First-time onboarding wizard (full-screen, shown before tour) */}
       {showOnboarding && (
         <OnboardingWizard
+          user={authUser}
           onNavigate={(page) => navigateToPage(page as any)}
           onComplete={() => { setShowOnboarding(false); setPendingTour(true); }}
           onDismiss={() => setShowOnboarding(false)}

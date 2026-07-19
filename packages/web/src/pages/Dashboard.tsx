@@ -281,14 +281,15 @@ function ChartTooltip({ active, payload, label }: any) {
 // ── Onboarding Checklist ─────────────────────────────────────────────────────
 
 function OnboardingChecklist({
-  hasAccounts, hasPosts, hasDesigns, hasEmails, userId,
+  hasBrief, hasAccounts, hasPosts, hasDesigns, hasEmails, userId,
 }: {
-  hasAccounts: boolean; hasPosts: boolean; hasDesigns: boolean; hasEmails: boolean; userId?: string | null;
+  hasBrief: boolean; hasAccounts: boolean; hasPosts: boolean; hasDesigns: boolean; hasEmails: boolean; userId?: string | null;
 }) {
   const storageKey = `onboarding_dismissed_${userId ?? 'anon'}`;
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(storageKey) === '1');
 
   const steps = [
+    { label: 'Brief your AI team about your brand', done: hasBrief, href: '/memory', icon: Sparkles },
     { label: 'Connect a social platform', done: hasAccounts, href: '/integrations', icon: Link2 },
     { label: 'Create your first post', done: hasPosts, href: '/posts', icon: FileText },
     { label: 'Design a card', done: hasDesigns, href: '/cards', icon: Palette },
@@ -367,6 +368,7 @@ export default function Dashboard({ currentUser }: DashboardProps) {
   const [designs, setDesigns] = useState<UserDesign[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [emailsSent, setEmailsSent] = useState(false);
+  const [hasBrief, setHasBrief] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -389,6 +391,10 @@ export default function Dashboard({ currentUser }: DashboardProps) {
       fetch(`${API_BASE_URL}/api/mailing/analytics`, {
         headers: { Authorization: `Bearer ${tok()}` },
       }).then(r => r.json()).then(d => { if (active && d?.campaigns?.sent > 0) setEmailsSent(true); }).catch(() => undefined);
+      // Has the AI memory been seeded (onboarding wizard or Memory page)?
+      fetch(`${API_BASE_URL}/api/memory`, {
+        headers: { Authorization: `Bearer ${tok()}` },
+      }).then(r => r.json()).then(d => { if (active && (d?.memories?.length ?? 0) > 0) setHasBrief(true); }).catch(() => undefined);
     };
 
     fetchAll()
@@ -515,6 +521,7 @@ export default function Dashboard({ currentUser }: DashboardProps) {
 
           {/* ── Onboarding Checklist ── */}
           <OnboardingChecklist
+            hasBrief={hasBrief}
             hasAccounts={accounts.length > 0}
             hasPosts={posts.length > 0}
             hasDesigns={designs.length > 0}

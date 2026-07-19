@@ -71,6 +71,7 @@ import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
 import { registerDbAuditRoutes } from './server/dbAuditRoutes.ts';
 import { registerSocialAuthRoutes } from './server/socialAuthRoutes.ts';
 import { registerMemoryAgentRoutes } from './server/memoryAgentRoutes.ts';
+import { registerOnboardingRoutes } from './server/onboardingRoutes.ts';
 import { registerDakyLearnRoutes } from './server/dakyLearnRoutes.ts';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
@@ -899,6 +900,7 @@ app.use('/api', registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
 
 // ── Memory + Agent Routes ───────────────────────────────────────────────────
 app.use('/api', registerMemoryAgentRoutes({ requireAuth, requireAdmin, dbQuery, hasDatabase, triggerAgentCompilation, createNotification, checkTaskActions, provisionUserAgents, AGENT_DEFS, getAIConfig, decryptAIKey }));
+app.use('/api', registerOnboardingRoutes({ requireAuth, dbQuery, hasDatabase, triggerAgentCompilation, createNotification, checkTaskActions }));
 
 
 // ── Daky Learn Routes ───────────────────────────────────────────────────────

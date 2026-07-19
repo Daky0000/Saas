@@ -32,6 +32,8 @@ await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NUL
 await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
 await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT;`);
 await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;`);
+// onboarding: wizard answers + completed_at/skipped_at so the wizard never re-shows across devices
+await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding JSONB NOT NULL DEFAULT '{}'::jsonb;`);
 await pool.query(`
   CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx
   ON users (LOWER(username))
