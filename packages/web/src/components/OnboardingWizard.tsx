@@ -101,6 +101,32 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
   const [goals, setGoals] = useState<string[]>([]);
   const [platforms, setPlatforms] = useState<string[]>([]);
 
+  // Website analysis: pre-fills later steps, but never a field the user touched.
+  const [analysis, setAnalysis] = useState<{ state: 'idle' | 'loading' | 'done' | 'failed'; host: string }>({ state: 'idle', host: '' });
+  const touchedRef = useRef<Set<string>>(new Set());
+  const analyzedUrlRef = useRef('');
+  const touch = (field: string) => touchedRef.current.add(field);
+
+  const maybeAnalyzeWebsite = () => {
+    const url = website.trim();
+    if (!url || url === analyzedUrlRef.current) return;
+    analyzedUrlRef.current = url;
+    let host = url;
+    try { host = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname; } catch { /* keep raw */ }
+    setAnalysis({ state: 'loading', host });
+    onboardingService.analyzeWebsite(url)
+      .then(({ suggestions: s }) => {
+        const untouched = (f: string) => !touchedRef.current.has(f);
+        if (s.industry && INDUSTRIES.includes(s.industry) && untouched('industry')) setIndustry(s.industry);
+        if (s.offering && untouched('offering')) setOffering(s.offering);
+        if (s.audience && untouched('audience')) setAudience(s.audience);
+        if (s.tones?.length && untouched('tones')) setTones(s.tones.filter((t) => TONES.includes(t)).slice(0, 3));
+        if (s.platforms?.length && untouched('platforms')) setPlatforms(s.platforms.filter((p) => PLATFORMS.includes(p)));
+        setAnalysis({ state: 'done', host });
+      })
+      .catch(() => setAnalysis({ state: 'failed', host }));
+  };
+
   useEffect(() => {
     if (step === 0) brandInputRef.current?.focus();
   }, [step]);
@@ -141,6 +167,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
 
   const next = () => {
     if (!canContinue) return;
+    if (step === 0) maybeAnalyzeWebsite();
     if (isLast) { void finish(); return; }
     setStep((s) => s + 1);
   };
@@ -190,6 +217,10 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
                   placeholder="https://…"
                   className={inputClass}
                 />
+                <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-400">
+                  <Sparkles size={12} className="shrink-0 text-indigo-400" />
+                  Add it and we&apos;ll read your site to pre-fill the next steps for you.
+                </p>
               </div>
             </div>
           </>
@@ -204,7 +235,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
               <FieldLabel>Industry</FieldLabel>
               <div className="flex flex-wrap gap-2">
                 {INDUSTRIES.map((i) => (
-                  <Chip key={i} label={i} active={industry === i} onClick={() => setIndustry(industry === i ? '' : i)} />
+                  <Chip key={i} label={i} active={industry === i} onClick={() => { touch('industry'); setIndustry(industry === i ? '' : i); }} />
                 ))}
               </div>
             </div>
@@ -212,7 +243,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
               <FieldLabel optional>What do you offer?</FieldLabel>
               <textarea
                 value={offering}
-                onChange={(e) => setOffering(e.target.value)}
+                onChange={(e) => { touch('offering'); setOffering(e.target.value); }}
                 placeholder="e.g. Specialty coffee subscriptions and brewing gear for home baristas."
                 rows={3}
                 className={`${inputClass} resize-none`}
@@ -230,7 +261,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
               <FieldLabel optional>Describe your target audience</FieldLabel>
               <textarea
                 value={audience}
-                onChange={(e) => setAudience(e.target.value)}
+                onChange={(e) => { touch('audience'); setAudience(e.target.value); }}
                 placeholder="e.g. Urban 25–40s who care about quality coffee, sustainability, and small rituals."
                 rows={3}
                 className={`${inputClass} resize-none`}
@@ -240,7 +271,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
               <FieldLabel optional>How should your brand sound?</FieldLabel>
               <div className="flex flex-wrap gap-2">
                 {TONES.map((t) => (
-                  <Chip key={t} label={t} active={tones.includes(t)} onClick={() => toggle(tones, setTones, t)} />
+                  <Chip key={t} label={t} active={tones.includes(t)} onClick={() => { touch('tones'); toggle(tones, setTones, t); }} />
                 ))}
               </div>
             </div>
@@ -264,7 +295,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
               <FieldLabel optional>Platforms that matter to you</FieldLabel>
               <div className="flex flex-wrap gap-2">
                 {PLATFORMS.map((p) => (
-                  <Chip key={p} label={p} active={platforms.includes(p)} onClick={() => toggle(platforms, setPlatforms, p)} />
+                  <Chip key={p} label={p} active={platforms.includes(p)} onClick={() => { touch('platforms'); toggle(platforms, setPlatforms, p); }} />
                 ))}
               </div>
             </div>
@@ -454,6 +485,19 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
                   Step {step + 1} of {STEP_META.length} — {STEP_META[step].title}
                 </span>
               </div>
+
+              {step > 0 && analysis.state === 'loading' && (
+                <div className="flex items-center gap-2.5 rounded-2xl bg-violet-50 border border-violet-100 px-4 py-3 text-[13px] text-violet-700">
+                  <Loader2 size={14} className="shrink-0 animate-spin" />
+                  <span>Reading <span className="font-semibold">{analysis.host}</span> — your answers will pre-fill as we learn about your brand…</span>
+                </div>
+              )}
+              {step > 0 && analysis.state === 'done' && (
+                <div className="flex items-center gap-2.5 rounded-2xl bg-indigo-50 border border-indigo-100 px-4 py-3 text-[13px] text-indigo-700">
+                  <Sparkles size={14} className="shrink-0" />
+                  <span>Pre-filled from <span className="font-semibold">{analysis.host}</span> — review and change anything.</span>
+                </div>
+              )}
 
               {renderStep()}
 
