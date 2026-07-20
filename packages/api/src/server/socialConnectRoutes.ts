@@ -1022,13 +1022,13 @@ async function seedSocialMemory(
     );
     if (existing.rows.length > 0) {
       await dbQuery(
-        `UPDATE user_memories SET title = $1, content = $2, updated_at = NOW() WHERE id = $3`,
+        `UPDATE user_memories SET category = 'social', title = $1, content = $2, updated_at = NOW() WHERE id = $3`,
         [`${platformLabel} social account`, content, (existing.rows[0] as any).id],
       );
     } else {
       await dbQuery(
-        `INSERT INTO user_memories (id, user_id, title, content, source, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+        `INSERT INTO user_memories (id, user_id, category, title, content, source, created_at, updated_at)
+         VALUES ($1, $2, 'social', $3, $4, $5, NOW(), NOW())`,
         [randomUUID(), userId, `${platformLabel} social account`, content, `social:${platform}`],
       );
     }

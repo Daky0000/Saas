@@ -5,6 +5,7 @@ export type OnboardingAnswers = {
   website: string;
   industry: string;
   offering: string;
+  offerings: string[];
   audience: string;
   tones: string[];
   goals: string[];
@@ -22,9 +23,15 @@ export type WebsiteSuggestions = {
   brandName: string;
   industry: string;
   offering: string;
+  offerings: string[];
   audience: string;
   tones: string[];
   platforms: string[];
+};
+
+export type AccountSuggestions = {
+  tones: string[];
+  audience: string;
 };
 
 export const onboardingService = {
@@ -33,8 +40,18 @@ export const onboardingService = {
     api.post<{ success: boolean; memoriesCreated: number }>('/api/onboarding', answers),
   skip: () => api.post<{ success: boolean }>('/api/onboarding/skip'),
   analyzeWebsite: (website: string) =>
-    api.post<{ success: boolean; suggestions: WebsiteSuggestions; sourceUrl: string }>(
+    api.post<{ success: boolean; suggestions: WebsiteSuggestions; socialLinks: Record<string, string>; sourceUrl: string }>(
       '/api/onboarding/analyze-website',
       { website },
     ),
+  analyzeAccount: (platform: string) =>
+    api.post<{
+      success: boolean;
+      platform: string;
+      platformLabel: string;
+      handle: string;
+      followers: number;
+      bio: string | null;
+      suggestions: AccountSuggestions;
+    }>('/api/onboarding/analyze-account', { platform }),
 };

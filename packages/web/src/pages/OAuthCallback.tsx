@@ -32,28 +32,48 @@ export default function OAuthCallback() {
     const code = params.get('code') || '';
     const state = params.get('state') || '';
 
+    // Opened via window.open() (e.g. from the onboarding wizard) rather than a
+    // top-level redirect — report back over postMessage and close instead of
+    // navigating the opener's whole app away from wherever it was.
+    const isPopup = typeof window !== 'undefined' && !!window.opener && window.opener !== window;
+    const finishPopup = (success: boolean, error?: string) => {
+      try {
+        window.opener.postMessage({ type: 'oauth_connected', platform, success, error }, window.location.origin);
+      } catch {
+        /* opener gone or cross-origin — nothing more we can do */
+      }
+      window.close();
+    };
+
     if (!platform || !SUPPORTED_PLATFORMS.has(platform)) {
       setStatus('error');
       setMessage('Unsupported integration callback.');
+      if (isPopup) finishPopup(false, 'Unsupported integration callback.');
       return;
     }
 
     if (errorParam) {
+      const decoded = decodeURIComponent(errorParam);
       setStatus('error');
-      setMessage(decodeURIComponent(errorParam));
+      setMessage(decoded);
+      if (isPopup) finishPopup(false, decoded);
       return;
     }
 
     if (!code || !state) {
+      const msg = 'Missing OAuth parameters. Please try connecting again.';
       setStatus('error');
-      setMessage('Missing OAuth parameters. Please try connecting again.');
+      setMessage(msg);
+      if (isPopup) finishPopup(false, msg);
       return;
     }
 
     const token = localStorage.getItem('auth_token');
     if (!token) {
+      const msg = 'Your session expired. Please log in and try again.';
       setStatus('error');
-      setMessage('Your session expired. Please log in and try again.');
+      setMessage(msg);
+      if (isPopup) finishPopup(false, msg);
       return;
     }
 
@@ -67,14 +87,22 @@ export default function OAuthCallback() {
         if (!res.ok || data?.success === false) {
           throw new Error(data?.error || 'Connection failed');
         }
+        if (isPopup) {
+          setStatus('success');
+          setMessage('Connected! You can close this window…');
+          finishPopup(true);
+          return;
+        }
         const returnTo = typeof data?.returnTo === 'string' ? data.returnTo : '/integrations';
         setStatus('success');
         setMessage('Connected! Redirecting…');
         window.location.replace(returnTo.startsWith('/') ? returnTo : '/integrations');
       })
       .catch((err) => {
+        const msg = err instanceof Error ? err.message : 'Connection failed';
         setStatus('error');
-        setMessage(err instanceof Error ? err.message : 'Connection failed');
+        setMessage(msg);
+        if (isPopup) finishPopup(false, msg);
       });
   }, []);
 

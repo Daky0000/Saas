@@ -12,8 +12,11 @@ import {
   Sparkles,
   Target,
   Users,
+  X,
 } from 'lucide-react';
 import { onboardingService, type OnboardingAnswers } from '../services/onboardingService';
+import { integrationService } from '../services/integrationService';
+import { PlatformLogo } from './PlatformLogo';
 
 const STORAGE_KEY = 'dw_onboarded';
 
@@ -34,6 +37,21 @@ const GOALS = [
 const PLATFORMS = [
   'Instagram', 'Facebook', 'X (Twitter)', 'LinkedIn', 'TikTok', 'YouTube', 'Pinterest', 'WordPress',
 ];
+
+// Platforms the app can actually OAuth-connect (mirrors OAuthCallback.tsx's
+// SUPPORTED_PLATFORMS, minus non-social integrations like Gmail/Slack/Zoom).
+// slug is what the OAuth + PlatformLogo + analyze-account APIs expect.
+const CONNECTABLE_PLATFORMS: { label: string; slug: string }[] = [
+  { label: 'Instagram', slug: 'instagram' },
+  { label: 'Facebook', slug: 'facebook' },
+  { label: 'X (Twitter)', slug: 'twitter' },
+  { label: 'LinkedIn', slug: 'linkedin' },
+  { label: 'TikTok', slug: 'tiktok' },
+  { label: 'Pinterest', slug: 'pinterest' },
+  { label: 'Threads', slug: 'threads' },
+];
+
+type ConnectStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
 const STEP_META = [
   { icon: Building2, title: 'Your brand' },
@@ -67,6 +85,49 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
   );
 }
 
+function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder: string }) {
+  const [draft, setDraft] = useState('');
+  const add = () => {
+    const v = draft.trim();
+    if (!v) return;
+    if (!value.some((x) => x.toLowerCase() === v.toLowerCase())) onChange([...value, v.slice(0, 60)]);
+    setDraft('');
+  };
+  return (
+    <div>
+      {value.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {value.map((item) => (
+            <span key={item} className="flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-[13px] font-semibold text-indigo-700">
+              {item}
+              <button type="button" onClick={() => onChange(value.filter((x) => x !== item))} className="text-indigo-400 hover:text-indigo-700">
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          placeholder={placeholder}
+          className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13px] text-gray-900 placeholder:text-gray-300 focus:border-indigo-400 focus:outline-none focus:ring-4 focus:ring-indigo-50 transition-all"
+        />
+        <button
+          type="button"
+          onClick={add}
+          className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] font-semibold text-gray-500 hover:bg-gray-50 transition-colors"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FieldLabel({ children, optional }: { children: React.ReactNode; optional?: boolean }) {
   return (
     <label className="mb-1.5 flex items-baseline gap-2 text-[13px] font-bold text-gray-700">
@@ -96,6 +157,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
   const [website, setWebsite] = useState('');
   const [industry, setIndustry] = useState('');
   const [offering, setOffering] = useState('');
+  const [offerings, setOfferings] = useState<string[]>([]);
   const [audience, setAudience] = useState('');
   const [tones, setTones] = useState<string[]>([]);
   const [goals, setGoals] = useState<string[]>([]);
@@ -103,9 +165,16 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
 
   // Website analysis: pre-fills later steps, but never a field the user touched.
   const [analysis, setAnalysis] = useState<{ state: 'idle' | 'loading' | 'done' | 'failed'; host: string }>({ state: 'idle', host: '' });
+  const [foundSocialLinks, setFoundSocialLinks] = useState<Record<string, string>>({});
   const touchedRef = useRef<Set<string>>(new Set());
   const analyzedUrlRef = useRef('');
   const touch = (field: string) => touchedRef.current.add(field);
+
+  // Connected-account state: one entry per CONNECTABLE_PLATFORMS slug.
+  const [connectStatus, setConnectStatus] = useState<Record<string, ConnectStatus>>({});
+  const [accountInsights, setAccountInsights] = useState<Record<string, { handle: string; followers: number }>>({});
+  const oauthCleanupRef = useRef<Map<string, () => void>>(new Map());
+  useEffect(() => () => { oauthCleanupRef.current.forEach((cleanup) => cleanup()); }, []);
 
   const maybeAnalyzeWebsite = () => {
     const url = website.trim();
@@ -115,16 +184,81 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
     try { host = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname; } catch { /* keep raw */ }
     setAnalysis({ state: 'loading', host });
     onboardingService.analyzeWebsite(url)
-      .then(({ suggestions: s }) => {
+      .then(({ suggestions: s, socialLinks }) => {
         const untouched = (f: string) => !touchedRef.current.has(f);
         if (s.industry && INDUSTRIES.includes(s.industry) && untouched('industry')) setIndustry(s.industry);
         if (s.offering && untouched('offering')) setOffering(s.offering);
+        if (s.offerings?.length && untouched('offerings')) setOfferings(s.offerings.slice(0, 8));
         if (s.audience && untouched('audience')) setAudience(s.audience);
         if (s.tones?.length && untouched('tones')) setTones(s.tones.filter((t) => TONES.includes(t)).slice(0, 3));
         if (s.platforms?.length && untouched('platforms')) setPlatforms(s.platforms.filter((p) => PLATFORMS.includes(p)));
+        if (socialLinks) setFoundSocialLinks(socialLinks);
         setAnalysis({ state: 'done', host });
       })
       .catch(() => setAnalysis({ state: 'failed', host }));
+  };
+
+  // Opens the platform's OAuth flow in a popup so the wizard never unmounts, then
+  // asks the AI to read the freshly-connected profile (bio/followers) and merges
+  // whatever it can infer into the still-open form — respecting touched fields.
+  const connectPlatform = (label: string, slug: string) => {
+    touch('platforms');
+    setConnectStatus((p) => ({ ...p, [slug]: 'connecting' }));
+
+    // Open synchronously (before any await) so browsers don't treat it as a
+    // blocked auto-popup; redirect it to the real URL once we have it.
+    // Unique window name per platform — a shared name would let a second
+    // Connect click (e.g. Facebook while Instagram is still mid-flow) hijack
+    // the first popup instead of opening its own.
+    const popup = window.open('about:blank', `dw_oauth_${slug}`, 'width=560,height=700,left=200,top=100');
+    if (!popup) {
+      setConnectStatus((p) => ({ ...p, [slug]: 'error' }));
+      return;
+    }
+
+    let settled = false;
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage);
+      clearInterval(closeTimer);
+      oauthCleanupRef.current.delete(slug);
+    };
+    const onMessage = (evt: MessageEvent) => {
+      if (evt.origin !== window.location.origin) return;
+      if (evt.data?.type !== 'oauth_connected' || evt.data?.platform !== slug) return;
+      settled = true;
+      cleanup();
+      if (!evt.data.success) { setConnectStatus((p) => ({ ...p, [slug]: 'error' })); return; }
+      setPlatforms((prev) => (prev.includes(label) ? prev : [...prev, label]));
+      setConnectStatus((p) => ({ ...p, [slug]: 'connected' }));
+      onboardingService.analyzeAccount(slug)
+        .then(({ handle, followers, suggestions }) => {
+          setAccountInsights((p) => ({ ...p, [slug]: { handle, followers } }));
+          const untouched = (f: string) => !touchedRef.current.has(f);
+          if (suggestions.tones?.length && untouched('tones')) {
+            setTones((prev) => Array.from(new Set([...prev, ...suggestions.tones])).slice(0, 3));
+          }
+          if (suggestions.audience && untouched('audience')) setAudience(suggestions.audience);
+        })
+        .catch(() => undefined);
+    };
+    const closeTimer = window.setInterval(() => {
+      if (popup.closed) {
+        cleanup();
+        if (!settled) setConnectStatus((p) => (p[slug] === 'connecting' ? { ...p, [slug]: 'idle' } : p));
+      }
+    }, 800);
+    window.addEventListener('message', onMessage);
+    oauthCleanupRef.current.set(slug, cleanup);
+
+    integrationService.getOAuthPopupUrl(slug, '/dashboard').then((r) => {
+      if (!r.success || !r.url) {
+        cleanup();
+        setConnectStatus((p) => ({ ...p, [slug]: 'error' }));
+        popup.close();
+        return;
+      }
+      popup.location.href = r.url;
+    });
   };
 
   useEffect(() => {
@@ -152,7 +286,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
     setErrorMessage(null);
     const answers: OnboardingAnswers = {
       brandName: brandName.trim(), website: website.trim(), industry,
-      offering: offering.trim(), audience: audience.trim(), tones, goals, platforms,
+      offering: offering.trim(), offerings, audience: audience.trim(), tones, goals, platforms,
     };
     try {
       const result = await onboardingService.complete(answers);
@@ -175,6 +309,7 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
   const answered = {
     brand: brandName.trim().length > 0,
     industry: industry.length > 0,
+    offerings: offerings.length > 0,
     audience: audience.trim().length > 0,
     tones: tones.length > 0,
     goals: goals.length > 0,
@@ -249,6 +384,17 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
                 className={`${inputClass} resize-none`}
               />
             </div>
+            <div>
+              <FieldLabel optional>Specific products or services</FieldLabel>
+              <TagInput
+                value={offerings}
+                onChange={(v) => { touch('offerings'); setOfferings(v); }}
+                placeholder="e.g. Espresso subscriptions — press Enter to add"
+              />
+              <p className="mt-1.5 text-[12px] text-gray-400">
+                Listed individually so every agent can reference exact products, not just a vague category.
+              </p>
+            </div>
           </>
         );
       case 2:
@@ -298,6 +444,55 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
                   <Chip key={p} label={p} active={platforms.includes(p)} onClick={() => { touch('platforms'); toggle(platforms, setPlatforms, p); }} />
                 ))}
               </div>
+            </div>
+            <div>
+              <FieldLabel optional>Connect an account — Daky reads it for you</FieldLabel>
+              <div className="flex flex-wrap gap-2">
+                {CONNECTABLE_PLATFORMS.map(({ label, slug }) => {
+                  const status = connectStatus[slug] ?? 'idle';
+                  const insight = accountInsights[slug];
+                  const foundOnSite = Boolean(foundSocialLinks[label]);
+                  const busy = status === 'connecting' || status === 'connected';
+                  return (
+                    <button
+                      key={slug}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => connectPlatform(label, slug)}
+                      className={`flex items-center gap-2 rounded-full border px-3.5 py-2 text-[13px] font-semibold transition-all ${
+                        status === 'connected'
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          : status === 'error'
+                            ? 'border-red-200 bg-red-50 text-red-600 hover:border-red-300'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300 hover:text-indigo-600'
+                      }`}
+                    >
+                      {status === 'connecting' ? (
+                        <Loader2 size={14} className="shrink-0 animate-spin" />
+                      ) : status === 'connected' ? (
+                        <CheckCircle2 size={14} className="shrink-0 text-emerald-500" />
+                      ) : (
+                        <span className="shrink-0"><PlatformLogo platform={slug} size={16} /></span>
+                      )}
+                      <span>
+                        {status === 'connected'
+                          ? `${label}${insight ? ` — @${insight.handle}` : ''}`
+                          : status === 'connecting'
+                            ? `Connecting ${label}…`
+                            : status === 'error'
+                              ? `Retry ${label}`
+                              : label}
+                      </span>
+                      {status === 'idle' && foundOnSite && (
+                        <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-500">found</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[12px] text-gray-400">
+                Opens a secure popup. We read your bio and follower count to sharpen your brief — nothing is posted on your behalf.
+              </p>
             </div>
           </>
         );
@@ -402,6 +597,18 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
                 )}
                 {answered.industry && <BriefRow label="Industry" value={industry} />}
                 {offering.trim() && <BriefRow label="Offering" value={<span className="font-medium text-white/85">{offering.trim()}</span>} />}
+                {answered.offerings && (
+                  <BriefRow
+                    label="Products & services"
+                    value={
+                      <span className="flex flex-wrap gap-1.5 pt-0.5">
+                        {offerings.map((o) => (
+                          <span key={o} className="rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-semibold">{o}</span>
+                        ))}
+                      </span>
+                    }
+                  />
+                )}
                 {answered.audience && <BriefRow label="Audience" value={<span className="font-medium text-white/85">{audience.trim()}</span>} />}
                 {answered.tones && (
                   <BriefRow
@@ -434,6 +641,21 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
                       <span className="flex flex-wrap gap-1.5 pt-0.5">
                         {platforms.map((p) => (
                           <span key={p} className="rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-semibold">{p}</span>
+                        ))}
+                      </span>
+                    }
+                  />
+                )}
+                {Object.keys(accountInsights).length > 0 && (
+                  <BriefRow
+                    label="Connected accounts"
+                    value={
+                      <span className="flex flex-col gap-1 pt-0.5">
+                        {Object.entries(accountInsights).map(([slug, info]) => (
+                          <span key={slug} className="flex items-center gap-1.5 text-[12px] font-medium text-white/85">
+                            <CheckCircle2 size={12} className="shrink-0 text-emerald-300" />
+                            @{info.handle} · {info.followers.toLocaleString()} followers
+                          </span>
                         ))}
                       </span>
                     }

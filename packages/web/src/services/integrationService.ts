@@ -135,6 +135,51 @@ function randomString(length = 48) {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
+// Shared by startOAuth (top-level redirect) and getOAuthPopupUrl (caller opens
+// the popup and assigns this URL to it) so both paths register the same state
+// row and CSRF/PKCE handling.
+async function buildAuthorizeUrl(platform: string, returnTo: string): Promise<{ success: boolean; url?: string; error?: string }> {
+  const normalized = String(platform || '').trim().toLowerCase();
+  const state = randomString(32);
+
+  let codeVerifier: string | undefined;
+  let codeChallenge: string | undefined;
+  if (normalized === 'twitter') {
+    codeVerifier = randomString(64);
+    codeChallenge = await sha256Base64Url(codeVerifier);
+  }
+
+  const stateResponse = await fetchApiJson<{ error?: string }>(
+    '/api/oauth/state',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ state, platform: normalized, returnTo, codeVerifier }),
+    },
+    'Failed to start OAuth'
+  );
+  if (!stateResponse.ok) {
+    return { success: false, error: extractApiErrorMessage(stateResponse.payload, stateResponse.text, 'Failed to start OAuth') };
+  }
+
+  const params = new URLSearchParams({ state });
+  if (normalized === 'twitter' && codeChallenge) {
+    params.set('code_challenge', codeChallenge);
+    params.set('code_challenge_method', 'S256');
+  }
+
+  const authResponse = await fetchApiJson<{ url?: string; error?: string }>(
+    `/api/oauth/${encodeURIComponent(normalized)}/authorize-url?${params.toString()}`,
+    { headers: authHeaders() },
+    'Failed to build authorization URL'
+  );
+  if (!authResponse.ok) {
+    return { success: false, error: extractApiErrorMessage(authResponse.payload, authResponse.text, 'Failed to build authorization URL') };
+  }
+  if (!authResponse.payload?.url) return { success: false, error: 'Authorization URL missing' };
+  return { success: true, url: authResponse.payload.url };
+}
+
 export const integrationService = {
   async getCatalog(): Promise<{ success: boolean; integrations?: IntegrationCatalogItem[]; error?: string }> {
     const response = await fetchApiJson<{ integrations?: IntegrationCatalogItem[] }>(
@@ -166,48 +211,16 @@ export const integrationService = {
   },
 
   async startOAuth(platform: string, returnTo = '/integrations'): Promise<{ success: boolean; error?: string }> {
-    const normalized = String(platform || '').trim().toLowerCase();
-    const state = randomString(32);
-
-    let codeVerifier: string | undefined;
-    let codeChallenge: string | undefined;
-
-    if (normalized === 'twitter') {
-      codeVerifier = randomString(64);
-      codeChallenge = await sha256Base64Url(codeVerifier);
-    }
-
-    const stateResponse = await fetchApiJson<{ error?: string }>(
-      '/api/oauth/state',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ state, platform: normalized, returnTo, codeVerifier }),
-      },
-      'Failed to start OAuth'
-    );
-    if (!stateResponse.ok) {
-      return { success: false, error: extractApiErrorMessage(stateResponse.payload, stateResponse.text, 'Failed to start OAuth') };
-    }
-
-    const params = new URLSearchParams({ state });
-    if (normalized === 'twitter' && codeChallenge) {
-      params.set('code_challenge', codeChallenge);
-      params.set('code_challenge_method', 'S256');
-    }
-
-    const authResponse = await fetchApiJson<{ url?: string; error?: string }>(
-      `/api/oauth/${encodeURIComponent(normalized)}/authorize-url?${params.toString()}`,
-      { headers: authHeaders() },
-      'Failed to build authorization URL'
-    );
-    if (!authResponse.ok) {
-      return { success: false, error: extractApiErrorMessage(authResponse.payload, authResponse.text, 'Failed to build authorization URL') };
-    }
-    if (!authResponse.payload?.url) return { success: false, error: 'Authorization URL missing' };
-
-    window.location.href = authResponse.payload.url;
+    const result = await buildAuthorizeUrl(platform, returnTo);
+    if (!result.success || !result.url) return { success: false, error: result.error };
+    window.location.href = result.url;
     return { success: true };
+  },
+
+  // Same OAuth handshake as startOAuth, but returns the URL instead of navigating —
+  // for callers that open it in a popup (e.g. onboarding) so the host page never unmounts.
+  async getOAuthPopupUrl(platform: string, returnTo = '/dashboard'): Promise<{ success: boolean; url?: string; error?: string }> {
+    return buildAuthorizeUrl(platform, returnTo);
   },
 
   async listFacebookPages(): Promise<{

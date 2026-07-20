@@ -900,7 +900,7 @@ app.use('/api', registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
 
 // ── Memory + Agent Routes ───────────────────────────────────────────────────
 app.use('/api', registerMemoryAgentRoutes({ requireAuth, requireAdmin, dbQuery, hasDatabase, triggerAgentCompilation, createNotification, checkTaskActions, provisionUserAgents, AGENT_DEFS, getAIConfig, decryptAIKey }));
-app.use('/api', registerOnboardingRoutes({ requireAuth, dbQuery, hasDatabase, triggerAgentCompilation, createNotification, checkTaskActions, getAIConfig, decryptAIKey }));
+app.use('/api', registerOnboardingRoutes({ requireAuth, dbQuery, hasDatabase, triggerAgentCompilation, createNotification, checkTaskActions, getAIConfig, resolveActiveKey, callAINonStreaming }));
 
 
 // ── Daky Learn Routes ───────────────────────────────────────────────────────
