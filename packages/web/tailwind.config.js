@@ -9,8 +9,30 @@ export default {
     extend: {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
+        // The vendored lead-generation UI (src/components/leads) leans on
+        // font-serif for headings and font-mono for its table chrome. Point
+        // them at faces the app actually loads rather than letting the browser
+        // pick Times and Courier.
+        serif: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
+        // ── Lead-generation module theme ──────────────────────────────────
+        // The vendored UI is written entirely against four colour names. It
+        // ships a warm gold-on-ivory preset; these values re-skin it to
+        // ContentFlow's palette instead, which is the whole point of the
+        // module keeping its colours behind names. Do not add a bare `slate`
+        // here — the module never uses one as a class, and defining it would
+        // wipe out Tailwind's slate-50…950 scale that the rest of the app
+        // depends on.
+        /** Body text, headers, primary buttons. */
+        ink: '#0f172a',
+        /** Page ground and drawer background. */
+        ivory: '#f8fafc',
+        /** Accent: score bars, selected rows, badges. */
+        gold: '#5b6cf9',
+        /** Darker accent: links and clickable cells. */
+        bronze: '#4a5be8',
         primary: {
           50: '#f0f9ff',
           100: '#e0f2fe',

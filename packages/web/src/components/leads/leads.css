@@ -1,0 +1,19 @@
+/**
+ * The two form classes the lead pages share.
+ *
+ * Prefixed `leads-` so they can't collide with a class the host app already
+ * has. Import this once, after your own `@tailwind` directives:
+ *
+ *   @import "leads-module/client/leads.css";
+ */
+
+@layer components {
+  .leads-input {
+    @apply w-full border border-ink/20 bg-white px-3 py-2 text-sm outline-none transition focus:border-ink/50;
+  }
+
+  /* Compact control for the filter bar, where a full .leads-input is too loud. */
+  .leads-filter-select {
+    @apply border border-ink/15 bg-white px-2 py-1.5 font-mono text-[11px] uppercase tracking-[.08em] text-ink/70 outline-none transition focus:border-ink/50;
+  }
+}

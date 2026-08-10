@@ -35,6 +35,7 @@ import { registerBlogRoutes } from './server/blogRoutes.ts';
 import { registerBillingRoutes, registerAdminBillingRoutes } from './server/billingRoutes.ts';
 import { registerSurveyRoutes, registerPublicSurveyRoutes } from './server/surveyRoutes.ts';
 import { registerLeadsRoutes, registerGoogleSheetsRoutes } from './server/leadsRoutes.ts';
+import { registerLeadgenRoutes } from './server/leadgenRoutes.ts';
 import { registerPagesRoutes } from './server/pagesRoutes.ts';
 import { registerMailingRoutes } from './server/mailingRoutes.ts';
 import { registerNotificationRoutes } from './server/notificationsRoutes.ts';
@@ -870,6 +871,12 @@ const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'ht
 const leadsDeps = { requireAuth, pool: pool!, frontendUrl: FRONTEND_URL, gsClientId: GS_CLIENT_ID, gsClientSecret: GS_CLIENT_SECRET, gsRedirect: GS_REDIRECT };
 app.use('/api/leads', registerLeadsRoutes(leadsDeps));
 app.use('/api/google-sheets', registerGoogleSheetsRoutes(leadsDeps));
+
+// ─── Marketing → Lead Generation (vendored leads module, Prisma-backed) ───────
+// Uploads ride in the JSON body as base64, so the practical file ceiling is the
+// global 20 MB express.json limit above (~15 MB of spreadsheet once encoded),
+// not the module's own 20 MB check.
+app.use('/api/leadgen', registerLeadgenRoutes({ requireAuth }));
 
 // ─── Calendar (Google Calendar OAuth + events) ────────────────────────────────
 app.use('/api/calendar', registerCalendarRoutes({ requireAuth, pool: pool!, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret, frontendUrl: FRONTEND_URL }));

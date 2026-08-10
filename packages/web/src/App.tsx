@@ -64,6 +64,7 @@ const MarketingSurveys = lazy(() => import('./pages/MarketingSurveys'));
 const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
 const MarketingForms = lazy(() => import('./pages/MarketingForms'));
 const MarketingLeads = lazy(() => import('./pages/MarketingLeads'));
+const MarketingLeadsImport = lazy(() => import('./pages/MarketingLeadsImport'));
 const CRMCompanies = lazy(() => import('./pages/CRMCompanies'));
 const CRMPipeline = lazy(() => import('./pages/CRMPipeline'));
 const CRMLeadScoring = lazy(() => import('./pages/CRMLeadScoring'));
@@ -121,6 +122,7 @@ export type PageType =
   | 'marketing-automations'
   | 'marketing-forms'
   | 'marketing-leads'
+  | 'marketing-leads-import'
   | 'crm-companies'
   | 'crm-pipeline'
   | 'crm-scoring'
@@ -172,6 +174,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'marketing-automations': '/marketing/automations',
   'marketing-forms': '/marketing/forms',
   'marketing-leads': '/marketing/leads',
+  'marketing-leads-import': '/marketing/leads/import',
   'crm-companies': '/crm/companies',
   'crm-pipeline': '/crm/pipeline',
   'crm-scoring': '/crm/scoring',
@@ -209,6 +212,7 @@ const MARKETING_PAGES: PageType[] = [
   'marketing-automations',
   'marketing-forms',
   'marketing-leads',
+  'marketing-leads-import',
 ];
 const CRM_PAGES: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring', 'gmail-agent'];
 const CONNECTOR_PAGES: PageType[] = ['connector-hub', 'connector-setup', 'connector-sync'];
@@ -677,6 +681,7 @@ function AppSidebar({
                     { id: 'marketing-automations' as PageType, label: 'Automations', navKey: 'marketing-automations' },
                     { id: 'marketing-forms' as PageType, label: 'Forms', navKey: 'marketing-forms' },
                     { id: 'marketing-leads' as PageType, label: 'Lead Generation', navKey: 'marketing-leads' },
+                    { id: 'marketing-leads-import' as PageType, label: 'Import Leads', navKey: 'marketing-leads-import' },
                   ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
                     <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                       {c.label}
@@ -1182,7 +1187,8 @@ function App() {
       case 'marketing-surveys': return <MarketingSurveys />;
       case 'marketing-automations': return <MarketingAutomations />;
       case 'marketing-forms': return <MarketingForms />;
-      case 'marketing-leads': return <MarketingLeads />;
+      case 'marketing-leads': return <MarketingLeads navigateToPage={navigateToPage} />;
+      case 'marketing-leads-import': return <MarketingLeadsImport navigateToPage={navigateToPage} />;
       case 'crm-companies': return <CRMCompanies />;
       case 'crm-pipeline': return <CRMPipeline />;
       case 'crm-scoring': return <CRMLeadScoring />;

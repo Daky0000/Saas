@@ -44,6 +44,7 @@ const NAV_TREE: NavItem[] = [
       { key: 'marketing-automations', label: 'Automations' },
       { key: 'marketing-forms', label: 'Forms' },
       { key: 'marketing-leads', label: 'Lead Generation' },
+      { key: 'marketing-leads-import', label: 'Lead Generation › Import' },
     ],
   },
   { key: 'integrations', label: 'Integrations' },

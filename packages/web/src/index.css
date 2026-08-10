@@ -1,3 +1,8 @@
+/* The two form classes the vendored lead-generation UI shares. It declares an
+   @layer components block, so it has to be inlined into the stylesheet that
+   carries the @tailwind directives — and @import has to lead the file. */
+@import './components/leads/leads.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

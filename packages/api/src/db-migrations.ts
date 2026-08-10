@@ -4300,4 +4300,187 @@ await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS attendees 
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS reminder_minutes INTEGER[]`).catch(() => undefined);
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS google_event_id TEXT`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_company_idx ON crm_activities (company_id, created_at DESC)`).catch(() => undefined);
+
+await createLeadgenTables(pool);
+}
+
+// ── Marketing → Lead Generation ───────────────────────────────────────────────
+//
+// Tables for the vendored leads module (src/server/leads). Unlike everything
+// above, these are read and written by Prisma, not the pg pool — so the column
+// names are the module's camelCase and the DDL has to match
+// prisma/schema.prisma exactly. Regenerate it after any schema change with:
+//
+//   npx prisma migrate diff --from-empty \
+//     --to-schema-datamodel prisma/schema.prisma --script
+//
+// and re-apply the idempotency guards, which that output does not include.
+// They are created here rather than by `prisma migrate` so the project keeps
+// one migration path and one thing that runs at boot.
+//
+// The `leadgen_` prefix keeps them clear of the older `leads` / `lead_groups`
+// tables, which belong to the Contacts feature and are unrelated.
+async function createLeadgenTables(pool: Pool): Promise<void> {
+  const enums: [string, string[]][] = [
+    ['LeadSource', ['REFERRAL', 'LINKEDIN', 'COLD_EMAIL', 'OUTREACH', 'CONTENT', 'WARM_NETWORK', 'GOOGLE_MAPS', 'WEB_SCRAPE', 'DIRECTORY', 'SOCIAL', 'OTHER']],
+    ['LeadStatus', ['NEW', 'QUALIFYING', 'QUALIFIED', 'DISQUALIFIED', 'CONVERTED', 'LOST']],
+    ['LeadFieldType', ['TEXT', 'LONG_TEXT', 'NUMBER', 'CURRENCY', 'DATE', 'BOOLEAN', 'EMAIL', 'PHONE', 'URL', 'SELECT']],
+    ['LeadActivityType', ['EMAIL', 'CALL', 'MESSAGE', 'MEETING', 'NOTE']],
+    ['LeadImportSource', ['UPLOAD', 'GOOGLE_SHEET', 'GOOGLE_DRIVE_FILE']],
+    ['LeadImportStatus', ['ANALYZING', 'READY', 'IMPORTED', 'FAILED']],
+  ];
+  for (const [name, values] of enums) {
+    const labels = values.map((value) => `'${value}'`).join(', ');
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '${name}') THEN
+          CREATE TYPE "${name}" AS ENUM (${labels});
+        END IF;
+      END
+      $$;
+    `).catch(() => undefined);
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "leadgen_lead_imports" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL DEFAULT '',
+      "source" "LeadImportSource" NOT NULL DEFAULT 'UPLOAD',
+      "status" "LeadImportStatus" NOT NULL DEFAULT 'ANALYZING',
+      "fileName" TEXT,
+      "driveFileId" TEXT,
+      "sheetNames" TEXT[] DEFAULT ARRAY[]::TEXT[],
+      "plan" JSONB,
+      "analyzedBy" TEXT,
+      "notes" TEXT,
+      "error" TEXT,
+      "tablesFound" INTEGER NOT NULL DEFAULT 0,
+      "groupsCreated" INTEGER NOT NULL DEFAULT 0,
+      "leadsCreated" INTEGER NOT NULL DEFAULT 0,
+      "leadsUpdated" INTEGER NOT NULL DEFAULT 0,
+      "rowsSkipped" INTEGER NOT NULL DEFAULT 0,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
+      CONSTRAINT "leadgen_lead_imports_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "leadgen_lead_imports_user_fkey" FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "leadgen_lead_groups" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL DEFAULT '',
+      "name" TEXT NOT NULL,
+      "slug" TEXT NOT NULL,
+      "description" TEXT,
+      "autoCreated" BOOLEAN NOT NULL DEFAULT false,
+      "sourceLabel" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
+      "leadImportId" TEXT,
+      CONSTRAINT "leadgen_lead_groups_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "leadgen_lead_groups_user_fkey" FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT "leadgen_lead_groups_leadImportId_fkey" FOREIGN KEY ("leadImportId") REFERENCES "leadgen_lead_imports"("id") ON DELETE SET NULL ON UPDATE CASCADE
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "leadgen_leads" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL DEFAULT '',
+      "contactName" TEXT NOT NULL,
+      "contactEmail" TEXT,
+      "contactPhone" TEXT,
+      "companyName" TEXT,
+      "source" "LeadSource" NOT NULL DEFAULT 'OTHER',
+      "status" "LeadStatus" NOT NULL DEFAULT 'NEW',
+      "leadScore" INTEGER NOT NULL DEFAULT 0,
+      "discoveryCallAt" TIMESTAMP(3),
+      "discoveryNotes" TEXT,
+      "estimatedDealSize" DECIMAL(12,2),
+      "winLossReason" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
+      "website" TEXT,
+      "address" TEXT,
+      "city" TEXT,
+      "region" TEXT,
+      "country" TEXT,
+      "category" TEXT,
+      "rating" DECIMAL(3,2),
+      "reviewsCount" INTEGER,
+      "latitude" DOUBLE PRECISION,
+      "longitude" DOUBLE PRECISION,
+      "socialLinks" JSONB,
+      "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+      "externalId" TEXT,
+      "dedupeKey" TEXT,
+      "enrichment" JSONB,
+      "customFields" JSONB,
+      "clientId" TEXT,
+      "scraperSourceId" TEXT,
+      "scraperRunId" TEXT,
+      "groupId" TEXT,
+      CONSTRAINT "leadgen_leads_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "leadgen_leads_user_fkey" FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT "leadgen_leads_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "leadgen_lead_groups"("id") ON DELETE SET NULL ON UPDATE CASCADE
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "leadgen_lead_fields" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL DEFAULT '',
+      "groupId" TEXT,
+      "key" TEXT NOT NULL,
+      "label" TEXT NOT NULL,
+      "type" "LeadFieldType" NOT NULL DEFAULT 'TEXT',
+      "builtin" BOOLEAN NOT NULL DEFAULT false,
+      "hidden" BOOLEAN NOT NULL DEFAULT false,
+      "position" INTEGER NOT NULL DEFAULT 0,
+      "width" INTEGER,
+      "meta" JSONB,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
+      CONSTRAINT "leadgen_lead_fields_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "leadgen_lead_fields_user_fkey" FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT "leadgen_lead_fields_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "leadgen_lead_groups"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    );
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "leadgen_lead_activities" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL DEFAULT '',
+      "leadId" TEXT NOT NULL,
+      "type" "LeadActivityType" NOT NULL DEFAULT 'NOTE',
+      "summary" TEXT NOT NULL,
+      "outcome" TEXT,
+      "occurredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "actorId" TEXT,
+      "actorName" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "leadgen_lead_activities_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "leadgen_lead_activities_user_fkey" FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT "leadgen_lead_activities_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "leadgen_leads"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    );
+  `).catch(() => undefined);
+
+  const indexes = [
+    `CREATE INDEX IF NOT EXISTS "leadgen_leads_userId_status_idx" ON "leadgen_leads"("userId", "status")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_leads_groupId_idx" ON "leadgen_leads"("groupId")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_leads_userId_source_createdAt_idx" ON "leadgen_leads"("userId", "source", "createdAt")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "leadgen_leads_userId_dedupeKey_key" ON "leadgen_leads"("userId", "dedupeKey")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_lead_groups_leadImportId_idx" ON "leadgen_lead_groups"("leadImportId")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_lead_groups_userId_idx" ON "leadgen_lead_groups"("userId")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "leadgen_lead_groups_userId_slug_key" ON "leadgen_lead_groups"("userId", "slug")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_lead_fields_groupId_position_idx" ON "leadgen_lead_fields"("groupId", "position")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "leadgen_lead_fields_userId_groupId_key_key" ON "leadgen_lead_fields"("userId", "groupId", "key")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_lead_activities_leadId_occurredAt_idx" ON "leadgen_lead_activities"("leadId", "occurredAt")`,
+    `CREATE INDEX IF NOT EXISTS "leadgen_lead_imports_userId_createdAt_idx" ON "leadgen_lead_imports"("userId", "createdAt")`,
+  ];
+  for (const sql of indexes) {
+    await pool.query(sql).catch(() => undefined);
+  }
 }
