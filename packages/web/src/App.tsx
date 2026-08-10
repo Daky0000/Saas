@@ -7,7 +7,6 @@ import {
   Building2,
   ChevronDown,
   CreditCard,
-  FileText,
   HelpCircle,
   Layers,
   Loader2,
@@ -19,7 +18,6 @@ import {
   Shield,
   Sparkles,
   Star,
-  TrendingUp,
   User,
   Waypoints,
   Settings,
@@ -65,6 +63,7 @@ const MarketingCampaigns = lazy(() => import('./pages/MarketingCampaigns'));
 const MarketingSurveys = lazy(() => import('./pages/MarketingSurveys'));
 const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
 const MarketingForms = lazy(() => import('./pages/MarketingForms'));
+const MarketingLeads = lazy(() => import('./pages/MarketingLeads'));
 const CRMCompanies = lazy(() => import('./pages/CRMCompanies'));
 const CRMPipeline = lazy(() => import('./pages/CRMPipeline'));
 const CRMLeadScoring = lazy(() => import('./pages/CRMLeadScoring'));
@@ -121,6 +120,7 @@ export type PageType =
   | 'marketing-surveys'
   | 'marketing-automations'
   | 'marketing-forms'
+  | 'marketing-leads'
   | 'crm-companies'
   | 'crm-pipeline'
   | 'crm-scoring'
@@ -171,6 +171,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'marketing-surveys': '/marketing/surveys',
   'marketing-automations': '/marketing/automations',
   'marketing-forms': '/marketing/forms',
+  'marketing-leads': '/marketing/leads',
   'crm-companies': '/crm/companies',
   'crm-pipeline': '/crm/pipeline',
   'crm-scoring': '/crm/scoring',
@@ -194,6 +195,23 @@ const PATH_TO_PAGE = new Map<string, PageType>(
 PATH_TO_PAGE.set('/admin', 'admin');
 PATH_TO_PAGE.set('/mailing', 'marketing-email');
 PATH_TO_PAGE.set('/campaign', 'marketing-campaigns');
+
+// Sidebar groups — Content (incl. Analytics) is nested inside Marketing, so any
+// content page must expand both the Marketing menu and the Content submenu.
+const CONTENT_PAGES: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'workflow', 'analytics'];
+const MARKETING_PAGES: PageType[] = [
+  'marketing',
+  ...CONTENT_PAGES,
+  'marketing-contacts',
+  'marketing-email',
+  'marketing-campaigns',
+  'marketing-surveys',
+  'marketing-automations',
+  'marketing-forms',
+  'marketing-leads',
+];
+const CRM_PAGES: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring', 'gmail-agent'];
+const CONNECTOR_PAGES: PageType[] = ['connector-hub', 'connector-setup', 'connector-sync'];
 
 async function fetchCurrentUser(token: string): Promise<AppUser | null> {
   try {
@@ -424,56 +442,11 @@ function AppSidebar({
           </button>
         )}
 
-        {/* Content (Posts + Automation + Media + Cards) */}
-        {navOn('content') && (
-          <>
-            <button
-              type="button"
-              data-tour-id="nav-content"
-              onClick={() => { setPostsMenuOpen(true); go('posts'); }}
-              className={cls(currentPage === 'posts' || currentPage === 'post-automation' || currentPage === 'media' || currentPage === 'cards' || currentPage === 'workflow')}
-            >
-              <FileText size={15} className="shrink-0" />
-              <span className="flex-1 text-left">Content</span>
-              <span
-                role="button"
-                aria-label="Toggle submenu"
-                onClick={(e) => { e.stopPropagation(); setPostsMenuOpen((p) => !p); }}
-                className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60"
-              >
-                <ChevronDown size={12} className={`text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
-              </span>
-            </button>
-            {postsMenuOpen && (
-              <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                {([
-                  { id: 'post-automation' as PageType, label: 'Automation', navKey: 'content-automation' },
-                  { id: 'media' as PageType, label: 'Media', navKey: 'content-media' },
-                  { id: 'cards' as PageType, label: 'AI Studio', navKey: 'content-studio' },
-                  { id: 'workflow' as PageType, label: 'Workflow', navKey: 'content-workflow' },
-                ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
-                  <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
         {/* AI Team */}
         {navOn('ai-team') && (
           <button type="button" onClick={() => go('ai-team')} className={cls(currentPage === 'ai-team')}>
             <Bot size={15} className="shrink-0" />
             <span className="flex-1 text-left">AI Team</span>
-          </button>
-        )}
-
-        {/* Analytics */}
-        {navOn('analytics') && (
-          <button type="button" data-tour-id="nav-analytics" onClick={() => go('analytics')} className={cls(currentPage === 'analytics')}>
-            <TrendingUp size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Analytics</span>
           </button>
         )}
 
@@ -636,15 +609,7 @@ function AppSidebar({
                 type="button"
                 data-tour-id="nav-marketing"
                 onClick={() => { setMarketingMenuOpen(true); go('marketing'); }}
-                className={cls(
-                  currentPage === 'marketing' ||
-                  currentPage === 'marketing-contacts' ||
-                  currentPage === 'marketing-email' ||
-                  currentPage === 'marketing-campaigns' ||
-                  currentPage === 'marketing-surveys' ||
-                  currentPage === 'marketing-automations' ||
-                  currentPage === 'marketing-forms'
-                )}
+                className={cls(MARKETING_PAGES.includes(currentPage))}
               >
                 <Megaphone size={15} className="shrink-0" />
                 <span className="flex-1 text-left">Marketing</span>
@@ -654,14 +619,64 @@ function AppSidebar({
               </button>
               {marketingMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                  {navOn('marketing-overview') && (
+                    <button type="button" onClick={() => go('marketing')} className={subCls(currentPage === 'marketing')}>
+                      Overview
+                    </button>
+                  )}
+
+                  {/* Content (Posts + Automation + Media + AI Studio + Workflow + Analytics) */}
+                  {navOn('content') && (
+                    <>
+                      <button
+                        type="button"
+                        data-tour-id="nav-content"
+                        onClick={() => { setPostsMenuOpen(true); go('posts'); }}
+                        className={subCls(CONTENT_PAGES.includes(currentPage))}
+                      >
+                        <span className="flex-1 text-left">Content</span>
+                        <span
+                          role="button"
+                          aria-label="Toggle submenu"
+                          onClick={(e) => { e.stopPropagation(); setPostsMenuOpen((p) => !p); }}
+                          className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60"
+                        >
+                          <ChevronDown size={11} className={`text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
+                        </span>
+                      </button>
+                      {postsMenuOpen && (
+                        <div className="ml-2 border-l border-gray-100 pl-2.5 flex flex-col">
+                          {([
+                            { id: 'posts' as PageType, label: 'Posts', navKey: 'content-posts' },
+                            { id: 'post-automation' as PageType, label: 'Automation', navKey: 'content-automation' },
+                            { id: 'media' as PageType, label: 'Media', navKey: 'content-media' },
+                            { id: 'cards' as PageType, label: 'AI Studio', navKey: 'content-studio' },
+                            { id: 'workflow' as PageType, label: 'Workflow', navKey: 'content-workflow' },
+                            { id: 'analytics' as PageType, label: 'Analytics', navKey: 'analytics' },
+                          ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              {...(c.id === 'analytics' ? { 'data-tour-id': 'nav-analytics' } : {})}
+                              onClick={() => go(c.id)}
+                              className={subCls(currentPage === c.id)}
+                            >
+                              {c.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   {([
-                    { id: 'marketing' as PageType, label: 'Overview', navKey: 'marketing-overview' },
                     { id: 'marketing-contacts' as PageType, label: 'Contacts', navKey: 'marketing-contacts' },
                     { id: 'marketing-email' as PageType, label: 'Email', navKey: 'marketing-email' },
                     { id: 'marketing-campaigns' as PageType, label: 'Campaigns', navKey: 'marketing-campaigns' },
                     { id: 'marketing-surveys' as PageType, label: 'Surveys', navKey: 'marketing-surveys' },
                     { id: 'marketing-automations' as PageType, label: 'Automations', navKey: 'marketing-automations' },
                     { id: 'marketing-forms' as PageType, label: 'Forms', navKey: 'marketing-forms' },
+                    { id: 'marketing-leads' as PageType, label: 'Lead Generation', navKey: 'marketing-leads' },
                   ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
                     <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
                       {c.label}
@@ -891,16 +906,16 @@ function App() {
   const navigateToPage = useCallback(
     (page: PageType, replace = false) => {
       setCurrentPage(page);
-      if (page === 'posts' || page === 'post-automation' || page === 'media' || page === 'cards' || page === 'workflow') {
+      if (CONTENT_PAGES.includes(page)) {
         setPostsMenuOpen(true);
       }
-      if (page === 'marketing' || page === 'marketing-contacts' || page === 'marketing-email' || page === 'marketing-campaigns' || page === 'marketing-surveys' || page === 'marketing-automations') {
+      if (MARKETING_PAGES.includes(page)) {
         setMarketingMenuOpen(true);
       }
-      if (page === 'crm-companies' || page === 'crm-pipeline' || page === 'crm-scoring' || page === 'gmail-agent') {
+      if (CRM_PAGES.includes(page)) {
         setCrmMenuOpen(true);
       }
-      if (page === 'connector-hub' || page === 'connector-setup' || page === 'connector-sync') {
+      if (CONNECTOR_PAGES.includes(page)) {
         setConnectorMenuOpen(true);
       }
       const path = PAGE_PATHS[page];
@@ -1033,14 +1048,10 @@ function App() {
     const pageFromPath = getPageFromPath(pathname);
     if (pageFromPath) {
       setCurrentPage(pageFromPath);
-      const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'workflow'];
-      if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
-      const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
-      if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
-      const crmPages: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring', 'gmail-agent'];
-      if (crmPages.includes(pageFromPath)) setCrmMenuOpen(true);
-      const connectorPages: PageType[] = ['connector-hub', 'connector-setup', 'connector-sync'];
-      if (connectorPages.includes(pageFromPath)) setConnectorMenuOpen(true);
+      if (CONTENT_PAGES.includes(pageFromPath)) setPostsMenuOpen(true);
+      if (MARKETING_PAGES.includes(pageFromPath)) setMarketingMenuOpen(true);
+      if (CRM_PAGES.includes(pageFromPath)) setCrmMenuOpen(true);
+      if (CONNECTOR_PAGES.includes(pageFromPath)) setConnectorMenuOpen(true);
       return () => {
         canceled = true;
       };
@@ -1072,10 +1083,10 @@ function App() {
       const pageFromPath = getPageFromPath(pathname);
       if (pageFromPath) {
         setCurrentPage(pageFromPath);
-        const contentPages: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'workflow'];
-        if (contentPages.includes(pageFromPath)) setPostsMenuOpen(true);
-        const marketingPages: PageType[] = ['marketing', 'marketing-contacts', 'marketing-email', 'marketing-campaigns', 'marketing-surveys', 'marketing-automations'];
-        if (marketingPages.includes(pageFromPath)) setMarketingMenuOpen(true);
+        if (CONTENT_PAGES.includes(pageFromPath)) setPostsMenuOpen(true);
+        if (MARKETING_PAGES.includes(pageFromPath)) setMarketingMenuOpen(true);
+        if (CRM_PAGES.includes(pageFromPath)) setCrmMenuOpen(true);
+        if (CONNECTOR_PAGES.includes(pageFromPath)) setConnectorMenuOpen(true);
         return;
       }
 
@@ -1171,6 +1182,7 @@ function App() {
       case 'marketing-surveys': return <MarketingSurveys />;
       case 'marketing-automations': return <MarketingAutomations />;
       case 'marketing-forms': return <MarketingForms />;
+      case 'marketing-leads': return <MarketingLeads />;
       case 'crm-companies': return <CRMCompanies />;
       case 'crm-pipeline': return <CRMPipeline />;
       case 'crm-scoring': return <CRMLeadScoring />;

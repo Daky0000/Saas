@@ -14,17 +14,7 @@ interface NavItem {
 const NAV_TREE: NavItem[] = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'notifications', label: 'Notifications' },
-  {
-    key: 'content', label: 'Content',
-    children: [
-      { key: 'content-automation', label: 'Automation' },
-      { key: 'content-media', label: 'Media' },
-      { key: 'content-studio', label: 'AI Studio' },
-      { key: 'content-workflow', label: 'Workflow' },
-    ],
-  },
   { key: 'ai-team', label: 'AI Team' },
-  { key: 'analytics', label: 'Analytics' },
   {
     key: 'crm', label: 'CRM',
     children: [
@@ -38,11 +28,22 @@ const NAV_TREE: NavItem[] = [
     key: 'marketing', label: 'Marketing',
     children: [
       { key: 'marketing-overview', label: 'Overview' },
+      // Content is a nested group inside Marketing — toggling `content` hides
+      // the whole sub-tree, the `content-*` keys hide individual entries.
+      { key: 'content', label: 'Content' },
+      { key: 'content-posts', label: 'Content › Posts' },
+      { key: 'content-automation', label: 'Content › Automation' },
+      { key: 'content-media', label: 'Content › Media' },
+      { key: 'content-studio', label: 'Content › AI Studio' },
+      { key: 'content-workflow', label: 'Content › Workflow' },
+      { key: 'analytics', label: 'Content › Analytics' },
       { key: 'marketing-contacts', label: 'Contacts' },
       { key: 'marketing-email', label: 'Email' },
       { key: 'marketing-campaigns', label: 'Campaigns' },
       { key: 'marketing-surveys', label: 'Surveys' },
       { key: 'marketing-automations', label: 'Automations' },
+      { key: 'marketing-forms', label: 'Forms' },
+      { key: 'marketing-leads', label: 'Lead Generation' },
     ],
   },
   { key: 'integrations', label: 'Integrations' },
