@@ -496,6 +496,99 @@ export function registerSalesRoutes({ requireAuth, pool, salesEngine }: Deps): R
     }
   });
 
+  // ─── Vapi setup + developer test calls ────────────────────────────────────
+
+  /**
+   * Whether Vapi is actually reachable with the configured keys, and which
+   * phone numbers the private key can see. Returns no key material.
+   */
+  router.get('/vapi/status', async (req, res) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    try {
+      res.json({ success: true, status: await salesEngine.getVapiStatus() });
+    } catch (err) {
+      logger.error({ err }, 'sales_vapi_status_failed');
+      fail(res, 500, 'Failed to check Vapi credentials');
+    }
+  });
+
+  /** Prefill a test with the exact brief a real lead would get. */
+  router.get('/test-call/brief/:contactId', async (req, res) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    try {
+      const owned = await pool.query(`SELECT 1 FROM mailing_contacts WHERE id=$1 AND user_id=$2`, [
+        req.params.contactId, auth.userId,
+      ]);
+      if (!owned.rowCount) return fail(res, 404, 'Contact not found');
+      const brief = await salesEngine.buildCallBriefFor(auth.userId, req.params.contactId);
+      res.json({ success: true, brief });
+    } catch (err) {
+      logger.error({ err }, 'sales_test_brief_failed');
+      fail(res, 500, 'Failed to build the call brief');
+    }
+  });
+
+  /**
+   * Config for an in-browser test call: the PUBLIC key plus the assistant
+   * definition. The private key is never returned to a client.
+   */
+  router.post('/test-call/web', async (req, res) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    try {
+      const { context, first_message, voice_id } = req.body ?? {};
+      if (!context || !String(context).trim()) return fail(res, 400, 'A context for the agent is required');
+      const config = await salesEngine.getWebTestConfig({
+        userId: auth.userId,
+        context: String(context).slice(0, 20_000),
+        firstMessage: first_message ?? null,
+        voiceId: voice_id ?? null,
+      });
+      res.json({ success: true, ...config });
+    } catch (err) {
+      logger.warn({ err }, 'sales_web_test_config_failed');
+      fail(res, 400, err instanceof Error ? err.message : 'Failed to prepare the browser test call');
+    }
+  });
+
+  /** Place a real outbound test call. Rate-limited; always discloses the AI. */
+  router.post('/test-call/phone', async (req, res) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    try {
+      const { to_number, context, first_message, voice_id } = req.body ?? {};
+      if (!to_number || !/^\+?[0-9\s\-()]{7,20}$/.test(String(to_number))) {
+        return fail(res, 400, 'A valid phone number in E.164 format is required (e.g. +233201234567)');
+      }
+      if (!context || !String(context).trim()) return fail(res, 400, 'A context for the agent is required');
+
+      const result = await salesEngine.placeTestCall({
+        userId: auth.userId,
+        toNumber: String(to_number).replace(/[\s\-()]/g, ''),
+        context: String(context).slice(0, 20_000),
+        firstMessage: first_message ?? null,
+        voiceId: voice_id ?? null,
+      });
+      res.json({ success: true, ...result });
+    } catch (err) {
+      logger.warn({ err }, 'sales_test_call_failed');
+      fail(res, 400, err instanceof Error ? err.message : 'Failed to place the test call');
+    }
+  });
+
+  router.get('/test-call/history', async (req, res) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    try {
+      res.json({ success: true, calls: await salesEngine.listTestCalls(auth.userId) });
+    } catch (err) {
+      logger.error({ err }, 'sales_test_history_failed');
+      fail(res, 500, 'Failed to load test calls');
+    }
+  });
+
   // ─── Policy ───────────────────────────────────────────────────────────────
 
   router.get('/policy', async (req, res) => {

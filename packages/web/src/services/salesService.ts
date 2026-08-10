@@ -206,6 +206,28 @@ export interface SalesIntelligence {
   policyEnabled: boolean;
 }
 
+export interface VapiStatus {
+  ok: boolean;
+  error?: string;
+  phoneNumbers: { id: string; number: string | null; name: string | null }[];
+  phoneNumberIdValid: boolean;
+  hasPublicKey: boolean;
+}
+
+export interface TestCallRecord {
+  id: string;
+  to_number: string | null;
+  status: string;
+  outcome: string | null;
+  started_at: string | null;
+  duration_sec: number | null;
+  transcript: string | null;
+  recording_url: string | null;
+  ended_reason: string | null;
+  last_error: string | null;
+  objective: string | null;
+}
+
 function assertSuccess<T extends { success: boolean; error?: string }>(data: T): T {
   if (!data.success) throw new Error(data.error || 'Request failed');
   return data;
@@ -384,6 +406,50 @@ export const salesService = {
       await api.post<{ success: boolean; error?: string; written: number }>('/api/sales/insights/generate'),
     );
     return data.written;
+  },
+
+  // ─── Vapi setup + developer test calls ────────────────────────────────────
+  async getVapiStatus() {
+    const data = assertSuccess(
+      await api.get<{ success: boolean; error?: string; status: VapiStatus }>('/api/sales/vapi/status'),
+    );
+    return data.status;
+  },
+
+  /** The exact brief a real lead would get — for testing against reality. */
+  async getTestBrief(contactId: string) {
+    const data = assertSuccess(
+      await api.get<{ success: boolean; error?: string; brief: { systemPrompt: string; firstMessage: string; objective: string } }>(
+        `/api/sales/test-call/brief/${contactId}`,
+      ),
+    );
+    return data.brief;
+  },
+
+  /** Public key + assistant config for an in-browser mic call. */
+  async getWebTestConfig(payload: { context: string; first_message?: string; voice_id?: string }) {
+    return assertSuccess(
+      await api.post<{ success: boolean; error?: string; publicKey: string; assistant: Record<string, unknown> }>(
+        '/api/sales/test-call/web',
+        payload,
+      ),
+    );
+  },
+
+  async placeTestCall(payload: { to_number: string; context: string; first_message?: string; voice_id?: string }) {
+    return assertSuccess(
+      await api.post<{ success: boolean; error?: string; attemptId: string; externalId: string }>(
+        '/api/sales/test-call/phone',
+        payload,
+      ),
+    );
+  },
+
+  async listTestCalls() {
+    const data = assertSuccess(
+      await api.get<{ success: boolean; error?: string; calls: TestCallRecord[] }>('/api/sales/test-call/history'),
+    );
+    return data.calls;
   },
 
   // ─── Playbooks ────────────────────────────────────────────────────────────

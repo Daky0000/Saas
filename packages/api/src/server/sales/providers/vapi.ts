@@ -79,11 +79,13 @@ export class VapiProvider implements CallProvider {
     return Boolean(this.cfg.apiKey && this.cfg.phoneNumberId);
   }
 
-  async placeCall(req: PlaceCallRequest): Promise<{ externalId: string }> {
-    if (!this.isConfigured()) {
-      throw new Error('Vapi is not configured — an API key and phone number ID are required');
-    }
-
+  /**
+   * The transient assistant definition. Shared by outbound phone calls (placed
+   * server-side with the PRIVATE key) and browser test calls (started by the
+   * Web SDK with the PUBLIC key), so a developer testing in the browser is
+   * exercising the same agent that will dial a lead — not an approximation.
+   */
+  buildAssistant(req: Pick<PlaceCallRequest, 'firstMessage' | 'systemPrompt' | 'voiceId' | 'maxDurationSec' | 'recordingEnabled'>): Record<string, unknown> {
     const assistant: Record<string, unknown> = {
       firstMessage: req.firstMessage,
       maxDurationSeconds: req.maxDurationSec,
@@ -99,15 +101,79 @@ export class VapiProvider implements CallProvider {
     if (req.voiceId) {
       assistant.voice = { provider: '11labs', voiceId: req.voiceId };
     }
+    return assistant;
+  }
+
+  /**
+   * Verify the private key and report what it can reach. Setup is otherwise
+   * guesswork — a wrong key or a phone number ID from the wrong org fails
+   * silently at 3am on the first real call instead of here.
+   */
+  async checkCredentials(): Promise<{
+    ok: boolean;
+    error?: string;
+    phoneNumbers: { id: string; number: string | null; name: string | null }[];
+    phoneNumberIdValid: boolean;
+    hasPublicKey: boolean;
+  }> {
+    const base = { phoneNumbers: [], phoneNumberIdValid: false, hasPublicKey: Boolean(this.cfg.publicKey) };
+    if (!this.cfg.apiKey) return { ...base, ok: false, error: 'No private API key configured' };
+    try {
+      const { data } = await axios.get(`${VAPI_API}/phone-number`, {
+        headers: { Authorization: `Bearer ${this.cfg.apiKey}` },
+        timeout: 15_000,
+      });
+      const phoneNumbers = (Array.isArray(data) ? data : []).map((p: any) => ({
+        id: String(p.id),
+        number: p.number ?? null,
+        name: p.name ?? null,
+      }));
+      return {
+        ok: true,
+        phoneNumbers,
+        phoneNumberIdValid: Boolean(this.cfg.phoneNumberId) && phoneNumbers.some((p) => p.id === this.cfg.phoneNumberId),
+        hasPublicKey: Boolean(this.cfg.publicKey),
+      };
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.message || err?.message;
+      if (status === 401 || status === 403) {
+        return { ...base, ok: false, error: 'Vapi rejected the private key' };
+      }
+      return { ...base, ok: false, error: `Could not reach Vapi: ${detail || 'unknown error'}` };
+    }
+  }
+
+  /** The browser-safe key, for the Web SDK. Never returns the private key. */
+  getPublicKey(): string | null {
+    return this.cfg.publicKey || null;
+  }
+
+  async placeCall(req: PlaceCallRequest): Promise<{ externalId: string }> {
+    return this.placeCallWithAssistant({
+      toNumber: req.toNumber,
+      assistant: this.buildAssistant(req),
+      metadata: req.metadata,
+    });
+  }
+
+  async placeCallWithAssistant(params: {
+    toNumber: string;
+    assistant: Record<string, unknown>;
+    metadata: { attemptId: string; userId: string; contactId: string };
+  }): Promise<{ externalId: string }> {
+    if (!this.isConfigured()) {
+      throw new Error('Vapi is not configured — a private API key and phone number ID are required');
+    }
 
     try {
       const { data } = await axios.post(
         `${VAPI_API}/call`,
         {
           phoneNumberId: this.cfg.phoneNumberId,
-          customer: { number: req.toNumber },
-          assistant,
-          metadata: req.metadata,
+          customer: { number: params.toNumber },
+          assistant: params.assistant,
+          metadata: params.metadata,
         },
         {
           headers: { Authorization: `Bearer ${this.cfg.apiKey}`, 'Content-Type': 'application/json' },
@@ -121,7 +187,11 @@ export class VapiProvider implements CallProvider {
       const detail = err?.response?.data?.message || err?.response?.data?.error || err?.message;
       const status = err?.response?.status;
       logger.error({ status, detail }, 'vapi_place_call_failed');
-      if (status === 401 || status === 403) throw new Error('Vapi rejected the API key');
+      // A private key used here is the usual cause of a 401 — the public key
+      // cannot place calls, which is the single most common setup mistake.
+      if (status === 401 || status === 403) {
+        throw new Error('Vapi rejected the key. Placing calls requires the PRIVATE key, not the public one.');
+      }
       if (status === 400) throw new Error(`Vapi rejected the call: ${detail}`);
       throw new Error(`Vapi call failed: ${detail || 'unknown error'}`);
     }

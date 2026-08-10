@@ -40,7 +40,18 @@ export type CallEvent =
   | { kind: 'ignored' };
 
 export interface ProviderConfig {
+  /**
+   * PRIVATE key. Server-side only: places calls, reads phone numbers, full org
+   * access. Never send this to a browser, put it in a log, or return it from an
+   * API response.
+   */
   apiKey: string;
+  /**
+   * PUBLIC key. Browser-safe by design — used by the Web SDK to start an
+   * in-browser test call. It is still a credential: restrict it by allowed
+   * origin and by assistant in the Vapi dashboard.
+   */
+  publicKey?: string | null;
   phoneNumberId?: string | null;
   webhookSecret?: string | null;
   assistantId?: string | null;

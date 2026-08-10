@@ -51,14 +51,21 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
     return policyFromRow(null);
   }
 
-  async function getProvider(policy: SalesCallPolicy): Promise<CallProvider> {
-    if (policy.provider !== 'vapi') return new SimulatorProvider();
+  async function buildVapiProvider(): Promise<VapiProvider> {
     const cfg = await getPlatformConfig('vapi').catch(() => ({}) as Record<string, string>);
     return new VapiProvider({
+      // apiKey is the PRIVATE key — server-side only.
       apiKey: cfg.apiKey || cfg.privateKey || process.env.VAPI_API_KEY || '',
+      // publicKey is browser-safe and is the only one ever sent to a client.
+      publicKey: cfg.publicKey || process.env.VAPI_PUBLIC_KEY || null,
       phoneNumberId: cfg.phoneNumberId || process.env.VAPI_PHONE_NUMBER_ID || null,
       webhookSecret: cfg.webhookSecret || process.env.VAPI_WEBHOOK_SECRET || null,
     });
+  }
+
+  async function getProvider(policy: SalesCallPolicy): Promise<CallProvider> {
+    if (policy.provider !== 'vapi') return new SimulatorProvider();
+    return buildVapiProvider();
   }
 
   /** Exposed for the webhook, which must pick a provider without a user id. */
@@ -110,7 +117,8 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
       ),
       pool.query(
         `SELECT COUNT(*)::int AS n FROM sales_call_attempts
-          WHERE user_id=$1 AND created_at >= date_trunc('day', NOW()) AND status <> 'blocked'`,
+          WHERE user_id=$1 AND created_at >= date_trunc('day', NOW())
+            AND status <> 'blocked' AND is_test = false`,
         [userId],
       ),
       pool.query(
@@ -319,7 +327,7 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
     if (event.kind === 'ignored') return { handled: false };
 
     const { rows } = await pool.query(
-      `SELECT id, user_id, contact_id, lead_profile_id, followup_id, status
+      `SELECT id, user_id, contact_id, lead_profile_id, followup_id, status, is_test
          FROM sales_call_attempts WHERE provider=$1 AND external_id=$2 LIMIT 1`,
       [providerId, event.externalId],
     );
@@ -355,11 +363,21 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
     const { rowCount } = await pool.query(
       `UPDATE sales_call_attempts
           SET status='completed', outcome=$1, ended_at=$2, duration_sec=$3,
-              recording_url=$4, updated_at=NOW()
-        WHERE id=$5 AND status <> 'completed'`,
-      [event.outcome, event.at, event.durationSec, event.recordingUrl ?? null, attempt.id],
+              recording_url=$4, transcript=$5, ended_reason=$6, updated_at=NOW()
+        WHERE id=$7 AND status <> 'completed'`,
+      [
+        event.outcome, event.at, event.durationSec, event.recordingUrl ?? null,
+        event.transcript ?? null, event.endedReason ?? null, attempt.id,
+      ],
     );
     if (!rowCount) return { handled: true };
+
+    // A test call stops here. It has no lead, so there is nothing to update and
+    // no conversation to create — and critically it must not feed the timing
+    // model, or a developer testing at 2am teaches the scheduler that 2am works.
+    if (attempt.is_test || !attempt.contact_id) {
+      return { handled: true };
+    }
 
     // $1 is cast explicitly: a bare parameter inside CASE WHEN gives Postgres
     // nothing to infer a type from and errors with "could not determine data
@@ -619,6 +637,7 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
           WHERE outcome IS NOT NULL
             AND outcome IN ('answered','no_answer','busy','voicemail','rejected')
             AND local_weekday IS NOT NULL AND local_hour IS NOT NULL
+            AND is_test = false
             AND created_at >= NOW() - INTERVAL '90 days'
           GROUP BY user_id, local_weekday, local_hour
          ON CONFLICT (user_id, weekday, hour)
@@ -645,6 +664,142 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
     } catch (err) {
       logger.error({ err }, 'sales_weekly_insights_failed');
     }
+  }
+
+  // ─── Developer test calls ──────────────────────────────────────────────────
+  //
+  // A test call has no lead behind it, so it deliberately does NOT run the
+  // compliance gate — there is no consent record or do-not-call flag for a
+  // number you are typing in to hear your own agent. What replaces the gate:
+  //
+  //   - a low hourly cap, so this cannot become an open dialing relay
+  //   - the AI disclosure is still prepended, always, regardless of policy
+  //   - a short hard duration cap
+  //   - every test is recorded in sales_call_attempts with is_test = true
+  //
+  // It also never touches a lead profile, never creates a conversation record,
+  // and never feeds the timing model. Test data must not contaminate the
+  // statistics the real system learns from.
+
+  const TEST_CALLS_PER_HOUR = 5;
+  const TEST_CALL_MAX_DURATION_SEC = 180;
+
+  async function testCallsInLastHour(userId: string): Promise<number> {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM sales_call_attempts
+        WHERE user_id=$1 AND is_test=true AND created_at >= NOW() - INTERVAL '1 hour'`,
+      [userId],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  /** Compose the assistant a test will run. Shared by phone and browser tests. */
+  async function buildTestAssistant(params: {
+    userId: string;
+    context: string;
+    firstMessage?: string | null;
+    voiceId?: string | null;
+  }): Promise<{ provider: VapiProvider; assistant: Record<string, unknown>; firstMessage: string }> {
+    const provider = await buildVapiProvider();
+    const policy = await getPolicy(params.userId);
+    // Disclosure is forced on for tests: aiDisclosureRequired: true regardless
+    // of the account policy, because a test dials a real human's phone.
+    const firstMessage = applyDisclosures(
+      (params.firstMessage || '').trim() || 'This is a test call. Can you hear me?',
+      { ...policy, aiDisclosureRequired: true },
+    );
+    const assistant = provider.buildAssistant({
+      firstMessage,
+      systemPrompt: params.context,
+      voiceId: params.voiceId ?? policy.voiceId,
+      maxDurationSec: TEST_CALL_MAX_DURATION_SEC,
+      recordingEnabled: true,
+    });
+    return { provider, assistant, firstMessage };
+  }
+
+  /** Place a real outbound test call to an arbitrary number. */
+  async function placeTestCall(params: {
+    userId: string;
+    toNumber: string;
+    context: string;
+    firstMessage?: string | null;
+    voiceId?: string | null;
+  }): Promise<{ attemptId: string; externalId: string }> {
+    const used = await testCallsInLastHour(params.userId);
+    if (used >= TEST_CALLS_PER_HOUR) {
+      throw new Error(`Test call limit reached (${TEST_CALLS_PER_HOUR} per hour). Try again later.`);
+    }
+
+    const { provider, assistant, firstMessage } = await buildTestAssistant(params);
+    if (!provider.isConfigured()) {
+      throw new Error('Vapi is not configured — add a private API key and phone number ID under Admin → Integrations.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO sales_call_attempts
+         (id, user_id, provider, to_number, objective, brief, status, run_at, is_test)
+       VALUES ($1,$2,'vapi',$3,$4,$5,'dialing',NOW(),true) RETURNING id`,
+      [randomUUID(), params.userId, params.toNumber, 'Developer test call', params.context],
+    );
+    const attemptId = rows[0].id;
+
+    try {
+      const { externalId } = await provider.placeCallWithAssistant({
+        toNumber: params.toNumber,
+        assistant,
+        metadata: { attemptId, userId: params.userId, contactId: '' },
+      });
+      await pool.query(
+        `UPDATE sales_call_attempts SET external_id=$1, started_at=NOW(), updated_at=NOW() WHERE id=$2`,
+        [externalId, attemptId],
+      );
+      logger.info({ userId: params.userId, attemptId, firstMessage }, 'sales_test_call_placed');
+      return { attemptId, externalId };
+    } catch (err: any) {
+      await pool
+        .query(`UPDATE sales_call_attempts SET status='failed', outcome='failed', last_error=$1 WHERE id=$2`, [
+          String(err?.message || err).slice(0, 500),
+          attemptId,
+        ])
+        .catch(() => undefined);
+      throw err;
+    }
+  }
+
+  /**
+   * Everything the browser needs to run an in-mic test call: the PUBLIC key
+   * and the assistant definition. The private key never leaves the server.
+   */
+  async function getWebTestConfig(params: {
+    userId: string;
+    context: string;
+    firstMessage?: string | null;
+    voiceId?: string | null;
+  }): Promise<{ publicKey: string; assistant: Record<string, unknown> }> {
+    const { provider, assistant } = await buildTestAssistant(params);
+    const publicKey = provider.getPublicKey();
+    if (!publicKey) {
+      throw new Error('No Vapi public key configured. Add it under Admin → Integrations → Vapi to test in the browser.');
+    }
+    return { publicKey, assistant };
+  }
+
+  async function getVapiStatus() {
+    const provider = await buildVapiProvider();
+    return provider.checkCredentials();
+  }
+
+  async function listTestCalls(userId: string) {
+    const { rows } = await pool.query(
+      `SELECT id, to_number, status, outcome, started_at, duration_sec, transcript,
+              recording_url, ended_reason, last_error, objective
+         FROM sales_call_attempts
+        WHERE user_id=$1 AND is_test=true
+        ORDER BY created_at DESC LIMIT 20`,
+      [userId],
+    );
+    return rows;
   }
 
   // ─── Manual conversation entry (the Phase 1 doorway) ───────────────────────
@@ -679,6 +834,11 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
     getPolicy,
     getProvider,
     getProviderByName,
+    placeTestCall,
+    getWebTestConfig,
+    getVapiStatus,
+    listTestCalls,
+    buildCallBriefFor: (userId: string, contactId: string) => buildCallBrief(pool, { userId, contactId }),
     ensureLeadProfile,
     evaluateGate,
     queueCall,

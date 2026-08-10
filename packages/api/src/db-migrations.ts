@@ -4602,6 +4602,15 @@ async function createSalesTables(pool: Pool): Promise<void> {
   await pool.query(`CREATE INDEX IF NOT EXISTS sales_agent_runs_user_idx ON sales_agent_runs (user_id, created_at DESC)`).catch(() => undefined);
   await pool.query(`CREATE INDEX IF NOT EXISTS sales_agent_runs_subject_idx ON sales_agent_runs (subject_type, subject_id)`).catch(() => undefined);
 
+  // Developer test calls. A test has no lead behind it, so contact_id stays
+  // NULL and no conversation record is produced — the transcript lands on the
+  // attempt itself, which is the only thing there is to look at.
+  await pool.query(`ALTER TABLE sales_call_attempts ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT false`).catch(() => undefined);
+  await pool.query(`ALTER TABLE sales_call_attempts ADD COLUMN IF NOT EXISTS transcript TEXT`).catch(() => undefined);
+  await pool.query(`ALTER TABLE sales_call_attempts ADD COLUMN IF NOT EXISTS ended_reason TEXT`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_call_attempts_test_idx
+    ON sales_call_attempts (user_id, created_at DESC) WHERE is_test = true`).catch(() => undefined);
+
   // Rolled-up user-level answer rates — the PRIOR that per-lead timing shrinks
   // toward. 168 rows per user, recomputed periodically, never on the read path.
   await pool.query(`

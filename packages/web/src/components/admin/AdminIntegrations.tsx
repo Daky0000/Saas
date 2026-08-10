@@ -201,7 +201,8 @@ const PLATFORMS: PlatformDef[] = [
     name: 'Vapi (AI Voice Calls)',
     description: 'Voice-agent provider for the AI Sales OS. Vapi owns telephony, speech recognition, turn-taking and speech synthesis; we supply the call brief and receive an end-of-call report.',
     fields: [
-      { id: 'apiKey', label: 'Private API Key', placeholder: 'Vapi private key', type: 'password', helpText: 'From dashboard.vapi.ai → API Keys. Use the PRIVATE key — the public key cannot place calls.' },
+      { id: 'apiKey', label: 'Private API Key', placeholder: 'Vapi private key', type: 'password', helpText: 'From dashboard.vapi.ai → API Keys. This places calls and is used server-side only — never expose it in a browser, a log, or a repo. The public key cannot place calls.' },
+      { id: 'publicKey', label: 'Public API Key', placeholder: 'Vapi public key', type: 'text', helpText: 'Browser-safe, used by the Web SDK for in-browser test calls under Sales → Settings. It is still a credential: restrict it by allowed origin and by assistant in the Vapi dashboard.' },
       { id: 'phoneNumberId', label: 'Phone Number ID', placeholder: 'e.g. 8f2c…', type: 'text', helpText: 'The UUID of the Vapi phone number that calls are placed from (Phone Numbers tab), not the number itself.' },
       { id: 'webhookSecret', label: 'Webhook Secret', placeholder: 'Shared secret for /webhooks/vapi', type: 'password', helpText: 'Set the same value as the server-URL secret on your Vapi phone number. Without it every webhook is rejected, so calls will never produce a conversation record.' },
     ],

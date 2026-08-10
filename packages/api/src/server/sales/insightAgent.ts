@@ -53,7 +53,8 @@ export async function collectSalesAggregates(pool: Pool, userId: string, days = 
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE outcome='answered')::int AS answered
          FROM sales_call_attempts
-        WHERE user_id=$1 AND outcome IS NOT NULL AND created_at >= NOW() - INTERVAL '${since}'`,
+        WHERE user_id=$1 AND outcome IS NOT NULL AND is_test = false
+          AND created_at >= NOW() - INTERVAL '${since}'`,
       [userId],
     ),
     pool.query(
@@ -74,6 +75,7 @@ export async function collectSalesAggregates(pool: Pool, userId: string, days = 
               COUNT(*) FILTER (WHERE outcome='answered')::int AS answered
          FROM sales_call_attempts
         WHERE user_id=$1 AND outcome IS NOT NULL AND local_weekday IS NOT NULL
+          AND is_test = false
           AND created_at >= NOW() - INTERVAL '${since}'
         GROUP BY 1,2 HAVING COUNT(*) >= 5
         ORDER BY (COUNT(*) FILTER (WHERE outcome='answered'))::numeric / COUNT(*) DESC

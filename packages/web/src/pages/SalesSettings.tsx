@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, BookOpen, Check, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import {
   OBJECTION_LABELS, salesService,
-  type SalesCallPolicy, type SalesPlaybook,
+  type SalesCallPolicy, type SalesLead, type SalesPlaybook,
 } from '../services/salesService';
+import VapiTestConsole from '../components/sales/VapiTestConsole';
 
 const ACCENT = '#5b6cf9';
 const DAYS = [
@@ -26,6 +27,7 @@ const inputClass = 'w-full rounded-xl border border-slate-200 px-3 py-2 text-sm 
 export default function SalesSettings() {
   const [policy, setPolicy] = useState<SalesCallPolicy | null>(null);
   const [playbooks, setPlaybooks] = useState<SalesPlaybook[]>([]);
+  const [leads, setLeads] = useState<SalesLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -35,9 +37,15 @@ export default function SalesSettings() {
   const load = useCallback(async () => {
     try {
       setError(null);
-      const [p, books] = await Promise.all([salesService.getPolicy(), salesService.listPlaybooks()]);
+      const [p, books, leadPage] = await Promise.all([
+        salesService.getPolicy(),
+        salesService.listPlaybooks(),
+        // Only for the test console's "prefill from a real lead" picker.
+        salesService.listLeads({ limit: 50 }).catch(() => ({ leads: [], total: 0 })),
+      ]);
       setPolicy(p);
       setPlaybooks(books);
+      setLeads(leadPage.leads);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings');
     } finally {
@@ -271,6 +279,8 @@ export default function SalesSettings() {
         </button>
         {saved && <span className="inline-flex items-center gap-1 text-sm text-emerald-600"><Check size={15} /> Saved</span>}
       </div>
+
+      <VapiTestConsole leads={leads} />
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
