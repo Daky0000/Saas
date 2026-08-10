@@ -44,6 +44,8 @@ import { registerOrgRoutes } from './server/orgRoutes.ts';
 import { registerCRMCompaniesRoutes } from './server/crmCompaniesRoutes.ts';
 import { registerCRMDealsRoutes } from './server/crmDealsRoutes.ts';
 import { registerCRMActivitiesRoutes } from './server/crmActivitiesRoutes.ts';
+import { registerSalesRoutes } from './server/salesRoutes.ts';
+import { buildSalesEngine } from './server/sales/salesEngine.ts';
 import { registerCalendarRoutes } from './server/calendarRoutes.ts';
 import { registerConnectorRegistryRoutes } from './server/connectorRegistryRoutes.ts';
 import { registerConnectorPreferencesRoutes } from './server/connectorPreferencesRoutes.ts';
@@ -207,9 +209,14 @@ const PORT = config.port;
 // globally instead of per client.
 app.set('trust proxy', 1);
 
+// AI Sales OS. Built before the automation engine (whose call/follow-up steps
+// delegate to it) and before the webhook router (which normalizes provider call
+// events through it).
+const salesEngine = buildSalesEngine({ pool: pool!, getPlatformConfig });
+
 // Automation engine executes the flows built in Marketing → Automations.
 // Built before all routes so public forms, webhooks, and mailing can fire triggers.
-const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl });
+const automationEngine = buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl: config.appUrl, salesEngine });
 
 // Unified platform mailer: switch between the hosting provider's SMTP inbox
 // (Admin → Platform Settings → smtp) and Resend via the `email` config.
@@ -217,6 +224,7 @@ const mailer = buildMailer({ getPlatformConfig, getResendConfig });
 
 // Auto-content plans: background generation of promo content + featured images.
 const contentPlanEngine = buildContentPlanEngine({ pool: pool!, createNotification, sendPlatformEmail: mailer.sendPlatformEmail });
+
 
 // Request IDs first so even health checks carry x-request-id
 app.use(requestIdMiddleware);
@@ -488,6 +496,7 @@ app.use(registerWebhookRoutes({
   getPlatformConfig,
   fireAutomationTrigger: automationEngine.fireAutomationTrigger,
   recalcLeadScore,
+  salesEngine,
 }));
 
 
@@ -854,6 +863,12 @@ app.use('/api/crm', registerCRMCompaniesRoutes({ requireAuth, pool: pool! }));
 app.use('/api/crm', registerCRMDealsRoutes({ requireAuth, pool: pool! }));
 app.use('/api/crm', registerCRMActivitiesRoutes({ requireAuth, pool: pool! }));
 
+// ─── AI Sales OS ──────────────────────────────────────────────────────────────
+// Built on the CRM contact rather than beside it: sales_lead_profiles hangs off
+// mailing_contacts, and every analysed conversation also writes a crm_activities
+// row so the Companies and Pipeline pages pick it up with no sync job.
+app.use('/api/sales', registerSalesRoutes({ requireAuth, pool: pool!, salesEngine }));
+
 // ─── Connector Abstraction Layer ──────────────────────────────────────────────
 app.use('/api/connectors', registerConnectorRegistryRoutes({ requireAuth, pool: pool! }));
 app.use('/api/connectors', registerConnectorPreferencesRoutes({ requireAuth, pool: pool! }));
@@ -1057,6 +1072,25 @@ if (config.nodeEnv !== 'test') {
     // Run due auto-content plans (e.g. 3 promo pieces/day) every 10 minutes.
     void contentPlanEngine.processDueContentPlans();
     setInterval(() => void contentPlanEngine.processDueContentPlans(), 10 * 60 * 1000);
+
+    // ── AI Sales OS ──
+    // Analyse finished conversations every minute — a rep who just logged a
+    // call expects the extracted record while they still have it in mind.
+    void salesEngine.processPendingAnalyses();
+    setInterval(() => void salesEngine.processPendingAnalyses(), 60 * 1000);
+    // Turn due follow-up obligations into queued calls every 5 minutes.
+    void salesEngine.processDueFollowUps();
+    setInterval(() => void salesEngine.processDueFollowUps(), 5 * 60 * 1000);
+    // Dial queued attempts every minute. Each one re-runs the compliance gate
+    // before it dials — the queue is a plan, not a permission.
+    setInterval(() => void salesEngine.processDueCallAttempts(), 60 * 1000);
+    // Recompute answer-rate priors. Delayed at boot so a restart doesn't run a
+    // full-table aggregate while everything else is warming up.
+    setTimeout(() => void salesEngine.rollupCallStats(), 25 * 60 * 1000);
+    setInterval(() => void salesEngine.rollupCallStats(), 6 * 60 * 60 * 1000);
+    // Weekly pattern mining. Proposals only — nothing is applied without a human.
+    setTimeout(() => void salesEngine.runWeeklyInsights(), 45 * 60 * 1000);
+    setInterval(() => void salesEngine.runWeeklyInsights(), 7 * 24 * 60 * 60 * 1000);
   });
 }
 

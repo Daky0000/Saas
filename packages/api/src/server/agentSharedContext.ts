@@ -78,6 +78,34 @@ export async function buildSharedAgentContext(userId: string): Promise<string> {
     if (Number(rows[0]?.n) > 0) parts.push(`Active marketing automations: ${rows[0].n}`);
   });
 
+  // Sales pipeline state — so the marketing/content agents know what sales is
+  // actually hearing on calls, not just what the campaigns did.
+  await safe(async () => {
+    const { rows } = await dbQuery(
+      `SELECT COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE stage IN ('interested','proposal','negotiation'))::int AS active,
+              COUNT(*) FILTER (WHERE stage='won')::int AS won
+         FROM sales_lead_profiles WHERE user_id=$1`,
+      [userId]
+    );
+    const s = rows[0];
+    if (s && Number(s.total) > 0) {
+      parts.push(`Sales pipeline: ${s.total} leads, ${s.active} in active conversation, ${s.won} won`);
+    }
+  });
+
+  await safe(async () => {
+    const { rows } = await dbQuery(
+      `SELECT objection_code, COUNT(*)::int AS n FROM sales_conversation_objections
+        WHERE user_id=$1 AND created_at >= NOW() - INTERVAL '90 days'
+        GROUP BY objection_code ORDER BY n DESC LIMIT 4`,
+      [userId]
+    );
+    if (rows.length) {
+      parts.push(`Objections heard on sales calls: ${rows.map((r: any) => `${String(r.objection_code).replace(/_/g, ' ')} (${r.n})`).join(', ')}`);
+    }
+  });
+
   await safe(async () => {
     const { rows } = await dbQuery(
       `SELECT value FROM user_agent_memory WHERE user_id=$1 AND agent_key='global' AND mem_type='insight' ORDER BY created_at DESC LIMIT 5`,

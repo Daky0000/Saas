@@ -25,6 +25,16 @@ const NAV_TREE: NavItem[] = [
     ],
   },
   {
+    key: 'sales', label: 'Sales',
+    children: [
+      { key: 'sales-leads', label: 'Leads' },
+      { key: 'sales-conversations', label: 'Conversations' },
+      { key: 'sales-followups', label: 'Follow-ups' },
+      { key: 'sales-intelligence', label: 'Intelligence' },
+      { key: 'sales-settings', label: 'Settings' },
+    ],
+  },
+  {
     key: 'marketing', label: 'Marketing',
     children: [
       { key: 'marketing-overview', label: 'Overview' },

@@ -4302,6 +4302,320 @@ await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS google_eve
 await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_company_idx ON crm_activities (company_id, created_at DESC)`).catch(() => undefined);
 
 await createLeadgenTables(pool);
+await createSalesTables(pool);
+}
+
+// ── AI Sales OS ───────────────────────────────────────────────────────────────
+//
+// A multi-agent sales layer built ON the existing CRM rather than beside it:
+// mailing_contacts stays the one person record, sales_lead_profiles hangs
+// sales-only state off it, and every conversation also writes a crm_activities
+// row so the Companies/Pipeline pages light up without a sync job.
+//
+// Two conventions here are load-bearing:
+//
+//  - Analytical dimensions (objection, intent, sentiment, stage, outcome) are
+//    CHECK-constrained codes PLUS a raw-text field. Free text cannot be grouped,
+//    and "too expensive" / "budget is tight" / "price is high" must land in one
+//    bar on the dashboard. The same enums are pinned into the Analyst agent's
+//    JSON schema so the model cannot invent a twelfth objection code.
+//
+//  - sales_call_attempts doubles as the durable dial queue (status='queued' +
+//    run_at), claimed with FOR UPDATE SKIP LOCKED exactly like
+//    mailing_automation_jobs. One table means no queue/history drift.
+//
+// Keep the CHECK lists in sync with packages/api/src/server/sales/types.ts.
+async function createSalesTables(pool: Pool): Promise<void> {
+  // Sales leads are routinely phone-only (scraped lists, referrals, Sheets
+  // imports), but mailing_contacts was built email-first: NOT NULL + a table
+  // level UNIQUE(user_id, email). Relax to partial unique indexes — Postgres
+  // treats NULL as distinct, so email dedupe is preserved for the rows that
+  // have one while phone-only rows become insertable. Every read that assumed
+  // a non-null email must tolerate NULL (see mailing/campaign send paths).
+  await pool.query(`ALTER TABLE mailing_contacts ALTER COLUMN email DROP NOT NULL`).catch(() => undefined);
+  await pool.query(`ALTER TABLE mailing_contacts DROP CONSTRAINT IF EXISTS mailing_contacts_user_id_email_key`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS mailing_contacts_user_email_uidx
+    ON mailing_contacts (user_id, email) WHERE email IS NOT NULL`).catch(() => undefined);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS mailing_contacts_user_phone_uidx
+    ON mailing_contacts (user_id, phone) WHERE phone IS NOT NULL AND email IS NULL`).catch(() => undefined);
+
+  // Sales-only state, 1:1 with the CRM contact. Nothing here duplicates a
+  // mailing_contacts or crm_deals column.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_lead_profiles (
+      id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      contact_id            TEXT NOT NULL UNIQUE REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      stage                 TEXT NOT NULL DEFAULT 'new' CHECK (stage IN ('new','contacted','qualified','interested','proposal','negotiation','won','lost','unreachable')),
+      do_not_call           BOOLEAN NOT NULL DEFAULT false,
+      do_not_call_reason    TEXT,
+      do_not_call_at        TIMESTAMPTZ,
+      consent_source        TEXT,
+      consent_at            TIMESTAMPTZ,
+      timezone              TEXT,
+      is_decision_maker     BOOLEAN,
+      role_title            TEXT,
+      owner_user_id         TEXT REFERENCES users(id) ON DELETE SET NULL,
+      human_handling        BOOLEAN NOT NULL DEFAULT false,
+      last_contacted_at     TIMESTAMPTZ,
+      next_action           TEXT,
+      next_action_at        TIMESTAMPTZ,
+      attempt_count         INT NOT NULL DEFAULT 0,
+      consecutive_no_answer INT NOT NULL DEFAULT 0,
+      summary               TEXT,
+      custom_data           JSONB DEFAULT '{}',
+      created_at            TIMESTAMPTZ DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_lead_profiles'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_lead_profiles_user_stage_idx ON sales_lead_profiles (user_id, stage)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_lead_profiles_next_action_idx ON sales_lead_profiles (user_id, next_action_at)`).catch(() => undefined);
+
+  // One row per user. The compliance gate reads nothing else. Defaults are
+  // deliberately conservative: a fresh account cannot autodial anyone until a
+  // human flips enabled and consent is on the record.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_call_policies (
+      id                             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id                        TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      enabled                        BOOLEAN NOT NULL DEFAULT false,
+      require_consent                BOOLEAN NOT NULL DEFAULT true,
+      allowed_days                   SMALLINT[] NOT NULL DEFAULT '{1,2,3,4,5}',
+      window_start                   TEXT NOT NULL DEFAULT '09:00',
+      window_end                     TEXT NOT NULL DEFAULT '17:00',
+      default_timezone               TEXT NOT NULL DEFAULT 'Africa/Accra',
+      max_attempts_per_lead_per_week INT NOT NULL DEFAULT 2,
+      max_consecutive_no_answer      INT NOT NULL DEFAULT 4,
+      min_hours_between_attempts     INT NOT NULL DEFAULT 24,
+      daily_call_cap                 INT NOT NULL DEFAULT 50,
+      ai_disclosure_required         BOOLEAN NOT NULL DEFAULT true,
+      ai_disclosure_text             TEXT,
+      recording_disclosure_required  BOOLEAN NOT NULL DEFAULT true,
+      blackout_dates                 TEXT[] NOT NULL DEFAULT '{}',
+      require_approval_for           JSONB NOT NULL DEFAULT '["set_do_not_call","link_deal"]',
+      provider                       TEXT NOT NULL DEFAULT 'simulator',
+      from_number                    TEXT,
+      voice_id                       TEXT,
+      max_call_duration_sec          INT NOT NULL DEFAULT 420,
+      created_at                     TIMESTAMPTZ DEFAULT NOW(),
+      updated_at                     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_call_policies'));
+
+  // Every dial, answered or not — and simultaneously the durable dial queue.
+  // local_weekday/local_hour are denormalized at dial time in the LEAD's
+  // timezone: deriving them later would re-read a timezone that may have
+  // changed, and it turns the stats rollup into a plain GROUP BY.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_call_attempts (
+      id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      contact_id       TEXT REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      lead_profile_id  TEXT REFERENCES sales_lead_profiles(id) ON DELETE CASCADE,
+      followup_id      TEXT,
+      provider         TEXT NOT NULL DEFAULT 'manual',
+      external_id      TEXT,
+      from_number      TEXT,
+      to_number        TEXT,
+      objective        TEXT,
+      brief            TEXT,
+      status           TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','dialing','in_progress','completed','cancelled','blocked','failed')),
+      outcome          TEXT CHECK (outcome IS NULL OR outcome IN ('answered','no_answer','busy','voicemail','rejected','invalid_number','failed','blocked')),
+      run_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      started_at       TIMESTAMPTZ,
+      ended_at         TIMESTAMPTZ,
+      duration_sec     INT,
+      local_weekday    SMALLINT,
+      local_hour       SMALLINT,
+      block_reason     TEXT,
+      attempts         INT NOT NULL DEFAULT 0,
+      last_error       TEXT,
+      recording_url    TEXT,
+      provider_payload JSONB DEFAULT '{}',
+      conversation_id  TEXT,
+      created_at       TIMESTAMPTZ DEFAULT NOW(),
+      updated_at       TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_call_attempts'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_call_attempts_due_idx ON sales_call_attempts (status, run_at)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_call_attempts_user_idx ON sales_call_attempts (user_id, created_at DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_call_attempts_contact_idx ON sales_call_attempts (contact_id, created_at DESC)`).catch(() => undefined);
+  // Makes webhook delivery idempotent — Vapi retries end-of-call reports.
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS sales_call_attempts_external_uidx
+    ON sales_call_attempts (provider, external_id) WHERE external_id IS NOT NULL`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_call_attempts_bucket_idx
+    ON sales_call_attempts (user_id, local_weekday, local_hour) WHERE outcome IS NOT NULL`).catch(() => undefined);
+
+  // The Conversation Record — the source of truth every other agent reads.
+  // analysis_status exists because analysis is an async LLM call that can fail,
+  // and a failed analysis must be visibly retryable rather than a silently
+  // lost call.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_conversations (
+      id                 TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      contact_id         TEXT REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      lead_profile_id    TEXT REFERENCES sales_lead_profiles(id) ON DELETE CASCADE,
+      attempt_id         TEXT,
+      channel            TEXT NOT NULL DEFAULT 'phone' CHECK (channel IN ('phone','sms','email','whatsapp','meeting')),
+      direction          TEXT NOT NULL DEFAULT 'outbound' CHECK (direction IN ('outbound','inbound')),
+      started_at         TIMESTAMPTZ DEFAULT NOW(),
+      ended_at           TIMESTAMPTZ,
+      duration_sec       INT,
+      recording_url      TEXT,
+      transcript         TEXT,
+      summary            TEXT,
+      sentiment          TEXT CHECK (sentiment IS NULL OR sentiment IN ('positive','neutral','negative')),
+      intent             TEXT CHECK (intent IS NULL OR intent IN ('interested','needs_info','callback_requested','meeting_booked','undecided','not_interested','wrong_number','do_not_call')),
+      lead_stage_before  TEXT,
+      lead_stage_after   TEXT,
+      commitments        JSONB NOT NULL DEFAULT '[]',
+      promises           JSONB NOT NULL DEFAULT '[]',
+      questions          JSONB NOT NULL DEFAULT '[]',
+      buying_signals     JSONB NOT NULL DEFAULT '[]',
+      recommended_action TEXT,
+      analyst_confidence NUMERIC,
+      analysis_status    TEXT NOT NULL DEFAULT 'pending' CHECK (analysis_status IN ('pending','analyzing','done','failed','skipped')),
+      analysis_error     TEXT,
+      analysis_attempts  INT NOT NULL DEFAULT 0,
+      crm_activity_id    TEXT REFERENCES crm_activities(id) ON DELETE SET NULL,
+      created_by         TEXT NOT NULL DEFAULT 'human' CHECK (created_by IN ('human','agent','import')),
+      created_at         TIMESTAMPTZ DEFAULT NOW(),
+      updated_at         TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_conversations'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_conversations_user_idx ON sales_conversations (user_id, started_at DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_conversations_contact_idx ON sales_conversations (contact_id, started_at DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_conversations_analysis_idx ON sales_conversations (analysis_status, created_at)`).catch(() => undefined);
+
+  // A child table rather than a JSONB array on the conversation, precisely so
+  // GROUP BY objection_code powers the dashboard.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_conversation_objections (
+      id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      conversation_id     TEXT NOT NULL REFERENCES sales_conversations(id) ON DELETE CASCADE,
+      contact_id          TEXT REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      objection_code      TEXT NOT NULL CHECK (objection_code IN ('price','budget','timing','no_authority','existing_provider','no_need','trust','missing_feature','contract_lock_in','bad_experience','other')),
+      raw_text            TEXT,
+      resolved            BOOLEAN NOT NULL DEFAULT false,
+      resolved_by_response TEXT,
+      created_at          TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_conversation_objections'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_objections_user_code_idx ON sales_conversation_objections (user_id, objection_code, created_at DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_objections_contact_idx ON sales_conversation_objections (contact_id) WHERE resolved = false`).catch(() => undefined);
+
+  // A first-class obligation, never a note. exact_time_requested means the lead
+  // named a time — the scheduler must never override that with a statistically
+  // better window.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_followups (
+      id                        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id                   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      contact_id                TEXT REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+      lead_profile_id           TEXT REFERENCES sales_lead_profiles(id) ON DELETE CASCADE,
+      type                      TEXT NOT NULL DEFAULT 'phone_call' CHECK (type IN ('phone_call','email','sms','task')),
+      requested_by              TEXT NOT NULL DEFAULT 'agent' CHECK (requested_by IN ('lead','agent','human','automation')),
+      scheduled_for             TIMESTAMPTZ NOT NULL,
+      exact_time_requested      BOOLEAN NOT NULL DEFAULT false,
+      reason                    TEXT,
+      objective                 TEXT,
+      status                    TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','due','in_progress','completed','cancelled','missed')),
+      source_conversation_id    TEXT REFERENCES sales_conversations(id) ON DELETE SET NULL,
+      completed_conversation_id TEXT,
+      attempts                  INT NOT NULL DEFAULT 0,
+      last_error                TEXT,
+      created_at                TIMESTAMPTZ DEFAULT NOW(),
+      updated_at                TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_followups'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_followups_due_idx ON sales_followups (status, scheduled_for)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_followups_user_idx ON sales_followups (user_id, scheduled_for)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_followups_contact_idx ON sales_followups (contact_id, status)`).catch(() => undefined);
+
+  // Sales knowledge (memory type C): what actually works. Business knowledge
+  // (services, pricing, case studies) is NOT duplicated here — it already lives
+  // in user_memories from the onboarding wizard and is read through
+  // buildSharedAgentContext().
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_playbooks (
+      id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind            TEXT NOT NULL DEFAULT 'objection_response' CHECK (kind IN ('objection_response','pitch','question','faq','disqualifier')),
+      objection_code  TEXT,
+      title           TEXT,
+      content         TEXT NOT NULL,
+      source          TEXT NOT NULL DEFAULT 'human' CHECK (source IN ('human','ai_proposed','ai_accepted')),
+      active          BOOLEAN NOT NULL DEFAULT true,
+      times_used      INT NOT NULL DEFAULT 0,
+      times_succeeded INT NOT NULL DEFAULT 0,
+      created_at      TIMESTAMPTZ DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_playbooks'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_playbooks_user_idx ON sales_playbooks (user_id, kind, active)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_playbooks_objection_idx ON sales_playbooks (user_id, objection_code) WHERE active = true`).catch(() => undefined);
+
+  // Insight Agent proposals. Nothing here is ever applied automatically —
+  // status starts 'new' and a human accepts or rejects.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_insights (
+      id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind            TEXT NOT NULL CHECK (kind IN ('objection_pattern','timing','script','segment','risk')),
+      title           TEXT NOT NULL,
+      body            TEXT,
+      evidence        JSONB NOT NULL DEFAULT '{}',
+      confidence      NUMERIC,
+      sample_size     INT NOT NULL DEFAULT 0,
+      proposed_change JSONB,
+      status          TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','accepted','rejected','applied')),
+      reviewed_by     TEXT,
+      reviewed_at     TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_insights'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_insights_user_idx ON sales_insights (user_id, status, created_at DESC)`).catch(() => undefined);
+
+  // Audit trail. Without this, "AI interprets, the app executes" is an
+  // unverifiable claim — every proposal, every applied op, and every rejected
+  // op with its reason is recorded here.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_agent_runs (
+      id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      agent         TEXT NOT NULL,
+      subject_type  TEXT,
+      subject_id    TEXT,
+      model         TEXT,
+      input_tokens  INT NOT NULL DEFAULT 0,
+      output_tokens INT NOT NULL DEFAULT 0,
+      proposed      JSONB,
+      applied       JSONB,
+      rejected      JSONB,
+      error         TEXT,
+      duration_ms   INT,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_agent_runs'));
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_agent_runs_user_idx ON sales_agent_runs (user_id, created_at DESC)`).catch(() => undefined);
+  await pool.query(`CREATE INDEX IF NOT EXISTS sales_agent_runs_subject_idx ON sales_agent_runs (subject_type, subject_id)`).catch(() => undefined);
+
+  // Rolled-up user-level answer rates — the PRIOR that per-lead timing shrinks
+  // toward. 168 rows per user, recomputed periodically, never on the read path.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_call_stats (
+      id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      weekday    SMALLINT NOT NULL,
+      hour       SMALLINT NOT NULL,
+      attempts   INT NOT NULL DEFAULT 0,
+      answered   INT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (user_id, weekday, hour)
+    )
+  `).catch((err) => logger.error({ err }, 'migration_failed: sales_call_stats'));
 }
 
 // ── Marketing → Lead Generation ───────────────────────────────────────────────

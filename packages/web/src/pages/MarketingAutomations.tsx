@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bell,
+  CalendarClock,
   Clock,
+  PhoneCall,
   GitBranch,
   GitMerge,
   History,
@@ -67,7 +69,10 @@ type StepType =
   | 'webhook'
   | 'score_lead'
   | 'notify_team'
-  | 'add_to_campaign';
+  | 'add_to_campaign'
+  | 'place_call'
+  | 'create_followup'
+  | 'set_lead_stage';
 
 type FlowStep = {
   id: string;
@@ -135,11 +140,15 @@ const NODE_META: Record<StepType, NodeMeta> = {
   score_lead:       { label: 'Score Lead',          color: '#f59e0b', bg: '#fffbeb', icon: <Star size={14} />,          category: 'action'  },
   notify_team:      { label: 'Notify Team',         color: '#6366f1', bg: '#eef2ff', icon: <Bell size={14} />,          category: 'action'  },
   add_to_campaign:  { label: 'Add to Campaign',     color: '#8b5cf6', bg: '#f5f3ff', icon: <Target size={14} />,        category: 'action'  },
+  place_call:       { label: 'Place AI Call',       color: '#5b6cf9', bg: '#eef2ff', icon: <PhoneCall size={14} />,     category: 'action'  },
+  create_followup:  { label: 'Create Follow-up',    color: '#0ea5e9', bg: '#f0f9ff', icon: <CalendarClock size={14} />, category: 'action'  },
+  set_lead_stage:   { label: 'Set Sales Stage',     color: '#8b5cf6', bg: '#f5f3ff', icon: <Target size={14} />,        category: 'action'  },
 };
 
 const RULE_TYPES: StepType[] = ['delay', 'wait_trigger', 'if_else', 'split'];
 const ACTION_TYPES: StepType[] = [
   'send_email', 'send_sms', 'send_survey',
+  'place_call', 'create_followup', 'set_lead_stage',
   'score_lead', 'notify_team', 'add_to_campaign',
   'tag', 'untag', 'group', 'ungroup',
   'update_contact', 'unsubscribe', 'archive', 'webhook',
@@ -195,6 +204,8 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 function defaultStep(type: StepType): FlowStep {
   const base: FlowStep = { id: uid(), type, config: {} };
   if (type === 'delay') base.config = { unit: 'days', amount: 1 };
+  if (type === 'create_followup') base.config = { type: 'phone_call', unit: 'days', amount: 3 };
+  if (type === 'set_lead_stage') base.config = { stage: 'contacted' };
   if (type === 'if_else') { base.yes_steps = []; base.no_steps = []; }
   if (type === 'split') { base.config = { percent_a: 50 }; base.a_steps = []; base.b_steps = []; }
   return base;
@@ -217,6 +228,9 @@ function labelForStep(step: FlowStep): string {
   if (step.type === 'wait_trigger') return c.trigger ? `Wait until: ${c.trigger}` : 'Wait for trigger';
   if (step.type === 'webhook') return c.url ? `POST → ${String(c.url).slice(0, 28)}…` : 'Configure webhook';
   if (step.type === 'update_contact') return c.field ? `Update: ${c.field}` : 'Configure field update';
+  if (step.type === 'place_call') return c.objective ? `Call: ${String(c.objective).slice(0, 30)}…` : 'Place an AI call';
+  if (step.type === 'create_followup') return `Follow up in ${c.amount ?? 3} ${c.unit ?? 'days'}`;
+  if (step.type === 'set_lead_stage') return `Set stage: ${c.stage ?? 'contacted'}`;
   return meta.label;
 }
 
@@ -321,6 +335,9 @@ function StepConfigPanel({
                 <option value="survey_score">Survey score is above</option>
                 <option value="survey_completed">Completed a survey</option>
                 <option value="in_campaign">Added to a campaign</option>
+                <option value="lead_stage">Sales stage is</option>
+                <option value="has_objection">Has an open objection</option>
+                <option value="call_outcome">Last call outcome was</option>
               </select>
             </Field>
             <Field label={step.config.condition_type === 'lead_score' || step.config.condition_type === 'survey_score' ? 'Threshold value' : 'Value'}>
@@ -432,6 +449,56 @@ function StepConfigPanel({
             </Field>
             <p className="text-xs text-slate-400 leading-relaxed">A POST request with contact data will be sent to this URL when a contact reaches this step.</p>
           </>
+        )}
+
+        {step.type === 'place_call' && (
+          <>
+            <Field label="Call objective" hint="What this call is for. It becomes the first line of the caller's brief.">
+              <textarea rows={3} value={String(step.config.objective ?? '')} onChange={e => set('objective', e.target.value)} placeholder="e.g. Confirm they received the proposal and find out what is holding them back." className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none resize-none" />
+            </Field>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              The call still has to pass your calling policy — consent, do-not-call, attempt caps and permitted hours
+              in the lead's timezone. If it does not, the attempt is recorded as blocked with the reason instead of
+              dialling. Configure this under Sales → Settings.
+            </p>
+          </>
+        )}
+
+        {step.type === 'create_followup' && (
+          <>
+            <Field label="Follow up in">
+              <div className="flex items-center gap-2">
+                <input type="number" min={1} value={String(step.config.amount ?? 3)} onChange={e => set('amount', parseInt(e.target.value, 10) || 1)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+                <select value={String(step.config.unit ?? 'days')} onChange={e => set('unit', e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                  <option value="hours">hours</option>
+                  <option value="days">days</option>
+                  <option value="weeks">weeks</option>
+                </select>
+              </div>
+            </Field>
+            <Field label="Type">
+              <select value={String(step.config.type ?? 'phone_call')} onChange={e => set('type', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none">
+                <option value="phone_call">Phone call</option>
+                <option value="email">Email</option>
+                <option value="sms">SMS</option>
+                <option value="task">Task</option>
+              </select>
+            </Field>
+            <Field label="Objective">
+              <input type="text" value={String(step.config.objective ?? '')} onChange={e => set('objective', e.target.value)} placeholder="e.g. Check whether pricing answered their concern" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+            </Field>
+            <p className="text-xs text-slate-400 leading-relaxed">Phone follow-ups queue a call automatically when they come due. Everything else waits for a person on the Follow-ups page.</p>
+          </>
+        )}
+
+        {step.type === 'set_lead_stage' && (
+          <Field label="Stage">
+            <select value={String(step.config.stage ?? 'contacted')} onChange={e => set('stage', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm capitalize focus:border-indigo-400 focus:outline-none">
+              {['new', 'contacted', 'qualified', 'interested', 'proposal', 'negotiation', 'won', 'lost', 'unreachable'].map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </Field>
         )}
 
         {step.type === 'score_lead' && (

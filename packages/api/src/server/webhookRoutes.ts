@@ -21,6 +21,13 @@ export interface WebhookDeps {
   getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
   fireAutomationTrigger: (userId: string, triggerType: string, contact: { id?: string | null; email?: string }) => Promise<void>;
   recalcLeadScore: (pool: Pool | null, userId: string, contactId: string) => Promise<number | null>;
+  salesEngine: {
+    getProviderByName: (name: string) => Promise<{
+      verifySignature: (headers: Record<string, string | string[] | undefined>, rawBody: string) => boolean;
+      normalizeWebhook: (body: unknown) => any;
+    }>;
+    handleProviderEvent: (providerId: string, event: any) => Promise<{ handled: boolean }>;
+  };
 }
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
@@ -311,6 +318,40 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
   };
   router.get('/webhooks/meta', metaVerify);
   router.get('/api/v1/webhooks/facebook', metaVerify);
+
+  // POST /webhooks/vapi
+  //
+  // Vapi's end-of-call report: recording URL, transcript, duration, endedReason.
+  // Configure this URL and the shared secret on the Vapi phone number or
+  // assistant (Admin → Integrations → Vapi holds our copy of the secret).
+  //
+  // Two things make redelivery safe, and Vapi does redeliver: the attempt is
+  // located by the partial unique index on (provider, external_id), and
+  // handleProviderEvent ignores an attempt that is already terminal. So a
+  // duplicate report cannot produce a second conversation record.
+  //
+  // Responds 200 before doing the work — a slow analysis must not make Vapi
+  // think delivery failed and retry, but an unverified body is rejected first.
+  router.post('/webhooks/vapi', async (req: Request, res: Response) => {
+    try {
+      const provider = await deps.salesEngine.getProviderByName('vapi');
+      const raw = (req as any).rawBody as Buffer | undefined;
+      const rawText = raw ? raw.toString('utf8') : JSON.stringify(req.body ?? {});
+
+      if (!provider.verifySignature(req.headers as Record<string, string | string[] | undefined>, rawText)) {
+        logger.warn('vapi_webhook_signature_rejected');
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+      res.status(200).json({ received: true });
+
+      const event = provider.normalizeWebhook(req.body);
+      if (event.kind === 'ignored') return;
+      await deps.salesEngine.handleProviderEvent('vapi', event);
+    } catch (err) {
+      logger.error({ err }, 'vapi_webhook_failed');
+      if (!res.headersSent) res.status(500).json({ error: 'Webhook processing failed' });
+    }
+  });
 
   // POST /webhooks/meta
   router.post('/webhooks/meta', async (req: Request, res: Response) => {

@@ -20,6 +20,12 @@ export const AGENT_DEFS: Record<string, { name: string; role: string; icon: stri
   quality:          { name: 'Vetta',   role: 'Quality Control',       icon: '✓', color: '#0891B2', memoryKeywords: ['brand','voice','tone','audience','goal'] },
   planner:          { name: 'Atlas',   role: 'Content Planner',       icon: '▤', color: '#4F46E5', memoryKeywords: ['plan','schedule','campaign','goal','platform','content'] },
   calculator:       { name: 'Ledger',  role: 'Credit Calculator',     icon: '∑', color: '#65A30D', memoryKeywords: [] },
+  // AI Sales OS. These three run from the sales engine rather than the agent
+  // proposal scheduler, but they are registered here so their memory briefs
+  // compile alongside everything else.
+  sales_analyst:    { name: 'Echo',    role: 'Conversation Analyst',  icon: '◐', color: '#0EA5E9', memoryKeywords: ['objection','pricing','service','product','audience','offer'] },
+  sales_caller:     { name: 'Rune',    role: 'Sales Caller',          icon: '☎', color: '#5B6CF9', memoryKeywords: ['service','product','pricing','offer','case study','faq','audience'] },
+  sales_insight:    { name: 'Prism',   role: 'Sales Intelligence',    icon: '◭', color: '#F97316', memoryKeywords: ['sales','objection','conversion','goal','pricing','competit'] },
 };
 
 export async function provisionUserAgents(userId: string): Promise<void> {

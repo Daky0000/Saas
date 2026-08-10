@@ -6,6 +6,7 @@ import {
   Bot,
   Building2,
   ChevronDown,
+  PhoneCall,
   CreditCard,
   HelpCircle,
   Layers,
@@ -65,6 +66,11 @@ const MarketingAutomations = lazy(() => import('./pages/MarketingAutomations'));
 const MarketingForms = lazy(() => import('./pages/MarketingForms'));
 const MarketingLeads = lazy(() => import('./pages/MarketingLeads'));
 const MarketingLeadsImport = lazy(() => import('./pages/MarketingLeadsImport'));
+const SalesLeads = lazy(() => import('./pages/SalesLeads'));
+const SalesConversations = lazy(() => import('./pages/SalesConversations'));
+const SalesFollowUps = lazy(() => import('./pages/SalesFollowUps'));
+const SalesIntelligence = lazy(() => import('./pages/SalesIntelligence'));
+const SalesSettings = lazy(() => import('./pages/SalesSettings'));
 const CRMCompanies = lazy(() => import('./pages/CRMCompanies'));
 const CRMPipeline = lazy(() => import('./pages/CRMPipeline'));
 const CRMLeadScoring = lazy(() => import('./pages/CRMLeadScoring'));
@@ -123,6 +129,11 @@ export type PageType =
   | 'marketing-forms'
   | 'marketing-leads'
   | 'marketing-leads-import'
+  | 'sales-leads'
+  | 'sales-conversations'
+  | 'sales-followups'
+  | 'sales-intelligence'
+  | 'sales-settings'
   | 'crm-companies'
   | 'crm-pipeline'
   | 'crm-scoring'
@@ -175,6 +186,11 @@ const PAGE_PATHS: Record<PageType, string> = {
   'marketing-forms': '/marketing/forms',
   'marketing-leads': '/marketing/leads',
   'marketing-leads-import': '/marketing/leads/import',
+  'sales-leads': '/sales/leads',
+  'sales-conversations': '/sales/conversations',
+  'sales-followups': '/sales/followups',
+  'sales-intelligence': '/sales/intelligence',
+  'sales-settings': '/sales/settings',
   'crm-companies': '/crm/companies',
   'crm-pipeline': '/crm/pipeline',
   'crm-scoring': '/crm/scoring',
@@ -215,6 +231,9 @@ const MARKETING_PAGES: PageType[] = [
   'marketing-leads-import',
 ];
 const CRM_PAGES: PageType[] = ['crm-companies', 'crm-pipeline', 'crm-scoring', 'gmail-agent'];
+const SALES_PAGES: PageType[] = [
+  'sales-leads', 'sales-conversations', 'sales-followups', 'sales-intelligence', 'sales-settings',
+];
 const CONNECTOR_PAGES: PageType[] = ['connector-hub', 'connector-setup', 'connector-sync'];
 
 async function fetchCurrentUser(token: string): Promise<AppUser | null> {
@@ -262,6 +281,8 @@ type AppSidebarProps = {
   setMarketingMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   crmMenuOpen: boolean;
   setCrmMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  salesMenuOpen: boolean;
+  setSalesMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   connectorMenuOpen: boolean;
   setConnectorMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   profileNeedsAttention: boolean;
@@ -281,6 +302,8 @@ function AppSidebar({
   setMarketingMenuOpen,
   crmMenuOpen,
   setCrmMenuOpen,
+  salesMenuOpen,
+  setSalesMenuOpen,
   connectorMenuOpen,
   setConnectorMenuOpen,
   profileNeedsAttention,
@@ -607,6 +630,38 @@ function AppSidebar({
             </>
           )}
 
+          {/* Sales — sits beside CRM because it extends the same contact record */}
+          {navOn('sales') && (
+            <>
+              <button
+                type="button"
+                onClick={() => { setSalesMenuOpen(true); go('sales-leads'); }}
+                className={cls(SALES_PAGES.includes(currentPage))}
+              >
+                <PhoneCall size={15} className="shrink-0" />
+                <span className="flex-1 text-left">Sales</span>
+                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setSalesMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${salesMenuOpen ? 'rotate-180' : ''}`} />
+                </span>
+              </button>
+              {salesMenuOpen && (
+                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
+                  {([
+                    { id: 'sales-leads' as PageType, label: 'Leads', navKey: 'sales-leads' },
+                    { id: 'sales-conversations' as PageType, label: 'Conversations', navKey: 'sales-conversations' },
+                    { id: 'sales-followups' as PageType, label: 'Follow-ups', navKey: 'sales-followups' },
+                    { id: 'sales-intelligence' as PageType, label: 'Intelligence', navKey: 'sales-intelligence' },
+                    { id: 'sales-settings' as PageType, label: 'Settings', navKey: 'sales-settings' },
+                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
+                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
           {navOn('marketing') && (
             <>
               <button
@@ -859,6 +914,7 @@ function App() {
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
   const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
   const [crmMenuOpen, setCrmMenuOpen] = useState(false);
+  const [salesMenuOpen, setSalesMenuOpen] = useState(false);
   const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
   const [disabledNav, setDisabledNav] = useState<Set<string>>(new Set());
   const [connectorSetupDomain, setConnectorSetupDomain] = useState<any>(null);
@@ -919,6 +975,9 @@ function App() {
       }
       if (CRM_PAGES.includes(page)) {
         setCrmMenuOpen(true);
+      }
+      if (SALES_PAGES.includes(page)) {
+        setSalesMenuOpen(true);
       }
       if (CONNECTOR_PAGES.includes(page)) {
         setConnectorMenuOpen(true);
@@ -1056,6 +1115,7 @@ function App() {
       if (CONTENT_PAGES.includes(pageFromPath)) setPostsMenuOpen(true);
       if (MARKETING_PAGES.includes(pageFromPath)) setMarketingMenuOpen(true);
       if (CRM_PAGES.includes(pageFromPath)) setCrmMenuOpen(true);
+      if (SALES_PAGES.includes(pageFromPath)) setSalesMenuOpen(true);
       if (CONNECTOR_PAGES.includes(pageFromPath)) setConnectorMenuOpen(true);
       return () => {
         canceled = true;
@@ -1091,6 +1151,7 @@ function App() {
         if (CONTENT_PAGES.includes(pageFromPath)) setPostsMenuOpen(true);
         if (MARKETING_PAGES.includes(pageFromPath)) setMarketingMenuOpen(true);
         if (CRM_PAGES.includes(pageFromPath)) setCrmMenuOpen(true);
+        if (SALES_PAGES.includes(pageFromPath)) setSalesMenuOpen(true);
         if (CONNECTOR_PAGES.includes(pageFromPath)) setConnectorMenuOpen(true);
         return;
       }
@@ -1189,6 +1250,11 @@ function App() {
       case 'marketing-forms': return <MarketingForms />;
       case 'marketing-leads': return <MarketingLeads navigateToPage={navigateToPage} />;
       case 'marketing-leads-import': return <MarketingLeadsImport navigateToPage={navigateToPage} />;
+      case 'sales-leads': return <SalesLeads />;
+      case 'sales-conversations': return <SalesConversations />;
+      case 'sales-followups': return <SalesFollowUps />;
+      case 'sales-intelligence': return <SalesIntelligence />;
+      case 'sales-settings': return <SalesSettings />;
       case 'crm-companies': return <CRMCompanies />;
       case 'crm-pipeline': return <CRMPipeline />;
       case 'crm-scoring': return <CRMLeadScoring />;
@@ -1229,6 +1295,8 @@ function App() {
     setMarketingMenuOpen,
     crmMenuOpen,
     setCrmMenuOpen,
+    salesMenuOpen,
+    setSalesMenuOpen,
     connectorMenuOpen,
     setConnectorMenuOpen,
     profileNeedsAttention,

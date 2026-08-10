@@ -197,6 +197,18 @@ const PLATFORMS: PlatformDef[] = [
     redirectHint: 'Use `/auth/zoom/callback` on the backend. Create a User-managed OAuth app in Zoom Marketplace.',
   },
   {
+    id: 'vapi',
+    name: 'Vapi (AI Voice Calls)',
+    description: 'Voice-agent provider for the AI Sales OS. Vapi owns telephony, speech recognition, turn-taking and speech synthesis; we supply the call brief and receive an end-of-call report.',
+    fields: [
+      { id: 'apiKey', label: 'Private API Key', placeholder: 'Vapi private key', type: 'password', helpText: 'From dashboard.vapi.ai → API Keys. Use the PRIVATE key — the public key cannot place calls.' },
+      { id: 'phoneNumberId', label: 'Phone Number ID', placeholder: 'e.g. 8f2c…', type: 'text', helpText: 'The UUID of the Vapi phone number that calls are placed from (Phone Numbers tab), not the number itself.' },
+      { id: 'webhookSecret', label: 'Webhook Secret', placeholder: 'Shared secret for /webhooks/vapi', type: 'password', helpText: 'Set the same value as the server-URL secret on your Vapi phone number. Without it every webhook is rejected, so calls will never produce a conversation record.' },
+    ],
+    docsUrl: 'https://docs.vapi.ai/api-reference/calls/create',
+    redirectHint: 'Set the Server URL on your Vapi phone number to `/webhooks/vapi` on this backend. Telephony minutes are billed by Vapi and are NOT metered by the AI credit system.',
+  },
+  {
     id: 'hubtel',
     name: 'Hubtel (Payments)',
     description: 'Hubtel payment gateway credentials for processing GHS subscription payments.',

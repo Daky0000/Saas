@@ -544,12 +544,14 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
         const segParams: unknown[] = [auth.userId];
         const segWhere = buildSegmentWhere(segs[0].rules as _SegRules, segParams);
         const { rows } = await pool.query(
-          `SELECT mc.* FROM mailing_contacts mc LEFT JOIN mailing_contact_tags mct ON mct.contact_id = mc.id WHERE mc.user_id = $1 AND mc.subscribed = true AND ${segWhere} GROUP BY mc.id`,
+          `SELECT mc.* FROM mailing_contacts mc LEFT JOIN mailing_contact_tags mct ON mct.contact_id = mc.id WHERE mc.user_id = $1 AND mc.subscribed = true AND mc.email IS NOT NULL AND ${segWhere} GROUP BY mc.id`,
           segParams
         );
         contacts = rows;
       } else {
-        const { rows } = await pool.query('SELECT * FROM mailing_contacts WHERE user_id = $1 AND subscribed = true', [auth.userId]);
+        // email IS NOT NULL: sales leads may be phone-only since the sales
+        // module made the column nullable, and they are not email recipients.
+        const { rows } = await pool.query('SELECT * FROM mailing_contacts WHERE user_id = $1 AND subscribed = true AND email IS NOT NULL', [auth.userId]);
         contacts = rows;
       }
       if (!contacts.length) return res.status(400).json({ success: false, error: 'No subscribed contacts found' });

@@ -114,9 +114,16 @@ interface EngineDeps {
   getResendConfig: () => Promise<{ apiKey: string; fromEmail: string; fromName: string }>;
   getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
   appUrl: string;
+  // The sales steps (place_call, create_followup, set_lead_stage) delegate here
+  // rather than writing sales tables directly — queueCall in particular must run
+  // the compliance gate, which is not something a flow step gets to skip.
+  salesEngine?: {
+    ensureLeadProfile: (userId: string, contactId: string) => Promise<string | null>;
+    queueCall: (params: { userId: string; contactId: string; objective?: string | null }) => Promise<{ queued: boolean }>;
+  };
 }
 
-export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl }: EngineDeps) {
+export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig, appUrl, salesEngine }: EngineDeps) {
   async function loadContact(userId: string, contact: Partial<AutomationContact>): Promise<AutomationContact | null> {
     if (!pool) return null;
     const byId = contact.id ? 'id=$2' : 'LOWER(email)=LOWER($2)';
@@ -153,6 +160,13 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
   }
 
   async function sendEmail(userId: string, contact: AutomationContact, opts: { subject: string; html: string; fromName?: string; fromEmail?: string; to?: string }): Promise<void> {
+    // Sales leads can be phone-only (mailing_contacts.email is nullable since
+    // the sales module landed), so an email step over a phone-only contact is
+    // a skip, not a failure that burns the flow's retry budget.
+    if (!opts.to && !contact.email) {
+      logger.info({ userId, contactId: contact.id }, 'automation_email_skipped_no_email');
+      return;
+    }
     const { apiKey, fromEmail, fromName } = await getResendConfig();
     if (!apiKey) throw new Error('Resend is not configured');
     const finalFromEmail = String(opts.fromEmail || fromEmail);
@@ -238,6 +252,35 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
       case 'email_opened': return hasEmailEvent(userId, contact, 'open');
       case 'link_clicked': return hasEmailEvent(userId, contact, 'click');
       case 'lead_score': return (await getLeadScore(userId, contact)) >= Number(value || 0);
+      case 'lead_stage': {
+        if (!pool || !contact.id) return false;
+        const { rows } = await pool.query(
+          `SELECT stage FROM sales_lead_profiles WHERE user_id=$1 AND contact_id=$2`,
+          [userId, contact.id]
+        );
+        return String(rows[0]?.stage ?? '') === value;
+      }
+      case 'has_objection': {
+        if (!pool || !contact.id) return false;
+        // An unresolved objection only — a handled one should not keep gating.
+        const { rows } = await pool.query(
+          `SELECT 1 FROM sales_conversation_objections
+            WHERE user_id=$1 AND contact_id=$2 AND resolved=false
+              AND ($3='' OR objection_code=$3) LIMIT 1`,
+          [userId, contact.id, value]
+        );
+        return rows.length > 0;
+      }
+      case 'call_outcome': {
+        if (!pool || !contact.id) return false;
+        const { rows } = await pool.query(
+          `SELECT outcome FROM sales_call_attempts
+            WHERE user_id=$1 AND contact_id=$2 AND outcome IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1`,
+          [userId, contact.id]
+        );
+        return String(rows[0]?.outcome ?? '') === value;
+      }
       case 'field': {
         // Single-value UI: true when any core field matches the value.
         const v = value.toLowerCase();
@@ -379,6 +422,55 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
 
         case 'send_sms': {
           await sendHubtelSms(userId, contact, String(cfg.message ?? ''));
+          break;
+        }
+
+        // ── AI Sales OS steps ──
+        // Each one is a thin delegate. The engine deliberately does not touch
+        // sales tables itself: queueCall runs the compliance gate, and a flow
+        // step must not be able to route around it.
+        case 'place_call': {
+          if (!contact.id || !salesEngine) break;
+          const result = await salesEngine.queueCall({
+            userId,
+            contactId: contact.id,
+            objective: String(cfg.objective ?? '') || null,
+          });
+          if (!result.queued) {
+            logger.info({ userId, contactId: contact.id }, 'automation_call_blocked_by_policy');
+          }
+          break;
+        }
+
+        case 'create_followup': {
+          if (!contact.id || !salesEngine) break;
+          const leadProfileId = await salesEngine.ensureLeadProfile(userId, contact.id);
+          const runAt = new Date(Date.now() + delayToMs(cfg.amount ?? 3, cfg.unit ?? 'days'));
+          await pool.query(
+            `INSERT INTO sales_followups
+               (id, user_id, contact_id, lead_profile_id, type, requested_by, scheduled_for, reason, objective)
+             VALUES ($1,$2,$3,$4,$5,'automation',$6,$7,$8)`,
+            [
+              randomUUID(), userId, contact.id, leadProfileId,
+              String(cfg.type ?? 'phone_call'), runAt,
+              String(cfg.reason ?? 'Created by an automation'),
+              String(cfg.objective ?? '') || null,
+            ],
+          );
+          break;
+        }
+
+        case 'set_lead_stage': {
+          if (!contact.id || !salesEngine) break;
+          const stage = String(cfg.stage ?? '').trim();
+          // Guard the CHECK constraint: an unknown stage would abort the query.
+          const allowed = ['new', 'contacted', 'qualified', 'interested', 'proposal', 'negotiation', 'won', 'lost', 'unreachable'];
+          if (!allowed.includes(stage)) break;
+          await salesEngine.ensureLeadProfile(userId, contact.id);
+          await pool.query(
+            `UPDATE sales_lead_profiles SET stage=$1, updated_at=NOW() WHERE contact_id=$2 AND user_id=$3`,
+            [stage, contact.id, userId],
+          );
           break;
         }
 
@@ -567,7 +659,7 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
       for (const flow of birthdayFlows) {
         const { rows: contacts } = await pool.query(
           `SELECT id, email, first_name, last_name, phone FROM mailing_contacts
-           WHERE user_id=$1 AND subscribed=true AND RIGHT(custom_data->>'birthday', 5) = $2`,
+           WHERE user_id=$1 AND subscribed=true AND email IS NOT NULL AND RIGHT(custom_data->>'birthday', 5) = $2`,
           [flow.user_id, monthDay]
         );
         for (const contact of contacts) {
@@ -607,7 +699,7 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
       for (const flow of dueFlows) {
         const { rows: contacts } = await pool.query(
           `SELECT id, email, first_name, last_name, phone FROM mailing_contacts
-           WHERE user_id=$1 AND subscribed=true`,
+           WHERE user_id=$1 AND subscribed=true AND email IS NOT NULL`,
           [flow.user_id]
         );
         for (const contact of contacts) {
