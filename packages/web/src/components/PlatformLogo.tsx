@@ -109,15 +109,8 @@ function YouTubeLogo({ size }: { size: number }) {
   );
 }
 
-function StripeLogo({ size }: { size: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="20" cy="20" r="20" fill="#635BFF" />
-      <g transform="translate(8,8)">
-        <path fill="white" d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z" />
-      </g>
-    </svg>
-  );
+function PaystackLogo({ size }: { size: number }) {
+  return <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#011b33" />{[0,1,2,3].map(i => <rect key={i} x="9" y={10+i*6} width={22-i*3} height="3" rx="1.5" fill="#00c3f7" />)}</svg>;
 }
 
 function MailchimpLogo({ size }: { size: number }) {
@@ -219,7 +212,7 @@ const LOGOS: Record<string, (size: number) => React.ReactElement> = {
   wordpress: (s) => <WordPressLogo size={s} />,
   tiktok: (s) => <TikTokLogo size={s} />,
   youtube: (s) => <YouTubeLogo size={s} />,
-  stripe: (s) => <StripeLogo size={s} />,
+  paystack: (s) => <PaystackLogo size={s} />,
   mailchimp: (s) => <MailchimpLogo size={s} />,
   hubtel: (s) => <HubtelLogo size={s} />,
   gmail: (s) => <GmailLogo size={s} />,

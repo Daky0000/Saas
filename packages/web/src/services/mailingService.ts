@@ -234,11 +234,11 @@ export const mailingService = {
     await fetch(`${BASE}/campaigns/${id}`, { method: 'DELETE', headers: authHeaders() });
   },
 
-  async sendCampaign(id: string): Promise<{ sent: number; failed: number }> {
+  async sendCampaign(id: string): Promise<{ sent: number; failed: number; queued: number }> {
     const res = await fetch(`${BASE}/campaigns/${id}/send`, { method: 'POST', headers: authHeaders() });
-    const data = await parseJson<{ success: boolean; sent: number; failed: number; error?: string }>(res);
+    const data = await parseJson<{ success: boolean; sent: number; failed: number; queued?: number; error?: string }>(res);
     if (!data.success) throw new Error(data.error || 'Failed to send campaign');
-    return { sent: data.sent, failed: data.failed };
+    return { sent: data.sent, failed: data.failed, queued: data.queued || 0 };
   },
 
   // Automations

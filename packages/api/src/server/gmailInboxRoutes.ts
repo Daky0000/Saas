@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Response } from 'express';
+import type { Request } from '../types/http.ts';
 import axios from 'axios';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
@@ -14,7 +15,7 @@ export interface GmailInboxDeps {
   getAIConfig: () => Promise<any>;
   resolveActiveKey: (cfg: any) => string | null;
   GEMINI_MODELS: string[];
-  callAINonStreaming: (provider: string, apiKey: string, model: string, system: string, user: string, maxTokens?: number) => Promise<string>;
+  callAINonStreaming: typeof import('../ai-helpers.ts').callAINonStreaming;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

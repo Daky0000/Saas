@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from './types/http.ts';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { dbQuery, hasDatabase, normalizeEmail, normalizeUsername, pool } from './db.ts';
@@ -69,8 +70,8 @@ export const inMemoryPlatformConfigs = new Map<string, PlatformConfigRow>();
 
 export async function getPlatformConfig(platform: string): Promise<Record<string, string>> {
   if (hasDatabase()) {
-    const result = await dbQuery('SELECT config FROM platform_configs WHERE platform = $1', [platform]);
-    if (result.rows.length > 0) return decryptPlatformConfig(result.rows[0].config) as Record<string, string>;
+    const result = await dbQuery('SELECT config, enabled FROM platform_configs WHERE platform = $1', [platform]);
+    if (result.rows.length > 0) return { ...decryptPlatformConfig(result.rows[0].config), ...(platform === 'paystack' ? { _enabled: String(result.rows[0].enabled) } : {}) } as Record<string, string>;
     return {};
   }
   return decryptPlatformConfig(inMemoryPlatformConfigs.get(platform)?.config) as Record<string, string>;
@@ -144,7 +145,7 @@ export function seedInMemoryUsers() {
     name: 'Dan Ayipah',
     username: 'daky',
     email: 'danayipah@gmail.com',
-    password: 'DanAyipah#1',
+    password: process.env.DEV_ADMIN_PASSWORD || randomUUID(),
     role: 'admin',
   });
   upsertInMemoryUser({
@@ -152,7 +153,7 @@ export function seedInMemoryUsers() {
     name: 'User One',
     username: 'user',
     email: 'dakyayipah@gmail.com',
-    password: 'User',
+    password: process.env.DEV_USER_PASSWORD || randomUUID(),
     role: 'user',
   });
 }
@@ -165,7 +166,7 @@ export async function getUserPlanName(userId: string): Promise<string> {
     const { rows } = await dbQuery<{ name: string }>(
       `SELECT pp.name FROM subscriptions s
        JOIN pricing_plans pp ON pp.id = s.plan_id
-       WHERE s.user_id = $1 AND s.status IN ('active','trialing')
+       WHERE s.user_id = $1 AND s.status IN ('active','trialing') AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
        ORDER BY s.created_at DESC LIMIT 1`,
       [userId]
     );
@@ -336,6 +337,7 @@ export async function ensureSeedUser(input: {
 }
 
 export async function ensureSeedUsers() {
+  if (config.nodeEnv === 'production' || process.env.ALLOW_DEMO_DATA !== 'true') return;
   if (!hasDatabase()) {
     seedInMemoryUsers();
     return;
@@ -345,14 +347,14 @@ export async function ensureSeedUsers() {
     name: 'Dan Ayipah',
     username: 'daky',
     email: 'danayipah@gmail.com',
-    password: 'DanAyipah#1',
+    password: process.env.DEV_ADMIN_PASSWORD || randomUUID(),
     role: 'admin',
   });
   await ensureSeedUser({
     name: 'User One',
     username: 'user',
     email: 'dakyayipah@gmail.com',
-    password: 'User',
+    password: process.env.DEV_USER_PASSWORD || randomUUID(),
     role: 'user',
   });
 }
@@ -446,6 +448,35 @@ export async function ensureSeedPricingPlans() {
         'Save ~20% vs monthly billing',
       ],
     },
+    {
+      name: 'Enterprise / Dakyworld OS Pro',
+      description: 'For multi-brand operators & Dakyworld OS nodes requiring full autonomous AI orchestration.',
+      monthlyPrice: 199,
+      yearlyPrice: 1908,
+      monthlyFeatures: [
+        '25,000 AI credits per month + Auto-Recharge',
+        'Full Dakyworld OS Bidirectional Bridge (/api/v1/os/*)',
+        '21 Autonomous Specialist AI Agents + Brand Vault',
+        'High-throughput API Rate Limit (1,200 req/min)',
+        'Outbound HMAC-SHA256 OS Webhooks & Event Stream',
+        'Unlimited social accounts & client workspaces',
+        'AI Sales OS (Autonomous Outbound Caller + Objection Mining)',
+        'White-label executive PDF/Excel reporting',
+        '25 team seats + priority SLA',
+      ],
+      yearlyFeatures: [
+        '25,000 AI credits per month + Auto-Recharge',
+        'Full Dakyworld OS Bidirectional Bridge (/api/v1/os/*)',
+        '21 Autonomous Specialist AI Agents + Brand Vault',
+        'High-throughput API Rate Limit (1,200 req/min)',
+        'Outbound HMAC-SHA256 OS Webhooks & Event Stream',
+        'Unlimited social accounts & client workspaces',
+        'AI Sales OS (Autonomous Outbound Caller + Objection Mining)',
+        'White-label executive PDF/Excel reporting',
+        '25 team seats + priority SLA',
+        'Save ~20% vs monthly billing',
+      ],
+    },
   ];
 
   if (!hasDatabase()) {
@@ -463,6 +494,8 @@ export async function ensureSeedPricingPlans() {
         billing_period: 'monthly',
         features: plan.monthlyFeatures,
         is_active: true,
+        discount_percentage: 0,
+        is_on_sale: false,
         created_at: now,
         updated_at: now,
       });
@@ -475,6 +508,8 @@ export async function ensureSeedPricingPlans() {
         billing_period: 'yearly',
         features: plan.yearlyFeatures,
         is_active: true,
+        discount_percentage: 20,
+        is_on_sale: true,
         created_at: now,
         updated_at: now,
       });
@@ -634,13 +669,13 @@ export async function updateUserProfile(
   return result.rows[0];
 }
 
-export function requireAuth(req: Request, res: Response): { userId: string; email?: string } | null {
+export function requireAuth(req: Request, res: Response): { userId: string; email: string; role: string; tokenVersion: number | null } | null {
   const auth = getAuthUser(req);
   if (!auth) {
     res.status(401).json({ success: false, error: 'Unauthorized' });
     return null;
   }
-  return auth;
+  return { ...auth, role: (req as Request & { authRole?: string }).authRole || 'user' };
 }
 
 // Validates that the token_version embedded in the JWT matches the DB.
@@ -660,11 +695,12 @@ export async function checkTokenVersion(auth: { userId: string; tokenVersion: nu
     return true;
   } catch (err) {
     logger.error('Unhandled error:', err);
-    return true; // DB error — fail open to avoid blocking all requests
+    res.status(503).json({ success: false, error: 'Authentication service unavailable' });
+    return false;
   }
 }
 
-export async function requireAdmin(req: Request, res: Response): Promise<DbUserRow | null> {
+export async function requireAdmin(req: Request, res: Response): Promise<(DbUserRow & { userId: string }) | null> {
   const auth = requireAuth(req, res);
   if (!auth) return null;
   // Admin routes require DB access — fail-closed if DB is unavailable so a
@@ -674,7 +710,7 @@ export async function requireAdmin(req: Request, res: Response): Promise<DbUserR
     return null;
   }
   const user = await getUserById(auth.userId);
-  if (!user || user.role !== 'admin') {
+  if (!user || user.role !== 'admin' || user.status !== 'active') {
     res.status(403).json({ success: false, error: 'Admin access required' });
     return null;
   }
@@ -683,7 +719,7 @@ export async function requireAdmin(req: Request, res: Response): Promise<DbUserR
     res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
     return null;
   }
-  return user;
+  return { ...user, userId: user.id };
 }
 
 export const ORG_ROLE_RANK: Record<string, number> = { owner: 4, admin: 3, editor: 2, viewer: 1 };

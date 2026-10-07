@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.ts';

@@ -124,6 +124,11 @@ export async function safeAxios<T = unknown>(config: AxiosRequestConfig & { url:
   await assertSafePublicUrl(config.url);
   return axios.request<T>({
     ...config,
+    beforeRedirect: options => {
+      const host=String(options.hostname || '').replace(/^\[|\]$/g,'');
+      if (net.isIP(host) && isPrivateAddress(host)) throw new Error('Redirect to a private address is blocked');
+      if (options.auth) throw new Error('Redirect with embedded credentials is blocked');
+    },
     httpAgent: guardedHttpAgent,
     httpsAgent: guardedHttpsAgent,
     maxRedirects: config.maxRedirects ?? 2,

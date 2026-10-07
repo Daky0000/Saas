@@ -168,7 +168,7 @@ function EmailsTab() {
       }
       const result = await mailingService.sendCampaign(id!);
       closeBuilder();
-      notify(true, `Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
+      notify(true, result.queued ? `Sending to ${result.queued} contacts. Check campaign status for progress.` : `Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}${result.failed ? `, ${result.failed} failed` : ''}.`);
       await load();
     } catch (err) {
       notify(false, err instanceof Error ? err.message : 'Failed to send.');
@@ -180,7 +180,7 @@ function EmailsTab() {
     setSendingId(email.id);
     try {
       const result = await mailingService.sendCampaign(email.id);
-      notify(true, `Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}.`);
+      notify(true, result.queued ? `Sending to ${result.queued} contacts. Check campaign status for progress.` : `Sent to ${result.sent} contact${result.sent !== 1 ? 's' : ''}.`);
       await load();
     } catch (err) {
       notify(false, err instanceof Error ? err.message : 'Send failed.');

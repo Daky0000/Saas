@@ -1,9 +1,31 @@
+import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
+import { decodeHtmlEntities } from '../link-metadata.ts';
+import { hasDatabase } from '../db.ts';
+import { encryptIntegrationSecret, upsertUserIntegration } from '../integration-helpers.ts';
+import { formatSocialAccountLabel, getVisibleUserPlatformSlugs, resolveOAuthRedirectUri } from '../platform-helpers.ts';
+import { getLinkedInScopeSet, parseLinkedInScopeList, computeIsoFromTtlSeconds } from '../social-helpers.ts';
+import { getLinkedInOAuthCredentials as credentialsImpl, postLinkedInOAuthForm, enrichLinkedInTokenData as enrichImpl } from './socialConnectRoutes.ts';
+import type { MediaModule } from './mediaRoutes.ts';
+type DataDeletionStatus = 'received' | 'completed' | 'unknown';
+type DataDeletionRecord = { code: string; metaUserId: string | null; status: DataDeletionStatus; createdAt: string; completedAt: string | null };
+const inMemoryDataDeletionRequests = new Map<string,DataDeletionRecord>();
+const META_GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = config.socialTokenSafetyMarginDays;
+const TWITTER_MONTHLY_WRITE_LIMIT = config.twitterMonthlyWriteLimit;
+const X_OAUTH_TOKEN_URL = 'https://api.x.com/2/oauth2/token';
+const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
+const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
+const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
+let socialAutomationQueue: Queue | null = null;
+let socialAutomationWorker: Worker | null = null;
+let socialAutomationRedis: IORedis | null = null;
 ﻿import axios from 'axios';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import { Queue, Worker } from 'bullmq';
-import IORedis from 'ioredis';
+import { Redis as IORedis } from 'ioredis';
 import { FacebookPagesPlatform } from '../../backend/platforms/facebook_pages.ts';
 import { InstagramBusinessPlatform } from '../../backend/platforms/instagram_business.ts';
 import { LinkedInPlatform } from '../../backend/platforms/linkedin.ts';
@@ -31,9 +53,10 @@ import {
 // 鈹€鈹€鈹€ Deps 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface DistributionDeps {
+  ensureMediaRecordForSource: MediaModule['ensureMediaRecordForSource'];
   requireAuth: (req: Request, res: Response) => { userId: string; role: string; tokenVersion: number | null } | null;
   pool: Pool | null;
-  dbQuery: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
+  dbQuery: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[]; rowCount: number }>;
   decryptIntegrationSecret: (encrypted: string) => string;
   getIntegrationRowBySlug: (slug: string) => Promise<{ id: number; slug: string; name: string | null; type: string | null } | null>;
   logIntegrationEvent: (params: { userId: string | null; integrationSlug: string | null; eventType: string; status: 'success' | 'failed' | 'info'; response?: any }) => Promise<void>;
@@ -69,6 +92,8 @@ function isBullMqEnabled() {
 // 鈹€鈹€鈹€ Factory 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface DistributionModule {
+  queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
+  publishToplatform: (userId: string, post: any, platformId: string) => Promise<any>;
   router: Router;
   getPublishableSocialConnection: (userId: string, platformId: string) => Promise<PublishableSocialConnection | null>;
   markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
@@ -91,11 +116,18 @@ export interface DistributionModule {
 
 export function buildDistributionModule(deps: DistributionDeps): DistributionModule {
   const {
-    requireAuth, pool, dbQuery,
+    requireAuth, pool, dbQuery, ensureMediaRecordForSource,
     decryptIntegrationSecret, getIntegrationRowBySlug, logIntegrationEvent,
     getPlatformConfig, getWordPressConnection, decryptWordPressPassword, wpRequest,
   } = deps;
   const router = Router();
+  const getLinkedInOAuthCredentials = (req?: Request) => credentialsImpl(getPlatformConfig,resolveOAuthRedirectUri,req);
+  const enrichLinkedInTokenData = (data: unknown,req?: Request) => enrichImpl(getPlatformConfig,resolveOAuthRedirectUri,parseLinkedInScopeList,computeIsoFromTtlSeconds,data,req);
+  const getMediaServerBase = () => (process.env.BACKEND_PUBLIC_URL || config.appUrl).replace(/\/$/,'');
+  const buildMediaServeUrl = (id: string,name: string) => `${getMediaServerBase()}/media/${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
+  const getSocialAutomationMaxAttempts = (platform?: string) => normalizePlatformId(platform || '') === 'twitter' ? 6 : SOCIAL_AUTOMATION_MAX_ATTEMPTS;
+  const getRetryDelayMs = (attempt: number,platform?: string) => (normalizePlatformId(platform || '') === 'twitter' ? 60_000 : SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS) * 2 ** Math.max(0,attempt-1);
+
 
 
 function normalizePlatformId(value: string): string {
@@ -635,7 +667,7 @@ async function markSocialAccountNeedsReapproval(params: {
       userId: uid,
       integrationSlug: platformId,
       eventType: disconnect ? 'deauthorized' : 'token_attention',
-      status: 'warning',
+      status: 'info',
       response: { reason: meta.reason },
     });
   }
@@ -2200,7 +2232,7 @@ async function publishToplatform(
           userId,
           integrationSlug: 'twitter',
           eventType: 'post_publish_failed',
-          status: 'error',
+          status: 'failed',
           response: { error: result.error || 'Twitter publish failed' },
         });
       }
@@ -2788,18 +2820,10 @@ router.post(['/meta/deauthorize', '/api/meta/deauthorize'], async (req: Request,
   }
 });
 
-// Root route
-router.get('/', (req: Request, res: Response) => {
-  if (hasStaticFiles) {
-    res.sendFile(path.join(publicDir, 'index.html'));
-    return;
-  }
-  res.json({ message: 'OAuth Backend Server Running', version: '1.0.0' });
-});
 
 
   return {
-    router,
+    router, publishToplatform,
     getPublishableSocialConnection,
     markSocialAccountNeedsReapproval,
     listLinkedInAdminOrganizations,

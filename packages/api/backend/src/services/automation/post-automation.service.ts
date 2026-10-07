@@ -1,4 +1,5 @@
-import {import { prisma } from "../../utils/prisma";
+import {
+import { prisma } from "../../utils/prisma";
 
   PrismaClient,
   PostPlatformStatus,

@@ -1,3 +1,4 @@
+import type NodeFormData from 'form-data';
 import { randomBytes, createCipheriv, createDecipheriv, scryptSync, randomUUID } from 'crypto';
 import axios from 'axios';
 import { config } from './config.ts';
@@ -250,7 +251,7 @@ export async function wpRequest(
   appPassword: string,
   method: string,
   path: string,
-  options: { data?: any; formData?: FormData; responseType?: 'json' } = {}
+  options: { data?: any; formData?: FormData | NodeFormData; responseType?: 'json' } = {}
 ): Promise<{ data?: any; status: number; error?: string }> {
   const base = normalizeWordPressSiteUrl(siteUrl);
   const url = `${base.replace(/\/+$/, '')}/wp-json${path.startsWith('/') ? path : `/${path}`}`;
@@ -265,7 +266,7 @@ export async function wpRequest(
         method,
         url,
         data: options.formData,
-        headers: { ...headers, ...(options.formData.getHeaders?.() || {}) },
+        headers: { ...headers, ...('getHeaders' in options.formData ? options.formData.getHeaders() : {}) },
         maxRedirects: 2,
         validateStatus: () => true,
         maxBodyLength: Infinity,

@@ -1,4 +1,5 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
@@ -180,7 +181,7 @@ router.put('/card-templates/:id', async (req: Request, res: Response) => {
       };
       inMemoryCardTemplatesById.set(id, updated);
 
-      await syncCardTemplateMedia(admin.id, updated).catch((error) => {
+      await syncCardTemplateMedia(admin.userId, updated).catch((error) => {
         logger.error('Card template media sync error:', error);
       });
 
@@ -220,7 +221,7 @@ router.put('/card-templates/:id', async (req: Request, res: Response) => {
       }
 
       const template = result.rows[0];
-      await syncCardTemplateMedia(admin.id, template).catch((error) => {
+      await syncCardTemplateMedia(admin.userId, template).catch((error) => {
         logger.error('Card template media sync error:', error);
       });
       return res.json({
@@ -268,7 +269,7 @@ router.post('/card-templates/:id/publish', async (req: Request, res: Response) =
       };
       inMemoryCardTemplatesById.set(id, updated);
 
-      await syncCardTemplateMedia(admin.id, updated).catch((error) => {
+      await syncCardTemplateMedia(admin.userId, updated).catch((error) => {
         logger.error('Card template media sync error:', error);
       });
 
@@ -301,7 +302,7 @@ router.post('/card-templates/:id/publish', async (req: Request, res: Response) =
       }
 
       const template = result.rows[0];
-      await syncCardTemplateMedia(admin.id, template).catch((error) => {
+      await syncCardTemplateMedia(admin.userId, template).catch((error) => {
         logger.error('Card template media sync error:', error);
       });
       return res.json({

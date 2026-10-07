@@ -1,9 +1,10 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { randomBytes, randomUUID } from 'crypto';
 import { Queue, Worker } from 'bullmq';
-import IORedis from 'ioredis';
+import { Redis as IORedis } from 'ioredis';
 import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string; email?: string } | null;

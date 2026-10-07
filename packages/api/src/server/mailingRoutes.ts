@@ -1,5 +1,7 @@
+import { config } from '../config.ts';
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { Resend } from 'resend';
@@ -528,7 +530,7 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
   router.post('/campaigns/:id/send', async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res); if (!auth) return;
-      const { apiKey: resendKey, fromEmail: resendFrom, fromName: resendFromName } = await getResendConfig();
+      const { apiKey: resendKey } = await getResendConfig();
       if (!resendKey) return res.status(503).json({ success: false, error: 'Email sending is not configured — add your Resend API key in Admin → Platform Settings' });
       const { rows: campaignRows } = await pool.query(
         `SELECT c.*, ms.name AS segment_name FROM mailing_campaigns c LEFT JOIN mailing_segments ms ON ms.id = c.segment_id WHERE c.id = $1 AND c.user_id = $2`,
@@ -555,35 +557,27 @@ export function registerMailingRoutes({ requireAuth, pool, getResendConfig, fire
         contacts = rows;
       }
       if (!contacts.length) return res.status(400).json({ success: false, error: 'No subscribed contacts found' });
-      const fromField = resendFromName ? `${resendFromName} <${resendFrom}>` : resendFrom;
-      const resend = new Resend(resendKey);
-      const apiBase = (process.env.API_URL || '').replace(/\/$/, '');
-      let sentCount = 0, failedCount = 0;
-      for (const contact of contacts) {
-        try {
-          const unsubscribeUrl = contact.unsubscribe_token ? `${apiBase}/api/mailing/unsubscribe/${contact.unsubscribe_token}` : null;
-          // Emails from the builder carry a {{unsubscribe_url}} footer placeholder;
-          // resolve it instead of appending a second unsubscribe link.
-          const rawContent = String(campaign.content || '(no content)');
-          const hasPlaceholder = rawContent.includes('{{unsubscribe_url}}');
-          const resolvedContent = rawContent.replaceAll('{{unsubscribe_url}}', unsubscribeUrl ?? '#');
-          const htmlBody = personalize(`${resolvedContent}${!hasPlaceholder && unsubscribeUrl ? `\n\n<p style="font-size:11px;color:#999;"><a href="${unsubscribeUrl}">Unsubscribe</a></p>` : ''}`, contact);
-          const { data: sendData, error: sendErr } = await resend.emails.send({
-            from: fromField, to: contact.email, subject: personalize(String(campaign.subject ?? ''), contact),
-            html: htmlBody.includes('<') ? htmlBody : htmlBody.replace(/\n/g, '<br>'),
-            headers: unsubscribeUrl ? { 'List-Unsubscribe': `<${unsubscribeUrl}>` } : undefined,
-          });
-          if (sendErr) throw new Error(sendErr.message);
-          // resend_id lets /webhooks/resend correlate opens/clicks/bounces back to this send
-          await pool.query(
-            `INSERT INTO mailing_email_events (id, user_id, campaign_id, contact_id, event_type, metadata, created_at) VALUES ($1,$2,$3,$4,'delivered',$5::jsonb,NOW())`,
-            [randomUUID(), auth.userId, campaign.id, contact.id, JSON.stringify({ resend_id: sendData?.id ?? null })]
-          ).catch((err) => logger.warn({ err }, 'campaign_send_event_insert_failed'));
-          sentCount++;
-        } catch (_err) { failedCount++; }
-      }
-      await pool.query(`UPDATE mailing_campaigns SET status='sent', sent_count=$2, failed_count=$3, updated_at=NOW() WHERE id=$1`, [campaign.id, sentCount, failedCount]);
-      return res.json({ success: true, sent: sentCount, failed: failedCount });
+      const client=await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const claimed=await client.query("UPDATE mailing_campaigns SET status='queued' WHERE id=$1 AND user_id=$2 AND status NOT IN ('sent','queued') RETURNING id",[campaign.id,auth.userId]);
+        if (!claimed.rows.length) { await client.query('ROLLBACK');return res.status(409).json({ error: 'Campaign is already queued or sent' }); }
+        for (const contact of contacts) {
+          const token=contact.unsubscribe_token || randomUUID();
+          if (!contact.unsubscribe_token) await client.query('UPDATE mailing_contacts SET unsubscribe_token=$2 WHERE id=$1',[contact.id,token]);
+          const unsubscribeUrl=`${config.appUrl}/api/mailing/unsubscribe/${encodeURIComponent(token)}`;
+          const raw=String(campaign.content || '');
+          const html=personalize(raw.replaceAll('{{unsubscribe_url}}',unsubscribeUrl),contact);
+          const body=html.includes('<') ? html : html.replace(/\n/g,'<br>');
+          const footer=raw.includes('{{unsubscribe_url}}') ? '' : `<p><a href="${unsubscribeUrl}">Unsubscribe</a></p>`;
+          await client.query(`INSERT INTO campaign_email_jobs(id,user_id,campaign_id,contact_id,recipient,subject,html,unsubscribe_url)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(campaign_id,contact_id) DO NOTHING`,
+            [randomUUID(),auth.userId,campaign.id,contact.id,contact.email,personalize(String(campaign.subject || ''),contact),body+footer,unsubscribeUrl]);
+        }
+        await client.query('COMMIT');
+        return res.status(202).json({ success: true,queued: contacts.length,sent: 0,failed: 0 });
+      } catch(error) { await client.query('ROLLBACK');throw error; } finally { client.release(); }
+
     } catch (err: unknown) {
       return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Send failed' });
     }

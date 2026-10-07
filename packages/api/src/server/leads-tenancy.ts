@@ -21,7 +21,8 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { PrismaClient } from '@prisma/client';
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { config } from '../config.ts';
 import { logger } from '../logger.ts';
 

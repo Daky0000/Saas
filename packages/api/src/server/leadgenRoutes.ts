@@ -12,7 +12,8 @@
 // ---------------------------------------------------------------------------
 
 import express from 'express';
-import type { Request, Response, Router } from 'express';
+import type { Response, Router } from 'express';
+import type { Request } from '../types/http.ts';
 import { configureLeads } from './leads/index.ts';
 import { importsRouter } from './leads/routes/imports.ts';
 import { leadsRouter } from './leads/routes/leads.ts';

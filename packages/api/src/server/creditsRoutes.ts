@@ -1,7 +1,9 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
-import { ensureCreditAccount, chargeAICredits, grantCredits } from '../ai-helpers.ts';
+import { ensureCreditAccount, chargeAICredits, grantCredits, CREDIT_TOPUP_PACKS, getTokenEfficiencyTelemetry } from '../ai-helpers.ts';
+import { buildPaystackService, PaymentError, type ConfigReader } from './paystackService.ts';
 import { recordAuditLog } from '../link-metadata.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
@@ -11,9 +13,10 @@ interface CreditsDeps {
   requireAdmin: (req: Request, res: Response) => Promise<AuthResult>;
   hasDatabase: () => boolean;
   pool: Pool;
+  getPlatformConfig: ConfigReader;
 }
 
-export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, pool }: CreditsDeps): Router {
+export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, pool, getPlatformConfig }: CreditsDeps): Router {
   const router = express.Router();
 
   // GET /api/credits/balance — lazily creates the account at the plan
@@ -21,12 +24,74 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
   router.get('/credits/balance', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!hasDatabase()) return res.json({ success: true, credits: 100, reset_date: null });
     try {
-      const { credits, resetDate } = await ensureCreditAccount(auth.userId);
-      return res.json({ success: true, credits, reset_date: resetDate });
+      const { credits, resetDate, autoRecharge, autoRechargePack } = await ensureCreditAccount(auth.userId);
+      return res.json({
+        success: true,
+        credits,
+        autoRecharge: { enabled: Boolean(autoRecharge), packId: autoRechargePack, threshold: 50 },
+        tokenEfficiency: getTokenEfficiencyTelemetry(),
+        reset_date: resetDate,
+        auto_recharge: Boolean(autoRecharge),
+        auto_recharge_pack: autoRechargePack || 'starter',
+        token_efficiency: getTokenEfficiencyTelemetry(),
+      });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
+    }
+  });
+
+  // GET /api/credits/packs — available Pay-As-You-Go AI credit top-up packs + telemetry
+  router.get('/credits/packs', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const account = await ensureCreditAccount(auth.userId).catch(() => ({ credits: 100, resetDate: null, autoRecharge: false, autoRechargePack: 'starter' }));
+    return res.json({
+      success: true,
+      packs: CREDIT_TOPUP_PACKS,
+      account,
+      tokenEfficiency: getTokenEfficiencyTelemetry(),
+    });
+  });
+
+  // POST /api/credits/purchase — purchase a never-expiring AI credit pack (with Idempotency-Key protection)
+  router.post('/credits/purchase', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const packId = String(req.body?.packId || 'starter').toLowerCase();
+    const pack = CREDIT_TOPUP_PACKS.find((p) => p.id === packId);
+    if (!pack) {
+      return res.status(400).json({ success: false, error: 'Invalid credit pack ID. Choose starter, growth, or agency.' });
+    }
+    try {
+      if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
+      const payments = buildPaystackService({ pool, readConfig: getPlatformConfig });
+      return res.json({ success: true, ...await payments.checkout(auth.userId, 'credits', pack.id) });
+    } catch (e: any) {
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
+    }
+  });
+
+  // PUT /api/credits/auto-recharge — toggle automatic credit top-up when balance drops below 50
+  router.put('/credits/auto-recharge', async (req: Request, res: Response) => {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const enabled = Boolean(req.body?.enabled);
+    if (enabled) return res.status(409).json({ success: false, error: 'Automatic recharge is not enabled. Buy credits through verified Paystack checkout.' });
+    const packId = String(req.body?.packId || 'starter').toLowerCase();
+    try {
+      await pool.query(
+        `UPDATE user_credits SET auto_recharge=$2, auto_recharge_pack=$3, updated_at=NOW() WHERE user_id=$1`,
+        [auth.userId, enabled, packId]
+      ).catch(() => undefined);
+      return res.json({
+        success: true,
+        auto_recharge: enabled,
+        auto_recharge_pack: packId,
+        autoRecharge: { enabled, packId, threshold: 50 },
+      });
+    } catch (e: any) {
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -34,7 +99,6 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
   router.get('/credits/history', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
-    if (!hasDatabase()) return res.json({ success: true, entries: [] });
     try {
       const { rows } = await pool.query(
         `SELECT delta, balance_after, reason, meta, created_at FROM credit_ledger
@@ -43,13 +107,11 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       );
       return res.json({ success: true, entries: rows });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
   // POST /api/credits/use — spend credits (frontend-initiated features).
-  // amount is strictly validated: a negative or absurd value previously let
-  // any signed-in user mint credits (credits - (-N) = credits + N).
   router.post('/credits/use', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -57,7 +119,6 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
     if (!Number.isFinite(rawAmount) || !Number.isInteger(rawAmount) || rawAmount < 1 || rawAmount > 500) {
       return res.status(400).json({ success: false, error: 'amount must be an integer between 1 and 500' });
     }
-    if (!hasDatabase()) return res.json({ success: true, credits: 50 });
     const reason = String((req.body as { reason?: unknown })?.reason ?? 'feature_use').slice(0, 60);
     try {
       const { credits } = await ensureCreditAccount(auth.userId);
@@ -66,7 +127,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       const after = await ensureCreditAccount(auth.userId);
       return res.json({ success: true, credits: after.credits });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -91,7 +152,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       void recordAuditLog((admin as any).id, 'admin_credits_granted', [], { targetUserId: resolvedId, amount: amt });
       return res.json({ success: true, user_id: resolvedId, credits: balance });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -114,7 +175,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       void recordAuditLog((admin as any).id, 'admin_credits_granted_all', [], { amount: amt, updated: result.rowCount });
       return res.json({ success: true, updated: result.rowCount });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -131,7 +192,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       );
       return res.json({ success: true, view_count: rows[0]?.view_count ?? 0 });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -162,7 +223,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       const { rows } = await pool.query<{ like_count: number }>('SELECT like_count FROM card_templates WHERE id = $1', [id]);
       return res.json({ success: true, liked, like_count: rows[0]?.like_count ?? 0 });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -193,7 +254,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       const { rows } = await pool.query<{ like_count: number }>('SELECT like_count FROM user_designs WHERE id = $1', [id]);
       return res.json({ success: true, liked, like_count: rows[0]?.like_count ?? 0 });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -209,7 +270,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       );
       return res.json({ success: true, liked_ids: rows.map((r) => r.design_id) });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 
@@ -226,7 +287,7 @@ export function registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, 
       );
       return res.json({ liked: rows.length > 0 });
     } catch (e: any) {
-      return res.status(500).json({ success: false, error: e.message });
+      return res.status(e instanceof PaymentError ? e.status : 500).json({ success: false, error: e instanceof PaymentError ? e.message : 'Unable to complete credit operation' });
     }
   });
 

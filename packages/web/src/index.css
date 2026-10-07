@@ -1,11 +1,11 @@
 /* The two form classes the vendored lead-generation UI shares. It declares an
    @layer components block, so it has to be inlined into the stylesheet that
    carries the @tailwind directives — and @import has to lead the file. */
+@import 'tailwindcss';
+@config '../tailwind.config.js';
 @import './components/leads/leads.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+
 
 @layer base {
   html {
@@ -72,3 +72,16 @@
 .dw-progress{ animation: dw-prog    1.2s ease-out   .3s both }
 
 [contenteditable][data-placeholder]:empty:before { content: attr(data-placeholder); color: #94a3b8; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dw-float, .dw-float-2, .dw-float-3, .dw-glow, .dw-glow-2, .dw-marquee, .dw-dot-pulse, .dw-bar, .dw-progress {
+    animation: none;
+    transform: none;
+    will-change: auto;
+  }
+  html { scroll-behavior: auto; }
+}
+button:focus-visible, a:focus-visible, select:focus-visible {
+  outline: 2px solid #4338ca;
+  outline-offset: 3px;
+}

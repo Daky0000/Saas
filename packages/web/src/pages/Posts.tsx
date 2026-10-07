@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { API_BASE_URL } from '../utils/apiBase';
 import { PlatformLogo } from '../components/PlatformLogo';
 import {
   Plus,
@@ -1276,7 +1277,38 @@ function PostEditor({
           <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">{postId ? 'Edit Post' : 'Create Post'}</h2>
           <p className="mt-1 text-sm text-slate-500">Write, optimize, and automate your post in one place.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const res = await fetch(`${API_BASE_URL}/api/approvals/links`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    title: title || 'Draft Post Review',
+                    resourceType: 'post',
+                    resourceId: postId || undefined,
+                    content: content || excerpt || title || 'Scheduled post ready for review.',
+                    scheduledAt: scheduledAt || null,
+                    mediaUrl: featuredImage || null,
+                  }),
+                });
+                const data = await res.json();
+                if (data.success && data.link?.token) {
+                  const shareUrl = `${window.location.origin}/review/${data.link.token}`;
+                  await navigator.clipboard.writeText(shareUrl).catch(() => undefined);
+                  alert(`Client Sign-Off Portal link copied to clipboard:\n${shareUrl}`);
+                }
+              } catch {
+                // ignore
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2.5 text-sm font-bold text-indigo-700 hover:bg-indigo-100"
+          >
+            Client Sign-Off Link
+          </button>
+
           <button
             type="button"
             onClick={() => void save('draft')}

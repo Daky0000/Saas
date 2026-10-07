@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import axios from 'axios';
 import { randomBytes, randomUUID } from 'crypto';
 import type { Pool } from 'pg';
@@ -27,10 +28,10 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
   const FRONTEND = frontendUrl.replace(/\/$/, '');
 
   async function getCalendarCredentials(): Promise<Record<string, string>> {
-    const calCfg = await getPlatformConfig('google_calendar').catch(() => ({}));
+    const calCfg = await getPlatformConfig('google_calendar').catch(() => ({} as Record<string, string>));
     if (calCfg.clientId && calCfg.clientSecret) return calCfg;
     // Fallback to Gmail credentials (same Google app, different scope)
-    return getPlatformConfig('gmail').catch(() => ({}));
+    return getPlatformConfig('gmail').catch(() => ({} as Record<string, string>));
   }
 
   async function getValidToken(userId: string): Promise<string | null> {

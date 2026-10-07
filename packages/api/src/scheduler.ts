@@ -63,7 +63,7 @@ export async function runTaskReminders() {
       ) recipient
       WHERE t.status != 'done'
         AND t.reminder_at IS NOT NULL
-        AND t.reminder_at BETWEEN NOW() - INTERVAL '1 minute' AND NOW() + INTERVAL '1 minute'
+        AND t.reminder_at <= NOW()
         AND NOT EXISTS (
           SELECT 1 FROM notifications n
           WHERE n.user_id = recipient.user_id
@@ -98,44 +98,38 @@ export interface PublishDuePostsDeps {
 // Runs every 2 minutes. Finds posts whose scheduled_at has passed, promotes them
 // to published, fires social automation + workflow triggers for each.
 export async function publishDuePosts(deps?: Partial<PublishDuePostsDeps>) {
-  if (!hasDatabase()) return;
+  if (!hasDatabase() || !deps?.queueSocialAutomationForPublishedPost) return;
   try {
-    const { rows } = await pool!.query<{ id: string; user_id: string; title: string }>(
-      `UPDATE blog_posts
-       SET status = 'published', published_at = NOW(), updated_at = NOW()
-       WHERE status = 'scheduled'
-         AND scheduled_at IS NOT NULL
-         AND scheduled_at <= NOW()
-       RETURNING id, user_id, title`
-    );
-    if (!rows.length) return;
-
-    for (const post of rows) {
-      const { rows: full } = await pool!.query(
-        `SELECT p.*,
-          ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id = t.id WHERE pt.post_id = p.id) AS tag_names
-         FROM blog_posts p WHERE p.id = $1`,
-        [post.id]
-      ).catch(() => ({ rows: [] }));
-
-      if (full.length) {
-        await deps?.queueSocialAutomationForPublishedPost?.(post.user_id, full[0]).catch(() => undefined);
-        void deps?.fireWorkflowTriggers?.(post.user_id, 'post_published', full[0]);
+    // The publication transition and its durable delivery intent commit together.
+    await pool.query(`WITH published AS (
+      UPDATE blog_posts SET status='published',published_at=NOW(),updated_at=NOW()
+      WHERE status='scheduled' AND scheduled_at<=NOW() RETURNING *
+    ) INSERT INTO publication_outbox(id,post_id,user_id,payload)
+      SELECT id,id,user_id,to_jsonb(published) FROM published ON CONFLICT(id) DO NOTHING`);
+    const { rows }=await pool.query(`WITH due AS (
+      SELECT id FROM publication_outbox WHERE status IN ('pending','processing') AND run_at<=NOW()
+      ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 30
+    ) UPDATE publication_outbox o SET status='processing',run_at=NOW()+INTERVAL '15 minutes'
+      FROM due WHERE o.id=due.id RETURNING o.*`);
+    for (const event of rows) {
+      try {
+        const { rows: posts }=await pool.query(`SELECT p.*,
+          ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
+          FROM blog_posts p WHERE p.id=$1 AND p.user_id=$2`,[event.post_id,event.user_id]);
+        if (!posts[0]) throw new Error('Published post is unavailable');
+        if (!event.distribution_enqueued) {
+          await deps.queueSocialAutomationForPublishedPost(event.user_id,posts[0]);
+          await pool.query('UPDATE publication_outbox SET distribution_enqueued=true WHERE id=$1',[event.id]);
+        }
+        await deps.fireWorkflowTriggers?.(event.user_id,'post_published',posts[0]);
+        await pool.query(`UPDATE publication_outbox SET status='completed',last_error=NULL WHERE id=$1`,[event.id]);
+        await dbQuery(`INSERT INTO notifications(user_id,type,title,message,data) VALUES($1,'post','Blog post published',$2,$3)`,
+          [event.user_id,`"${posts[0].title}" is published. Social distribution is queued separately.`,JSON.stringify({ post_id: event.post_id })]);
+      } catch(error) {
+        await pool.query(`UPDATE publication_outbox SET status=CASE WHEN attempts>=7 THEN 'failed' ELSE 'pending' END,
+          attempts=attempts+1,run_at=NOW()+INTERVAL '5 minutes',last_error=$2 WHERE id=$1`,[event.id,error instanceof Error ? error.message.slice(0,300) : 'Delivery failed']);
+        logger.error({ err: error,eventId: event.id },'publication_delivery_failed');
       }
-
-      await dbQuery(
-        `INSERT INTO notifications (user_id, type, title, message, data)
-         VALUES ($1, 'post', 'Post published', $2, $3)`,
-        [
-          post.user_id,
-          `"${post.title}" was automatically published as scheduled.`,
-          JSON.stringify({ post_id: post.id }),
-        ]
-      ).catch(() => undefined);
     }
-
-    logger.info({ count: rows.length }, 'scheduled_posts_published');
-  } catch (err) {
-    logger.error({ err }, 'scheduled_posts_publish_error');
-  }
+  } catch(error) { logger.error({ err: error },'scheduled_posts_publish_error'); }
 }

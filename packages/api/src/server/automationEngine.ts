@@ -591,6 +591,52 @@ export function buildAutomationEngine({ pool, getResendConfig, getPlatformConfig
           break;
         }
 
+        case 'create_project_task': {
+          const rawTitle = personalize(String(cfg.title ?? 'Follow up with {{first_name}} ({{email}})'), contact).trim();
+          const rawDesc = personalize(String(cfg.description ?? 'Auto-created by cross-module automation flow.'), contact).trim();
+          const priority = ['low', 'medium', 'high', 'urgent'].includes(String(cfg.priority))
+            ? String(cfg.priority)
+            : 'high';
+          let projectId = String(cfg.project_id ?? '').trim();
+          if (!projectId) {
+            const { rows: projRows } = await pool.query(
+              `SELECT p.id FROM projects p
+               INNER JOIN organization_memberships m ON m.org_id = p.org_id
+               WHERE m.user_id = $1
+               ORDER BY p.created_at ASC LIMIT 1`,
+              [userId]
+            ).catch(() => ({ rows: [] as Array<{ id: string }> }));
+            projectId = projRows[0]?.id || '';
+          }
+          if (projectId) {
+            await pool.query(
+              `INSERT INTO tasks (id, project_id, title, description, status, priority, position, created_by)
+               VALUES ($1, $2, $3, $4, 'todo', $5, 0, $6)`,
+              [randomUUID(), projectId, rawTitle, rawDesc, priority, userId]
+            ).catch(() => undefined);
+          }
+          break;
+        }
+
+        case 'create_crm_deal': {
+          const dealTitle = personalize(String(cfg.title ?? 'Opportunity: {{first_name}} {{last_name}}'), contact).trim();
+          const dealValue = Number(cfg.value ?? 1000) || 1000;
+          await pool.query(
+            `INSERT INTO crm_deals (id, user_id, title, value, currency, stage_id, contact_id, description)
+             VALUES ($1, $2, $3, $4, 'USD', $5, $6, $7)`,
+            [
+              randomUUID(),
+              userId,
+              dealTitle,
+              dealValue,
+              null,
+              contact.id,
+              `Created automatically by flow ${automationId} for ${contact.email}`,
+            ]
+          ).catch(() => undefined);
+          break;
+        }
+
         default:
           logger.info({ automationId, stepType: step.type }, 'automation_step_skipped_unsupported');
           break;

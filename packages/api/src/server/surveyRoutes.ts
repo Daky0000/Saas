@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
@@ -165,7 +166,7 @@ export function registerSurveyRoutes({ requireAuth, pool }: SurveyDeps): Router 
         } else if (q.type === 'rating') {
           const dist: Record<string, number> = { '1':0,'2':0,'3':0,'4':0,'5':0 };
           allAnswers.forEach(v => { const n = Number(v); if (n >= 1 && n <= 5) dist[String(n)]++; });
-          const avg = allAnswers.length ? allAnswers.reduce((s, v) => s + Number(v), 0) / allAnswers.length : 0;
+          const avg = allAnswers.length ? allAnswers.reduce<number>((s, v) => s + Number(v), 0) / allAnswers.length : 0;
           questionsRecord[q.id] = { type: q.type, distribution: dist, average: Math.round(avg * 10) / 10, total: allAnswers.length };
         } else if (q.type === 'nps' || q.type === 'range') {
           const nums = allAnswers.map(v => Number(v)).filter(n => !isNaN(n) && n >= 0 && n <= 10);

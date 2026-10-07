@@ -1,30 +1,31 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, LayoutDashboard, LogOut, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, LayoutDashboard, Loader2, LogOut, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AppUser, clearStoredUser } from '../utils/userSession';
-import AdminOverview from '../components/admin/AdminOverview';
-import UserManagementPage from '../components/admin/UserManagementPage';
-import PricingManagement from '../components/admin/PricingManagement';
-import AdminCardsManagement from '../components/admin/AdminCardsManagement';
-import PaymentManagement from '../components/admin/PaymentManagement';
-import AdminAuthProviders from '../components/admin/AdminAuthProviders';
-import AdminPagesManagement from '../components/admin/AdminPagesManagement';
-import AdminMediaManagement from '../components/admin/AdminMediaManagement';
-import AdminIntegrations from '../components/admin/AdminIntegrations';
-import AdminAIConfig from '../components/admin/AdminAIConfig';
-import AdminAISkills from '../components/admin/AdminAISkills';
-import AdminBillingDashboard from '../components/admin/AdminBillingDashboard';
-import AdminApify from '../components/admin/AdminApify';
-import AdminLearn from '../components/admin/AdminLearn';
-import AdminAgents from '../components/admin/AdminAgents';
-import AdminMagnific from '../components/admin/AdminMagnific';
-import AdminKling from '../components/admin/AdminKling';
-import AdminGoogle from '../components/admin/AdminGoogle';
-import AdminOpenAI from '../components/admin/AdminOpenAI';
-import AdminAuditLog from '../components/admin/AdminAuditLog';
-import AdminPlatformSettings from '../components/admin/AdminPlatformSettings';
-import AdminHiggsfield from '../components/admin/AdminHiggsfield';
-import AdminNavSettings from '../components/admin/AdminNavSettings';
-import AdminMCP from '../components/admin/AdminMCP';
+
+const AdminOverview = lazy(() => import('../components/admin/AdminOverview'));
+const UserManagementPage = lazy(() => import('../components/admin/UserManagementPage'));
+const PricingManagement = lazy(() => import('../components/admin/PricingManagement'));
+const AdminCardsManagement = lazy(() => import('../components/admin/AdminCardsManagement'));
+const PaymentManagement = lazy(() => import('../components/admin/PaymentManagement'));
+const AdminAuthProviders = lazy(() => import('../components/admin/AdminAuthProviders'));
+const AdminPagesManagement = lazy(() => import('../components/admin/AdminPagesManagement'));
+const AdminMediaManagement = lazy(() => import('../components/admin/AdminMediaManagement'));
+const AdminIntegrations = lazy(() => import('../components/admin/AdminIntegrations'));
+const AdminAIConfig = lazy(() => import('../components/admin/AdminAIConfig'));
+const AdminAISkills = lazy(() => import('../components/admin/AdminAISkills'));
+const AdminBillingDashboard = lazy(() => import('../components/admin/AdminBillingDashboard'));
+const AdminApify = lazy(() => import('../components/admin/AdminApify'));
+const AdminLearn = lazy(() => import('../components/admin/AdminLearn'));
+const AdminAgents = lazy(() => import('../components/admin/AdminAgents'));
+const AdminMagnific = lazy(() => import('../components/admin/AdminMagnific'));
+const AdminKling = lazy(() => import('../components/admin/AdminKling'));
+const AdminGoogle = lazy(() => import('../components/admin/AdminGoogle'));
+const AdminOpenAI = lazy(() => import('../components/admin/AdminOpenAI'));
+const AdminAuditLog = lazy(() => import('../components/admin/AdminAuditLog'));
+const AdminPlatformSettings = lazy(() => import('../components/admin/AdminPlatformSettings'));
+const AdminHiggsfield = lazy(() => import('../components/admin/AdminHiggsfield'));
+const AdminNavSettings = lazy(() => import('../components/admin/AdminNavSettings'));
+const AdminMCP = lazy(() => import('../components/admin/AdminMCP'));
 
 type AdminProps = {
   currentUser: AppUser | null;
@@ -435,32 +436,40 @@ const Admin = ({ currentUser }: AdminProps) => {
           </header>
 
           <main className="px-4 py-6 md:px-6">
-            {activeTab === 'overview' && <AdminOverview />}
-            {activeTab === 'users' && <UserManagementPage currentAdminRole={currentAdminRole} />}
-            {activeTab === 'pricing' && <PricingManagement />}
-            {activeTab === 'cards' && <AdminCardsManagement />}
-            {activeTab === 'payments' && <PaymentManagement />}
-            {activeTab === 'auth-providers' && <AdminAuthProviders />}
-            {activeTab === 'integrations' && <AdminIntegrations />}
-            {activeTab === 'media' && <AdminMediaManagement />}
-            {activeTab === 'ai-config' && <AdminAIConfig />}
-            {activeTab === 'ai-skills' && <AdminAISkills />}
-            {activeTab === 'billing' && <AdminBillingDashboard />}
-            {activeTab === 'apify' && <AdminApify />}
-            {activeTab === 'mcp' && <AdminMCP />}
-            {activeTab === 'learn' && <AdminLearn />}
-            {activeTab === 'agents' && <AdminAgents />}
-            {activeTab === 'magnific' && <AdminMagnific />}
-            {activeTab === 'kling' && <AdminKling />}
-            {activeTab === 'google' && <AdminGoogle />}
-            {activeTab === 'openai' && <AdminOpenAI />}
-            {activeTab === 'settings' && <AdminPlatformSettings />}
-            {activeTab === 'audit' && <AdminAuditLog />}
-            {activeTab === 'nav-settings' && <AdminNavSettings />}
-            {activeTab === 'higgsfield' && <AdminHiggsfield />}
-            {activeTab.startsWith('pages-') && (
-              <AdminPagesManagement activePage={activeTab} />
-            )}
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+                </div>
+              }
+            >
+              {activeTab === 'overview' && <AdminOverview />}
+              {activeTab === 'users' && <UserManagementPage currentAdminRole={currentAdminRole} />}
+              {activeTab === 'pricing' && <PricingManagement />}
+              {activeTab === 'cards' && <AdminCardsManagement />}
+              {activeTab === 'payments' && <PaymentManagement />}
+              {activeTab === 'auth-providers' && <AdminAuthProviders />}
+              {activeTab === 'integrations' && <AdminIntegrations />}
+              {activeTab === 'media' && <AdminMediaManagement />}
+              {activeTab === 'ai-config' && <AdminAIConfig />}
+              {activeTab === 'ai-skills' && <AdminAISkills />}
+              {activeTab === 'billing' && <AdminBillingDashboard />}
+              {activeTab === 'apify' && <AdminApify />}
+              {activeTab === 'mcp' && <AdminMCP />}
+              {activeTab === 'learn' && <AdminLearn />}
+              {activeTab === 'agents' && <AdminAgents />}
+              {activeTab === 'magnific' && <AdminMagnific />}
+              {activeTab === 'kling' && <AdminKling />}
+              {activeTab === 'google' && <AdminGoogle />}
+              {activeTab === 'openai' && <AdminOpenAI />}
+              {activeTab === 'settings' && <AdminPlatformSettings />}
+              {activeTab === 'audit' && <AdminAuditLog />}
+              {activeTab === 'nav-settings' && <AdminNavSettings />}
+              {activeTab === 'higgsfield' && <AdminHiggsfield />}
+              {activeTab.startsWith('pages-') && (
+                <AdminPagesManagement activePage={activeTab} />
+              )}
+            </Suspense>
           </main>
         </div>
       </div>

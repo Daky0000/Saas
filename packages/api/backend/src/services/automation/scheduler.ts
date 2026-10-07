@@ -1,4 +1,5 @@
-import cron from "node-cron";import { prisma } from "../../utils/prisma";
+import cron from "node-cron";
+import { prisma } from "../../utils/prisma";
 
 import { PostPlatformStatus, PostStatus } from "@prisma/client";
 import { addPostToQueue } from "./queue";

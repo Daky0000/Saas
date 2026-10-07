@@ -121,7 +121,7 @@ function TermsOfService({ embedded = false }: { embedded?: boolean }) {
             <p>
               Dakyworld Hub offers free and paid subscription plans. Paid plans are billed on a
               monthly or annual basis as selected at the time of purchase. All fees are in US dollars
-              unless stated otherwise. Payments are processed securely by Stripe.
+              unless stated otherwise. Payments are processed securely by Paystack.
             </p>
 
             <h3 className="text-base font-semibold text-gray-800 mb-2 mt-4">7.2 Cancellation and Refunds</h3>

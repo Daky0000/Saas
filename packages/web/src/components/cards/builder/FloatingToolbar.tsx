@@ -51,6 +51,7 @@ export default function FloatingToolbar({ onAddText, onUploadImage, onAddRect, o
               <div className="relative">
                 <button
                   type="button"
+                  aria-label="Shape"
                   onClick={() => setShapeOpen((o) => !o)}
                   className="flex h-9 w-9 items-center justify-center rounded-xl text-zinc-600 transition hover:bg-zinc-100"
                 >
@@ -86,6 +87,7 @@ export default function FloatingToolbar({ onAddText, onUploadImage, onAddRect, o
             ) : (
               <button
                 type="button"
+                aria-label={tool.label}
                 onClick={tool.onClick}
                 className="flex h-9 w-9 items-center justify-center rounded-xl text-zinc-600 transition hover:bg-zinc-100"
               >

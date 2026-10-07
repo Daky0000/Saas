@@ -153,7 +153,7 @@ export default function RefundPolicy({ embedded = false }: { embedded?: boolean 
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">9. Currency and Processing</h2>
             <p>
-              All payments and refunds are processed in US dollars (USD) via Stripe. If your bank
+              All payments and refunds are processed in US dollars (USD) via Paystack. If your bank
               account is in a different currency, your bank's exchange rate at the time of the refund
               may differ from the rate at the time of the original charge. Dakyworld is not responsible
               for any currency conversion differences.

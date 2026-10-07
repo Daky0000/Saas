@@ -1,4 +1,5 @@
-import Queue from "bull";import { prisma } from "../../utils/prisma";
+import Queue from "bull";
+import { prisma } from "../../utils/prisma";
 
 import {
   PrismaClient,

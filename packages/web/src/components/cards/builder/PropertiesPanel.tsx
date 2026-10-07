@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { fabric } from 'fabric';
+import * as fabric from 'fabric';
 import {
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Trash2, Copy, ArrowUp, ArrowDown, Eye, EyeOff,
@@ -20,7 +20,7 @@ export interface GradientStop {
 
 interface PropsPanelProps {
   canvas: fabric.Canvas | null;
-  selectedObjects: fabric.Object[];
+  selectedObjects: fabric.FabricObject[];
   onDelete: () => void;
   onDuplicate: () => void;
   onBringForward: () => void;
@@ -591,7 +591,7 @@ export default function PropertiesPanel({
   // Sync text fill mode when selection changes
   useEffect(() => {
     const obj = selectedObjects[0];
-    if (!obj || !(obj instanceof fabric.IText || obj instanceof fabric.Text)) {
+    if (!obj || !(obj instanceof fabric.IText || obj instanceof fabric.FabricText)) {
       setTextFillMode('solid');
       return;
     }
@@ -617,13 +617,13 @@ export default function PropertiesPanel({
   }
 
   const obj = selectedObjects[0];
-  const isText = obj instanceof fabric.IText || obj instanceof fabric.Text;
-  const isImage = obj instanceof fabric.Image;
+  const isText = obj instanceof fabric.IText || obj instanceof fabric.FabricText;
+  const isImage = obj instanceof fabric.FabricImage;
   const isShape = !isText && !isImage && (obj instanceof fabric.Rect || obj instanceof fabric.Circle || obj instanceof fabric.Line || obj instanceof fabric.Ellipse);
   const zoom = canvas.getZoom();
 
   const set = (key: string, value: unknown) => {
-    selectedObjects.forEach((o) => (o as fabric.Object & Record<string, unknown>).set(key, value));
+    selectedObjects.forEach((o) => (o as fabric.FabricObject & Record<string, unknown>).set(key, value));
     canvas.requestRenderAll();
     refresh((n) => n + 1);
     onSnapshot?.();
@@ -644,7 +644,7 @@ export default function PropertiesPanel({
   // Image fit to artboard
   const applyFit = (fit: 'auto' | 'fill' | 'cover' | 'contain') => {
     if (!isImage) return;
-    const img = obj as fabric.Image;
+    const img = obj as fabric.FabricImage;
     const iw = img.width ?? 1;
     const ih = img.height ?? 1;
     if (fit === 'auto') {
@@ -666,7 +666,7 @@ export default function PropertiesPanel({
   // Image position alignment
   const alignImage = (hAlign: 'left' | 'center' | 'right' | null, vAlign: 'top' | 'center' | 'bottom' | null) => {
     if (!isImage) return;
-    const img = obj as fabric.Image;
+    const img = obj as fabric.FabricImage;
     const sw = img.getScaledWidth();
     const sh = img.getScaledHeight();
     if (hAlign === 'left') img.set('left', 0);
@@ -716,7 +716,7 @@ export default function PropertiesPanel({
 
   // Image preview src
   const imagePreviewSrc = isImage
-    ? ((obj as fabric.Image).getElement() as HTMLImageElement)?.src ?? ''
+    ? ((obj as fabric.FabricImage).getElement() as HTMLImageElement)?.src ?? ''
     : '';
 
   return (
@@ -847,7 +847,7 @@ export default function PropertiesPanel({
                         if (m === 'solid') {
                           // Revert to a solid color
                           const solidColor = typeof txt.fill === 'string' ? txt.fill : '#000000';
-                          selectedObjects.forEach((o) => (o as fabric.Object).set('fill', solidColor));
+                          selectedObjects.forEach((o) => (o as fabric.FabricObject).set('fill', solidColor));
                           canvas?.requestRenderAll();
                           refresh((n) => n + 1);
                           onSnapshot?.();

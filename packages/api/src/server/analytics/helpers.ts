@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../../types/http.ts';
 import type { Pool } from 'pg';
 import { logger } from '../../logger.ts';
 

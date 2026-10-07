@@ -1,6 +1,7 @@
 import express from 'express';
 import { FAST_MODEL } from '../ai-helpers.ts';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
@@ -21,7 +22,7 @@ interface DakyLearnDeps {
   pool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> } | null;
   getAIConfig: () => Promise<AIConfig>;
   resolveActiveKey: (config: AIConfig) => string;
-  callAINonStreaming: (provider: 'anthropic' | 'google', apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens?: number) => Promise<string>;
+  callAINonStreaming: typeof import('../ai-helpers.ts').callAINonStreaming;
   GEMINI_MODELS: string[];
   createNotification: (userId: string, type: string, title: string, message: string, data?: Record<string, any>, pinned?: boolean) => Promise<void>;
 }
@@ -136,7 +137,7 @@ JSON shape:
           const genAI = new GoogleGenerativeAI(apiKey);
           const gModel = genAI.getGenerativeModel({ model: videoModel });
           const result = await gModel.generateContent([
-            { fileData: { fileUri: url } },
+            { fileData: { fileUri: url, mimeType: 'video/mp4' } },
             { text: `${LEARN_EXTRACT_PROMPT}\n\nAnalyze this YouTube video and return the JSON:` },
           ]);
           const raw = result.response.text();
@@ -252,7 +253,7 @@ JSON shape:
           const genAI = new GoogleGenerativeAI(apiKey);
           const gModel = genAI.getGenerativeModel({ model: fastModel });
           const result = await gModel.generateContent([
-            { fileData: { fileUri: item.url } },
+            { fileData: { fileUri: item.url, mimeType: 'video/mp4' } },
             { text: `You are a SaaS marketing analyst. Watch this video fully and return ONLY a valid JSON object — no markdown, no extra text.\n\nJSON shape:\n${analyzeJsonShape}` },
           ]);
           const raw = result.response.text();

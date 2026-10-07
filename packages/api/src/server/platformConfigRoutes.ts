@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import { randomBytes } from 'crypto';
@@ -32,7 +33,6 @@ export interface PlatformConfigDeps {
   getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
   getIntegrationRowBySlug: (slug: string) => Promise<{ id: number; slug: string; name: string | null; type: string | null } | null>;
   getResendConfig: () => Promise<{ apiKey: string; fromEmail: string; fromName: string }>;
-  refreshStripe: () => Promise<void>;
   oauthAuthUrls: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }>;
   resolveOAuthRedirectUri: (platform: string, redirectUri?: string, req?: Request) => string;
   isOAuthClientSecretRequired: (platform: string) => boolean;
@@ -44,7 +44,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
   const {
     requireAuth, requireAdmin, hasDatabase, dbQuery, pool,
     inMemoryPlatformConfigs, getPlatformConfig, getIntegrationRowBySlug,
-    getResendConfig, refreshStripe,
+    getResendConfig,
     oauthAuthUrls, resolveOAuthRedirectUri, isOAuthClientSecretRequired,
   } = deps;
 
@@ -111,6 +111,12 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
 
       const now = new Date().toISOString();
       const normalizedConfig: Record<string, string> = { ...(config as any) };
+      if (platform === 'stripe') return res.status(410).json({ success: false, error: 'Use Paystack in Payments.' });
+      if (platform === 'paystack') {
+        const { resolvePaystackConfig } = await import('./paystackService.ts');
+        for (const mode of ['test', 'live'] as const) resolvePaystackConfig(normalizedConfig, mode);
+        if (!resolvePaystackConfig(normalizedConfig)) return res.status(400).json({ success: false, error: 'The selected payment mode needs credentials.' });
+      }
       const meta = oauthAuthUrls[platform];
       if (meta) {
         const incomingRedirect = typeof normalizedConfig.redirectUri === 'string' ? normalizedConfig.redirectUri : '';
@@ -149,7 +155,6 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         platform, enabled: finalEnabled, fields: Object.keys(normalizedConfig),
       });
 
-      if (platform === 'stripe') void refreshStripe();
       return res.json({ success: true, message: 'Platform config saved' });
     } catch (error) {
       logger.error('Save platform config error:', error);
@@ -221,6 +226,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
   router.get('/oauth/:platform/configured', async (req: Request, res: Response) => {
     try {
       const platform = req.params.platform.toLowerCase();
+      if (platform === 'stripe') return res.status(410).json({ success: false, error: 'Use Paystack in Payments.' });
       const meta = oauthAuthUrls[platform];
       if (!meta) return res.json({ success: true, configured: false });
       const cfg = await getPlatformConfig(platform);
@@ -275,14 +281,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
           if (resp.status === 200) return res.json({ success: true });
           throw new Error('Invalid Webflow API token');
         }
-        case 'stripe': {
-          const { secretKey } = credentials;
-          const resp = await axios.get('https://api.stripe.com/v1/account', {
-            headers: { Authorization: `Bearer ${secretKey}` }, validateStatus: () => true, timeout: 8000,
-          });
-          if (resp.status === 200) return res.json({ success: true });
-          throw new Error('Invalid Stripe secret key');
-        }
+
         case 'linear': {
           const { apiKey } = credentials;
           const resp = await axios.post(

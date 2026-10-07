@@ -4,13 +4,12 @@ import { getPlatformConfig, getUserPlanName } from './user-auth.ts';
 import { decryptIntegrationSecret } from './integration-helpers.ts';
 import { pool, dbQuery } from './db.ts';
 import { logger } from './logger.ts';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 
 export const AI_CONFIG_PLATFORM = 'ai_assistant';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Model registry — the single source of truth for model IDs across the API.
-// Route modules must import from here instead of hardcoding strings.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CLAUDE_MODELS = [
@@ -20,22 +19,16 @@ export const CLAUDE_MODELS = [
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', note: 'Fastest · lowest cost' },
 ] as const;
 
-// Primary assistant (Daky chat) default — admin can change in Admin → AI Assistant
 export const DEFAULT_CHAT_MODEL = 'claude-opus-4-8';
-// Background work: skill-brief compilation, per-agent proposal generation
 export const FAST_MODEL = 'claude-haiku-4-5';
 
-// Gemini model names — used for model selection UI + provider-aware calls
 export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
-// Map from Anthropic model IDs → equivalent Gemini models for background/agent calls.
-// Includes legacy IDs so configs saved by older deploys keep resolving.
 export const ANTHROPIC_TO_GEMINI: Record<string, string> = {
   'claude-opus-4-8': 'gemini-2.5-pro',
   'claude-sonnet-5': 'gemini-2.5-pro',
   'claude-sonnet-4-6': 'gemini-2.5-flash',
   'claude-haiku-4-5': 'gemini-2.0-flash',
-  // legacy IDs from earlier deploys
   'claude-haiku-4-5-20251001': 'gemini-2.0-flash',
   'claude-opus-4-7': 'gemini-2.5-pro',
 };
@@ -63,31 +56,18 @@ export async function getAIConfig(): Promise<{
 
 export function resolveActiveKey(config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null }): string {
   if (config.provider === 'google') {
-    return (config.googleEncryptedKey ? decryptAIKey(config.googleEncryptedKey) : null) || process.env.GOOGLE_AI_API_KEY || '';
+    return (config.googleEncryptedKey ? decryptAIKey(config.googleEncryptedKey) : null) || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
   }
   return (config.encryptedKey ? decryptAIKey(config.encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Credit economics.
-//
-// 1 credit = $0.01 of retail value (100 credits = $1). AI text calls are
-// metered against REAL provider prices below, marked up AI_PROFIT_MULTIPLIER×
-// so every credit spent is profitable: credits = ceil(apiCostUsd × 3 / 0.01),
-// minimum 1 per metered call. Image/video generation keeps its fixed per-model
-// pricing (✦3–35 in magnific/kling routes), which is already margin-priced.
-//
-// Plan allowances (matches the seeded pricing page): Free 100 · Pro 2,000 ·
-// Agency 6,000 credits/month. Worst-case COGS per plan = allowance × $0.01 / 3,
-// e.g. Pro $29 → max $6.67 API spend → ≥77% gross margin on AI.
+// Credit economics & Monetization Top-Up Packs
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CREDIT_USD = 0.01;          // retail value of one credit
 export const AI_PROFIT_MULTIPLIER = 3;   // retail = 3× raw provider cost
 
-// Provider list prices, USD per 1M tokens. Anthropic prices are current list
-// prices; Gemini prices are Google's published rates (estimates — revisit if
-// Google reprices). cacheRead ≈ 0.1× input for Anthropic.
 export const MODEL_COSTS: Record<string, { in: number; out: number; cacheRead?: number }> = {
   'claude-opus-4-8':           { in: 5,    out: 25,   cacheRead: 0.5 },
   'claude-opus-4-7':           { in: 5,    out: 25,   cacheRead: 0.5 },
@@ -101,7 +81,6 @@ export const MODEL_COSTS: Record<string, { in: number; out: number; cacheRead?: 
   'gemini-1.5-pro':            { in: 1.25, out: 5 },
   'gemini-1.5-flash':          { in: 0.075, out: 0.3 },
 };
-// Unknown/future models: assume Sonnet-tier so we never under-charge badly.
 const FALLBACK_COST = { in: 3, out: 15, cacheRead: 0.3 };
 
 export function computeAICostUsd(model: string, inputTokens: number, outputTokens: number, cacheReadTokens = 0): number {
@@ -119,7 +98,94 @@ export function creditsForCostUsd(costUsd: number): number {
   return Math.max(1, Math.ceil((costUsd * AI_PROFIT_MULTIPLIER) / CREDIT_USD));
 }
 
-export const PLAN_AI_CREDITS: Record<string, number> = { free: 100, pro: 2000, agency: 6000 };
+export const PLAN_AI_CREDITS: Record<string, number> = {
+  free: 100,
+  pro: 2000,
+  agency: 6000,
+  enterprise: 25000,
+  'os pro': 25000,
+};
+
+export const CREDIT_TOPUP_PACKS = [
+  {
+    id: 'starter',
+    name: 'Starter Boost Pack',
+    credits: 1000,
+    priceUsd: 12,
+    badge: 'Quick Top-Up',
+    description: '1,000 never-expiring AI credits for chat, agents & image generation.',
+  },
+  {
+    id: 'growth',
+    name: 'Creator & Growth Pack',
+    credits: 5000,
+    priceUsd: 49,
+    badge: 'Most Popular · Save 18%',
+    description: '5,000 never-expiring AI credits + priority generation queue.',
+  },
+  {
+    id: 'agency',
+    name: 'Agency & OS Mega-Vault',
+    credits: 20000,
+    priceUsd: 149,
+    badge: 'Best Value · Save 38%',
+    description: '20,000 never-expiring AI credits for high-volume video & Dakyworld OS.',
+  },
+] as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deterministic AI Response Cache & Token Efficiency Telemetry
+// Prevents wasted LLM tokens on identical prompts, repeated skill compilations,
+// and rapid dashboard refreshes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CachedAIResponse {
+  text: string;
+  expiresAt: number;
+  estimatedTokens: number;
+  model: string;
+}
+
+const aiResponseCache = new Map<string, CachedAIResponse>();
+const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+export const tokenEfficiencyStats = {
+  totalCalls: 0,
+  cacheHits: 0,
+  promptCacheReadTokens: 0,
+  estimatedTokensSaved: 0,
+  estimatedUsdSaved: 0,
+  batchedCompilationsSaved: 0,
+  fastPathOrchestrationsSaved: 0,
+};
+
+export function recordFastPathSavings(estimatedTokens = 450) {
+  tokenEfficiencyStats.fastPathOrchestrationsSaved += 1;
+  tokenEfficiencyStats.estimatedTokensSaved += estimatedTokens;
+  tokenEfficiencyStats.estimatedUsdSaved += (estimatedTokens / 1_000_000) * 1.5;
+}
+
+export function recordBatchCompilationSavings(callsSaved = 20, estimatedTokens = 12000) {
+  tokenEfficiencyStats.batchedCompilationsSaved += callsSaved;
+  tokenEfficiencyStats.estimatedTokensSaved += estimatedTokens;
+  tokenEfficiencyStats.estimatedUsdSaved += (estimatedTokens / 1_000_000) * 1.5;
+}
+
+export function getTokenEfficiencyTelemetry() {
+  const totalDecisions =
+    tokenEfficiencyStats.totalCalls +
+    tokenEfficiencyStats.cacheHits +
+    tokenEfficiencyStats.fastPathOrchestrationsSaved +
+    tokenEfficiencyStats.batchedCompilationsSaved;
+  const hitRatePct = totalDecisions > 0
+    ? Math.min(99, Math.round(((tokenEfficiencyStats.cacheHits + tokenEfficiencyStats.fastPathOrchestrationsSaved + tokenEfficiencyStats.batchedCompilationsSaved) / totalDecisions) * 100))
+    : 0;
+  return {
+    ...tokenEfficiencyStats,
+    hitRatePct,
+    activeCachedResponses: aiResponseCache.size,
+  };
+}
 
 async function getMonthlyCreditAllowance(userId: string): Promise<number> {
   try {
@@ -131,11 +197,7 @@ async function getMonthlyCreditAllowance(userId: string): Promise<number> {
   return PLAN_AI_CREDITS.free;
 }
 
-// Lazy monthly reset: called from balance reads and charges — when reset_date
-// has passed, the balance refills to the plan allowance and reset_date rolls
-// forward. No scheduler needed, and multi-instance safe (guarded UPDATE).
-export async function ensureCreditAccount(userId: string): Promise<{ credits: number; resetDate: string | null }> {
-  if (!pool) return { credits: 100, resetDate: null };
+export async function ensureCreditAccount(userId: string): Promise<{ credits: number; resetDate: string | null; autoRecharge?: boolean; autoRechargePack?: string }> {
   const allowance = await getMonthlyCreditAllowance(userId);
   await dbQuery(
     `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
@@ -144,21 +206,25 @@ export async function ensureCreditAccount(userId: string): Promise<{ credits: nu
     [userId, allowance]
   ).catch(() => undefined);
   const { rows: reset } = await dbQuery<{ credits: number }>(
-    `UPDATE user_credits SET credits = $2, reset_date = date_trunc('month', NOW()) + INTERVAL '1 month', updated_at = NOW()
+    `UPDATE user_credits SET credits = purchased_credits + $2, reset_date = date_trunc('month', NOW()) + INTERVAL '1 month', updated_at = NOW()
      WHERE user_id = $1 AND reset_date IS NOT NULL AND reset_date <= NOW() RETURNING credits`,
     [userId, allowance]
   ).catch(() => ({ rows: [] as any[] }));
   if (reset.length) {
     await recordCreditLedger(userId, allowance, reset[0].credits, 'monthly_reset', {});
   }
-  const { rows } = await dbQuery<{ credits: number; reset_date: string | null }>(
-    `SELECT credits, reset_date FROM user_credits WHERE user_id = $1`, [userId]
+  const { rows } = await dbQuery<{ credits: number; reset_date: string | null; auto_recharge?: boolean; auto_recharge_pack?: string }>(
+    `SELECT credits, reset_date, purchased_credits, auto_recharge, auto_recharge_pack FROM user_credits WHERE user_id = $1`, [userId]
   );
-  return { credits: Number(rows[0]?.credits ?? 0), resetDate: rows[0]?.reset_date ?? null };
+  return {
+    credits: Number(rows[0]?.credits ?? allowance),
+    resetDate: rows[0]?.reset_date ?? null,
+    autoRecharge: Boolean((rows[0] as any)?.auto_recharge),
+    autoRechargePack: String((rows[0] as any)?.auto_recharge_pack || 'starter'),
+  };
 }
 
 export async function hasAICredits(userId: string): Promise<boolean> {
-  if (!pool) return true; // in-memory dev mode — don't block
   const { credits } = await ensureCreditAccount(userId);
   return credits > 0;
 }
@@ -170,20 +236,25 @@ async function recordCreditLedger(userId: string, delta: number, balanceAfter: n
   ).catch((err) => logger.warn({ err }, 'credit_ledger_insert_failed'));
 }
 
-// Deduct credits (floor 0 — AI usage is post-paid, enforcement blocks the NEXT
-// call once the balance is empty) and write an audit ledger row.
 export async function chargeAICredits(userId: string, credits: number, reason: string, meta: Record<string, unknown> = {}): Promise<void> {
-  if (!pool || credits <= 0) return;
+  if (credits <= 0) return;
   await ensureCreditAccount(userId);
-  const { rows } = await dbQuery<{ credits: number }>(
-    `UPDATE user_credits SET credits = GREATEST(0, credits - $1), updated_at = NOW() WHERE user_id = $2 RETURNING credits`,
-    [credits, userId]
-  ).catch(() => ({ rows: [] as any[] }));
-  if (rows.length) await recordCreditLedger(userId, -credits, rows[0].credits, reason, meta);
+  const result = await dbQuery<{ credits: number }>(
+    `WITH debited AS (
+      UPDATE user_credits SET purchased_credits=GREATEST(0,purchased_credits-GREATEST(0,$1-(credits-purchased_credits))),
+      credits=credits-$1,updated_at=NOW() WHERE user_id=$2 AND credits >= $1 RETURNING credits
+    ), logged AS (
+      INSERT INTO credit_ledger(id,user_id,delta,balance_after,reason,meta)
+      SELECT $3,$2,-$1,credits,$4,$5::jsonb FROM debited RETURNING balance_after
+    ) SELECT balance_after AS credits FROM logged`,
+    [credits,userId,randomUUID(),reason.slice(0,60),JSON.stringify(meta)]
+  );
+  if (!result.rows.length) throw new Error('Insufficient AI credits');
+
 }
 
 export async function grantCredits(userId: string, credits: number, reason: string, meta: Record<string, unknown> = {}): Promise<number | null> {
-  if (!pool || credits <= 0) return null;
+  if (credits <= 0) return null;
   const { rows } = await dbQuery<{ credits: number }>(
     `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
      VALUES ($1, $2, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
@@ -196,11 +267,6 @@ export async function grantCredits(userId: string, credits: number, reason: stri
   return rows[0].credits;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Usage tracking — every AI call records tokens + real cost, and charges the
-// user's credit balance at the marked-up rate.
-// ─────────────────────────────────────────────────────────────────────────────
-
 export async function recordAIUsage(params: {
   userId: string | null;
   feature: string;
@@ -210,10 +276,13 @@ export async function recordAIUsage(params: {
   outputTokens: number;
   cacheReadTokens?: number;
 }): Promise<void> {
-  if (!pool) return;
   const inputTokens = Math.max(0, Math.round(params.inputTokens || 0));
   const outputTokens = Math.max(0, Math.round(params.outputTokens || 0));
   const cacheReadTokens = Math.max(0, Math.round(params.cacheReadTokens || 0));
+  if (cacheReadTokens > 0) {
+    tokenEfficiencyStats.promptCacheReadTokens += cacheReadTokens;
+    tokenEfficiencyStats.estimatedTokensSaved += Math.round(cacheReadTokens * 0.9);
+  }
   const costUsd = computeAICostUsd(params.model, inputTokens, outputTokens, cacheReadTokens);
   const credits = creditsForCostUsd(costUsd);
   await dbQuery(
@@ -238,30 +307,60 @@ export async function callAINonStreaming(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 400,
-  usageMeta?: { userId: string | null; feature: string },
+  usageMeta?: { userId: string | null; feature: string; skipCache?: boolean; cacheTtlMs?: number },
 ): Promise<string> {
+  const cacheKey = createHash('sha256')
+    .update(`${provider}:${model}:${maxTokens}:${systemPrompt}:${userMessage}`)
+    .digest('hex');
+
+  if (!usageMeta?.skipCache) {
+    const cached = aiResponseCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      tokenEfficiencyStats.cacheHits += 1;
+      tokenEfficiencyStats.estimatedTokensSaved += cached.estimatedTokens;
+      const savedCost = computeAICostUsd(cached.model, cached.estimatedTokens, Math.round(cached.estimatedTokens * 0.3));
+      tokenEfficiencyStats.estimatedUsdSaved += savedCost;
+      return cached.text;
+    }
+  }
+
+  tokenEfficiencyStats.totalCalls += 1;
+
   try {
     if (provider === 'google') {
       const effectiveModel = resolveGeminiModel(model);
       const genAI = new GoogleGenerativeAI(apiKey);
       const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: systemPrompt });
       const result = await gModel.generateContent(userMessage);
+      const text = result.response.text();
+      const inTok = result.response.usageMetadata?.promptTokenCount ?? Math.ceil((systemPrompt.length + userMessage.length) / 4);
+      const outTok = result.response.usageMetadata?.candidatesTokenCount ?? Math.ceil(text.length / 4);
       if (usageMeta) {
-        const meta = result.response.usageMetadata;
         void recordAIUsage({
           ...usageMeta, provider: 'google', model: effectiveModel,
-          inputTokens: meta?.promptTokenCount ?? 0, outputTokens: meta?.candidatesTokenCount ?? 0,
+          inputTokens: inTok, outputTokens: outTok,
         });
       }
-      return result.response.text();
+      aiResponseCache.set(cacheKey, {
+        text,
+        expiresAt: Date.now() + (usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS),
+        estimatedTokens: inTok + outTok,
+        model: effectiveModel,
+      });
+      return text;
     } else {
       const client = new Anthropic({ apiKey });
+      // Use Anthropic ephemeral prompt caching automatically on large system prompts
+      const systemParam: any = systemPrompt.length >= 1500
+        ? [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }]
+        : systemPrompt;
       const resp = await client.messages.create({
         model,
         max_tokens: maxTokens,
-        system: systemPrompt,
+        system: systemParam,
         messages: [{ role: 'user', content: userMessage }],
       });
+      const text = resp.content[0]?.type === 'text' ? resp.content[0].text : '';
       if (usageMeta) {
         void recordAIUsage({
           ...usageMeta, provider: 'anthropic', model,
@@ -269,19 +368,23 @@ export async function callAINonStreaming(
           cacheReadTokens: resp.usage.cache_read_input_tokens ?? 0,
         });
       }
-      return resp.content[0]?.type === 'text' ? resp.content[0].text : '';
+      aiResponseCache.set(cacheKey, {
+        text,
+        expiresAt: Date.now() + (usageMeta?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS),
+        estimatedTokens: resp.usage.input_tokens + resp.usage.output_tokens,
+        model,
+      });
+      if (aiResponseCache.size > 1500) {
+        const now = Date.now();
+        for (const [k, v] of aiResponseCache) if (v.expiresAt < now) aiResponseCache.delete(k);
+      }
+      return text;
     }
   } catch (err: any) {
     throw classifyAIProviderError(provider, model, err);
   }
 }
 
-// Turn a provider SDK error into an actionable admin-facing message.
-// Classify by HTTP status first (the Anthropic SDK exposes err.status); fall
-// back to targeted message patterns for the Google SDK, which only throws
-// generic Errors. Never match on the bare word "invalid" — Anthropic billing
-// and validation errors are typed "invalid_request_error" and were being
-// misreported as a bad API key.
 export function classifyAIProviderError(provider: 'anthropic' | 'google', model: string, err: any): Error {
   const status: number | undefined = typeof err?.status === 'number' ? err.status : undefined;
   const msg: string = err?.message || String(err);

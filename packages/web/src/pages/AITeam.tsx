@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import AgentSchedulesPanel from '../components/AgentSchedulesPanel';
 import {
   CheckCircle, ChevronRight, Loader2, RefreshCw, Sparkles,
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
@@ -6,7 +7,7 @@ import {
   Pencil, Bot, Play, ArrowRight, Network,
   FileText, ExternalLink, Lightbulb, LayoutList,
   MessageCircle, Calendar, ChevronLeft, Send,
-  Wand2, CalendarDays, Rocket,
+  Wand2, CalendarDays, Rocket, Copy, Trash2, Check, CheckCheck, Layers,
   type LucideIcon,
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiBase';
@@ -172,6 +173,54 @@ const AGENT_GROUPS = [
   { label: 'Content Creation', keys: ['daky', 'hook_writing', 'social_caption', 'video_script'] },
   { label: 'Creative & Paid', keys: ['nova', 'ad_copy', 'thumbnail_design', 'meta_ads'] },
   { label: 'Analytics & Automation', keys: ['aria', 'flux'] },
+  { label: 'Campaign Planning', keys: ['campaign_brief'] },
+];
+
+const BRAND_PRESETS = [
+  {
+    name: 'SaaS / AI OS',
+    brand_name: 'Dakyworld AI OS',
+    niche: 'SaaS / Tech',
+    website: 'https://dakyworld.com',
+    tone: 'Bold & Confident',
+    audience: 'Agencies, founders, and growth marketers looking to orchestrate multi-channel content autonomously.',
+    goals: ['Generate leads', 'Drive website traffic', 'Build brand awareness'],
+    platforms: ['LinkedIn', 'Twitter / X', 'YouTube'],
+    extra_notes: 'Emphasize high ROI, autonomous multi-agent speed, and replacing fragmented marketing tools.',
+  },
+  {
+    name: 'Luxury E-Commerce',
+    brand_name: 'Aura Maison',
+    niche: 'Fashion & Beauty',
+    website: 'https://auramaison.com',
+    tone: 'Luxury & Premium',
+    audience: 'Discerning buyers seeking sustainable luxury craftsmanship, timeless aesthetics, and mindful design.',
+    goals: ['Boost sales', 'Build brand awareness', 'Nurture existing audience'],
+    platforms: ['Instagram', 'Pinterest', 'TikTok'],
+    extra_notes: 'Tone must remain understated, elevated, and sensory. Avoid aggressive sales copy.',
+  },
+  {
+    name: 'B2B Tech Agency',
+    brand_name: 'Apex Growth Partners',
+    niche: 'Coaching & Consulting',
+    website: 'https://apexgrowth.io',
+    tone: 'Professional',
+    audience: 'Venture-backed B2B founders and CMOs seeking predictable enterprise pipeline.',
+    goals: ['Generate leads', 'Grow followers', 'Launch a product'],
+    platforms: ['LinkedIn', 'Twitter / X'],
+    extra_notes: 'Lead with hard metrics, conversion case studies, and proprietary growth playbooks.',
+  },
+  {
+    name: 'Creator / Solo Founder',
+    brand_name: 'The Modern Solopreneur',
+    niche: 'Education',
+    website: 'https://modernsolo.co',
+    tone: 'Casual & Friendly',
+    audience: 'Creators, freelancers, and indie hackers scaling one-person profitable media businesses.',
+    goals: ['Grow followers', 'Increase engagement', 'Build brand awareness'],
+    platforms: ['Twitter / X', 'YouTube', 'Instagram'],
+    extra_notes: 'Share actionable frameworks, transparent build-in-public metrics, and authentic personal anecdotes.',
+  },
 ];
 
 // ── Brand Wizard ───────────────────────────────────────────────────────────────
@@ -197,6 +246,17 @@ function BrandWizard({
   const [goals, setGoals]         = useState<string[]>(initial?.goals ?? []);
   const [platforms, setPlatforms] = useState<string[]>(initial?.platforms ?? []);
   const [extraNotes, setExtraNotes] = useState(initial?.extra_notes ?? '');
+
+  const applyPreset = (preset: typeof BRAND_PRESETS[number]) => {
+    setBrandName(preset.brand_name);
+    setNiche(preset.niche);
+    setWebsite(preset.website);
+    setTone(preset.tone);
+    setAudience(preset.audience);
+    setGoals(preset.goals);
+    setPlatforms(preset.platforms);
+    setExtraNotes(preset.extra_notes);
+  };
 
   const toggleGoal = (g: string) =>
     setGoals((prev) => prev.includes(g) ? prev.filter((x) => x !== g) : [...prev, g]);
@@ -249,6 +309,26 @@ function BrandWizard({
           <p className="text-xs text-slate-500 mt-0.5">
             Your AI team reads this profile to tailor every piece of content to your brand.
           </p>
+        </div>
+      </div>
+
+      {/* 1-Click Brand Presets banner */}
+      <div className="mb-6 rounded-xl border border-emerald-200 bg-white/90 p-3.5 shadow-sm">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 mb-2">
+          <Sparkles size={13} className="text-emerald-500" />
+          <span>Quick Setup: 1-Click Brand Presets</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {BRAND_PRESETS.map((preset) => (
+            <button
+              key={preset.name}
+              type="button"
+              onClick={() => applyPreset(preset)}
+              className="rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 hover:border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition flex items-center gap-1"
+            >
+              <span>+</span> {preset.name}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -525,12 +605,14 @@ const AGENT_COLORS: Record<string, string> = {
   trend_research: '#06B6D4', audience_research: '#7C3AED', seo_research: '#059669',
   hook_writing: '#D97706', social_caption: '#DB2777', video_script: '#DC2626',
   ad_copy: '#EA580C', thumbnail_design: '#9333EA', meta_ads: '#1877F2',
+  campaign_brief: '#0EA5E9',
 };
 const AGENT_ICONS: Record<string, string> = {
   daky: '✦', nova: '◉', sage: '◈', aria: '⊕', flux: '⟳',
   trend_research: '◎', audience_research: '◑', seo_research: '⊗',
   hook_writing: '⚡', social_caption: '✎', video_script: '▶',
   ad_copy: '◆', thumbnail_design: '▣', meta_ads: '⊛',
+  campaign_brief: '◫',
 };
 
 const STATUS_STYLES: Record<AgentTask['status'], string> = {
@@ -543,11 +625,19 @@ const STATUS_STYLES: Record<AgentTask['status'], string> = {
 function ApprovalQueue({
   tasks,
   onDecide,
+  onBatchDecide,
+  onEditAndApprove,
 }: {
   tasks: AgentTask[];
   onDecide: (id: string, decision: 'approved' | 'rejected') => Promise<void>;
+  onBatchDecide?: (decision: 'approved' | 'rejected') => Promise<void>;
+  onEditAndApprove?: (id: string, title: string, body: string) => Promise<void>;
 }) {
   const [deciding, setDeciding] = useState<Record<string, boolean>>({});
+  const [batching, setBatching] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editBody, setEditBody] = useState('');
 
   const decide = async (id: string, decision: 'approved' | 'rejected') => {
     setDeciding((d) => ({ ...d, [id]: true }));
@@ -555,17 +645,70 @@ function ApprovalQueue({
     setDeciding((d) => ({ ...d, [id]: false }));
   };
 
+  const handleStartEdit = (t: AgentTask) => {
+    setEditingId(t.id);
+    setEditTitle(t.title);
+    setEditBody(t.body || '');
+  };
+
+  const handleSaveAndApprove = async (id: string) => {
+    if (!onEditAndApprove) {
+      await decide(id, 'approved');
+      setEditingId(null);
+      return;
+    }
+    setDeciding((d) => ({ ...d, [id]: true }));
+    await onEditAndApprove(id, editTitle, editBody);
+    setDeciding((d) => ({ ...d, [id]: false }));
+    setEditingId(null);
+  };
+
+  const handleBatch = async (decision: 'approved' | 'rejected') => {
+    if (!onBatchDecide) return;
+    setBatching(decision);
+    try {
+      await onBatchDecide(decision);
+    } finally {
+      setBatching(null);
+    }
+  };
+
   const pending = tasks.filter((t) => t.status === 'pending');
   const history = tasks.filter((t) => t.status !== 'pending').slice(0, 10);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-base font-black text-slate-950 tracking-tight">Approval Queue</h3>
-        {pending.length > 0 && (
-          <span className="rounded-full bg-amber-500 text-white text-[11px] font-bold px-2 py-0.5">
-            {pending.length} pending
-          </span>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-black text-slate-950 tracking-tight">Approval Queue</h3>
+          {pending.length > 0 && (
+            <span className="rounded-full bg-amber-500 text-white text-[11px] font-bold px-2.5 py-0.5">
+              {pending.length} pending
+            </span>
+          )}
+        </div>
+        {pending.length > 1 && onBatchDecide && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={Boolean(batching)}
+              onClick={() => handleBatch('rejected')}
+              className="flex items-center gap-1 rounded-xl border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 transition disabled:opacity-50"
+            >
+              {batching === 'rejected' ? <Loader2 size={12} className="animate-spin" /> : <ThumbsDown size={12} />}
+              Reject All ({pending.length})
+            </button>
+            <button
+              type="button"
+              disabled={Boolean(batching)}
+              onClick={() => handleBatch('approved')}
+              className="flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
+              style={{ background: '#10B981' }}
+            >
+              {batching === 'approved' ? <Loader2 size={12} className="animate-spin" /> : <CheckCheck size={13} />}
+              Approve All ({pending.length})
+            </button>
+          </div>
         )}
       </div>
 
@@ -581,6 +724,8 @@ function ApprovalQueue({
         const color = AGENT_COLORS[task.agent_key] ?? '#5b6cf9';
         const icon  = AGENT_ICONS[task.agent_key] ?? '◆';
         const expiresIn = Math.max(0, Math.round((new Date(task.expires_at).getTime() - Date.now()) / 3600000));
+        const isEditing = editingId === task.id;
+
         return (
           <div key={task.id} className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
             <div className="flex items-start gap-3">
@@ -600,28 +745,84 @@ function ApprovalQueue({
                     <Clock size={10} /> {expiresIn}h left
                   </span>
                 </div>
-                <p className="text-sm font-semibold text-slate-900 mb-1">{task.title}</p>
-                {task.body && (
-                  <p className="text-xs text-slate-500 leading-relaxed">{task.body}</p>
+
+                {isEditing ? (
+                  <div className="space-y-2 mt-2">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:outline-none"
+                    />
+                    <textarea
+                      rows={4}
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-700 focus:border-indigo-400 focus:outline-none resize-none"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold text-slate-900 mb-1">{task.title}</p>
+                    {task.body && (
+                      <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{task.body}</p>
+                    )}
+                  </>
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-2 mt-4 justify-end">
-              <button type="button"
-                disabled={deciding[task.id]}
-                onClick={() => decide(task.id, 'rejected')}
-                className="flex items-center gap-1.5 rounded-xl border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 transition disabled:opacity-50">
-                {deciding[task.id] ? <Loader2 size={11} className="animate-spin" /> : <ThumbsDown size={11} />}
-                Reject
-              </button>
-              <button type="button"
-                disabled={deciding[task.id]}
-                onClick={() => decide(task.id, 'approved')}
-                className="flex items-center gap-1.5 rounded-xl px-4 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
-                style={{ background: '#10B981' }}>
-                {deciding[task.id] ? <Loader2 size={11} className="animate-spin" /> : <ThumbsUp size={11} />}
-                Approve
-              </button>
+
+            <div className="flex items-center gap-2 mt-4 justify-end flex-wrap">
+              {isEditing ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                  >
+                    Cancel Edit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deciding[task.id]}
+                    onClick={() => handleSaveAndApprove(task.id)}
+                    className="flex items-center gap-1.5 rounded-xl px-4 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
+                    style={{ background: '#10B981' }}
+                  >
+                    {deciding[task.id] ? <Loader2 size={11} className="animate-spin" /> : <ThumbsUp size={11} />}
+                    Save & Approve
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleStartEdit(task)}
+                    className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                  >
+                    <Pencil size={11} /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deciding[task.id]}
+                    onClick={() => decide(task.id, 'rejected')}
+                    className="flex items-center gap-1.5 rounded-xl border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 transition disabled:opacity-50"
+                  >
+                    {deciding[task.id] ? <Loader2 size={11} className="animate-spin" /> : <ThumbsDown size={11} />}
+                    Reject
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deciding[task.id]}
+                    onClick={() => decide(task.id, 'approved')}
+                    className="flex items-center gap-1.5 rounded-xl px-4 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
+                    style={{ background: '#10B981' }}
+                  >
+                    {deciding[task.id] ? <Loader2 size={11} className="animate-spin" /> : <ThumbsUp size={11} />}
+                    Approve
+                  </button>
+                </>
+              )}
             </div>
           </div>
         );
@@ -755,8 +956,14 @@ function AgentChatModal({
       const d = await res.json();
       if (d.success) {
         setMessages((prev) => [...prev, { role: 'assistant', content: d.reply }]);
+      } else {
+        setMessages((prev) => [...prev, { role: 'assistant', content: `⚠️ ${d.error || 'Agent service unavailable'}` }]);
       }
-    } catch { /* silent */ } finally { setSending(false); }
+    } catch (err: any) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: `⚠️ Connection error: ${err.message || 'Check network connection'}` }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -1060,18 +1267,67 @@ const DRAFT_TYPE_ICONS: Record<string, LucideIcon> = {
   workflow_setup:    LayoutList,
 };
 
-function AgentDraftsPanel({ drafts }: { drafts: AgentDraft[] }) {
+function navigateToCards() {
+  window.history.pushState({}, '', '/cards');
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+function AgentDraftsPanel({
+  drafts,
+  onDelete,
+}: {
+  drafts: AgentDraft[];
+  onDelete?: (id: string) => Promise<void>;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   if (drafts.length === 0) return null;
+
+  const handleCopy = async (draft: AgentDraft, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const text = draft.content || draft.title;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(draft.id);
+      setTimeout(() => setCopiedId((id) => (id === draft.id ? null : id)), 2500);
+    } catch { /* fallback */ }
+  };
+
+  const handleCreatePost = (draft: AgentDraft, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      localStorage.setItem('contentflow_prefill_post', JSON.stringify({
+        title: draft.title,
+        content: draft.content,
+        agent_key: draft.agent_key,
+      }));
+    } catch { /* ignore */ }
+    navigateToPosts();
+  };
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onDelete) return;
+    setDeletingId(id);
+    try {
+      await onDelete(id);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-base font-black text-slate-950 tracking-tight">Executed Drafts</h3>
-        <span className="rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold px-2 py-0.5">
-          {drafts.length}
-        </span>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-black text-slate-950 tracking-tight">Executed Drafts</h3>
+          <span className="rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold px-2 py-0.5">
+            {drafts.length}
+          </span>
+        </div>
+        <p className="text-xs text-slate-400">Approved deliverables ready for publishing or visual design</p>
       </div>
       <div className="space-y-2">
         {drafts.map((draft) => {
@@ -1079,9 +1335,11 @@ function AgentDraftsPanel({ drafts }: { drafts: AgentDraft[] }) {
           const icon    = AGENT_ICONS[draft.agent_key]  ?? '◆';
           const DraftIcon = DRAFT_TYPE_ICONS[draft.task_type] ?? FileText;
           const isOpen  = expanded === draft.id;
+          const isCopied = copiedId === draft.id;
+
           return (
             <div key={draft.id}
-              className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:border-slate-300 transition">
               <button
                 type="button"
                 onClick={() => setExpanded(isOpen ? null : draft.id)}
@@ -1101,30 +1359,73 @@ function AgentDraftsPanel({ drafts }: { drafts: AgentDraft[] }) {
                     </span>
                     {draft.blog_post_id && (
                       <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 rounded-full px-2 py-0.5">
-                        blog draft
+                        blog post linked
                       </span>
                     )}
                   </div>
                   <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{draft.title}</p>
                 </div>
-                <ChevronRight size={14} className={`shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    title="Copy content"
+                    onClick={(e) => handleCopy(draft, e)}
+                    className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
+                  >
+                    {isCopied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                  </button>
+                  {onDelete && (
+                    <button
+                      type="button"
+                      title="Delete draft"
+                      disabled={deletingId === draft.id}
+                      onClick={(e) => handleDelete(draft.id, e)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition disabled:opacity-40"
+                    >
+                      {deletingId === draft.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    </button>
+                  )}
+                  <ChevronRight size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                </div>
               </button>
 
               {isOpen && (
                 <div className="px-4 pb-4 border-t border-slate-100 pt-3">
-                  {draft.content && (
-                    <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap mb-3">
-                      {draft.content}
-                    </p>
-                  )}
-                  {draft.blog_post_id && (
+                  {draft.content ? (
+                    <div className="rounded-xl bg-slate-50 p-3.5 mb-3 border border-slate-100">
+                      <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap font-sans">
+                        {draft.content}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={navigateToPosts}
-                      className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition">
-                      <ExternalLink size={11} /> Open in Posts
+                      onClick={(e) => handleCopy(draft, e)}
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                    >
+                      {isCopied ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                      {isCopied ? 'Copied to Clipboard' : 'Copy Content'}
                     </button>
-                  )}
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleCreatePost(draft, e)}
+                      className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition"
+                    >
+                      <ExternalLink size={11} /> {draft.blog_post_id ? 'Open in Posts' : 'Send to Posts'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={navigateToCards}
+                      className="flex items-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50 px-3 py-1.5 text-xs font-bold text-pink-700 hover:bg-pink-100 transition"
+                    >
+                      <Layers size={11} /> Open in Cards
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1260,6 +1561,7 @@ const AGENT_NAMES: Record<string, string> = {
   trend_research: 'Trend', audience_research: 'Persona', seo_research: 'SEO',
   hook_writing: 'Hook', social_caption: 'Caption', video_script: 'Script',
   ad_copy: 'Ads', thumbnail_design: 'Thumb', meta_ads: 'Meta',
+  campaign_brief: 'Brief',
 };
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
@@ -1344,12 +1646,71 @@ export default function AITeam() {
     }
   };
 
-  const runAgent = async (key: string) => {
+  const handleEditAndApprove = async (id: string, title: string, body: string) => {
+    const res = await fetch(`${BASE()}/api/user/agent-tasks/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      body: JSON.stringify({ decision: 'approved', title, body }),
+    });
+    const d = await res.json();
+    if (d.success) {
+      setTasks((prev) => prev.map((t) => t.id === id ? d.task : t));
+      if (d.execution) {
+        const exec = d.execution as { type: string; blog_post_id?: string; draft_id?: string };
+        const toast: ExecToast = exec.type === 'blog_draft'
+          ? { message: 'Edited blog draft created!', blog_post_id: exec.blog_post_id }
+          : { message: 'Edited proposal draft saved to your team!' };
+        setExecToasts((prev) => [...prev, toast]);
+        setTimeout(() => setExecToasts((prev) => prev.filter((t) => t !== toast)), 7000);
+        fetch(`${BASE()}/api/user/agent-drafts`, { headers: { Authorization: `Bearer ${tok()}` } })
+          .then((r) => r.json())
+          .then((dr) => { if (dr.success) setDrafts(dr.drafts ?? []); })
+          .catch(() => {});
+      }
+    }
+  };
+
+  const handleBatchDecide = async (decision: 'approved' | 'rejected') => {
+    const pendingIds = tasks.filter((t) => t.status === 'pending').map((t) => t.id);
+    if (pendingIds.length === 0) return;
+    const res = await fetch(`${BASE()}/api/user/agent-tasks/batch-decide`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+      body: JSON.stringify({ task_ids: pendingIds, decision }),
+    });
+    const d = await res.json();
+    if (d.success) {
+      const [tr, dr] = await Promise.all([
+        fetch(`${BASE()}/api/user/agent-tasks`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+        fetch(`${BASE()}/api/user/agent-drafts`, { headers: { Authorization: `Bearer ${tok()}` } }).then((r) => r.json()),
+      ]);
+      if (tr.success) setTasks(tr.tasks);
+      if (dr.success) setDrafts(dr.drafts ?? []);
+      const count = d.count ?? pendingIds.length;
+      const toast: ExecToast = { message: `${count} proposal${count !== 1 ? 's' : ''} ${decision}!` };
+      setExecToasts((prev) => [...prev, toast]);
+      setTimeout(() => setExecToasts((prev) => prev.filter((t) => t !== toast)), 5000);
+    }
+  };
+
+  const handleDeleteDraft = async (id: string) => {
+    const res = await fetch(`${BASE()}/api/user/agent-drafts/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tok()}` },
+    });
+    const d = await res.json();
+    if (d.success) {
+      setDrafts((prev) => prev.filter((dr) => dr.id !== id));
+    }
+  };
+
+  const runAgent = async (key: string, brief?: string) => {
     setRunningAgents((s) => new Set(s).add(key));
     try {
       const res = await fetch(`${BASE()}/api/user/agents/${key}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ brief, force: true }),
       });
       const d = await res.json();
       const result: RunResult = d.success
@@ -1378,28 +1739,20 @@ export default function AITeam() {
     const agents = AGENT_DEFS;
     for (let i = 0; i < agents.length; i++) {
       setRunAllStatus(`Running ${agents[i].name} (${i + 1}/${agents.length})…`);
-      await runAgent(agents[i].key);
+      await runAgent(agents[i].key, campaignBrief || undefined);
     }
     setRunningAll(false);
     setRunAllStatus('');
   };
 
-  const launchCampaign = async () => {
-    setShowCampaignModal(false);
-    await runAll();
-    setCampaignBrief('');
-  };
-
   // Phase 8 — orchestration: streams step-by-step UI updates then calls backend
-  const runOrchestrate = async () => {
+  const runOrchestrate = async (overrideBrief?: string) => {
     if (orchRunning) return;
     setOrchRunning(true);
     setOrchResult(null);
-    // Reset all steps to idle
     setOrchSteps(ORCH_PIPELINE.map((s) => ({ ...s, status: 'idle' as const })));
 
-    // Mark steps running one-by-one to show progress (visual only — server does the real sequencing)
-    const DELAYS = [0, 3500, 7000, 10500, 10500]; // approx Haiku latency per step
+    const DELAYS = [0, 2500, 5000, 7500, 7500];
     const timeouts: ReturnType<typeof setTimeout>[] = [];
 
     ORCH_PIPELINE.forEach((_step, i) => {
@@ -1415,9 +1768,11 @@ export default function AITeam() {
     });
 
     try {
+      const effectiveBrief = overrideBrief ?? campaignBrief;
       const res = await fetch(`${BASE()}/api/user/agents/orchestrate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
+        body: JSON.stringify({ brief: effectiveBrief || undefined }),
       });
       const d = await res.json();
       timeouts.forEach(clearTimeout);
@@ -1432,7 +1787,7 @@ export default function AITeam() {
         setLastRunAt((prev) => {
           const now = new Date().toISOString();
           const next = { ...prev };
-          for (const k of ['sage','daky','nova','aria','flux']) next[k] = now;
+          for (const k of ['sage','daky','nova','aria','flux','campaign_brief']) next[k] = now;
           return next;
         });
         // Reload tasks
@@ -1450,6 +1805,18 @@ export default function AITeam() {
     } finally {
       setOrchRunning(false);
     }
+  };
+
+  const launchCampaign = async () => {
+    setShowCampaignModal(false);
+    const brief = campaignBrief.trim();
+    if (brief) {
+      setShowOrch(true);
+      await runOrchestrate(brief);
+    } else {
+      await runAll();
+    }
+    setCampaignBrief('');
   };
 
   const pendingCount = tasks.filter((t) => t.status === 'pending').length;
@@ -1561,7 +1928,7 @@ export default function AITeam() {
         <div>
           <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">AI Team</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Your full AI marketing team — 14 specialized agents powered by your brand profile.
+            Your full AI marketing team — {AGENT_DEFS.length} specialized agents powered by your brand profile.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1699,18 +2066,26 @@ export default function AITeam() {
       </div>
 
       {/* Approval queue */}
-      <ApprovalQueue tasks={tasks} onDecide={handleDecide} />
+      <ApprovalQueue
+        tasks={tasks}
+        onDecide={handleDecide}
+        onBatchDecide={handleBatchDecide}
+        onEditAndApprove={handleEditAndApprove}
+      />
 
       {/* Executed Drafts */}
-      <AgentDraftsPanel drafts={drafts} />
+      <AgentDraftsPanel drafts={drafts} onDelete={handleDeleteDraft} />
+
+      {/* Autonomous Schedules & Multi-Agent Handoffs */}
+      <AgentSchedulesPanel />
 
       {/* Info panel */}
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <p className="text-xs font-bold text-slate-600 mb-2">How your AI team works</p>
         <ul className="space-y-1.5 text-xs text-slate-500">
-          <li>• <strong>Brand Profile</strong> — Complete setup so all 14 agents know your niche, tone, goals, and audience.</li>
+          <li>• <strong>Brand Profile</strong> — Complete setup so all 15 agents know your niche, tone, goals, and audience.</li>
           <li>• <strong>Begin individual agents</strong> — Each generates 2-3 proposals tailored to your brand in seconds.</li>
-          <li>• <strong>Launch Campaign</strong> — Runs all 14 agents sequentially. Provide a brief and your full team gets to work.</li>
+          <li>• <strong>Launch Campaign</strong> — Runs your team with your custom campaign brief to produce coordinated deliverables across channels.</li>
           <li>• <strong>Orchestrate</strong> — Structured pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
           <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on your feedback.</li>
           <li>• <strong>Executed Drafts</strong> — Approving a <em>content post</em> auto-creates a blog draft you can edit and publish.</li>

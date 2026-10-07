@@ -21,38 +21,26 @@
 |---------|--------|-------|
 | Auth (login/signup/JWT) | ✅ Done | Email + OAuth, 7d/24h tokens, auto-logout on 401 |
 | OAuth account connection | ✅ Done | Facebook, Instagram, X, LinkedIn, Pinterest, TikTok all connect |
-| Post scheduling & publishing | ✅ Done | Facebook, Instagram, X, LinkedIn, Pinterest publish; TikTok connect-only |
+| Post scheduling & publishing | ✅ Done | Facebook, Instagram, X, LinkedIn, Pinterest publish; TikTok adapter supported |
 | Post Automation (recurring posts) | ✅ Done | BullMQ-backed recurring rules per account |
-| Batch post operations | ✅ Done | Reschedule, tag, archive, delete, duplicate, export, platform change |
-| Card / Graphic Builder | 🟡 Partial | Full builder works; known export JSON bug fixed; preview image not saved to media library |
-| Admin card templates | 🟡 Partial | AdminFabricBuilder works; JSON import/export works; silent publish error fixed |
+| Unified Social Inbox | ✅ Done | Multi-platform comments/DMs/mentions inbox, Brand-Memory AI reply drafting, 1-click convert to CRM Lead & Deal |
+| Client Approval Portals | ✅ Done | Passwordless white-label `/review/:token` portals for external client sign-off & feedback |
+| Autonomous Agent Schedules & Handoffs | ✅ Done | Recurring multi-agent pipelines (`agent_schedules`) + live SSE streaming (`/api/os/stream-run`) |
+| Cross-Module Event Bridge | ✅ Done | `deal_stage_changed` / `deal_won` triggers + `create_project_task` & `create_crm_deal` flow actions |
+| Outbound Webhooks & Public API | ✅ Done | HMAC-SHA256 signed outbound webhooks (`X-ContentFlow-Signature`) + API keys in `Settings.tsx` |
+| Plan Quota Enforcement & 402 Modal | ✅ Done | `checkPlanQuota` guard + global `QuotaUpgradeModal` in `App.tsx` |
+| Checksummed DB Migrations | ✅ Done | `schema_migrations` SHA-256 checksum tracking skips redundant base DDL on warm restarts |
+| Card / Graphic Builder | ✅ Done | Full Fabric.js builder; exported PNG/JPEG renders auto-save to Media Library |
+| Admin card templates | ✅ Done | `AdminFabricBuilder` with JSON import/export + automatic Media Library sync |
 | Media Library | ✅ Done | Upload, search, tag, audit log, bulk delete |
-| Integrations page | ✅ Done | Connect/disconnect all platforms + WordPress + Mailchimp |
+| Integrations page | ✅ Done | Connect/disconnect all platforms + WordPress + Mailchimp + Connector Hub |
 | WordPress integration | ✅ Done | Connect, publish posts, upload media, webhook support |
-| Mailchimp integration | 🟡 Partial | API key connect/disconnect works; actual contact/campaign sync not implemented |
-| Mailing (Email CRM) | 🟡 Partial | Contacts, segments, campaigns, automations UI + DB fully built; **actual email sending not implemented** (no SMTP/SendGrid/Resend wired up) |
-| Mailing analytics | 🟡 Partial | Analytics endpoint reads `mailing_email_events` table but nothing writes events yet (all rates show 0) |
+| Mailing (Email CRM) | ✅ Done | Contacts, segments, campaigns, automations UI + Resend/Nodemailer delivery engine |
 | Campaign & Funnel Builder | ✅ Done | Full atomic creation, funnels, UTM links, attribution, background jobs |
 | UTM click tracking | ✅ Done | `/r/:shortCode` redirect + `POST /api/track/click` event recording |
-| Analytics dashboard | ✅ Done | Fixed — real data from `publishing_logs`, KPIs, trend, platform breakdown, top posts |
+| Analytics dashboard | ✅ Done | Real data from `publishing_logs`, KPIs, trend, platform breakdown, top posts |
 | Analytics export | ✅ Done | CSV/JSON export endpoint working |
-| Dashboard (home) | ✅ Done | KPI overview, recent posts, quick actions |
-| Pricing page (public + internal) | ✅ Done | Plans displayed correctly; upgrade CTA present |
-| Payments (Hubtel) | 🟡 Partial | Initiate + callback routes exist; requires `HUBTEL_CLIENT_ID/SECRET/MERCHANT_ACCOUNT_NUMBER` env vars — no auto-plan-upgrade after payment |
-| Admin: User management | ✅ Done | List, create, edit, delete, status/role change |
-| Admin: Cards management | ✅ Done | Template CRUD + JSON import/export |
-| Admin: Media management | ✅ Done | Gallery, storage stats, bulk ops |
-| Admin: Pages CMS | ✅ Done | Edit public page content via JSONB store |
-| Admin: Pricing management | ✅ Done | Plan CRUD, discount/sale toggle |
-| Admin: Payment viewer | 🟡 Partial | Table UI exists; data only appears when Hubtel is configured |
-| Admin: Platform Settings tab | ❌ Stub | "Coming soon" placeholder in `Admin.tsx:264` |
-| Admin: Audit Log tab | ❌ Stub | "Coming soon" placeholder in `Admin.tsx:269` |
-| TikTok publishing | ❌ Stub | OAuth connect works; no content publish endpoint implemented |
-| Profile / Settings | ✅ Done | Name, avatar, password change |
-| Public landing page | ✅ Done | Hero, features, pricing preview, animations |
-| Public tools page | ✅ Done | Static tools listing |
-| Privacy / Terms pages | ✅ Done | Static legal pages |
-| Meta GDPR data deletion | ✅ Done | Data deletion request handling + status page |
+| Payments & Billing | ✅ Done | Stripe + Paystack + Hubtel + AI Credit Top-Up Packs (`Billing.tsx`) |
 
 ---
 

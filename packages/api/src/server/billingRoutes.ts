@@ -1,6 +1,8 @@
 import express from 'express';
-import type Stripe from 'stripe';
-import type { Router, Request, Response } from 'express';
+import type { Pool } from 'pg';
+import { buildPaystackService, getPaystackConfig, type ConfigReader, PaymentError } from './paystackService.ts';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { logger } from '../logger.ts';
@@ -20,22 +22,12 @@ type RequireAuthFn = (req: Request, res: Response) => AuthResult;
 type RequireAdminFn = (req: Request, res: Response) => Promise<AuthResult>;
 type DbQueryFn = <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
 
-type PaystackPlanCheckoutFn = (params: {
-  userId: string;
-  email: string;
-  customerName: string | null;
-  plan: { id: string; name: string; price: number; billing_period: string };
-  appUrl: string;
-}) => Promise<{ url: string } | null>;
-
 type BillingDeps = {
   requireAuth: RequireAuthFn;
   hasDatabase: () => boolean;
   dbQuery: DbQueryFn;
-  stripe: Stripe | null;
-  getOrCreateStripeCustomer: (userId: string, email: string, name: string | null) => Promise<string>;
-  // Fallback checkout provider while Stripe activation is pending
-  paystackPlanCheckout?: PaystackPlanCheckoutFn;
+  pool: Pool;
+  getPlatformConfig: ConfigReader;
 };
 
 /**
@@ -48,11 +40,11 @@ export function registerBillingRoutes({
   requireAuth,
   hasDatabase,
   dbQuery,
-  stripe,
-  getOrCreateStripeCustomer,
-  paystackPlanCheckout,
+  pool,
+  getPlatformConfig,
 }: BillingDeps): Router {
   const router = express.Router();
+  const payments = buildPaystackService({ pool, readConfig: getPlatformConfig });
 
   // GET /subscription — current plan + usage + subscription status
   router.get('/subscription', async (req: Request, res: Response) => {
@@ -68,19 +60,23 @@ export function registerBillingRoutes({
         [auth.userId],
       );
       const { rows: userRows } = await dbQuery(
-        `SELECT u.id, u.stripe_customer_id, p.name AS plan_name, p.price, p.billing_period, p.features, p.post_limit, p.user_limit, p.id AS plan_id
+        `SELECT u.id, p.name AS plan_name, p.price, p.billing_period, p.features, p.post_limit, p.user_limit, p.id AS plan_id
          FROM users u LEFT JOIN pricing_plans p ON p.id = u.plan_id WHERE u.id=$1`,
         [auth.userId],
       );
       const user = (userRows as any[])[0];
       const sub = (subRows as any[])[0] || null;
+      const expired = Boolean(sub?.current_period_end && new Date(sub.current_period_end).getTime() <= Date.now());
+      if (expired && sub.status === 'active') sub.status = 'expired';
+      const entitled = Boolean(sub && ['active', 'trialing'].includes(sub.status) && !expired);
+      const freePlan = (!entitled ? (await dbQuery("SELECT * FROM pricing_plans WHERE LOWER(name)='free' AND is_active=true LIMIT 1")).rows[0] : null) as any;
 
       const { rows: usageRows } = await dbQuery(
         `SELECT COUNT(*)::int AS posts_this_period FROM publishing_logs WHERE user_id=$1 AND status='published' AND created_at >= date_trunc('month', NOW())`,
         [auth.userId],
       ).catch(() => ({ rows: [{ posts_this_period: 0 }] }));
 
-      const postLimit = sub?.post_limit ?? user?.post_limit ?? null;
+      const postLimit = entitled ? sub.post_limit : freePlan?.post_limit ?? null;
       const usage = {
         posts_this_period: (usageRows as any[])[0]?.posts_this_period ?? 0,
         posts_limit: postLimit,
@@ -89,11 +85,14 @@ export function registerBillingRoutes({
       res.json({
         success: true,
         subscription: sub,
-        plan: sub
+        plan: entitled
           ? { id: sub.plan_id, name: sub.plan_name, price: sub.price, billing_period: sub.billing_period, features: sub.features, post_limit: sub.post_limit, user_limit: sub.user_limit }
-          : (user?.plan_id ? { id: user.plan_id, name: user.plan_name, price: user.price, billing_period: user.billing_period, features: user.features, post_limit: user.post_limit, user_limit: user.user_limit } : null),
+          : (freePlan ? { id: freePlan.id, name: freePlan.name, price: freePlan.price, billing_period: freePlan.billing_period, features: freePlan.features, post_limit: freePlan.post_limit, user_limit: freePlan.user_limit } : null),
         usage,
-        stripeConfigured: Boolean(stripe),
+        paystackConfigured: Boolean(await getPaystackConfig(getPlatformConfig)),
+        paymentMode: (await getPaystackConfig(getPlatformConfig))?.mode || 'test',
+        renewalType: 'prepaid',
+        sandbox: (await dbQuery('SELECT * FROM paystack_sandbox_accounts WHERE user_id=$1', [auth.userId])).rows[0] || null,
       });
     } catch (_e) {
       res.status(500).json({ success: false, error: 'Failed to load subscription' });
@@ -107,7 +106,7 @@ export function registerBillingRoutes({
     if (!hasDatabase()) return res.json({ success: true, invoices: [] });
     try {
       const { rows } = await dbQuery(
-        `SELECT id, stripe_invoice_id, invoice_number, status, total_cents, currency, hosted_invoice_url, invoice_pdf, paid_at, period_start, period_end, created_at
+        `SELECT id, paystack_reference, invoice_number, status, total_cents, currency, hosted_invoice_url, invoice_pdf, paid_at, period_start, period_end, created_at
          FROM billing_invoices WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`,
         [auth.userId],
       );
@@ -117,8 +116,7 @@ export function registerBillingRoutes({
     }
   });
 
-  // POST /checkout — provider-aware plan checkout: Stripe when the plan has a
-  // Stripe price, otherwise Paystack (active while Stripe activation pends).
+  // POST /checkout: server-priced Paystack checkout.
   router.post('/checkout', validateBody(checkoutSchema), async (req: Request, res: Response) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
@@ -135,110 +133,29 @@ export function registerBillingRoutes({
       const { rows: userRows } = await dbQuery(`SELECT email, full_name FROM users WHERE id=$1`, [auth.userId]);
       if (!(userRows as any[]).length) return res.status(404).json({ success: false, error: 'User not found' });
       const userRow = (userRows as any[])[0];
-      const appUrl = process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com';
 
-      const stripePriceId = period === 'yearly' ? (plan.stripe_annual_price_id || plan.stripe_price_id) : plan.stripe_price_id;
-      if (stripe && stripePriceId) {
-        const stripeCustomerId = await getOrCreateStripeCustomer(auth.userId, userRow.email, userRow.full_name);
-        const session = await stripe.checkout.sessions.create({
-          customer: stripeCustomerId,
-          mode: 'subscription',
-          line_items: [{ price: stripePriceId, quantity: 1 }],
-          success_url: `${appUrl}/billing?session_id={CHECKOUT_SESSION_ID}&success=1`,
-          cancel_url: `${appUrl}/pricing`,
-          metadata: { user_id: auth.userId, plan_id: planId },
-          subscription_data: { metadata: { user_id: auth.userId, plan_id: planId } },
-          allow_promotion_codes: true,
-        });
-        return res.json({ success: true, url: session.url, provider: 'stripe' });
-      }
-
-      if (paystackPlanCheckout) {
-        const result = await paystackPlanCheckout({
-          userId: auth.userId,
-          email: userRow.email,
-          customerName: userRow.full_name,
-          plan: { id: plan.id, name: plan.name, price: Number(plan.price), billing_period: plan.billing_period },
-          appUrl,
-        });
-        if (result?.url) return res.json({ success: true, url: result.url, provider: 'paystack' });
-      }
-
-      if (!stripe) return res.status(503).json({ success: false, error: 'No payment provider is configured on this server.' });
-      return res.status(400).json({ success: false, error: 'This plan is not yet configured for payments. Please contact support.' });
+      if (plan.billing_period !== period) return res.status(400).json({ success: false, error: 'Select the plan for the requested billing period.' });
+      return res.json({ success: true, provider: 'paystack', ...await payments.checkout(auth.userId, 'plan', planId) });
     } catch (e: any) {
       logger.error({ err: e }, 'checkout_error');
-      res.status(500).json({ success: false, error: e.message || 'Failed to create checkout session' });
+      res.status(e instanceof PaymentError ? e.status : 502).json({ success: false, error: e instanceof PaymentError ? e.message : 'Failed to create checkout session' });
     }
   });
 
-  // POST /portal — open Stripe Customer Portal
-  router.post('/portal', async (req: Request, res: Response) => {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-    if (!stripe) return res.status(503).json({ success: false, error: 'Stripe is not configured.' });
-    if (!hasDatabase()) return res.status(503).json({ success: false, error: 'Database unavailable' });
-    try {
-      const { rows: userRows } = await dbQuery(
-        `SELECT email, full_name, stripe_customer_id FROM users WHERE id=$1`,
-        [auth.userId],
-      );
-      if (!(userRows as any[]).length) return res.status(404).json({ success: false, error: 'User not found' });
-      const userRow = (userRows as any[])[0];
-      const stripeCustomerId = userRow.stripe_customer_id || await getOrCreateStripeCustomer(auth.userId, userRow.email, userRow.full_name);
-      const appUrl = process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com';
-      const session = await stripe.billingPortal.sessions.create({
-        customer: stripeCustomerId,
-        return_url: `${appUrl}/billing`,
-      });
-      res.json({ success: true, url: session.url });
-    } catch (e: any) {
-      logger.error({ err: e }, 'stripe_portal_error');
-      res.status(500).json({ success: false, error: e.message || 'Failed to open billing portal' });
-    }
+  // Prepaid plans renew through a new checkout; this route opens the plan selection page.
+  router.post('/portal', async (req, res) => {
+    if (!requireAuth(req,res)) return;
+    return res.json({ success: true, url: '/pricing' });
   });
-
-  // POST /cancel — cancel subscription at period end
-  router.post('/cancel', async (req: Request, res: Response) => {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-    if (!stripe || !hasDatabase()) return res.status(503).json({ success: false, error: 'Stripe not configured' });
-    try {
-      const { rows } = await dbQuery(
-        `SELECT stripe_subscription_id FROM subscriptions WHERE user_id=$1 AND status='active'`,
-        [auth.userId],
-      );
-      if (!(rows as any[]).length || !(rows as any[])[0].stripe_subscription_id) {
-        return res.status(404).json({ success: false, error: 'No active subscription' });
-      }
-      await stripe.subscriptions.update((rows as any[])[0].stripe_subscription_id, { cancel_at_period_end: true });
-      await dbQuery(`UPDATE subscriptions SET cancel_at_period_end=true, updated_at=NOW() WHERE user_id=$1`, [auth.userId]);
-      res.json({ success: true, message: 'Subscription will be canceled at the end of the billing period.' });
-    } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message || 'Failed to cancel subscription' });
-    }
-  });
-
-  // POST /reactivate — undo cancel
-  router.post('/reactivate', async (req: Request, res: Response) => {
-    const auth = requireAuth(req, res);
-    if (!auth) return;
-    if (!stripe || !hasDatabase()) return res.status(503).json({ success: false, error: 'Stripe not configured' });
-    try {
-      const { rows } = await dbQuery(
-        `SELECT stripe_subscription_id FROM subscriptions WHERE user_id=$1`,
-        [auth.userId],
-      );
-      if (!(rows as any[]).length || !(rows as any[])[0].stripe_subscription_id) {
-        return res.status(404).json({ success: false, error: 'No subscription found' });
-      }
-      await stripe.subscriptions.update((rows as any[])[0].stripe_subscription_id, { cancel_at_period_end: false });
-      await dbQuery(`UPDATE subscriptions SET cancel_at_period_end=false, updated_at=NOW() WHERE user_id=$1`, [auth.userId]);
-      res.json({ success: true, message: 'Subscription reactivated.' });
-    } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message || 'Failed to reactivate subscription' });
-    }
-  });
+  for (const [route, canceled] of [['cancel', true], ['reactivate', false]] as const) {
+    router.post(`/${route}`, async (req,res) => {
+      const user = requireAuth(req,res); if (!user) return;
+      if (!hasDatabase()) return res.status(503).json({ success: false,error: 'Database unavailable' });
+      const result = await dbQuery("UPDATE subscriptions SET cancel_at_period_end=$2,updated_at=NOW() WHERE user_id=$1 AND status='active' AND current_period_end>NOW() RETURNING id", [user.userId,canceled]);
+      if (!result.rows.length) return res.status(404).json({ success: false,error: 'No active paid period found' });
+      return res.json({ success: true });
+    });
+  }
 
   return router;
 }
@@ -247,10 +164,9 @@ type AdminBillingDeps = {
   requireAdmin: RequireAdminFn;
   hasDatabase: () => boolean;
   dbQuery: DbQueryFn;
-  stripe: Stripe | null;
 };
 
-export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery, stripe }: AdminBillingDeps): Router {
+export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery }: AdminBillingDeps): Router {
   const router = express.Router();
 
   // GET /api/admin/billing/metrics — MRR, ARR, customer counts
@@ -311,7 +227,7 @@ export function registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery,
         },
         plan_breakdown: planBreakdown,
         recent_invoices: recentTxn,
-        stripe_configured: Boolean(stripe),
+        payment_provider: 'paystack',
       });
     } catch (e) {
       res.status(500).json({ success: false, error: 'Failed to load billing metrics' });

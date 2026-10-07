@@ -1,4 +1,4 @@
-import type { Request } from 'express';
+import type { Request } from './types/http.ts';
 import { logger } from './logger.ts';
 import { pool, dbQuery } from './db.ts';
 import { getPlatformConfig } from './user-auth.ts';
@@ -150,7 +150,7 @@ export async function getUserConnectedAccounts(userId: string): Promise<any[]> {
 
 const META_BASE_SCOPES = ['public_profile', 'email', 'pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_metadata', 'read_insights'];
 const META_INSTAGRAM_SCOPES = ['instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'];
-function getMetaOAuthScopeString(extraScopes: string[] = []): string {
+export function getMetaOAuthScopeString(extraScopes: string[] = []): string {
   return Array.from(new Set([...META_BASE_SCOPES, ...META_INSTAGRAM_SCOPES, ...extraScopes])).join(',');
 }
 

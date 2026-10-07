@@ -1,4 +1,5 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { Response, NextFunction } from 'express';
+import type { Request } from '../types/http.ts';
 import { config } from '../config.ts';
 import { logger } from '../logger.ts';
 

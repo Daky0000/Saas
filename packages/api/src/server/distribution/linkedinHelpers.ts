@@ -131,7 +131,7 @@ export async function fetchLinkedInSocialMetadataBatch(accessToken: string, enti
 export function sumLinkedInReactionCounts(metadata: any): number {
   const summaries = metadata?.reactionSummaries;
   if (!summaries || typeof summaries !== 'object') return 0;
-  return Object.values(summaries).reduce((sum, summary: any) => sum + Number(summary?.count || 0), 0);
+  return Object.values(summaries).reduce<number>((sum, summary: any) => sum + Number(summary?.count || 0), 0);
 }
 
 export async function fetchLinkedInShareStatisticsForPosts(

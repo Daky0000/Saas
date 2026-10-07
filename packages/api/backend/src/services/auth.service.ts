@@ -1,4 +1,5 @@
-import bcrypt from "bcryptjs";import { prisma } from "../utils/prisma";
+import bcrypt from "bcryptjs";
+import { prisma } from "../utils/prisma";
 
 import jwt from "jsonwebtoken";
 import { seedDefaultUsersNow } from "../utils/seed-default-users";

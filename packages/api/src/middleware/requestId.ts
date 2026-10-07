@@ -1,4 +1,5 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { Response, NextFunction } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction) {

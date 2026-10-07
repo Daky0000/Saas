@@ -1,14 +1,18 @@
 import express from 'express';
-import type { Router, Request, Response, NextFunction } from 'express';
+import type { Router, Response, NextFunction } from 'express';
+import type { Request } from '../types/http.ts';
 import axios from 'axios';
 import { randomBytes, randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import { signToken, getUserById, userToAuthPayload } from '../user-auth.ts';
+import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
+import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
 interface SocialAuthDeps {
+  pool: Pool;
   requireAuth: (req: Request, res: Response) => AuthResult;
   requireAdmin: (req: Request, res: Response) => Promise<AuthResult>;
   hasDatabase: () => boolean;
@@ -39,10 +43,38 @@ const SOCIAL_PROVIDER_CONFIG: Record<string, { authUrl: string; tokenUrl: string
 };
 
 // Module-level OAuth state store (replaces app.locals usage; auto-expires entries)
-const oauthStateStore = new Map<string, { provider: string; expiry: number }>();
 
-export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, jwtSecret, jwtExpiresIn }: SocialAuthDeps): Router {
+export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool }: SocialAuthDeps): Router {
   const router = express.Router();
+  async function loginIdentity(provider: string,subject: string,email: string,name: string,verifiedEmail: boolean) {
+    if (!hasDatabase()) throw new Error('Database unavailable');
+    if (!subject || !email || !email.includes('@')) throw new Error('The provider did not supply an email address. Sign in with email instead.');
+    const client=await pool.connect();
+    let id: string;
+    try {
+      await client.query('BEGIN');
+      const identity=await client.query('SELECT user_id FROM social_login_identities WHERE provider=$1 AND subject=$2',[provider,subject]);
+      const existing=await client.query('SELECT id,status FROM users WHERE LOWER(email)=LOWER($1)',[email]);
+      if (identity.rows[0]) id=identity.rows[0].user_id;
+      else if (existing.rows[0]) {
+        if (!verifiedEmail) throw new Error('Sign in with your password to link this provider.');
+        id=existing.rows[0].id;
+      } else {
+        id=randomUUID();
+        await client.query(`INSERT INTO users(id,full_name,username,email,password_hash,role,status,email_verified)
+          VALUES($1,$2,$3,$4,$5,'user','active',$6)`,[id,name,`${provider}_${id.slice(0,8)}`,email.toLowerCase(),await bcrypt.hash(randomBytes(32).toString('hex'),12),verifiedEmail]);
+      }
+      const user=await client.query('SELECT status FROM users WHERE id=$1',[id]);
+      if (user.rows[0]?.status!=='active') throw new Error('Account is disabled');
+      await client.query('INSERT INTO social_login_identities(provider,subject,user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[provider,subject,id]);
+      await client.query('UPDATE users SET last_login_at=NOW() WHERE id=$1',[id]);
+      await client.query('COMMIT');
+    } catch(error) { await client.query('ROLLBACK');throw error; } finally { client.release(); }
+    const user=await getUserById(id);
+    if (!user || user.status!=='active') throw new Error('Account is disabled');
+    return { token: signToken(user.id,user.email,user.token_version),user: userToAuthPayload(user) };
+  }
+
 
   // GET /api/auth/:provider/start — redirect to provider's OAuth page
   router.get('/api/auth/:provider/start', async (req: Request, res: Response) => {
@@ -55,13 +87,14 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
       if (!providerRow.rows.length || !(providerRow.rows[0] as any).enabled) {
         return res.status(403).json({ success: false, error: 'Provider not enabled' });
       }
-      const config = (providerRow.rows[0] as any).config as Record<string, string>;
+      const config = decryptPlatformConfig((providerRow.rows[0] as any).config) as Record<string, string>;
       const clientId = config.clientId || '';
       const redirectUri = config.redirectUri || '';
       if (!clientId || !redirectUri) return res.status(400).json({ success: false, error: 'Provider not configured' });
 
       const state = randomBytes(16).toString('hex');
-      oauthStateStore.set(`oauth_state_${state}`, { provider, expiry: Date.now() + 600_000 });
+      if (!hasDatabase()) return res.status(503).json({ error: 'Login service unavailable' });
+      await dbQuery(`INSERT INTO login_oauth_states(state,provider,expires_at) VALUES($1,$2,NOW()+INTERVAL '10 minutes')`,[state,provider]);
 
       let authUrl = cfg.authUrl.replace('{tenantId}', config.tenantId || 'common');
       const params = new URLSearchParams({
@@ -100,19 +133,15 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
       if (oauthError) return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(oauthError)}`);
 
       // Validate state
-      const stateKey = `oauth_state_${state}`;
-      const storedState = oauthStateStore.get(stateKey);
-      if (!storedState || storedState.provider !== provider || Date.now() > storedState.expiry) {
-        return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent('Invalid or expired state')}`);
-      }
-      oauthStateStore.delete(stateKey);
+      const consumed = await dbQuery('DELETE FROM login_oauth_states WHERE state=$1 AND provider=$2 AND expires_at>NOW() RETURNING state',[state,provider]);
+      if (!consumed.rows.length) return res.redirect(`${FRONTEND_URL}/?auth_error=invalid_state`);
 
       const cfg = SOCIAL_PROVIDER_CONFIG[provider];
       if (!cfg) return res.redirect(`${FRONTEND_URL}/?auth_error=unknown_provider`);
 
       const providerRow = await dbQuery('SELECT config FROM auth_providers WHERE provider = $1', [provider]).catch(() => ({ rows: [] }));
       if (!providerRow.rows.length) return res.redirect(`${FRONTEND_URL}/?auth_error=provider_not_configured`);
-      const config = (providerRow.rows[0] as any).config as Record<string, string>;
+      const config = decryptPlatformConfig((providerRow.rows[0] as any).config) as Record<string, string>;
 
       // Exchange code for token
       const tokenUrl = cfg.tokenUrl.replace('{tenantId}', config.tenantId || 'common');
@@ -135,36 +164,16 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const userInfo = userRes.data;
-      const email = userInfo.email || userInfo.mail || `${userInfo.login || 'user'}@${provider}.social`;
-      const name = userInfo.name || userInfo.displayName || email.split('@')[0];
-      const socialId = userInfo.sub || userInfo.id || email;
-
-      if (!email) return res.redirect(`${FRONTEND_URL}/?auth_error=no_email`);
-
-      // Find or create user in DB
-      let userId: string;
-      let userRole = 'user';
-      if (hasDatabase()) {
-        const existing = await dbQuery('SELECT id, role FROM users WHERE email = $1', [email]);
-        if (existing.rows.length > 0) {
-          userId = (existing.rows[0] as any).id as string;
-          userRole = (existing.rows[0] as any).role as string;
-          await dbQuery('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userId]);
-        } else {
-          userId = randomUUID();
-          const username = `${provider}_${(socialId as string).slice(0, 8)}`;
-          await dbQuery(
-            `INSERT INTO users (id, name, username, email, password_hash, role, status, created_at, last_login_at)
-             VALUES ($1, $2, $3, $4, $5, 'user', 'active', NOW(), NOW())`,
-            [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 12)],
-          );
-        }
-      } else {
-        userId = randomUUID();
+      let email = userInfo.email || userInfo.mail || '';
+      let verified = provider === 'google' && (userInfo as Record<string,unknown>).email_verified === true;
+      if (provider === 'github') {
+        const emails = await axios.get<Array<{ email: string; primary: boolean; verified: boolean }>>('https://api.github.com/user/emails',{ headers: { Authorization: `Bearer ${accessToken}` },timeout: 10000 });
+        const primary = emails.data.find(item => item.primary && item.verified);
+        email=primary?.email || '';verified=Boolean(primary);
       }
+      const result=await loginIdentity(provider,String(userInfo.sub || userInfo.id || ''),email,userInfo.name || userInfo.displayName || email.split('@')[0],verified);
+      return res.redirect(`${FRONTEND_URL}/login#auth_token=${encodeURIComponent(result.token)}&auth_provider=${provider}`);
 
-      const token = jwt.sign({ userId, email, role: userRole }, jwtSecret, { expiresIn: jwtExpiresIn });
-      return res.redirect(`${FRONTEND_URL}/?auth_token=${token}&auth_provider=${provider}`);
     } catch (error) {
       logger.error('Social auth callback error:', error);
       const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
@@ -209,33 +218,9 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
       const { id: fbId, name: fbName, email: fbEmail } = graphRes.data;
       if (!fbId) return res.status(401).json({ success: false, error: 'Could not verify Facebook token' });
 
-      const email = fbEmail || `fb_${fbId}@facebook.social`;
-      const name  = fbName  || email.split('@')[0];
+      const result = await loginIdentity('facebook',fbId,fbEmail || '',fbName || 'Facebook user',false);
+      return res.json({ success: true,...result });
 
-      let userId: string;
-      let userRole = 'user';
-
-      if (hasDatabase()) {
-        const existing = await dbQuery('SELECT id, role FROM users WHERE email = $1', [email]);
-        if (existing.rows.length > 0) {
-          userId   = (existing.rows[0] as any).id as string;
-          userRole = (existing.rows[0] as any).role as string;
-          await dbQuery('UPDATE users SET last_login_at = NOW() WHERE id = $1', [userId]);
-        } else {
-          userId = randomUUID();
-          const username = `fb_${fbId.slice(0, 8)}`;
-          await dbQuery(
-            `INSERT INTO users (id, name, username, email, password_hash, role, status, created_at, last_login_at)
-             VALUES ($1, $2, $3, $4, $5, 'user', 'active', NOW(), NOW())`,
-            [userId, name, username, email, await bcrypt.hash(randomBytes(16).toString('hex'), 12)],
-          );
-        }
-      } else {
-        userId = randomUUID();
-      }
-
-      const token = jwt.sign({ userId, email, role: userRole }, jwtSecret, { expiresIn: jwtExpiresIn });
-      return res.json({ success: true, token, user: { id: userId, email, name, role: userRole } });
     } catch (error) {
       logger.error('Facebook token auth error:', error);
       return res.status(401).json({ success: false, error: 'Facebook authentication failed' });
@@ -249,7 +234,7 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
       if (!admin) return;
       if (hasDatabase()) {
         const result = await dbQuery('SELECT provider, config, enabled, updated_at FROM auth_providers ORDER BY provider');
-        return res.json({ success: true, providers: result.rows });
+        return res.json({ success: true, providers: result.rows.map(row => ({ ...row, config: decryptPlatformConfig(row.config) })) });
       }
       return res.json({ success: true, providers: [] });
     } catch (error) {
@@ -272,7 +257,7 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
            VALUES ($1, $2, $3, NOW())
            ON CONFLICT (provider) DO UPDATE
              SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
-          [provider, JSON.stringify(config ?? {}), Boolean(enabled)],
+          [provider, JSON.stringify(encryptPlatformConfig(config ?? {})), Boolean(enabled)],
         );
         return res.json({ success: true });
       }

@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
-import { fabric } from 'fabric';
+import * as fabric from 'fabric';
 import { Type, ImageIcon, Square, Minus, Eye, EyeOff, Layers } from 'lucide-react';
 
 interface LayersPanelProps {
   canvas: fabric.Canvas | null;
-  selectedObjects: fabric.Object[];
+  selectedObjects: fabric.FabricObject[];
 }
 
-function getLabel(obj: fabric.Object, i: number): string {
-  if (obj instanceof fabric.IText || obj instanceof fabric.Text) {
+function getLabel(obj: fabric.FabricObject, i: number): string {
+  if (obj instanceof fabric.IText || obj instanceof fabric.FabricText) {
     const t = (obj as fabric.IText).text?.trim() ?? '';
     return t.slice(0, 18) || `Text ${i + 1}`;
   }
-  if (obj instanceof fabric.Image) return `Image ${i + 1}`;
+  if (obj instanceof fabric.FabricImage) return `Image ${i + 1}`;
   if (obj instanceof fabric.Rect) return `Rectangle ${i + 1}`;
   if (obj instanceof fabric.Ellipse) return `Ellipse ${i + 1}`;
   if (obj instanceof fabric.Circle) return `Circle ${i + 1}`;
@@ -20,9 +20,9 @@ function getLabel(obj: fabric.Object, i: number): string {
   return `Layer ${i + 1}`;
 }
 
-function getIcon(obj: fabric.Object) {
-  if (obj instanceof fabric.IText || obj instanceof fabric.Text) return <Type size={12} />;
-  if (obj instanceof fabric.Image) return <ImageIcon size={12} />;
+function getIcon(obj: fabric.FabricObject) {
+  if (obj instanceof fabric.IText || obj instanceof fabric.FabricText) return <Type size={12} />;
+  if (obj instanceof fabric.FabricImage) return <ImageIcon size={12} />;
   if (obj instanceof fabric.Line) return <Minus size={12} />;
   return <Square size={12} />;
 }

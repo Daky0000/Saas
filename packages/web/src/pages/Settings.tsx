@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
+import OutboundWebhooksPanel from '../components/OutboundWebhooksPanel';
 import {
   Bell,
   Camera,
@@ -318,6 +319,58 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
     } else {
       setKeyMsg({ ok: false, text: j?.error || 'Failed to revoke key' });
     }
+  };
+
+  // ── Dakyworld OS Bridge state ──
+  const [osManifest, setOsManifest] = useState<{ version?: string; credits?: number; agents?: any[] } | null>(null);
+  const [osWebhooks, setOsWebhooks] = useState<Array<{ id: string; url: string; events: string; active: boolean; created_at: string }>>([]);
+  const [newWebhookUrl, setNewWebhookUrl] = useState('');
+  const [createdWebhookSecret, setCreatedWebhookSecret] = useState<string | null>(null);
+  const [osCopiedEndpoint, setOsCopiedEndpoint] = useState<string | null>(null);
+
+  const loadOsBridge = async () => {
+    try {
+      const [mRes, wRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/v1/os/manifest`, { headers: authHdr() }),
+        fetch(`${API_BASE_URL}/api/v1/os/webhooks`, { headers: authHdr() }),
+      ]);
+      const mJson = await safeJson<{ success: boolean; version: string; credits: number; agents: any[] }>(mRes);
+      const wJson = await safeJson<{ success: boolean; webhooks: any[] }>(wRes);
+      if (mJson?.success) setOsManifest(mJson);
+      if (wJson?.success) setOsWebhooks(wJson.webhooks ?? []);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'apikeys') void loadOsBridge();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const registerOsWebhook = async () => {
+    if (!newWebhookUrl.trim()) return;
+    setCreatedWebhookSecret(null);
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/v1/os/webhooks`, {
+        method: 'POST',
+        headers: { ...authHdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: newWebhookUrl.trim(), events: ['post.published', 'agent.completed', 'lead.captured', 'credit.low'] }),
+      });
+      const j = await safeJson<{ success: boolean; webhook?: { signingSecret: string } }>(r);
+      if (j?.success && j.webhook) {
+        setCreatedWebhookSecret(j.webhook.signingSecret);
+        setNewWebhookUrl('');
+        void loadOsBridge();
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const deleteOsWebhook = async (id: string) => {
+    await fetch(`${API_BASE_URL}/api/v1/os/webhooks/${id}`, { method: 'DELETE', headers: authHdr() }).catch(() => undefined);
+    void loadOsBridge();
   };
 
   const [creditInfo, setCreditInfo] = useState<{ credits: number; reset_date: string | null } | null>(null);
@@ -816,6 +869,107 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
             </div>
           </SectionCard>
 
+          {/* ── Dakyworld OS Bridge Connection Panel ── */}
+          <SectionCard className="border-indigo-200 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full bg-indigo-500/20 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-indigo-300">
+                  <Sparkles size={12} /> Dakyworld OS Bridge API · {osManifest?.version ? `v${osManifest.version}` : 'v1.4.0'}
+                </div>
+                <h2 className="mt-2 text-lg font-black text-white">Connect Dakyworld Hub to Dakyworld OS</h2>
+                <p className="mt-1 text-xs text-slate-300">
+                  Authenticate with any <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-indigo-200">cf_live_...</code> API key above as a Bearer token. Includes 300 RPM OS rate limiting, 24h <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-indigo-200">Idempotency-Key</code> protection, and 90% token-optimized batch agent execution.
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-right">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Bridge Status</p>
+                <p className="text-sm font-black text-emerald-400">
+                  ● ONLINE ({osManifest?.agents?.length ?? 21} Agents Ready)
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {[
+                { method: 'GET', path: '/api/v1/os/manifest', desc: 'Discover 21 agents, connected channels & credit balance' },
+                { method: 'GET', path: '/api/v1/os/context', desc: 'Fetch compiled brand memory & shared agent context' },
+                { method: 'POST', path: '/api/v1/os/agents/invoke', desc: 'Invoke any agent or Butler tool with JSON output' },
+                { method: 'POST', path: '/api/v1/os/generate', desc: 'Generate studio images/videos with credit refund safety' },
+                { method: 'POST', path: '/api/v1/os/publish', desc: 'Cross-post or schedule to connected social channels' },
+                { method: 'POST', path: '/api/v1/os/memory/sync', desc: 'Bidirectional memory sync with 1-call batch compilation' },
+              ].map((ep) => {
+                const fullUrl = `${API_BASE_URL}${ep.path}`;
+                return (
+                  <div key={ep.path} className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-black ${ep.method === 'GET' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-indigo-500/30 text-indigo-200'}`}>
+                          {ep.method}
+                        </span>
+                        <code className="truncate text-xs font-bold text-white">{ep.path}</code>
+                      </div>
+                      <p className="mt-1 truncate text-[11px] text-slate-400">{ep.desc}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(fullUrl);
+                        setOsCopiedEndpoint(ep.path);
+                        setTimeout(() => setOsCopiedEndpoint(null), 1800);
+                      }}
+                      className="shrink-0 rounded-lg bg-white/10 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-white/20"
+                    >
+                      {osCopiedEndpoint === ep.path ? 'Copied' : 'Copy URL'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Outbound OS Webhooks */}
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-indigo-300">Outbound Dakyworld OS Event Webhooks (HMAC-SHA256 Signed)</p>
+              <div className="mt-2.5 flex gap-2">
+                <input
+                  type="url"
+                  value={newWebhookUrl}
+                  onChange={(e) => setNewWebhookUrl(e.target.value)}
+                  placeholder="https://os.dakyworld.com/api/webhooks/hub"
+                  className="flex-1 rounded-xl border border-white/15 bg-white/10 px-3.5 py-2 text-xs text-white placeholder-slate-400 focus:border-indigo-400 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void registerOsWebhook()}
+                  className="shrink-0 rounded-xl bg-indigo-500 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-400"
+                >
+                  Add OS Webhook
+                </button>
+              </div>
+              {createdWebhookSecret && (
+                <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs">
+                  <p className="font-bold text-emerald-300">HMAC-SHA256 Signing Secret (Copy now):</p>
+                  <code className="mt-1 block break-all font-mono text-white">{createdWebhookSecret}</code>
+                </div>
+              )}
+              {osWebhooks.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  {osWebhooks.map((wh) => (
+                    <div key={wh.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 text-xs">
+                      <code className="truncate text-slate-200">{wh.url}</code>
+                      <button
+                        type="button"
+                        onClick={() => void deleteOsWebhook(wh.id)}
+                        className="ml-2 text-red-400 hover:text-red-300 font-bold"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
+
           <SectionCard>
             <h2 className="text-lg font-black text-slate-950">Website tracking</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -840,6 +994,8 @@ export default function Settings({ currentUser, onUserUpdated, onNavigateToBilli
               Anonymous visits are still counted.
             </p>
           </SectionCard>
+
+          <OutboundWebhooksPanel />
         </div>
       )}
     </div>

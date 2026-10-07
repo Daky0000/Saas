@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { randomBytes, randomUUID, createHash } from 'crypto';
 import { z } from 'zod';
@@ -81,12 +82,15 @@ export function registerApiKeyRoutes({ requireAuth, pool }: KeyDeps): Router {
       if (Number(existing[0].c) >= 10) {
         return res.status(400).json({ success: false, error: 'Maximum of 10 active API keys — revoke one first' });
       }
+      const allowed = ['analytics:read','agents:invoke','content:write','generations:run','memory:sync','os:full'];
+      const scopes = req.body?.scopes || ['analytics:read'];
+      if (!Array.isArray(scopes) || !scopes.length || scopes.some((scope: unknown) => typeof scope !== 'string' || !allowed.includes(scope))) return res.status(400).json({ error: 'Select valid API key scopes' });
       const secret = KEY_PREFIX + randomBytes(24).toString('hex');
       const prefix = secret.slice(0, KEY_PREFIX.length + 6) + '…';
       const { rows } = await pool.query(
-        `INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash) VALUES ($1,$2,$3,$4,$5)
+        `INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes) VALUES ($1,$2,$3,$4,$5,$6::jsonb)
          RETURNING id, name, key_prefix, created_at`,
-        [randomUUID(), auth.userId, name.slice(0, 80), prefix, hashKey(secret)]
+        [randomUUID(), auth.userId, name.slice(0, 80), prefix, hashKey(secret), JSON.stringify(scopes)]
       );
       return res.json({ success: true, key: { ...rows[0], secret } });
     } catch (err) {
@@ -131,7 +135,7 @@ export function registerPublicTriggerRoutes({ pool, fireAutomationTrigger }: Tri
       }
       if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
       const { rows: keyRows } = await pool.query(
-        `SELECT id, user_id FROM api_keys WHERE key_hash=$1 AND revoked_at IS NULL LIMIT 1`,
+        `SELECT k.id,k.user_id FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.key_hash=$1 AND k.revoked_at IS NULL AND u.status='active' LIMIT 1`,
         [hashKey(bearer)]
       );
       if (!keyRows.length) return res.status(401).json({ success: false, error: 'Missing or invalid API key' });

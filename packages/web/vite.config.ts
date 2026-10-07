@@ -17,18 +17,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: false,
-    minify: 'esbuild',
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-charts': ['recharts'],
-          'vendor-editor': ['@tiptap/react', '@tiptap/starter-kit'],
-          'vendor-fabric': ['fabric'],
-        },
-      },
-    },
+    sourcemap: 'hidden',
+    minify: true,
+    chunkSizeWarningLimit: 650,
+
   },
 })
 

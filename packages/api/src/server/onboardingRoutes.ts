@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { invalidateSharedContext } from './agentSharedContext.ts';
 import { safeAxios } from '../ssrf-guard.ts';
 import { FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';

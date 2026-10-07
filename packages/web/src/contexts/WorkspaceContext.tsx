@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { getStoredUser } from '../utils/userSession';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from '../utils/apiBase';
 
 export type OrgRole = 'owner' | 'admin' | 'editor' | 'viewer';
@@ -58,17 +59,18 @@ function authHeaders(): Record<string, string> {
 
 function loadStoredIds(): { orgId: string | null; projectId: string | null } {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(`${STORAGE_KEY}:${getStoredUser()?.id || 'anonymous'}`);
     if (raw) return JSON.parse(raw);
   } catch {}
   return { orgId: null, projectId: null };
 }
 
 function saveStoredIds(orgId: string | null, projectId: string | null) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ orgId, projectId }));
+  localStorage.setItem(`${STORAGE_KEY}:${getStoredUser()?.id || 'anonymous'}`, JSON.stringify({ orgId, projectId }));
 }
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
+  const requestVersion=useRef(0);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -76,10 +78,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const loadProjects = useCallback(async (orgId: string, preferredProjectId?: string | null) => {
+    const version=++requestVersion.current;
     try {
       const res = await fetch(`${API_BASE_URL}/api/organizations/${orgId}/projects`, { headers: authHeaders() });
       if (!res.ok) { setProjects([]); setCurrentProject(null); return; }
       const data = await res.json();
+      if (version!==requestVersion.current) return;
       const list: Project[] = data.projects ?? [];
       setProjects(list);
       const preferred = preferredProjectId ? list.find((p) => p.id === preferredProjectId) : null;
@@ -92,7 +96,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     const token = localStorage.getItem('auth_token');
-    if (!token) { setLoading(false); return; }
+    if (!token) { requestVersion.current++; setOrganizations([]);setCurrentOrg(null);setProjects([]);setCurrentProject(null);setLoading(false);return; }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/workspace/summary`, { headers: authHeaders() });
@@ -115,6 +119,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void refresh();
+    const changed=() => { void refresh(); };
+    window.addEventListener('auth-changed',changed);
+    return () => window.removeEventListener('auth-changed',changed);
   }, [refresh]);
 
   useEffect(() => {

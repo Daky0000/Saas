@@ -1,3 +1,5 @@
+import { SCHEMA_SOURCE_HASH, REQUIRED_SCHEMA_TABLES } from './schema-fingerprint.ts';
+import { createHash } from 'crypto';
 import type { Pool } from 'pg';
 import { logger } from './logger.ts';
 
@@ -8,7 +10,45 @@ export function isTestUserCreditGrantEnabled(env: NodeJS.ProcessEnv = process.en
   return env.ENABLE_TEST_USER_CREDITS === 'true';
 }
 
+export const BASE_SCHEMA_VERSION = '2026.09.23-v2-core';
+export function computeMigrationChecksum(versionTag: string): string {
+  return createHash('sha256').update(`contentflow-schema:${versionTag}:${SCHEMA_SOURCE_HASH}`).digest('hex');
+}
+
 export async function runDatabaseMigrations(pool: Pool): Promise<void> {
+  const client=await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(18473021)');
+    await runDatabaseMigrationsUnlocked(client as unknown as Pool);
+    const result=await client.query<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema='public'`);
+    const present=new Set(result.rows.map(row=>row.table_name));
+    const missing=REQUIRED_SCHEMA_TABLES.filter(name=>!present.has(name));
+    if(missing.length) throw new Error(`Database migration did not create required tables: ${missing.join(', ')}`);
+    await client.query(`INSERT INTO schema_migrations(version,checksum) VALUES($1,$2) ON CONFLICT(version) DO UPDATE SET checksum=EXCLUDED.checksum`, [BASE_SCHEMA_VERSION,computeMigrationChecksum(BASE_SCHEMA_VERSION)]);
+  } finally { await client.query('SELECT pg_advisory_unlock(18473021)');client.release(); }
+}
+
+async function runDatabaseMigrationsUnlocked(pool: Pool): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      checksum TEXT NOT NULL,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => undefined);
+
+  const baseChecksum = computeMigrationChecksum(BASE_SCHEMA_VERSION);
+  const existingBase = await pool.query(
+    `SELECT checksum FROM schema_migrations WHERE version = $1 LIMIT 1`,
+    [BASE_SCHEMA_VERSION]
+  ).catch(() => ({ rows: [] as Array<{ checksum: string }> }));
+
+  if (existingBase.rows[0]?.checksum === baseChecksum && process.env.FORCE_FULL_MIGRATIONS !== 'true') {
+    await runIncrementalUpgradeMigrations(pool);
+    logger.info({ version: BASE_SCHEMA_VERSION }, 'Skipped base DDL (checksum matched); applied incremental upgrade migrations');
+    return;
+  }
+
 await pool.query(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -1943,20 +1983,6 @@ await pool.query(`CREATE INDEX IF NOT EXISTS page_view_events_contact_idx ON pag
 // Campaign audience membership: which mailing contacts belong to which
 // multi-channel campaign. Written by the automation add_to_campaign step;
 // read by the in_campaign if_else condition and campaign detail views.
-await pool.query(`
-  CREATE TABLE IF NOT EXISTS campaign_members (
-    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    contact_id TEXT NOT NULL REFERENCES mailing_contacts(id) ON DELETE CASCADE,
-    label TEXT,
-    source TEXT DEFAULT 'automation',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (campaign_id, contact_id)
-  );
-`).catch(() => undefined);
-await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_user_idx ON campaign_members (user_id, campaign_id);`).catch(() => undefined);
-await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_contact_idx ON campaign_members (contact_id);`).catch(() => undefined);
 
 // ── MCP server connections (Admin → MCP). Platform-level integrations that
 // speak the Model Context Protocol; env/headers hold secrets and are stored
@@ -4301,8 +4327,25 @@ await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS reminder_m
 await pool.query(`ALTER TABLE crm_activities ADD COLUMN IF NOT EXISTS google_event_id TEXT`).catch(() => undefined);
 await pool.query(`CREATE INDEX IF NOT EXISTS crm_activities_company_idx ON crm_activities (company_id, created_at DESC)`).catch(() => undefined);
 
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS campaign_members (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    contact_id TEXT NOT NULL REFERENCES mailing_contacts(id) ON DELETE CASCADE,
+    label TEXT,
+    source TEXT DEFAULT 'automation',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (campaign_id, contact_id)
+  );
+`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_user_idx ON campaign_members (user_id, campaign_id);`).catch(() => undefined);
+await pool.query(`CREATE INDEX IF NOT EXISTS campaign_members_contact_idx ON campaign_members (contact_id);`).catch(() => undefined);
+
 await createLeadgenTables(pool);
 await createSalesTables(pool);
+  await runIncrementalUpgradeMigrations(pool);
+
 }
 
 // ── AI Sales OS ───────────────────────────────────────────────────────────────
@@ -4806,4 +4849,135 @@ async function createLeadgenTables(pool: Pool): Promise<void> {
   for (const sql of indexes) {
     await pool.query(sql).catch(() => undefined);
   }
+
+
+}
+
+export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void> {
+  // 1. Unified Social Inbox Tables
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS social_inbox_threads (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      platform TEXT NOT NULL DEFAULT 'instagram',
+      external_thread_id TEXT,
+      sender_name TEXT NOT NULL,
+      sender_handle TEXT NOT NULL,
+      sender_avatar TEXT,
+      subject_or_post_preview TEXT,
+      channel_type TEXT NOT NULL DEFAULT 'comment', -- 'comment' | 'dm' | 'mention'
+      sentiment TEXT NOT NULL DEFAULT 'positive',   -- 'positive' | 'neutral' | 'urgent' | 'question'
+      status TEXT NOT NULL DEFAULT 'open',          -- 'open' | 'resolved' | 'snoozed'
+      unread_count INTEGER NOT NULL DEFAULT 1,
+      linked_contact_id TEXT,
+      last_message_preview TEXT,
+      last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS social_inbox_threads_user_status_idx ON social_inbox_threads(user_id, status, last_message_at DESC);
+
+    CREATE TABLE IF NOT EXISTS social_inbox_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES social_inbox_threads(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      direction TEXT NOT NULL DEFAULT 'inbound', -- 'inbound' | 'outbound'
+      sender_name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      ai_generated BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS social_inbox_messages_thread_idx ON social_inbox_messages(thread_id, created_at ASC);
+  `).catch(() => undefined);
+
+  // 2. Client Approval Portals (White-Label Share Links)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS client_approval_links (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      client_name TEXT,
+      client_email TEXT,
+      resource_type TEXT NOT NULL DEFAULT 'post', -- 'post' | 'card' | 'campaign'
+      resource_id TEXT NOT NULL,
+      resource_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'approved' | 'changes_requested'
+      reviewer_name TEXT,
+      reviewer_feedback TEXT,
+      decided_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS client_approval_links_user_idx ON client_approval_links(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS client_approval_links_token_idx ON client_approval_links(token);
+  `).catch(() => undefined);
+
+  // 3. Outbound Webhooks & Deliveries
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS outbound_webhooks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      target_url TEXT NOT NULL,
+      signing_secret TEXT NOT NULL,
+      events TEXT[] NOT NULL DEFAULT ARRAY['lead.created', 'deal.stage_changed', 'post.published', 'approval.decided']::TEXT[],
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      last_triggered_at TIMESTAMPTZ,
+      last_status_code INTEGER,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS outbound_webhooks_user_idx ON outbound_webhooks(user_id, is_active);
+
+    CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
+      id TEXT PRIMARY KEY,
+      webhook_id TEXT NOT NULL REFERENCES outbound_webhooks(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_name TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status_code INTEGER,
+      response_excerpt TEXT,
+      duration_ms INTEGER,
+      delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS outbound_webhook_deliveries_hook_idx ON outbound_webhook_deliveries(webhook_id, delivered_at DESC);
+  `).catch(() => undefined);
+
+  // 4. Autonomous Agent Scheduled Runs & Handoffs
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_schedules (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      primary_agent_slug TEXT NOT NULL DEFAULT 'researcher',
+      handoff_agent_slug TEXT,
+      prompt_goal TEXT NOT NULL,
+      frequency TEXT NOT NULL DEFAULT 'daily', -- 'hourly' | 'daily' | 'weekly'
+      output_action TEXT NOT NULL DEFAULT 'create_post_draft', -- 'create_post_draft' | 'create_task' | 'notify_only'
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      last_run_at TIMESTAMPTZ,
+      next_run_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '1 day'),
+      last_result_summary TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(is_active, next_run_at);
+
+    CREATE TABLE IF NOT EXISTS agent_schedule_runs (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'completed',
+      primary_output TEXT,
+      handoff_output TEXT,
+      artifact_type TEXT,
+      artifact_id TEXT,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS agent_schedule_runs_sched_idx ON agent_schedule_runs(schedule_id, started_at DESC);
+  `).catch(() => undefined);
 }

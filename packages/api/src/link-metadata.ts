@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import axios from 'axios';
-import type { Request } from 'express';
+import type { Request } from './types/http.ts';
 import { logger } from './logger.ts';
 import { pool, hasDatabase } from './db.ts';
 
@@ -76,7 +76,7 @@ export function checkLinkMetadataRateLimit(ip: string) {
   return true;
 }
 
-function decodeHtmlEntities(value: string) {
+export function decodeHtmlEntities(value: string) {
   return value
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')

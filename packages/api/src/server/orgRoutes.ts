@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID, randomBytes } from 'crypto';
 import { logger } from '../logger.ts';
 
@@ -10,7 +11,7 @@ interface OrgDeps {
   requireAuth: (req: Request, res: Response) => AuthResult;
   hasDatabase: () => boolean;
   dbQuery: <T = any>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }>;
-  requireOrgMembership: (req: Request, res: Response, orgId: string, minRole?: string) => Promise<OrgMemberResult>;
+  requireOrgMembership: (req: Request, res: Response, orgId: string, minRole?: 'viewer' | 'editor' | 'admin' | 'owner') => Promise<OrgMemberResult>;
   createNotification: (userId: string, type: string, title: string, message: string, data?: Record<string, any>, pinned?: boolean) => Promise<void>;
   checkTaskActions: (userId: string, actionType: string) => Promise<Array<{ task_id: string; title: string; new_status: string; progress: string }>>;
   logTaskActivity: (projectId: string, userId: string, action: string, taskId?: string, metadata?: Record<string, unknown>) => Promise<void>;
@@ -23,7 +24,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // ── Local helpers ────────────────────────────────────────────────────────────
 
   async function requireProjectAccess(
-    req: Request, res: Response, projectId: string
+    req: Request, res: Response, projectId: string, minRole: 'viewer' | 'editor' = 'viewer'
   ): Promise<{ userId: string; orgRole: string } | null> {
     const auth = requireAuth(req, res);
     if (!auth) return null;
@@ -35,6 +36,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
       [auth.userId, projectId]
     );
     if (!rows[0]) { res.status(403).json({ error: 'Not a project member' }); return null; }
+    if (minRole === 'editor' && !['owner', 'admin', 'editor'].includes((rows[0] as any).role)) { res.status(403).json({ error: 'Editor access required' }); return null; }
     return { userId: auth.userId, orgRole: (rows[0] as any).role };
   }
 
@@ -56,6 +58,21 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   }
 
   // ── Workspace / Organization Routes ─────────────────────────────────────────
+
+  // Guard all nested task operations, including comments, attachments, and subtasks.
+  router.use('/tasks/:taskId', async (req,res,next) => {
+    const user=requireAuth(req,res); if (!user) return;
+    if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
+    const result=await dbQuery(`SELECT t.project_id,p.org_id,om.role FROM tasks t JOIN projects p ON p.id=t.project_id
+      JOIN organization_memberships om ON om.org_id=p.org_id AND om.user_id=$2 WHERE t.id=$1`,[req.params.taskId,user.userId]);
+    const access=result.rows[0];
+    if (!access || (req.method!=='GET' && !['owner','admin','editor'].includes(access.role))) return res.status(403).json({ error: 'Task access denied' });
+    const assignee=req.body?.user_id || req.body?.supervisor_id;
+    if (assignee && !(await dbQuery('SELECT user_id FROM organization_memberships WHERE org_id=$1 AND user_id=$2',[access.org_id,assignee])).rows.length) return res.status(403).json({ error: 'The assignee must belong to this organization' });
+    const labelId=req.path.match(/^\/labels\/([^/]+)/)?.[1];
+    if (labelId && !(await dbQuery('SELECT id FROM task_labels WHERE id=$1 AND project_id=$2',[decodeURIComponent(labelId),access.project_id])).rows.length) return res.status(403).json({ error: 'The label must belong to this project' });
+    next();
+  });
 
   // GET /api/workspace/summary
   router.get('/workspace/summary', async (req: Request, res: Response) => {
@@ -520,7 +537,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // POST /api/projects/:projectId/tasks
   router.post('/projects/:projectId/tasks', async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     const { title, description = '', status = 'todo', priority = 'medium', due_date, supervisor_id, assignee_ids = [], label_ids = [], actions = [], task_type = 'todo', reminder_at, crm_company_id } =
       req.body as { title: string; description?: string; status?: string; priority?: string; due_date?: string; supervisor_id?: string; assignee_ids?: string[]; label_ids?: string[]; actions?: { action_type: string; label: string; target_count: number }[]; task_type?: string; reminder_at?: string; crm_company_id?: string };
@@ -600,7 +617,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // PUT /api/projects/:projectId/tasks/:taskId
   router.put('/projects/:projectId/tasks/:taskId', async (req: Request, res: Response) => {
     const { projectId, taskId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     const { title, description, priority, due_date, supervisor_id } =
       req.body as { title?: string; description?: string; priority?: string; due_date?: string | null; supervisor_id?: string | null };
@@ -626,13 +643,13 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // PATCH /api/projects/:projectId/tasks/:taskId/status
   router.patch('/projects/:projectId/tasks/:taskId/status', async (req: Request, res: Response) => {
     const { projectId, taskId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     const { status } = req.body as { status: string };
     const validStatuses = ['todo', 'in_progress', 'in_review', 'done'];
     if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
     try {
-      const { rows: task } = await dbQuery(`SELECT status, supervisor_id FROM tasks WHERE id=$1`, [taskId]);
+      const { rows: task } = await dbQuery(`SELECT status, supervisor_id FROM tasks WHERE id=$1 AND project_id=$2`, [taskId, projectId]);
       if (!task[0]) return res.status(404).json({ error: 'Task not found' });
       const isAdmin = ['owner', 'admin'].includes(access.orgRole);
       const isSupervisor = (task[0] as any).supervisor_id === access.userId;
@@ -642,8 +659,8 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
         [projectId, status]
       );
       await dbQuery(
-        `UPDATE tasks SET status=$1, position=$2, updated_at=NOW() WHERE id=$3`,
-        [status, (pos[0] as any).next, taskId]
+        `UPDATE tasks SET status=$1, position=$2, updated_at=NOW() WHERE id=$3 AND project_id=$4`,
+        [status, (pos[0] as any).next, taskId, projectId]
       );
       await logTaskActivity(projectId, access.userId, 'status_changed', taskId, { from: (task[0] as any).status, to: status });
       return res.json({ success: true });
@@ -655,7 +672,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // PATCH /api/projects/:projectId/tasks/reorder
   router.patch('/projects/:projectId/tasks/reorder', async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     const isAdmin = ['owner', 'admin'].includes(access.orgRole);
     if (!isAdmin) return res.status(403).json({ error: 'Only admins can reorder tasks' });
@@ -674,7 +691,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // DELETE /api/projects/:projectId/tasks/:taskId
   router.delete('/projects/:projectId/tasks/:taskId', async (req: Request, res: Response) => {
     const { projectId, taskId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     const isAdmin = ['owner', 'admin'].includes(access.orgRole);
     if (!isAdmin) return res.status(403).json({ error: 'Only admins can delete tasks' });
@@ -724,7 +741,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // POST /api/projects/:projectId/labels
   router.post('/projects/:projectId/labels', async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     const { name, color = '#6366f1' } = req.body as { name: string; color?: string };
     if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
@@ -738,7 +755,7 @@ export function registerOrgRoutes(deps: OrgDeps): Router {
   // DELETE /api/projects/:projectId/labels/:labelId
   router.delete('/projects/:projectId/labels/:labelId', async (req: Request, res: Response) => {
     const { projectId, labelId } = req.params;
-    const access = await requireProjectAccess(req, res, projectId);
+    const access = await requireProjectAccess(req, res, projectId, 'editor');
     if (!access) return;
     await dbQuery(`DELETE FROM task_labels WHERE id=$1 AND project_id=$2`, [labelId, projectId]);
     return res.json({ success: true });

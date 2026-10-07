@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import express from 'express';
-import type { Express, Router, Request, Response } from 'express';
+import type { Express, Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { registerBlogAnalyticsRoutes } from './blogAnalyticsRoutes.ts';
 import { logger } from '../logger.ts';
@@ -25,7 +26,7 @@ type BlogRouteDeps = {
     userId: string,
     post: { id: string; title?: string | null; featured_image?: string | null; social_image?: string | null; content?: string | null },
   ) => Promise<number>;
-  checkTaskActions: (userId: string, action: string) => Promise<void>;
+  checkTaskActions: (userId: string, action: string) => Promise<unknown[]>;
   fireWorkflowTriggers: (userId: string, event: string, data: any) => Promise<void>;
   queueSocialAutomationForPublishedPost: (userId: string, post: Record<string, any>) => Promise<void>;
   recordAuditLog: (userId: string, action: string, postIds: string[], changes: Record<string, any>) => Promise<void>;
@@ -238,7 +239,7 @@ export function registerBlogRoutes({
     const published_at = status === 'published' ? new Date().toISOString() : null;
 
     const client = await pool!.connect();
-    let rows: Array<Record<string, unknown>>;
+    let rows: Array<{ id: string; [key: string]: any }>;
     try {
       await client.query('BEGIN');
       const result = await client.query(
@@ -319,7 +320,7 @@ export function registerBlogRoutes({
     const willSchedule = newStatus === 'scheduled' && String(cur.status || '') !== 'scheduled';
     const published_at = newStatus === 'published' && !cur.published_at ? new Date().toISOString() : cur.published_at;
     const client = await pool!.connect();
-    let rows: Array<Record<string, unknown>>;
+    let rows: Array<{ id: string; [key: string]: any }>;
     try {
       await client.query('BEGIN');
       const result = await client.query(

@@ -17,7 +17,7 @@
  * breaking the rest.
  */
 
-import type { Request } from "express";
+import type { Request } from '../../types/http.ts';
 import type { Lead, PrismaClient } from "@prisma/client";
 import type { SheetGrid } from "./services/spreadsheet.ts";
 import type { ImportPlan, PlanTable } from "./services/sheetPlan.ts";

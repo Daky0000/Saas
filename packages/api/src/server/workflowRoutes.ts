@@ -1,6 +1,7 @@
 import express from 'express';
 import { FAST_MODEL, recordAIUsage, hasAICredits } from '../ai-helpers.ts';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.ts';

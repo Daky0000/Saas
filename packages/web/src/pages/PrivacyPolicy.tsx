@@ -60,8 +60,8 @@ function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
 
             <h3 className="text-base font-semibold text-gray-800 mb-2 mt-4">2.5 Payment Information</h3>
             <p>
-              Payments are processed by Stripe. We do not store full credit card numbers. We retain
-              Stripe customer IDs and subscription status to manage your plan.
+              Payments are processed by Paystack. We do not store full credit card numbers. We retain
+              Paystack customer IDs and subscription status to manage your plan.
             </p>
 
             <h3 className="text-base font-semibold text-gray-800 mb-2 mt-4">2.6 Social Login</h3>
@@ -99,7 +99,7 @@ function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
                 platforms under their own privacy policies.
               </li>
               <li>
-                <strong>Service providers:</strong> We use Stripe (payments), Railway (hosting),
+                <strong>Service providers:</strong> We use Paystack (payments), Railway (hosting),
                 and Neon/PostgreSQL (database). These processors handle your data only as directed
                 by us and under contractual data protection obligations.
               </li>

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
-import { fabric } from 'fabric';
+import * as fabric from 'fabric';
 import { jsPDF } from 'jspdf';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
@@ -74,7 +74,7 @@ export default function AdminFabricBuilder({
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
-  const [selectedObjects, setSelectedObjects] = useState<fabric.Object[]>([]);
+  const [selectedObjects, setSelectedObjects] = useState<fabric.FabricObject[]>([]);
   const [publishingState, setPublishingState] = useState<'idle' | 'saving' | 'publishing' | 'unpublishing' | 'done'>('idle');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [canvasScale, setCanvasScale] = useState(1);
@@ -101,7 +101,7 @@ export default function AdminFabricBuilder({
     if (skipSnapshotRef.current) return;
     const c = fabricRef.current;
     if (!c) return;
-    const json = JSON.stringify(c.toJSON(['data']));
+    const json = JSON.stringify(c.toObject(['data']));
     if (undoStack.current[undoStack.current.length - 1] === json) return;
     undoStack.current.push(json);
     if (undoStack.current.length > MAX_HISTORY) undoStack.current.shift();
@@ -117,7 +117,7 @@ export default function AdminFabricBuilder({
     redoStack.current.push(current);
     const prev = undoStack.current[undoStack.current.length - 1];
     skipSnapshotRef.current = true;
-    c.loadFromJSON(JSON.parse(prev), () => {
+    c.loadFromJSON(JSON.parse(prev)).then(() => {
       skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
@@ -132,7 +132,7 @@ export default function AdminFabricBuilder({
     const next = redoStack.current.pop()!;
     undoStack.current.push(next);
     skipSnapshotRef.current = true;
-    c.loadFromJSON(JSON.parse(next), () => {
+    c.loadFromJSON(JSON.parse(next)).then(() => {
       skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
@@ -151,8 +151,8 @@ export default function AdminFabricBuilder({
     const availH = wrap.clientHeight - padding;
     const scale = Math.min(availW / preset.w, availH / preset.h, 1);
     c.setZoom(scale);
-    c.setWidth(preset.w * scale);
-    c.setHeight(preset.h * scale);
+    c.setDimensions({ width: preset.w * scale });
+    c.setDimensions({ height: preset.h * scale });
     setCanvasScale(scale);
     setZoomLevel(scale);
     c.requestRenderAll();
@@ -183,10 +183,10 @@ export default function AdminFabricBuilder({
 
     if (existingDesignData?.fabricJson && Object.keys(existingDesignData.fabricJson).length > 0) {
       skipSnapshotRef.current = true;
-      canvas.loadFromJSON(existingDesignData.fabricJson, () => {
+      canvas.loadFromJSON(existingDesignData.fabricJson).then(() => {
         skipSnapshotRef.current = false;
         canvas.requestRenderAll();
-        const json = JSON.stringify(canvas.toJSON(['data']));
+        const json = JSON.stringify(canvas.toObject(['data']));
         undoStack.current = [json];
         redoStack.current = [];
         setCanUndo(false);
@@ -195,7 +195,7 @@ export default function AdminFabricBuilder({
         if (typeof bg === 'string') setBgColor(bg);
       });
     } else {
-      const json = JSON.stringify(canvas.toJSON(['data']));
+      const json = JSON.stringify(canvas.toObject(['data']));
       undoStack.current = [json];
       redoStack.current = [];
     }
@@ -234,8 +234,8 @@ export default function AdminFabricBuilder({
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
       const newZ = Math.max(0.1, Math.min(4, c.getZoom() * delta));
       c.setZoom(newZ);
-      c.setWidth(preset.w * newZ);
-      c.setHeight(preset.h * newZ);
+      c.setDimensions({ width: preset.w * newZ });
+      c.setDimensions({ height: preset.h * newZ });
       setZoomLevel(newZ);
       setCanvasScale(newZ);
       c.requestRenderAll();
@@ -325,19 +325,19 @@ export default function AdminFabricBuilder({
   const addImageFromUrl = useCallback((url: string) => {
     const c = fabricRef.current;
     if (!c) return;
-    fabric.Image.fromURL(url, (img) => {
+    fabric.FabricImage.fromURL(url,{ crossOrigin: 'anonymous' }).then((img) => {
       const maxW = Math.min(preset.w * canvasScale * 0.5, 400);
       if ((img.width ?? 1) > maxW) img.scale(maxW / (img.width ?? maxW));
       img.set(canvasCenter(img.getScaledWidth(), img.getScaledHeight()));
       c.add(img); c.setActiveObject(img); c.requestRenderAll();
-    }, { crossOrigin: 'anonymous' });
+    });
   }, [canvasCenter, preset, canvasScale]);
 
   // ── Background ───────────────────────────────────────────────────────────────
   const setBackground = useCallback((color: string) => {
     const c = fabricRef.current;
     if (!c) return;
-    c.setBackgroundColor(color, () => { c.requestRenderAll(); snapshot(); });
+    (c.backgroundColor=color,(() => { c.requestRenderAll(); snapshot(); })());
     setBgColor(color);
   }, [snapshot]);
 
@@ -360,27 +360,27 @@ export default function AdminFabricBuilder({
       ? { x1: (0.5 - 0.5 * sinA) * W, y1: (0.5 + 0.5 * cosA) * H, x2: (0.5 + 0.5 * sinA) * W, y2: (0.5 - 0.5 * cosA) * H }
       : { r1: 0, r2: Math.sqrt(W * W + H * H) / 2, x1: W / 2, y1: H / 2, x2: W / 2, y2: H / 2 };
     const grad = new fabric.Gradient({ type, gradientUnits: 'pixels', coords, colorStops });
-    c.setBackgroundColor(grad as unknown as string, () => { c.requestRenderAll(); snapshot(); });
+    (c.backgroundColor=grad as unknown as string,(() => { c.requestRenderAll(); snapshot(); })());
   }, [snapshot]);
 
   const setBgImageFromUrl = useCallback((url: string) => {
     const c = fabricRef.current;
     if (!c) return;
-    if (!url) { c.setBackgroundImage('', c.requestRenderAll.bind(c)); snapshot(); return; }
-    fabric.Image.fromURL(url, (img) => {
-      c.setBackgroundImage(img, c.requestRenderAll.bind(c), {
+    if (!url) { (c.backgroundImage=undefined,(c.requestRenderAll.bind(c))()); snapshot(); return; }
+    fabric.FabricImage.fromURL(url,{ crossOrigin: 'anonymous' }).then((img) => {
+      (c.backgroundImage=img,img.set({
         scaleX: (c.width ?? preset.w) / (img.width ?? 1),
         scaleY: (c.height ?? preset.h) / (img.height ?? 1),
-      });
+      }),(c.requestRenderAll.bind(c))());
       snapshot();
-    }, { crossOrigin: 'anonymous' });
+    });
   }, [preset, snapshot]);
 
   // ── Zoom ─────────────────────────────────────────────────────────────────────
   const applyZoom = useCallback((newZ: number) => {
     const c = fabricRef.current;
     if (!c) return;
-    c.setZoom(newZ); c.setWidth(preset.w * newZ); c.setHeight(preset.h * newZ);
+    c.setZoom(newZ); c.setDimensions({ width: preset.w * newZ }); c.setDimensions({ height: preset.h * newZ });
     setZoomLevel(newZ); setCanvasScale(newZ); c.requestRenderAll();
   }, [preset]);
 
@@ -400,7 +400,7 @@ export default function AdminFabricBuilder({
     if (!c) return;
     const obj = c.getActiveObject();
     if (!obj) return;
-    obj.clone((cloned: fabric.Object) => {
+    obj.clone(['data']).then((cloned: fabric.FabricObject) => {
       cloned.set({ left: (cloned.left ?? 0) + 20, top: (cloned.top ?? 0) + 20 });
       c.add(cloned); c.setActiveObject(cloned); c.requestRenderAll();
     });
@@ -408,23 +408,23 @@ export default function AdminFabricBuilder({
 
   const bringForward = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
-    const obj = c.getActiveObject(); if (obj) { c.bringForward(obj); c.requestRenderAll(); }
+    const obj = c.getActiveObject(); if (obj) { c.bringObjectForward(obj); c.requestRenderAll(); }
   }, []);
 
   const sendBackward = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
-    const obj = c.getActiveObject(); if (obj) { c.sendBackwards(obj); c.requestRenderAll(); }
+    const obj = c.getActiveObject(); if (obj) { c.sendObjectBackwards(obj); c.requestRenderAll(); }
   }, []);
 
   const flipH = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
-    const obj = c.getActiveObject() as fabric.Image;
+    const obj = c.getActiveObject() as fabric.FabricImage;
     if (obj) { obj.set('flipX', !obj.flipX); c.requestRenderAll(); snapshot(); }
   }, [snapshot]);
 
   const flipV = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
-    const obj = c.getActiveObject() as fabric.Image;
+    const obj = c.getActiveObject() as fabric.FabricImage;
     if (obj) { obj.set('flipY', !obj.flipY); c.requestRenderAll(); snapshot(); }
   }, [snapshot]);
 
@@ -435,7 +435,7 @@ export default function AdminFabricBuilder({
       fabricVersion: true,
       canvasWidth: preset.w,
       canvasHeight: preset.h,
-      fabricJson: c.toJSON(['data']) as Record<string, unknown>,
+      fabricJson: c.toObject(['data']) as Record<string, unknown>,
     };
   }, [preset]);
 
@@ -548,22 +548,46 @@ export default function AdminFabricBuilder({
   const exportPNG = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
+    const dataUrl = c.toDataURL({ format: 'png', quality: 1, multiplier: getExportMultiplier() });
     const link = document.createElement('a');
-    link.href = c.toDataURL({ format: 'png', quality: 1, multiplier: getExportMultiplier() });
+    link.href = dataUrl;
     link.download = `${sanitizedName}.png`;
     link.click();
+    void mediaService.upload({
+      url: dataUrl,
+      thumbnail_url: dataUrl,
+      file_name: `${sanitizedName}.png`,
+      original_name: `${templateName || 'Template'}.png`,
+      file_size: Math.round(dataUrl.length * 0.75),
+      file_type: 'image/png',
+      width: preset.w,
+      height: preset.h,
+      category: 'card-exports',
+    }).catch(() => undefined);
     setShowExportMenu(false);
-  }, [sanitizedName, getExportMultiplier]);
+  }, [sanitizedName, templateName, preset.w, preset.h, getExportMultiplier]);
 
   const exportJPEG = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
+    const dataUrl = c.toDataURL({ format: 'jpeg', quality: 0.95, multiplier: getExportMultiplier() });
     const link = document.createElement('a');
-    link.href = c.toDataURL({ format: 'jpeg', quality: 0.95, multiplier: getExportMultiplier() });
+    link.href = dataUrl;
     link.download = `${sanitizedName}.jpg`;
     link.click();
+    void mediaService.upload({
+      url: dataUrl,
+      thumbnail_url: dataUrl,
+      file_name: `${sanitizedName}.jpg`,
+      original_name: `${templateName || 'Template'}.jpg`,
+      file_size: Math.round(dataUrl.length * 0.75),
+      file_type: 'image/jpeg',
+      width: preset.w,
+      height: preset.h,
+      category: 'card-exports',
+    }).catch(() => undefined);
     setShowExportMenu(false);
-  }, [sanitizedName, getExportMultiplier]);
+  }, [sanitizedName, templateName, preset.w, preset.h, getExportMultiplier]);
 
   const getWrappedJSON = useCallback(() => {
     // Wrap in import-compatible format: [{ name, description, designData }]

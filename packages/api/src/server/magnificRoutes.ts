@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { logger } from '../logger.ts';
@@ -8,7 +9,7 @@ import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-hel
 import { chargeAICredits } from '../ai-helpers.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
-type Pool = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+type Pool = import('pg').Pool;
 
 interface MagnificDeps {
   requireAuth: (req: Request, res: Response) => AuthResult;
@@ -162,7 +163,7 @@ export async function pollMagnificTask(
     const status: string = data?.status ?? '';
     onProgress?.(status);
     if (status === 'COMPLETED') {
-      const urls: string[] = data.generated ?? data.output ?? (data.output_url ? [data.output_url] : []) ?? (data.url ? [data.url] : []);
+      const urls: string[] = data.generated ?? data.output ?? (data.output_url ? [data.output_url] : data.url ? [data.url] : []);
       return { url: urls[0] ?? null, error: null };
     }
     if (status === 'FAILED') {

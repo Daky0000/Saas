@@ -1,11 +1,12 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
-interface DbDesign {
+export interface DbDesign {
   id: string;
   user_id: string;
   name: string;
@@ -20,8 +21,8 @@ interface DbDesign {
 interface UserDesignDeps {
   requireAuth: (req: Request, res: Response) => AuthResult;
   hasDatabase: () => boolean;
-  dbQuery: <T = any>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }>;
-  syncUserDesignMedia: (userId: string, design: DbDesign) => Promise<void>;
+  dbQuery: <T = any>(sql: string, params?: unknown[]) => Promise<{ rows: T[]; rowCount: number }>;
+  syncUserDesignMedia: (userId: string, design: DbDesign) => Promise<number>;
   checkTaskActions: (userId: string, actionType: string) => Promise<unknown[]>;
 }
 

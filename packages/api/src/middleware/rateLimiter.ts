@@ -1,11 +1,9 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Store, Options, IncrementResponse } from 'express-rate-limit';
-import IORedis from 'ioredis';
+import { Redis as IORedis } from 'ioredis';
 
 // ── Redis-backed store for express-rate-limit ──────────────────────────────
 // Falls back to the default in-memory store if Redis is not configured.
-// When Redis is unavailable on startup we fail open (in-memory) rather than
-// blocking auth requests.
 
 function buildRedisStore(redis: InstanceType<typeof IORedis>, prefix: string, windowMs: number): Store {
   return {
@@ -44,12 +42,13 @@ function makeStore(prefix: string, windowMs: number): Partial<Options> {
 
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const PWD_WINDOW_MS = 60 * 60 * 1000;
+const ONE_MINUTE_MS = 60 * 1000;
 
 export const authLimiter = rateLimit({
   windowMs: AUTH_WINDOW_MS,
-  max: 10,
+  max: 15,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   message: { success: false, error: 'Too many attempts, please try again later' },
   skipSuccessfulRequests: false,
   ...makeStore('rl:auth', AUTH_WINDOW_MS),
@@ -59,23 +58,59 @@ export const passwordLimiter = rateLimit({
   windowMs: PWD_WINDOW_MS,
   max: 5,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   message: { success: false, error: 'Too many password change attempts, please try again in an hour' },
   ...makeStore('rl:pwd', PWD_WINDOW_MS),
 });
 
-const PUBLIC_API_WINDOW_MS = 60 * 1000;
-
-// Inbound public API (POST /api/v1/trigger) — keyed by API key when present so
-// one integration can't exhaust another's budget behind a shared IP.
+// Inbound public API (POST /api/v1/trigger) — keyed by API key when present
 export const publicApiLimiter = rateLimit({
-  windowMs: PUBLIC_API_WINDOW_MS,
+  windowMs: ONE_MINUTE_MS,
   max: 120,
   standardHeaders: true,
-  legacyHeaders: false,
-  // ipKeyGenerator buckets IPv6 clients by /56 subnet — raw req.ip would let
-  // IPv6 users rotate addresses within their allocation to bypass the limit.
+  legacyHeaders: true,
   keyGenerator: (req) => String(req.headers.authorization || '').trim() || ipKeyGenerator(req.ip ?? ''),
   message: { success: false, error: 'Rate limit exceeded — max 120 requests per minute' },
-  ...makeStore('rl:pubapi', PUBLIC_API_WINDOW_MS),
+  ...makeStore('rl:pubapi', ONE_MINUTE_MS),
 });
+
+// AI Chat & Agent Orchestration Rate Limiter — protects token budgets against rapid spam
+export const aiChatLimiter = rateLimit({
+  windowMs: ONE_MINUTE_MS,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: true,
+  keyGenerator: (req) => String(req.headers.authorization || '').slice(-32) || ipKeyGenerator(req.ip ?? ''),
+  message: { success: false, error: 'AI rate limit reached (30 requests/min). Please wait a few seconds before sending another message.' },
+  ...makeStore('rl:aichat', ONE_MINUTE_MS),
+});
+
+// Image & Video Generation Rate Limiter — protects GPU generation endpoints
+export const generationLimiter = rateLimit({
+  windowMs: ONE_MINUTE_MS,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: true,
+  keyGenerator: (req) => String(req.headers.authorization || '').slice(-32) || ipKeyGenerator(req.ip ?? ''),
+  message: { success: false, error: 'Generation rate limit reached (12/min). Please allow current renders to complete.' },
+  ...makeStore('rl:gen', ONE_MINUTE_MS),
+});
+
+// Dakyworld OS Bridge Rate Limiter — high-throughput API with standard RateLimit headers
+export const osApiLimiter = rateLimit({
+  windowMs: ONE_MINUTE_MS,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: true,
+  keyGenerator: (req) => String(req.headers.authorization || req.headers['x-dakyworld-os-key'] || '').trim() || ipKeyGenerator(req.ip ?? ''),
+  message: { success: false, error: 'Dakyworld OS Bridge rate limit exceeded (300 req/min).' },
+  ...makeStore('rl:osapi', ONE_MINUTE_MS),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SaaS Idempotency-Key Middleware
+// Guarantees that retried POST/PUT requests carrying `Idempotency-Key` return
+// the exact original response without double-charging credits or duplicating posts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { idempotencyMiddleware } from './idempotency.ts';

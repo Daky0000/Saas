@@ -1,13 +1,17 @@
+import { ownedCrmReferences } from './ownership.ts';
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import { dispatchOutboundWebhooks } from '../middleware/planQuotaMiddleware.ts';
 
 type AuthResult = { userId: string } | null;
 
 interface Deps {
   requireAuth: (req: Request, res: Response) => AuthResult;
   pool: Pool;
+  fireAutomationTrigger?: (userId: string, triggerType: string, contact: { id?: string | null; email?: string }) => Promise<void>;
 }
 
 const DEFAULT_STAGES = [
@@ -18,7 +22,7 @@ const DEFAULT_STAGES = [
   { name: 'Closed Won',  color: '#10b981', position: 4 },
 ];
 
-export function registerCRMDealsRoutes({ requireAuth, pool }: Deps): Router {
+export function registerCRMDealsRoutes({ requireAuth, pool, fireAutomationTrigger }: Deps): Router {
   const router = express.Router();
 
   // ── Ensure a default pipeline + stages for a new user ─────────────────────
@@ -226,6 +230,8 @@ export function registerCRMDealsRoutes({ requireAuth, pool }: Deps): Router {
 
   router.post('/deals', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
+    if (!await ownedCrmReferences(pool,auth.userId,req.body)) return res.status(403).json({ error: 'Related records must belong to your account' });
+    if (!await ownedCrmReferences(pool,auth.userId,req.body)) return res.status(403).json({ error: 'Related records must belong to your account' });
     const { title, value, currency, stage_id, contact_id, company_id, close_date, priority, probability, description } = req.body;
     if (!title?.trim()) return void res.status(400).json({ error: 'title required' });
     const { rows: [{ max_pos }] } = await pool.query(
@@ -243,6 +249,8 @@ export function registerCRMDealsRoutes({ requireAuth, pool }: Deps): Router {
 
   router.patch('/deals/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
+    if (!await ownedCrmReferences(pool,auth.userId,req.body)) return res.status(403).json({ error: 'Related records must belong to your account' });
+    if (!await ownedCrmReferences(pool,auth.userId,req.body)) return res.status(403).json({ error: 'Related records must belong to your account' });
     const fields = ['title','value','currency','stage_id','contact_id','company_id','close_date','priority','status','probability','description','position','custom_data','close_reason'];
     const sets: string[] = []; const params: unknown[] = [req.params.id, auth.userId];
     for (const f of fields) {
@@ -257,7 +265,27 @@ export function registerCRMDealsRoutes({ requireAuth, pool }: Deps): Router {
       `UPDATE crm_deals SET ${sets.join(',')} WHERE id=$1 AND user_id=$2 RETURNING *`, params
     );
     if (!rows.length) return void res.status(404).json({ error: 'Not found' });
-    res.json(rows[0]);
+    const updatedDeal = rows[0];
+
+    if (req.body.stage_id !== undefined || req.body.status !== undefined) {
+      await dispatchOutboundWebhooks(pool, auth.userId, 'deal.stage_changed', {
+        deal_id: updatedDeal.id,
+        title: updatedDeal.title,
+        stage_id: updatedDeal.stage_id,
+        status: updatedDeal.status,
+        value: updatedDeal.value,
+        contact_id: updatedDeal.contact_id,
+      }).catch(() => undefined);
+
+      if (fireAutomationTrigger && updatedDeal.contact_id) {
+        await fireAutomationTrigger(auth.userId, 'deal_stage_changed', { id: updatedDeal.contact_id }).catch(() => undefined);
+        if (String(updatedDeal.status || '').toLowerCase() === 'won') {
+          await fireAutomationTrigger(auth.userId, 'deal_won', { id: updatedDeal.contact_id }).catch(() => undefined);
+        }
+      }
+    }
+
+    res.json(updatedDeal);
   });
 
   router.delete('/deals/:id', async (req: Request, res: Response) => {

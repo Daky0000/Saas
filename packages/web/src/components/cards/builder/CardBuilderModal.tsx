@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
-import { fabric } from 'fabric';
+import * as fabric from 'fabric';
 import {
   X, Save, Undo2, Redo2, Download, ChevronDown, Loader2,
   ZoomIn, ZoomOut, Maximize2, Grid3X3,
@@ -74,7 +74,7 @@ export default function CardBuilderModal({
   const [canRedo, setCanRedo] = useState(false);
 
   // ── Selection ───────────────────────────────────────────────────────────────
-  const [selectedObjects, setSelectedObjects] = useState<fabric.Object[]>([]);
+  const [selectedObjects, setSelectedObjects] = useState<fabric.FabricObject[]>([]);
 
   // ── UI state ─────────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -91,7 +91,7 @@ export default function CardBuilderModal({
     if (skipSnapshotRef.current) return;
     const c = fabricRef.current;
     if (!c) return;
-    const json = JSON.stringify(c.toJSON(['data']));
+    const json = JSON.stringify(c.toObject(['data']));
     if (undoStack.current[undoStack.current.length - 1] === json) return;
     undoStack.current.push(json);
     if (undoStack.current.length > MAX_HISTORY) undoStack.current.shift();
@@ -107,7 +107,7 @@ export default function CardBuilderModal({
     redoStack.current.push(current);
     const prev = undoStack.current[undoStack.current.length - 1];
     skipSnapshotRef.current = true;
-    c.loadFromJSON(JSON.parse(prev), () => {
+    c.loadFromJSON(JSON.parse(prev)).then(() => {
       skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
@@ -122,7 +122,7 @@ export default function CardBuilderModal({
     const next = redoStack.current.pop()!;
     undoStack.current.push(next);
     skipSnapshotRef.current = true;
-    c.loadFromJSON(JSON.parse(next), () => {
+    c.loadFromJSON(JSON.parse(next)).then(() => {
       skipSnapshotRef.current = false;
       c.requestRenderAll();
       setCanUndo(undoStack.current.length > 1);
@@ -143,8 +143,8 @@ export default function CardBuilderModal({
     const scale = Math.min(availW / preset.w, availH / preset.h, 1);
 
     c.setZoom(scale);
-    c.setWidth(preset.w * scale);
-    c.setHeight(preset.h * scale);
+    c.setDimensions({ width: preset.w * scale });
+    c.setDimensions({ height: preset.h * scale });
     setCanvasScale(scale);
     setZoomLevel(scale);
     c.requestRenderAll();
@@ -185,10 +185,10 @@ export default function CardBuilderModal({
 
     if (startJson) {
       skipSnapshotRef.current = true;
-      canvas.loadFromJSON(startJson, () => {
+      canvas.loadFromJSON(startJson).then(() => {
         skipSnapshotRef.current = false;
         canvas.requestRenderAll();
-        const json = JSON.stringify(canvas.toJSON(['data']));
+        const json = JSON.stringify(canvas.toObject(['data']));
         undoStack.current = [json];
         redoStack.current = [];
         setCanUndo(false);
@@ -197,7 +197,7 @@ export default function CardBuilderModal({
         if (typeof bg === 'string') setBgColor(bg);
       });
     } else {
-      const json = JSON.stringify(canvas.toJSON(['data']));
+      const json = JSON.stringify(canvas.toObject(['data']));
       undoStack.current = [json];
       redoStack.current = [];
     }
@@ -236,8 +236,8 @@ export default function CardBuilderModal({
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
       const newZ = Math.max(0.1, Math.min(4, c.getZoom() * delta));
       c.setZoom(newZ);
-      c.setWidth(preset.w * newZ);
-      c.setHeight(preset.h * newZ);
+      c.setDimensions({ width: preset.w * newZ });
+      c.setDimensions({ height: preset.h * newZ });
       setZoomLevel(newZ);
       setCanvasScale(newZ);
       c.requestRenderAll();
@@ -286,18 +286,18 @@ export default function CardBuilderModal({
   }, [undo, redo]);
 
   // ── Clipboard ───────────────────────────────────────────────────────────────
-  const clipboardRef = useRef<fabric.Object | null>(null);
+  const clipboardRef = useRef<fabric.FabricObject | null>(null);
   const copySelection = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
     const obj = c.getActiveObject();
     if (!obj) return;
-    obj.clone((cloned: fabric.Object) => { clipboardRef.current = cloned; });
+    obj.clone(['data']).then((cloned: fabric.FabricObject) => { clipboardRef.current = cloned; });
   }, []);
   const paste = useCallback(() => {
     const c = fabricRef.current;
     if (!c || !clipboardRef.current) return;
-    clipboardRef.current.clone((cloned: fabric.Object) => {
+    clipboardRef.current.clone(['data']).then((cloned: fabric.FabricObject) => {
       c.discardActiveObject();
       cloned.set({ left: (cloned.left ?? 0) + 20, top: (cloned.top ?? 0) + 20, evented: true });
       if (cloned instanceof fabric.ActiveSelection) {
@@ -384,13 +384,13 @@ export default function CardBuilderModal({
     (url: string) => {
       const c = fabricRef.current;
       if (!c) return;
-      fabric.Image.fromURL(url, (img) => {
+      fabric.FabricImage.fromURL(url,{ crossOrigin: 'anonymous' }).then((img) => {
         const maxW = Math.min(preset.w * canvasScale * 0.5, 400);
         if ((img.width ?? 1) > maxW) img.scale(maxW / (img.width ?? maxW));
         const pos = canvasCenter(img.getScaledWidth(), img.getScaledHeight());
         img.set(pos);
         c.add(img); c.setActiveObject(img); c.requestRenderAll();
-      }, { crossOrigin: 'anonymous' });
+      });
     },
     [canvasCenter, preset, canvasScale],
   );
@@ -401,17 +401,17 @@ export default function CardBuilderModal({
       if (!c) return;
       if (!url) {
         // Clear background image
-        c.setBackgroundImage('', c.requestRenderAll.bind(c));
+        (c.backgroundImage=undefined,(c.requestRenderAll.bind(c))());
         snapshot();
         return;
       }
-      fabric.Image.fromURL(url, (img) => {
-        c.setBackgroundImage(img, c.requestRenderAll.bind(c), {
+      fabric.FabricImage.fromURL(url,{ crossOrigin: 'anonymous' }).then((img) => {
+        (c.backgroundImage=img,img.set({
           scaleX: (c.width ?? preset.w) / (img.width ?? 1),
           scaleY: (c.height ?? preset.h) / (img.height ?? 1),
-        });
+        }),(c.requestRenderAll.bind(c))());
         snapshot();
-      }, { crossOrigin: 'anonymous' });
+      });
     },
     [preset, snapshot],
   );
@@ -420,7 +420,7 @@ export default function CardBuilderModal({
   const setBackground = useCallback((color: string) => {
     const c = fabricRef.current;
     if (!c) return;
-    c.setBackgroundColor(color, () => { c.requestRenderAll(); snapshot(); });
+    (c.backgroundColor=color,(() => { c.requestRenderAll(); snapshot(); })());
     setBgColor(color);
   }, [snapshot]);
 
@@ -456,7 +456,7 @@ export default function CardBuilderModal({
       ? { x1, y1, x2, y2 }
       : { r1: 0, r2: Math.sqrt(W * W + H * H) / 2, x1: W / 2, y1: H / 2, x2: W / 2, y2: H / 2 };
     const grad = new fabric.Gradient({ type, gradientUnits: 'pixels', coords, colorStops });
-    c.setBackgroundColor(grad as unknown as string, () => { c.requestRenderAll(); snapshot(); });
+    (c.backgroundColor=grad as unknown as string,(() => { c.requestRenderAll(); snapshot(); })());
   }, [snapshot]);
 
   // ── Zoom controls ───────────────────────────────────────────────────────────
@@ -464,8 +464,8 @@ export default function CardBuilderModal({
     const c = fabricRef.current;
     if (!c) return;
     c.setZoom(newZ);
-    c.setWidth(preset.w * newZ);
-    c.setHeight(preset.h * newZ);
+    c.setDimensions({ width: preset.w * newZ });
+    c.setDimensions({ height: preset.h * newZ });
     setZoomLevel(newZ);
     setCanvasScale(newZ);
     c.requestRenderAll();
@@ -490,7 +490,7 @@ export default function CardBuilderModal({
     if (!c) return;
     const obj = c.getActiveObject();
     if (!obj) return;
-    obj.clone((cloned: fabric.Object) => {
+    obj.clone(['data']).then((cloned: fabric.FabricObject) => {
       cloned.set({ left: (cloned.left ?? 0) + 20, top: (cloned.top ?? 0) + 20 });
       c.add(cloned); c.setActiveObject(cloned); c.requestRenderAll();
     });
@@ -500,27 +500,27 @@ export default function CardBuilderModal({
     const c = fabricRef.current;
     if (!c) return;
     const obj = c.getActiveObject();
-    if (obj) { c.bringForward(obj); c.requestRenderAll(); }
+    if (obj) { c.bringObjectForward(obj); c.requestRenderAll(); }
   }, []);
 
   const sendBackward = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
     const obj = c.getActiveObject();
-    if (obj) { c.sendBackwards(obj); c.requestRenderAll(); }
+    if (obj) { c.sendObjectBackwards(obj); c.requestRenderAll(); }
   }, []);
 
   const flipH = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
-    const obj = c.getActiveObject() as fabric.Image;
+    const obj = c.getActiveObject() as fabric.FabricImage;
     if (obj) { obj.set('flipX', !obj.flipX); c.requestRenderAll(); snapshot(); }
   }, [snapshot]);
 
   const flipV = useCallback(() => {
     const c = fabricRef.current;
     if (!c) return;
-    const obj = c.getActiveObject() as fabric.Image;
+    const obj = c.getActiveObject() as fabric.FabricImage;
     if (obj) { obj.set('flipY', !obj.flipY); c.requestRenderAll(); snapshot(); }
   }, [snapshot]);
 
@@ -553,7 +553,7 @@ export default function CardBuilderModal({
     if (!c || saving) return;
     setSaving(true);
     try {
-      const canvasData = c.toJSON(['data']);
+      const canvasData = c.toObject(['data']);
       const thumbnailUrl = c.toDataURL({ format: 'jpeg', quality: 0.5, multiplier: 0.3 });
       const payload = { name: designName, canvas_width: preset.w, canvas_height: preset.h, canvas_data: canvasData, thumbnail_url: thumbnailUrl };
       let saved: UserDesign;

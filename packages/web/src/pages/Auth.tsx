@@ -402,7 +402,7 @@ function Auth({ onLogin }: AuthProps) {
 
   // ── OAuth callback token ────────────────────────────────────────────────────
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(window.location.hash.startsWith('#auth_token=') ? window.location.hash.slice(1) : window.location.search);
     const token = params.get('auth_token');
     const authError = params.get('auth_error');
     if (token) {

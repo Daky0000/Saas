@@ -1,16 +1,18 @@
-﻿// Sentry first: its uncaught-exception / unhandled-rejection integrations
+import { processCampaignEmails } from './server/campaignEmailWorker.ts';
+import { processOutboundWebhookJobs } from './middleware/planQuotaMiddleware.ts';
+// Sentry first: its uncaught-exception / unhandled-rejection integrations
 // must register before anything else runs. No-op unless SENTRY_DSN is set.
 import { Sentry, sentryEnabled } from './instrument.ts';
 import { Resend } from 'resend';
-import Stripe from 'stripe';
 import express from 'express';
-import type { Request, Response, NextFunction } from 'express';
+import type { Response, NextFunction } from 'express';
+import type { Request } from './types/http.ts';
 import cors from 'cors';
 import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Queue, Worker } from 'bullmq';
-import IORedis from 'ioredis';
+import { Redis as IORedis } from 'ioredis';
 import { z } from 'zod';
 import {
   randomBytes,
@@ -68,7 +70,7 @@ import { registerMcpAdminRoutes, registerMcpMediaRoutes, seedDefaultMcpServers, 
 import { buildMailer } from './server/mailer.ts';
 import { buildContentPlanEngine, registerContentPlanRoutes } from './server/contentPlanRoutes.ts';
 import { registerHubtelRoutes } from './server/hubtelRoutes.ts';
-import { registerPaystackRoutes, buildPaystackPlanCheckout } from './server/paystackRoutes.ts';
+import { registerPaystackRoutes, getPaystackConfig } from './server/paystackRoutes.ts';
 import { registerAISkillsRoutes } from './server/aiSkillsRoutes.ts';
 import { registerUserDesignRoutes } from './server/userDesignRoutes.ts';
 import { registerDbAuditRoutes } from './server/dbAuditRoutes.ts';
@@ -81,7 +83,10 @@ import { logger } from './logger.ts';
 import { requestIdMiddleware } from './middleware/requestId.ts';
 import { errorHandler } from './middleware/errorHandler.ts';
 import { validateBody } from './middleware/validate.ts';
-import { authLimiter, passwordLimiter } from './middleware/rateLimiter.ts';
+import { authLimiter, passwordLimiter, idempotencyMiddleware } from './middleware/rateLimiter.ts';
+import { registerDakyworldOsRoutes } from './server/dakyworldOsRoutes.ts';
+import { registerSocialInboxRoutes } from './server/socialInboxRoutes.ts';
+import { registerClientApprovalAndWebhookRoutes, runDueAgentSchedules } from './server/clientApprovalRoutes.ts';
 import { buildWorkflowEngine } from './server/workflowRoutes.ts';
 import { registerAIChatRoutes } from './server/aiChatRoutes.ts';
 import { registerMagnificRoutes, getMagnificApiKey, getFreepikApiKey, magnificPost, pollMagnificTask, magnificGenerateImage, freepikGenerateImage, MAGNIFIC_BASE, FREEPIK_BASE, ASPECT_TO_WH, MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS, ASPECT_RATIO_MAP, FREEPIK_IMAGE_MODELS, proxyHeaders, sanitizeMagnificError } from './server/magnificRoutes.ts';
@@ -94,12 +99,13 @@ import { registerAIConfigRoutes } from './server/aiConfigRoutes.ts';
 import { registerPlatformConfigRoutes } from './server/platformConfigRoutes.ts';
 import { registerWebhookRoutes } from './server/webhookRoutes.ts';
 import { registerLinkedInRoutes } from './server/linkedinRoutes.ts';
-import { registerSocialConnectRoutes } from './server/socialConnectRoutes.ts';
+import { registerSocialConnectRoutes, type SocialConnectDeps } from './server/socialConnectRoutes.ts';
 import { registerSocialRoutes } from './server/socialRoutes.ts';
 import { buildMediaModule } from './server/mediaRoutes.ts';
 import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
 import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
+import { runPaymentMigrations } from './payment-migrations.ts';
 import { runDatabaseMigrations } from './db-migrations.ts';
 import { pool, dbReady, setDbReady, setDbInitError, dbInitError, hasDatabase, dbQuery, normalizeEmail, normalizeUsername } from './db.ts';
 import type {
@@ -155,33 +161,6 @@ const __dirname = dirname(__filename);
 
 
 
-// ── Stripe — initialized from DB platform_configs; env vars are fallback only ─
-let stripe: Stripe | null = process.env.STRIPE_SECRET_KEY
-  ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-05-28.basil' as any })
-  : null;
-let STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-
-async function refreshStripe(): Promise<void> {
-  try {
-    const r = await dbQuery<{ config: Record<string, string>; enabled: boolean }>(
-      `SELECT config, enabled FROM platform_configs WHERE platform = 'stripe' LIMIT 1`
-    );
-    const row = r.rows[0];
-    if (!row) return; // no admin config yet — keep env var fallback
-    const stripeCfg = decryptPlatformConfig(row.config);
-    if (row.enabled && stripeCfg?.secretKey) {
-      stripe = new Stripe(stripeCfg.secretKey, { apiVersion: '2025-05-28.basil' as any });
-      STRIPE_WEBHOOK_SECRET = stripeCfg.webhookSecret || '';
-    } else if (!row.enabled) {
-      stripe = null;
-      STRIPE_WEBHOOK_SECRET = '';
-    }
-  } catch (err) {
-    logger.error('Unhandled error:', err);
-    // DB not ready yet — ignore, keep current value
-  }
-}
-
 // Logged once at boot in production: flags configuration gaps that won't
 // break startup but will silently degrade a live deployment.
 async function runProductionReadinessChecks(): Promise<void> {
@@ -189,9 +168,7 @@ async function runProductionReadinessChecks(): Promise<void> {
   if (!sentryEnabled) {
     logger.warn({ check: 'sentry' }, 'launch_check: SENTRY_DSN is not set — production errors will only reach the logs');
   }
-  if (stripe && !STRIPE_WEBHOOK_SECRET) {
-    logger.warn({ check: 'stripe_webhook' }, 'launch_check: Stripe is configured without a webhook secret — subscription lifecycle events will be rejected');
-  }
+
   const resendCfg = await getResendConfig().catch(() => null);
   if (resendCfg?.apiKey && !(await getPlatformConfig('resend').catch(() => ({} as Record<string, string>))).webhookSecret && !process.env.RESEND_WEBHOOK_SECRET) {
     logger.warn({ check: 'resend_webhook' }, 'launch_check: Resend is configured without a webhook signing secret — engagement events (opens/clicks/bounces) will be discarded');
@@ -232,11 +209,17 @@ app.use(requestIdMiddleware);
 // Registered BEFORE all other middleware so nothing can intercept it
 app.get('/ping', (_req, res) => res.send('pong'));
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
-app.get('/api/health', (_req, res) => res.json({
-  status: 'ok',
-  timestamp: new Date().toISOString(),
-  db: { configured: Boolean(config.databaseUrl), ready: dbReady, error: dbInitError },
-}));
+app.get('/api/health', async (_req, res) => {
+  let ready = dbReady;
+  if (ready && config.databaseUrl) {
+    try { await pool.query('SELECT 1'); }
+    catch { ready = false; }
+  }
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'unavailable', timestamp: new Date().toISOString(),
+    db: { configured: Boolean(config.databaseUrl), ready },
+  });
+});
 
 // Public hosted lead-capture forms (/f/:id). Mounted BEFORE the CORS and
 // helmet middleware on purpose: the page must be embeddable in iframes on
@@ -291,10 +274,16 @@ app.use(
     },
   })
 );
-// Raw body capture for Stripe webhook signature verification
+// Raw body capture for payment and messaging webhook signature verification
 app.use(express.json({ limit: '20mb', verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use('/api', idempotencyMiddleware);
 
+
+app.use('/api', (_req, res, next) => {
+  if (config.databaseUrl && !dbReady) return res.status(503).json({ success: false, error: 'Database unavailable' });
+  next();
+});
 
 // ── Admin Overview: platform KPIs + launch-readiness checks ──────────────────
 // Powers the Admin → Overview tab. Every metric is queried defensively so a
@@ -332,8 +321,7 @@ app.get('/api/admin/overview', async (req: Request, res: Response) => {
   const checks = [
     { id: 'db', label: 'Database connected', ok: dbReady, detail: dbReady ? 'Postgres ready' : String(dbInitError || 'not ready') },
     { id: 'sentry', label: 'Error monitoring (Sentry)', ok: sentryEnabled, detail: sentryEnabled ? 'SENTRY_DSN configured' : 'SENTRY_DSN not set — errors only reach logs' },
-    { id: 'stripe', label: 'Stripe configured', ok: Boolean(stripe), detail: stripe ? 'API key present' : 'No Stripe key — checkout disabled' },
-    { id: 'stripe_webhook', label: 'Stripe webhook secret', ok: !stripe || Boolean(STRIPE_WEBHOOK_SECRET), detail: !stripe ? 'n/a until Stripe is configured' : STRIPE_WEBHOOK_SECRET ? 'Signature verification active' : 'Missing — subscription events will be rejected' },
+    { id: 'paystack', label: 'Paystack configured', ok: Boolean(await getPaystackConfig(getPlatformConfig).catch(() => null)), detail: 'Configure test and live credentials in Payments' },
     { id: 'resend', label: 'Email sending (Resend)', ok: resendConfigured, detail: resendConfigured ? 'API key present' : 'No Resend key — campaigns and password resets disabled' },
     { id: 'resend_webhook', label: 'Resend webhook secret', ok: !resendConfigured || resendWebhookSecret, detail: !resendConfigured ? 'n/a until Resend is configured' : resendWebhookSecret ? 'Signed engagement events' : 'Missing — opens/clicks/bounces discarded in production' },
     { id: 'test_credits', label: 'Test-credit grant disabled', ok: process.env.ENABLE_TEST_USER_CREDITS !== 'true', detail: process.env.ENABLE_TEST_USER_CREDITS === 'true' ? 'ENABLE_TEST_USER_CREDITS is ON — turn off in production' : 'Off (production-safe)' },
@@ -368,23 +356,17 @@ app.get('/api/debug/db', async (req: Request, res: Response) => {
 // This makes logout-all-devices actually revoke access on all subsequent requests.
 // Skips if no auth header (public routes) or if DB is unavailable (fail-open).
 app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
-  if (!req.headers.authorization) return next();
   const auth = getAuthUser(req);
-  if (!auth || auth.tokenVersion === null || !hasDatabase()) return next();
+  if (!auth) return next();
+  if (config.nodeEnv === 'test' && !config.databaseUrl) return next();
   try {
-    const { rows } = await dbQuery<{ token_version: number }>(
-      'SELECT token_version FROM users WHERE id = $1',
-      [auth.userId]
-    );
-    if (rows[0] && rows[0].token_version !== auth.tokenVersion) {
-      res.status(401).json({ success: false, error: 'Session has been revoked. Please log in again.' });
-      return;
+    const user = await getUserById(auth.userId);
+    if (!user || user.status !== 'active' || auth.tokenVersion === null || user.token_version !== auth.tokenVersion) {
+      return res.status(401).json({ success: false, error: 'Account disabled or session revoked. Please log in again.' });
     }
-  } catch (err) {
-    logger.error('Unhandled error:', err);
-    // DB error — fail open so a transient hiccup doesn't lock everyone out
-  }
-  next();
+    (req as Request & { authRole?: string }).authRole = user.role;
+    next();
+  } catch { res.status(503).json({ success: false,error: 'Authentication service unavailable' }); }
 });
 
 // Serve frontend static assets when built files are present (copied by Dockerfile)
@@ -393,10 +375,11 @@ const indexHtmlPath = path.join(publicDir, 'index.html');
 const hasStaticFiles = existsSync(indexHtmlPath);
 const indexHtmlContent = hasStaticFiles ? readFileSync(indexHtmlPath, 'utf-8') : null;
 logger.info({ publicDir, hasStaticFiles }, 'static_files_check');
+app.use('/assets', (req,res,next) => { if (req.path.endsWith('.map')) return res.status(404).end(); next(); });
 app.use(
   express.static(publicDir, {
     setHeaders(res) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Cache-Control', res.req.url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
     },
@@ -469,7 +452,7 @@ type DataDeletionRecord = {
 const inMemoryDataDeletionRequests = new Map<string, DataDeletionRecord>();
 
 async function ensureDatabase() {
-  if (!pool) {
+  if (!config.databaseUrl) {
     if (config.nodeEnv === 'production') {
       logger.fatal({ event: 'db_missing_in_production' }, 'DATABASE_URL is not configured. Refusing to start in production without a database.');
       process.exit(1);
@@ -481,15 +464,15 @@ async function ensureDatabase() {
   }
 
   await runDatabaseMigrations(pool);
+  await runPaymentMigrations(pool);
   setDbReady(true);
 
 }
 
-// ── Stripe + Resend Webhooks ──
+// ── Messaging Webhooks ──
 // markSocialAccountNeedsReapproval is const from distModule (defined later) — use wrapper so it's read at call time
 app.use(registerWebhookRoutes({
-  stripe, hasDatabase, dbQuery, pool, requireAuth,
-  getStripeWebhookSecret: () => STRIPE_WEBHOOK_SECRET,
+  hasDatabase, dbQuery, pool, requireAuth,
   markSocialAccountNeedsReapproval: (...args) => markSocialAccountNeedsReapproval(...args),
   logIntegrationEvent,
   decryptIntegrationSecret,
@@ -513,40 +496,22 @@ const syncProfileMediaFn = (user: any) => syncProfileMedia(user);
 const syncCardTemplateMediaFn = (adminId: string, template: any) => syncCardTemplateMedia(adminId, template);
 const syncUserDesignMediaFn = (userId: string, design: any) => syncUserDesignMedia(userId, design);
 
-ensureDatabase()
+const initialization = ensureDatabase()
   .then(() => ensureSeedUsers())
   .then(() => ensureSeedPricingPlans())
   .then(() => seedDefaultMcpServers(pool))
-  .then(() => refreshStripe())
   .then(() => runProductionReadinessChecks())
-  .then(() => startSocialAutomationProcessor())
-  .then(() => startTokenHealthMonitor())
+  .then(() => { if (config.nodeEnv !== 'test') startSocialAutomationProcessor(); })
+  .then(() => { if (config.nodeEnv !== 'test') startTokenHealthMonitor(); })
   .catch((err) => {
     setDbReady(false);
     setDbInitError(err);
-    seedInMemoryUsers();
-    logger.error('Database initialization failed:', err);
+    logger.error({ err }, 'Database initialization failed');
+    if (config.nodeEnv !== 'test') throw err;
   });
 
 
-// ── Stripe helpers ────────────────────────────────────────────────────────────
 
-async function getOrCreateStripeCustomer(userId: string, email: string, name: string | null): Promise<string> {
-  if (!stripe) throw new Error('Stripe not configured');
-  // Check DB first
-  const { rows } = await dbQuery(`SELECT stripe_customer_id FROM users WHERE id=$1`, [userId]);
-  if (rows[0]?.stripe_customer_id) return rows[0].stripe_customer_id as string;
-  // Create new customer
-  const customer = await stripe.customers.create({
-    email,
-    name: name || undefined,
-    metadata: { user_id: userId },
-  });
-  await dbQuery(`UPDATE users SET stripe_customer_id=$1 WHERE id=$2`, [customer.id, userId]);
-  return customer.id;
-}
-
-// ── End Stripe helpers ─────────────────────────────────────────────────────────
 
 
 // ─── Auth Routes ─────────────────────────────────────────────────────────────
@@ -568,7 +533,7 @@ app.use('/api', registerUserRoutes({
   inMemoryUsersById, inMemoryUserIdByEmail, inMemoryUserIdByUsername,
 }));
 
-app.use('/api', registerSocialConnectRoutes({
+const socialConnectDeps: SocialConnectDeps = {
   requireAuth, hasDatabase, pool, dbQuery,
   getPublishableSocialConnection: (...a) => getPublishableSocialConnection(...a),
   normalizePlatformId: (...a) => normalizePlatformId(...a),
@@ -586,7 +551,8 @@ app.use('/api', registerSocialConnectRoutes({
   checkTaskActions,
   getAIConfig, resolveActiveKey, GEMINI_MODELS, callAINonStreaming,
   publishToplatform: (...a) => publishToplatform(...a),
-}));
+};
+app.use('/api', registerSocialConnectRoutes(socialConnectDeps));
 
 
 // ─── WordPress Routes ────────────────────────────────────────────────────────
@@ -597,7 +563,7 @@ app.use('/api', registerWordPressRoutes({
 }));
 
 // ─── Pricing Routes ──────────────────────────────────────────────────────────
-app.use('/api', registerPricingRoutes({ requireAdmin, hasDatabase, dbQuery, stripe, inMemoryPricingPlansById }));
+app.use('/api', registerPricingRoutes({ requireAdmin, hasDatabase, dbQuery, inMemoryPricingPlansById }));
 
 // ─── Card Template Routes ────────────────────────────────────────────────────
 app.use('/api', registerCardTemplateRoutes({
@@ -606,14 +572,14 @@ app.use('/api', registerCardTemplateRoutes({
   syncCardTemplateMedia: syncCardTemplateMediaFn,
 }));
 
-app.use('/api', registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, pool: pool! }));
+app.use('/api', registerCreditsRoutes({ requireAuth, requireAdmin, hasDatabase, getPlatformConfig, pool: pool! }));
 // ─── User Designs Routes ──────────────────────────────────────────────────────
 app.use('/api', registerUserDesignRoutes({ requireAuth, hasDatabase, dbQuery, syncUserDesignMedia: syncUserDesignMediaFn, checkTaskActions }));
 
 // ─── Hubtel Payment Routes ─────────────────────────────────────────────────────
 app.use('/api', registerHubtelRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, getPlatformConfig }));
 // ─── Paystack Payment Routes ───────────────────────────────────────────────────
-app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, getPlatformConfig }));
+app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase, pool, getPlatformConfig }));
 // GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
   app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
   try {
@@ -694,7 +660,7 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
 app.use('/api', registerPlatformConfigRoutes({
   requireAuth, requireAdmin, hasDatabase, dbQuery, pool,
   inMemoryPlatformConfigs, getPlatformConfig, getIntegrationRowBySlug,
-  getResendConfig, refreshStripe,
+  getResendConfig,
   oauthAuthUrls: OAUTH_AUTH_URLS,
   resolveOAuthRedirectUri,
   isOAuthClientSecretRequired,
@@ -702,7 +668,7 @@ app.use('/api', registerPlatformConfigRoutes({
 
 
 // ─── Social Auth: OAuth login + auth provider management ────────────────────
-app.use(registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, jwtSecret: config.jwtSecret, jwtExpiresIn: JWT_EXPIRES_IN }));
+app.use(registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool, jwtSecret: config.jwtSecret, jwtExpiresIn: JWT_EXPIRES_IN }));
 
 
 
@@ -803,12 +769,14 @@ function slugify(text: string): string {
 
 // ── Distribution Module ─────────────────────────────────────────────────────
 const distModule = buildDistributionModule({
+  ensureMediaRecordForSource: mediaModule.ensureMediaRecordForSource,
   requireAuth, pool, dbQuery,
   decryptIntegrationSecret, getIntegrationRowBySlug, logIntegrationEvent,
   getPlatformConfig, getWordPressConnection, decryptWordPressPassword, wpRequest,
 });
 app.use('/api', distModule.router);
 const getPublishableSocialConnection = distModule.getPublishableSocialConnection;
+const publishToplatform = distModule.publishToplatform;
 const normalizePlatformId = distModule.normalizePlatformId;
 const markSocialAccountNeedsReapproval = distModule.markSocialAccountNeedsReapproval;
 const listLinkedInAdminOrganizations = distModule.listLinkedInAdminOrganizations;
@@ -844,6 +812,7 @@ app.use('/api/blog', deprecatedApiPath('/api/v1/blog'), blogRouter);
 
 // ── Social Routes (automation + templates) ──────────────────────────────────
 app.use('/api', registerSocialRoutes({
+  socialConnectDeps,
   requireAuth, requireAdmin, hasDatabase, pool, dbQuery,
   getPlatformConfig, getPublishableSocialConnection,
   normalizePlatformId: distModule.normalizePlatformId,
@@ -860,8 +829,12 @@ app.use('/api/mailing', registerMailingRoutes({ requireAuth, pool: pool!, getRes
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────
 app.use('/api/crm', registerCRMCompaniesRoutes({ requireAuth, pool: pool! }));
-app.use('/api/crm', registerCRMDealsRoutes({ requireAuth, pool: pool! }));
+app.use('/api/crm', registerCRMDealsRoutes({ requireAuth, pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
 app.use('/api/crm', registerCRMActivitiesRoutes({ requireAuth, pool: pool! }));
+
+// ─── Unified Social Inbox + Client Approvals + Outbound Webhooks + Agent Schedules ──
+app.use('/api', registerSocialInboxRoutes({ requireAuth, pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
+app.use('/api', registerClientApprovalAndWebhookRoutes({ requireAuth, getUserPlanName, pool: pool! }));
 
 // ─── AI Sales OS ──────────────────────────────────────────────────────────────
 // Built on the CRM contact rather than beside it: sales_lead_profiles hangs off
@@ -913,12 +886,11 @@ app.use('/api', registerAIChatRoutes({ requireAuth, getAIConfig, resolveActiveKe
 // ─── Billing Routes ────────────────────────────────────────────────────────────
 
 const billingRouter = registerBillingRoutes({
-  requireAuth, hasDatabase, dbQuery, stripe, getOrCreateStripeCustomer,
-  paystackPlanCheckout: buildPaystackPlanCheckout({ dbQuery, getPlatformConfig }),
+  requireAuth, hasDatabase, dbQuery, pool, getPlatformConfig,
 });
 app.use('/api/v1/billing', billingRouter);
 app.use('/api/billing', deprecatedApiPath('/api/v1/billing'), billingRouter);
-app.use('/api', registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery, stripe }));
+app.use('/api', registerAdminBillingRoutes({ requireAdmin, hasDatabase, dbQuery }));
 
 // ── Memory + Agent Routes ───────────────────────────────────────────────────
 app.use('/api', registerMemoryAgentRoutes({ requireAuth, requireAdmin, dbQuery, hasDatabase, triggerAgentCompilation, createNotification, checkTaskActions, provisionUserAgents, AGENT_DEFS, getAIConfig, decryptAIKey }));
@@ -987,6 +959,7 @@ app.use('/api', registerAutomationRoutes({ requireAuth, pool: pool!, runAutomati
 // ── Public API: key management (authenticated) + inbound trigger (API-key auth) ──
 app.use('/api', registerApiKeyRoutes({ requireAuth, pool: pool! }));
 app.use('/api/v1', registerPublicTriggerRoutes({ pool, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
+app.use('/api/v1/os', registerDakyworldOsRoutes({ requireAuth, pool: pool!, dbQuery }));
 
 // ── Lead-capture forms (authenticated CRUD; public form served at /f/:id) ──
 app.use('/api', registerFormsRoutes({ requireAuth, pool: pool! }));
@@ -1025,14 +998,24 @@ app.use(errorHandler);
 
 // Start server
 if (config.nodeEnv !== 'test') {
-  app.listen(PORT, () => {
+  await initialization;
+  const httpServer = app.listen(PORT, () => {
     logger.info({ port: PORT }, 'api_listening');
+    const deliverHooks=() => processOutboundWebhookJobs(pool).catch(err=>logger.error({ err },'webhook_worker_failed'));
+    const deliverEmails=()=>processCampaignEmails(pool,getResendConfig).catch(err=>logger.error({ err },'campaign_email_worker_failed'));
+    void deliverEmails();
+    setInterval(()=>void deliverEmails(),60_000);
+    void deliverHooks();
+    setInterval(() => void deliverHooks(),60_000);
     // Run due-date alerts immediately, then every hour
     void runDueDateAlerts();
     setInterval(() => void runDueDateAlerts(), 60 * 60 * 1000);
     // Run scheduled agent auto-runs every hour
     void runScheduledAgents();
     setInterval(() => void runScheduledAgents(), 60 * 60 * 1000);
+    // Run autonomous multi-agent schedules & handoffs every 10 minutes
+    void runDueAgentSchedules(pool);
+    setInterval(() => void runDueAgentSchedules(pool), 10 * 60 * 1000);
     // Publish due scheduled posts every 2 minutes
     const schedulerDeps = { queueSocialAutomationForPublishedPost: distModule.queueSocialAutomationForPublishedPost, fireWorkflowTriggers };
     void publishDuePosts(schedulerDeps);
@@ -1091,6 +1074,10 @@ if (config.nodeEnv !== 'test') {
     // Weekly pattern mining. Proposals only — nothing is applied without a human.
     setTimeout(() => void salesEngine.runWeeklyInsights(), 45 * 60 * 1000);
     setInterval(() => void salesEngine.runWeeklyInsights(), 7 * 24 * 60 * 60 * 1000);
+  });
+  process.once('SIGTERM', () => {
+    httpServer.close(() => { void pool.end().finally(() => process.exit(0)); });
+    setTimeout(() => process.exit(1), 10_000).unref();
   });
 }
 

@@ -1,5 +1,6 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { randomBytes } from 'crypto';
 import { logger } from '../logger.ts';
@@ -44,14 +45,15 @@ export function registerLeadsRoutes({ requireAuth, pool, frontendUrl, gsClientId
       const auth = requireAuth(req, res); if (!auth) return;
       const buf = req.body as Buffer;
       if (!buf || !buf.length) return res.status(400).json({ success: false, error: 'No file data received' });
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(buf, { type: 'buffer' });
-      const sheets = wb.SheetNames.map((name: string) => {
-        const ws = wb.Sheets[name];
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, string>[];
-        const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
-        return { name, fields, leads: rows };
-      }).filter((s: { leads: unknown[] }) => s.leads.length > 0);
+      const { parseWorkbook }=await import('./leads/services/spreadsheet.ts');
+      const filename=String(req.headers['x-file-name'] || (buf[0]===80 && buf[1]===75 ? 'upload.xlsx' : 'upload.csv'));
+      const grids=await parseWorkbook(buf,filename);
+      const sheets=grids.map(grid => {
+        const fields=grid.rows[0] || [];
+        if (fields.some(field => ['__proto__','prototype','constructor'].includes(field))) throw new Error('Invalid column name');
+        const leads=grid.rows.slice(1).map(row => Object.fromEntries(fields.map((field,index) => [field,row[index] || ''])));
+        return { name: grid.name,fields,leads };
+      }).filter(sheet => sheet.leads.length);
       return res.json({ success: true, sheets });
     } catch (e) { return res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Parse failed' }); }
   });

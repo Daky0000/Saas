@@ -1,11 +1,11 @@
 # ── Stage 1: Build web frontend ───────────────────────────────────────────────
-FROM node:20-alpine AS web-builder
+FROM node:24-alpine AS web-builder
 WORKDIR /app
 
 COPY package*.json ./
 COPY packages/web/package*.json ./packages/web/
 
-RUN npm install --include=dev --no-audit --no-fund --workspace @contentflow/web
+RUN npm ci --include=dev --no-audit --no-fund --workspace @contentflow/web
 
 COPY packages/web ./packages/web
 
@@ -30,7 +30,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
 RUN npm run build --workspace @contentflow/web
 
 # ── Stage 2: Compile API TypeScript ───────────────────────────────────────────
-FROM node:20-alpine AS api-builder
+FROM node:24-alpine AS api-builder
 WORKDIR /app
 
 # Prisma's engine detection needs openssl on alpine. Generating inside this
@@ -44,7 +44,7 @@ COPY packages/api/package*.json ./packages/api/
 # Dependencies are installed before the source is copied, for layer caching, so
 # prisma/schema.prisma does not exist yet — the api package's postinstall skips
 # rather than failing. `npm run build` below runs `prisma generate` for real.
-RUN npm install --include=dev --no-audit --no-fund --workspace @contentflow/api
+RUN npm ci --include=dev --no-audit --no-fund --workspace @contentflow/api
 
 COPY packages/api ./packages/api
 COPY scripts ./scripts
@@ -52,7 +52,7 @@ COPY scripts ./scripts
 RUN npm --workspace @contentflow/api run build
 
 # ── Stage 3: Production image ─────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 
 RUN apk add --no-cache openssl
@@ -60,7 +60,7 @@ RUN apk add --no-cache openssl
 COPY package*.json ./
 COPY packages/api/package*.json ./packages/api/
 
-RUN npm install --omit=dev --no-audit --no-fund --workspace @contentflow/api
+RUN npm ci --omit=dev --no-audit --no-fund --workspace @contentflow/api
 
 # The server bundle is built with --packages=external, so @prisma/client is
 # resolved from node_modules at runtime — and a freshly installed one throws
@@ -73,6 +73,8 @@ COPY --from=api-builder /app/node_modules/.prisma ./node_modules/.prisma
 
 COPY --from=api-builder /app/packages/api/.railway-build ./packages/api/.railway-build
 COPY --from=web-builder /app/packages/web/dist ./packages/api/.railway-build/public
+
+USER node
 
 EXPOSE 5000
 

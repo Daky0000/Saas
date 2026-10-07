@@ -1,7 +1,7 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import type Stripe from 'stripe';
 import { logger } from '../logger.ts';
 import { recordAuditLog } from '../link-metadata.ts';
 
@@ -23,12 +23,11 @@ export interface PricingDeps {
   requireAdmin: (req: Request, res: Response) => Promise<{ userId: string } | null>;
   hasDatabase: () => boolean;
   dbQuery: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[]; rowCount?: number | null }>;
-  stripe: Stripe | null;
   inMemoryPricingPlansById: Map<string, DbPricingPlan>;
 }
 
 export function registerPricingRoutes(deps: PricingDeps): Router {
-  const { requireAdmin, hasDatabase, dbQuery, stripe, inMemoryPricingPlansById } = deps;
+  const { requireAdmin, hasDatabase, dbQuery, inMemoryPricingPlansById } = deps;
   const router = Router();
 
 router.get('/pricing/plans', async (req: Request, res: Response) => {

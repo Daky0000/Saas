@@ -1,3 +1,4 @@
+import { redactSensitive } from './redact.ts';
 import pino from 'pino';
 import * as Sentry from '@sentry/node';
 
@@ -26,12 +27,13 @@ function forwardToSentry(args: unknown[]) {
   }
 }
 
-export const logger = pino({
+const baseLogger = pino({
   level: process.env.LOG_LEVEL || 'info',
   hooks: {
     logMethod(inputArgs, method, level) {
-      if (level >= 50) forwardToSentry(inputArgs as unknown[]);
-      return method.apply(this, inputArgs as Parameters<typeof method>);
+      const safeArgs=inputArgs.map(value=>redactSensitive(value));
+      if (level >= 50) forwardToSentry(safeArgs);
+      return method.apply(this, safeArgs as Parameters<typeof method>);
     },
   },
   redact: {
@@ -46,3 +48,21 @@ export const logger = pino({
     remove: true,
   },
 });
+
+// Normalize legacy message-first calls so errors remain structured and visible.
+function log(level: 'debug' | 'info' | 'warn' | 'error' | 'fatal', args: unknown[]) {
+  const [first, ...rest] = args;
+  if (typeof first === 'string') {
+    const error = rest.find(value => value instanceof Error);
+    baseLogger[level]({ ...(error ? { err: error } : {}), ...(rest.length && !error ? { details: rest } : {}) }, first);
+  } else {
+    baseLogger[level](first && typeof first === 'object' ? first : { value: first }, typeof rest[0] === 'string' ? rest[0] : undefined);
+  }
+}
+export const logger = {
+  debug: (...args: unknown[]) => log('debug', args),
+  info: (...args: unknown[]) => log('info', args),
+  warn: (...args: unknown[]) => log('warn', args),
+  error: (...args: unknown[]) => log('error', args),
+  fatal: (...args: unknown[]) => log('fatal', args),
+};

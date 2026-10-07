@@ -1,6 +1,5 @@
 import { API_BASE_URL } from './apiBase';
 
-const DEFAULT_FALLBACK_API_BASE_URL = 'https://marketing.dakyworld.com';
 
 export const safeJsonParse = <T = any>(text: string): T | null => {
   try {
@@ -34,12 +33,9 @@ export async function fetchApiJson<T = any>(
   fallbackMessage = 'The API is unreachable right now.'
 ) {
   const candidates = [API_BASE_URL];
-  if (typeof window !== 'undefined') {
-    candidates.push(window.location.origin.replace(/\/$/, ''));
-  }
-  candidates.push(DEFAULT_FALLBACK_API_BASE_URL);
 
-  const bases = Array.from(new Set(candidates.filter(Boolean)));
+
+  const bases = Array.from(new Set(candidates));
   let lastNetworkError: Error | null = null;
 
   for (const [index, base] of bases.entries()) {

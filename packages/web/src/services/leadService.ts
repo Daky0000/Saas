@@ -87,7 +87,7 @@ export const leadService = {
     const buf = await file.arrayBuffer();
     const res = await fetch(`${API_BASE_URL}/api/leads/parse-excel`, {
       method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream' },
+      headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream', 'X-File-Name': file.name },
       body: buf,
     });
     const data = await parseJson<{ success: boolean; sheets: { name: string; fields: string[]; leads: Record<string, string>[] }[]; error?: string }>(res);

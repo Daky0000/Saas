@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { FAST_MODEL } from '../ai-helpers.ts';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
@@ -75,7 +76,7 @@ export interface SocialConnectDeps {
   getAIConfig: () => Promise<any>;
   resolveActiveKey: (cfg: any) => string | null;
   GEMINI_MODELS: string[];
-  callAINonStreaming: (provider: string, apiKey: string, model: string, system: string, user: string, maxTokens?: number) => Promise<string>;
+  callAINonStreaming: typeof import('../ai-helpers.ts').callAINonStreaming;
   publishToplatform: (userId: string, post: any, platformId: string) => Promise<any>;
 }
 
@@ -228,7 +229,7 @@ async function listInstagramPageTargets(userAccessToken: string): Promise<{
 
 // ── OAuth helper functions ─────────────────────────────────────────────────────
 
-function platformDisplayName(platformId: string) {
+export function platformDisplayName(platformId: string) {
   switch ((platformId || '').trim().toLowerCase()) {
     case 'instagram': return 'Instagram';
     case 'facebook': return 'Facebook';
@@ -241,7 +242,7 @@ function platformDisplayName(platformId: string) {
   }
 }
 
-async function getOAuthStateRow(
+export async function getOAuthStateRow(
   dbQuery: SocialConnectDeps['dbQuery'],
   state: string,
 ): Promise<{ user_id: string; platform: string; return_to?: string | null; code_verifier?: string | null } | null> {
@@ -293,7 +294,7 @@ function resolveBackendRedirectUri(uri: string | undefined, req?: Request): stri
 
 // ── LinkedIn OAuth helpers ─────────────────────────────────────────────────────
 
-async function getLinkedInOAuthCredentials(
+export async function getLinkedInOAuthCredentials(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   req?: Request,
@@ -326,7 +327,7 @@ function shouldRetryLinkedInSecret(status: number, payload: any): boolean {
   return status === 401 || errorCode === 'invalid_client' || errorCode === 'unauthorized_client';
 }
 
-async function postLinkedInOAuthForm(
+export async function postLinkedInOAuthForm(
   baseParams: Record<string, string>,
   credentials: { clientId: string; redirectUri: string; clientSecrets: string[] },
 ): Promise<any> {
@@ -426,7 +427,7 @@ function mergeLinkedInTokenMetadata(
   return next;
 }
 
-async function enrichLinkedInTokenData(
+export async function enrichLinkedInTokenData(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   parseLinkedInScopeList: SocialConnectDeps['parseLinkedInScopeList'],
@@ -645,7 +646,7 @@ async function exchangeLinkedInCode(
   return enrichLinkedInTokenData(getPlatformConfig, resolveOAuthRedirectUri, parseLinkedInScopeList, computeIsoFromTtlSeconds, response.data || {}, req);
 }
 
-async function exchangeFacebookCode(
+export async function exchangeFacebookCode(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   code: string,
@@ -945,7 +946,7 @@ async function exchangeZoomCode(
   return tokenData;
 }
 
-async function exchangeOAuthCode(
+export async function exchangeOAuthCode(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   parseLinkedInScopeList: SocialConnectDeps['parseLinkedInScopeList'],
@@ -1037,7 +1038,7 @@ async function seedSocialMemory(
   }
 }
 
-async function storeUserConnection(deps: SocialConnectDeps, userId: string, platform: string, tokenData: any): Promise<void> {
+export async function storeUserConnection(deps: SocialConnectDeps, userId: string, platform: string, tokenData: any): Promise<void> {
   const { pool, dbQuery, normalizePlatformId, encryptIntegrationSecret, upsertUserIntegration, logIntegrationEvent, createNotification, checkTaskActions, getAIConfig, resolveActiveKey, GEMINI_MODELS, callAINonStreaming } = deps;
   if (!pool) {
     logger.warn('DATABASE_URL not set; cannot persist social connection');

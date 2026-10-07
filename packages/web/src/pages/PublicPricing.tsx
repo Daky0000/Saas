@@ -521,7 +521,7 @@ export default function PublicPricing({ onLoginClick }: Props) {
           </div>
         )}
         <p className="text-center text-[12px] text-gray-400 mt-5">
-          Prices in USD. Billed securely via Stripe. Taxes may apply.
+          Prices in USD. Billed securely via Paystack. Taxes may apply.
         </p>
       </div>
 

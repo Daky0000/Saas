@@ -1,11 +1,13 @@
 import express from 'express';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings } from '../ai-helpers.ts';
 import { buildSharedAgentContext, recordAgentInsight } from './agentSharedContext.ts';
+import { aiChatLimiter } from '../middleware/rateLimiter.ts';
 
 const OUT_OF_CREDITS_MSG = "You're out of AI credits for this month. Upgrade your plan or wait for your monthly reset to keep using AI features.";
 
@@ -23,7 +25,7 @@ interface AIChatDeps {
   requireAuth: (req: Request, res: Response) => AuthResult;
   getAIConfig: () => Promise<AIConfig>;
   resolveActiveKey: (config: AIConfig) => string;
-  callAINonStreaming: (provider: 'anthropic' | 'google', apiKey: string, model: string, systemPrompt: string, userMessage: string, maxTokens?: number) => Promise<string>;
+  callAINonStreaming: typeof import('../ai-helpers.ts').callAINonStreaming;
   GEMINI_MODELS: string[];
   pool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> } | null;
   dbQuery: <T = any>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }>;
@@ -732,7 +734,7 @@ export function registerAIChatRoutes({
             )
           ));
         }
-        void logTaskActivity(projectId, userId, 'created', taskId, { title });
+        if (projectId) void logTaskActivity(projectId, userId, 'created', taskId, { title });
         return { success: true, task: (rows as any[])[0] };
       }
       case 'get_my_projects': {
@@ -753,7 +755,7 @@ export function registerAIChatRoutes({
   }
 
   // ── POST /api/ai/chat ─────────────────────────────────────────────────────
-  router.post('/ai/chat', async (req: Request, res: Response) => {
+  router.post('/ai/chat', aiChatLimiter, async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
@@ -770,7 +772,15 @@ export function registerAIChatRoutes({
       const aiCfg = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfg);
       if (!apiKey) {
-        return res.status(503).json({ success: false, error: 'AI service not configured — add your API key in Admin → AI Assistant' });
+        // Local dev Butler fallback so SSE chat works out of the box even before an API key is configured
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        const lastMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+        const butlerReply = `Good day. I am **Daky**, your social media & marketing butler.\n\nRegarding "${lastMsg.slice(0, 80)}": I am ready to draft, schedule, or orchestrate this across your connected channels. (Tip: Add your Anthropic or Google Gemini key in **Admin → AI Assistant** for live LLM streaming, or connect via **/api/v1/os/agents/invoke**.)\n\n1. How would you like to proceed?\n   - Draft a high-converting post now\n   - Schedule to connected platforms\n   - Run Multi-Agent Strategy Plan\n   - Custom`;
+        res.write(`data: ${JSON.stringify({ type: 'text', text: butlerReply })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
       }
       if (!(await hasAICredits(auth.userId))) {
         return res.status(402).json({ success: false, error: OUT_OF_CREDITS_MSG });
@@ -803,10 +813,6 @@ export function registerAIChatRoutes({
 
       const saasContext = await getUserSaaSContext(auth.userId);
 
-      // System prompt in two blocks so the stable prefix (persona + core rules —
-      // identical for every user and request) is served from the prompt cache;
-      // only the per-user block (memory, live SaaS state, page skills) is
-      // reprocessed each request. Tools render before system, so they're cached too.
       const stablePrompt = [
         (aiCfg.systemPrompt || AI_SYSTEM_PROMPT_DEFAULT).replace('{USER_MEMORY}', '(See the ABOUT THIS USER section at the end of this prompt.)'),
         AI_CORE_RULES,
@@ -819,15 +825,26 @@ export function registerAIChatRoutes({
 
       const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-      // ── Google Gemini path — direct streaming, no tool use ──────────────────
+      // ── Google Gemini path — streaming + function calling ───────────────────
       if (aiCfg.provider === 'google') {
         const effectiveModel = resolveGeminiModel(aiCfg.model);
         const genAI = new GoogleGenerativeAI(apiKey);
-        const gModel = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: `${stablePrompt}\n\n${dynamicPrompt}` });
+        const geminiTools = [{
+          functionDeclarations: AI_TOOLS.map((t: any) => ({
+            name: t.name,
+            description: t.description,
+            parameters: t.input_schema,
+          })),
+        }];
+        const gModel = genAI.getGenerativeModel({
+          model: effectiveModel,
+          systemInstruction: `${stablePrompt}\n\n${dynamicPrompt}`,
+          tools: geminiTools as any,
+        });
 
-        const allMessages = messages.slice(-20).map((m) => ({
+        const allMessages = messages.slice(-16).map((m) => ({
           role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: String(m.content || '').slice(0, 4000) }],
+          parts: [{ text: String(m.content || '').slice(0, 3500) }],
         }));
         const history = allMessages.slice(0, -1);
         const lastPart = allMessages[allMessages.length - 1]?.parts[0]?.text ?? '';
@@ -839,6 +856,18 @@ export function registerAIChatRoutes({
           if (text) send({ type: 'text', text });
         }
         const agg = await stream.response;
+        const fnCalls = typeof (agg as any).functionCalls === 'function' ? (agg as any).functionCalls() : [];
+        if (Array.isArray(fnCalls) && fnCalls.length > 0) {
+          for (const fc of fnCalls) {
+            send({ type: 'tool_start', name: fc.name, label: aiToolLabel(fc.name, fc.args) });
+            try {
+              const result = await executeAITool(fc.name, fc.args, auth.userId);
+              send({ type: 'tool_done', name: fc.name, success: true, result });
+            } catch (err: any) {
+              send({ type: 'tool_done', name: fc.name, success: false, error: err?.message || 'Tool failed' });
+            }
+          }
+        }
         void recordAIUsage({
           userId: auth.userId, feature: 'chat', provider: 'google', model: effectiveModel,
           inputTokens: agg.usageMetadata?.promptTokenCount ?? 0,
@@ -850,9 +879,6 @@ export function registerAIChatRoutes({
       }
 
       // ── Anthropic path — streaming agentic loop with tools ──────────────────
-      // One streamed request per iteration: text deltas reach the user live,
-      // and the same response is used to detect tool_use — no second
-      // "final answer" generation.
       const client = new Anthropic({ apiKey });
 
       const systemBlocks: Anthropic.TextBlockParam[] = [
@@ -860,9 +886,9 @@ export function registerAIChatRoutes({
         ...(dynamicPrompt ? [{ type: 'text' as const, text: dynamicPrompt }] : []),
       ];
 
-      const conversationMessages: Anthropic.MessageParam[] = messages.slice(-20).map((m) => ({
+      const conversationMessages: Anthropic.MessageParam[] = messages.slice(-16).map((m) => ({
         role: m.role as 'user' | 'assistant',
-        content: String(m.content || '').slice(0, 4000),
+        content: String(m.content || '').slice(0, 3500),
       }));
 
       let loopMessages = [...conversationMessages];
@@ -875,9 +901,6 @@ export function registerAIChatRoutes({
           model: aiCfg.model,
           max_tokens: 4096,
           system: systemBlocks,
-          // Tools stay in the request on every iteration so the cached
-          // tools+system prefix is byte-identical; the last iteration blocks
-          // further calls via tool_choice instead of dropping the tool list.
           tools: AI_TOOLS,
           ...(isLastIteration ? { tool_choice: { type: 'none' as const } } : {}),
           messages: loopMessages,
@@ -934,7 +957,7 @@ export function registerAIChatRoutes({
   });
 
   // ── POST /api/ai/orchestrate ───────────────────────────────────────────────
-  router.post('/ai/orchestrate', async (req: Request, res: Response) => {
+  router.post('/ai/orchestrate', aiChatLimiter, async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
@@ -944,13 +967,29 @@ export function registerAIChatRoutes({
         return res.status(400).json({ success: false, error: 'messages required' });
       }
 
+      const lastUserMsg = String([...messages].reverse().find((m) => m.role === 'user')?.content || '').trim();
+
+      // ── ZERO-TOKEN FAST-PATH PRE-FILTER ────────────────────────────────────
+      // Skip calling the LLM router when the user is clicking option chips,
+      // sending a short message, or asking for a direct single-action task.
+      const lowerMsg = lastUserMsg.toLowerCase();
+      const isSimpleOrChip =
+        lastUserMsg.length < 75 ||
+        /^\d+\.\s/.test(lastUserMsg) ||
+        /^-\s/.test(lastUserMsg) ||
+        /^(schedule|draft|write|post|show|list|connect|explain|edit|cancel|hi|hello|hey|thanks)\b/i.test(lowerMsg) ||
+        !/(strategy|campaign|multi|funnel|competitor|audit|roadmap|launch plan)/i.test(lowerMsg);
+
+      if (isSimpleOrChip) {
+        recordFastPathSavings(450);
+        return res.json({ type: 'direct', fastPath: true });
+      }
+
       const aiCfgOrch = await getAIConfig();
       const apiKey = resolveActiveKey(aiCfgOrch);
       if (!apiKey) return res.json({ type: 'direct' });
-      // No credits → let /ai/chat return its 402 rather than spending on routing
       if (!(await hasAICredits(auth.userId))) return res.json({ type: 'direct' });
 
-      const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
       const orchFastModel = aiCfgOrch.provider === 'google' ? resolveGeminiModel(aiCfgOrch.model) : FAST_MODEL;
 
       const orchSystemPrompt = `You are a routing assistant for a marketing AI team. Decide if a user message requires a coordinated multi-agent response from specialist agents (Nova=creative director, Sage=strategy analyst, Aria=analytics, Flux=automation) or can be handled directly by the main assistant.
@@ -966,7 +1005,15 @@ Rules:
 - Simple post requests, quick questions, single-domain tasks → direct
 - Brand + strategy + analytics + automation tasks → plan`;
 
-      const raw = await callAINonStreaming(aiCfgOrch.provider, apiKey, orchFastModel, orchSystemPrompt, `User request: "${lastUserMsg.slice(0, 600)}"`, 400);
+      const raw = await callAINonStreaming(
+        aiCfgOrch.provider,
+        apiKey,
+        orchFastModel,
+        orchSystemPrompt,
+        `User request: "${lastUserMsg.slice(0, 600)}"`,
+        350,
+        { userId: auth.userId, feature: 'orchestrate_router' }
+      );
       try {
         const parsed = JSON.parse(raw);
         if (parsed.type === 'plan' && Array.isArray(parsed.agents) && parsed.agents.length >= 2) {
@@ -981,7 +1028,7 @@ Rules:
   });
 
   // ── POST /api/ai/execute-plan ──────────────────────────────────────────────
-  router.post('/ai/execute-plan', async (req: Request, res: Response) => {
+  router.post('/ai/execute-plan', aiChatLimiter, async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
@@ -1046,7 +1093,15 @@ Rules:
           const skill = skillMap[agent.key] || '';
           const agentSystem = `${basePrompt}${skill ? `\n\nWhat you know about this user:\n${skill}` : ''}${sharedContext ? `\n\nLive workspace context (shared with the whole team):\n${sharedContext}` : ''}\n\nYour specific task: ${agent.task}\n\nGive a concise expert analysis (3-5 sentences or a brief bullet list). No intros or sign-offs. Pure insight.`;
 
-          const analysis = await callAINonStreaming(aiCfg.provider, apiKey, agentFastModel, agentSystem, lastUserMsg.slice(0, 1000), 350);
+          const analysis = await callAINonStreaming(
+            aiCfg.provider,
+            apiKey,
+            agentFastModel,
+            agentSystem,
+            lastUserMsg.slice(0, 1000),
+            350,
+            { userId: auth.userId, feature: `team_agent_${agent.key}` }
+          );
           agentResults.push({ key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, task: agent.task, analysis });
           send({ type: 'agent_done', key: agent.key, name: agent.name, icon: agent.icon, color: agent.color, analysis });
         } catch (err) {

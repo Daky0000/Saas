@@ -1,4 +1,5 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import { logger } from '../logger.ts';
 import { recordAuditLog } from '../link-metadata.ts';
@@ -20,7 +21,7 @@ export interface AIConfigDeps {
   encryptIntegrationSecret: (plain: string) => string;
   decryptAIKey: (encryptedKey: string) => string;
   resolveActiveKey: (config: { provider: 'anthropic' | 'google'; encryptedKey: string | null; googleEncryptedKey: string | null }) => string;
-  callAINonStreaming: (provider: 'anthropic' | 'google', apiKey: string, model: string, system: string, user: string, maxTokens?: number) => Promise<string>;
+  callAINonStreaming: typeof import('../ai-helpers.ts').callAINonStreaming;
   inMemoryPlatformConfigs: Map<string, any>;
 }
 

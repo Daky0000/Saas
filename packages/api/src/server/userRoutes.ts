@@ -1,4 +1,5 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import { logger } from '../logger.ts';
 import { recordAuditLog } from '../link-metadata.ts';

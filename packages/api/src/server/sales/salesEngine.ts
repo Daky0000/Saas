@@ -255,7 +255,7 @@ export function buildSalesEngine({ pool, getPlatformConfig }: SalesEngineDeps) {
               WHERE id=$4`,
             [
               blocked ? 'blocked' : 'queued',
-              blocked ? `${ctx.decision.code}: ${ctx.decision.reason}` : ctx.decision.reason,
+              ctx.decision.action === 'stop' ? `${ctx.decision.code}: ${ctx.decision.reason}` : ctx.decision.reason,
               ctx.decision.action === 'reschedule' ? ctx.decision.runAt : new Date(),
               attempt.id,
             ],

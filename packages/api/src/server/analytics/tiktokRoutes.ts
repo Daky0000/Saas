@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { Router, Request, Response } from 'express';
+import type { Router, Response } from 'express';
+import type { Request } from '../../types/http.ts';
 import { logger } from '../../logger.ts';
 import type { AnalyticsDeps } from './helpers.ts';
 import { fetchTikTokUserProfile } from './helpers.ts';

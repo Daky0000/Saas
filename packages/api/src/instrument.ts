@@ -1,3 +1,4 @@
+import { redactSensitive } from './redact.ts';
 import * as Sentry from '@sentry/node';
 import { config } from './config.ts';
 
@@ -11,6 +12,7 @@ if (sentryEnabled) {
   Sentry.init({
     dsn: config.sentryDsn,
     environment: config.nodeEnv,
+    beforeSend: event => redactSensitive(event) as typeof event,
     // Errors only — tracing stays off so enabling monitoring never adds
     // per-request overhead or surprise event volume.
     tracesSampleRate: 0,

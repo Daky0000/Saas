@@ -27,7 +27,7 @@ import NotificationBell from './components/NotificationBell';
 import OnboardingWizard from './components/OnboardingWizard';
 import { onboardingService } from './services/onboardingService';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
-import AdvancedTemplateCardModal from './components/AdvancedTemplateCardModal';
+import AdvancedTemplateCardModal from './components/TemplateEditorHost';
 import HelpModal from './components/HelpModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import ChatWidget from './components/ChatWidget';
@@ -90,6 +90,9 @@ const Notifications = lazy(() => import('./pages/Notifications'));
 const TasksPage = lazy(() => import('./components/tasks/TasksPage'));
 const ProjectSettings = lazy(() => import('./pages/ProjectSettings'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
+const SocialInbox = lazy(() => import('./pages/SocialInbox'));
+const ClientReviewPortal = lazy(() => import('./pages/ClientReviewPortal'));
+import QuotaUpgradeModal, { QuotaExceededPayload } from './components/QuotaUpgradeModal';
 import { TemplateEditorProvider } from './hooks/useTemplateEditor';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
 import { API_BASE_URL } from './utils/apiBase';
@@ -149,7 +152,8 @@ export type PageType =
   | 'settings'
   | 'workflow'
   | 'discover'
-  | 'ai-team';
+  | 'ai-team'
+  | 'social-inbox';
 
 type AuthMeResponse = {
   success: boolean;
@@ -206,6 +210,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   workflow: '/posts/workflow',
   discover: '/discover',
   'ai-team': '/ai-team',
+  'social-inbox': '/social-inbox',
 };
 
 const PATH_TO_PAGE = new Map<string, PageType>(
@@ -477,6 +482,14 @@ function AppSidebar({
           </button>
         )}
 
+        {/* Unified Social Inbox & Approvals */}
+        {navOn('social-inbox') && (
+          <button type="button" onClick={() => go('social-inbox')} className={cls(currentPage === 'social-inbox')}>
+            <Megaphone size={15} className="shrink-0" />
+            <span className="flex-1 text-left">Social Inbox</span>
+          </button>
+        )}
+
         {/* ── Projects ── */}
         <div className="mt-1">
           <div className="flex items-center border-l-2 border-transparent pl-4 pr-2">
@@ -597,22 +610,18 @@ function AppSidebar({
           {/* CRM */}
           {navOn('crm') && (
             <>
-              <button
-                type="button"
-                onClick={() => { setCrmMenuOpen(true); go('crm-pipeline'); }}
-                className={cls(
+              <div className={cls(
                   currentPage === 'crm-companies' ||
                   currentPage === 'crm-pipeline' ||
                   currentPage === 'crm-scoring' ||
                   currentPage === 'gmail-agent'
-                )}
-              >
+                )}><button type="button" onClick={() => { setCrmMenuOpen(true); go('crm-pipeline'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                 <Building2 size={15} className="shrink-0" />
                 <span className="flex-1 text-left">CRM</span>
-                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setCrmMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                </button><button type="button" aria-label="Toggle Crm submenu" aria-expanded={crmMenuOpen} onClick={(e) => { e.stopPropagation(); setCrmMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
                   <ChevronDown size={12} className={`text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
-                </span>
-              </button>
+                </button>
+              </div>
               {crmMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
                   {([
@@ -633,17 +642,13 @@ function AppSidebar({
           {/* Sales — sits beside CRM because it extends the same contact record */}
           {navOn('sales') && (
             <>
-              <button
-                type="button"
-                onClick={() => { setSalesMenuOpen(true); go('sales-leads'); }}
-                className={cls(SALES_PAGES.includes(currentPage))}
-              >
+              <div className={cls(SALES_PAGES.includes(currentPage))}><button type="button" onClick={() => { setSalesMenuOpen(true); go('sales-leads'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                 <PhoneCall size={15} className="shrink-0" />
                 <span className="flex-1 text-left">Sales</span>
-                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setSalesMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                </button><button type="button" aria-label="Toggle Sales submenu" aria-expanded={salesMenuOpen} onClick={(e) => { e.stopPropagation(); setSalesMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
                   <ChevronDown size={12} className={`text-gray-400 transition-transform ${salesMenuOpen ? 'rotate-180' : ''}`} />
-                </span>
-              </button>
+                </button>
+              </div>
               {salesMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
                   {([
@@ -664,18 +669,13 @@ function AppSidebar({
 
           {navOn('marketing') && (
             <>
-              <button
-                type="button"
-                data-tour-id="nav-marketing"
-                onClick={() => { setMarketingMenuOpen(true); go('marketing'); }}
-                className={cls(MARKETING_PAGES.includes(currentPage))}
-              >
+              <div className={cls(MARKETING_PAGES.includes(currentPage))}><button type="button" onClick={() => { setMarketingMenuOpen(true); go('marketing'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                 <Megaphone size={15} className="shrink-0" />
                 <span className="flex-1 text-left">Marketing</span>
-                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setMarketingMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                </button><button type="button" aria-label="Toggle Marketing submenu" aria-expanded={marketingMenuOpen} onClick={(e) => { e.stopPropagation(); setMarketingMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
                   <ChevronDown size={12} className={`text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
-                </span>
-              </button>
+                </button>
+              </div>
               {marketingMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
                   {navOn('marketing-overview') && (
@@ -757,21 +757,17 @@ function AppSidebar({
           {/* Connectors */}
           {navOn('connectors') && (
             <>
-              <button
-                type="button"
-                onClick={() => { setConnectorMenuOpen(true); go('connector-hub'); }}
-                className={cls(
+              <div className={cls(
                   currentPage === 'connector-hub' ||
                   currentPage === 'connector-setup' ||
                   currentPage === 'connector-sync'
-                )}
-              >
+                )}><button type="button" onClick={() => { setConnectorMenuOpen(true); go('connector-hub'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                 <Layers size={15} className="shrink-0" />
                 <span className="flex-1 text-left">Connectors</span>
-                <span role="button" aria-label="Toggle submenu" onClick={(e) => { e.stopPropagation(); setConnectorMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
+                </button><button type="button" aria-label="Toggle Connector submenu" aria-expanded={connectorMenuOpen} onClick={(e) => { e.stopPropagation(); setConnectorMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
                   <ChevronDown size={12} className={`text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
-                </span>
-              </button>
+                </button>
+              </div>
               {connectorMenuOpen && (
                 <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
                   {([
@@ -909,7 +905,7 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AppUser | null>(() => getStoredUser());
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
   const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
@@ -921,6 +917,7 @@ function App() {
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [pendingTour, setPendingTour] = useState(false);
+  const [quotaModalPayload, setQuotaModalPayload] = useState<QuotaExceededPayload | null>(null);
 
   const goTasks = useCallback((filter = 'all') => {
     setCurrentTaskFilter(filter);
@@ -944,6 +941,8 @@ function App() {
 
     localStorage.removeItem('auth_session');
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('workspace_state');
+    localStorage.removeItem('dw_onboarded');
     clearStoredUser();
     localStorage.setItem(resetFlag, '1');
   }, []);
@@ -995,17 +994,27 @@ function App() {
     [],
   );
 
-  // Global 401 handler — auto-logout when any API call returns Unauthorized
+  // Global 401 & 402 handler — auto-attaches token for /api/, auto-logs out on 401, and opens QuotaUpgradeModal on 402
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (...args) => {
+      const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : '';
+      if (url.includes('/api/')) {
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          const init = (args[1] ? { ...args[1] } : {}) as RequestInit;
+          const headers = new Headers(init.headers || {});
+          if (!headers.has('Authorization')) {
+            headers.set('Authorization', `Bearer ${token}`);
+          }
+          init.headers = headers;
+          args[1] = init;
+        }
+      }
       const response = await originalFetch(...args);
       if (response.status === 401) {
-        const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : '';
-        // Only intercept API calls to our backend (not OAuth, external, or best-effort background calls)
-        // Exclude media upload — it's fire-and-forget from the builder and shouldn't force logout
         if (url.includes('/api/') && !url.includes('/api/auth/') && !url.includes('/api/media')) {
           localStorage.removeItem('auth_session');
           localStorage.removeItem('auth_token');
@@ -1015,6 +1024,16 @@ function App() {
           addToast('error', 'Your session has expired. Please log in again.');
           navigatePath('/login', true);
         }
+      } else if (response.status === 402 && url.includes('/api/')) {
+        response.clone().json().then((body) => {
+          setQuotaModalPayload({
+            error: body?.error || 'You have reached the limit for your current subscription plan.',
+            resource: body?.resource,
+            currentCount: body?.currentCount,
+            limit: body?.limit,
+            currentPlan: body?.currentPlan,
+          });
+        }).catch(() => undefined);
       }
       return response;
     };
@@ -1101,7 +1120,7 @@ function App() {
 
     if (!loggedIn) {
       const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/changelog', '/data-deletion', '/reset-password', '/verify-email'];
-      if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
+      if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/') && !pathname.startsWith('/review/') && !pathname.startsWith('/survey/')) {
         navigatePath('/login', true);
       }
       return () => {
@@ -1168,15 +1187,19 @@ function App() {
     setIsAuthenticated(true);
     const storedUser = setStoredUser(user);
     setAuthUser(storedUser);
+    window.dispatchEvent(new Event('auth-changed'));
     navigateToPage(getDefaultPageForUser(storedUser), true);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('auth_session');
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('workspace_state');
+    localStorage.removeItem('dw_onboarded');
     clearStoredUser();
     setAuthUser(null);
     setIsAuthenticated(false);
+    window.dispatchEvent(new Event('auth-changed'));
     navigatePath('/login', true);
   };
 
@@ -1204,6 +1227,10 @@ function App() {
   if (currentPathname.startsWith('/survey/')) {
     const surveyId = currentPathname.replace('/survey/', '');
     return <Suspense fallback={<PageFallback />}><PublicSurvey surveyId={surveyId} /></Suspense>;
+  }
+  if (currentPathname.startsWith('/review/')) {
+    const reviewToken = currentPathname.replace('/review/', '');
+    return <Suspense fallback={<PageFallback />}><ClientReviewPortal token={reviewToken} /></Suspense>;
   }
   if ((currentPathname === '/' || currentPathname === '') && !isAuthenticated) {
     return <Suspense fallback={<PageFallback />}><Landing onLoginClick={goToLogin} /></Suspense>;
@@ -1282,6 +1309,7 @@ function App() {
       case 'workflow': return <WorkflowPage />;
       case 'discover': return <Discover />;
       case 'ai-team': return <AITeam />;
+      case 'social-inbox': return <SocialInbox />;
       default: return <Dashboard currentUser={authUser} />;
     }
   };
@@ -1355,6 +1383,12 @@ function App() {
 
       <AdvancedTemplateCardModal />
       <ChatWidget />
+      <QuotaUpgradeModal
+        payload={quotaModalPayload}
+        onClose={() => setQuotaModalPayload(null)}
+        onNavigateToPricing={() => navigateToPage('pricing')}
+        onNavigateToBilling={() => navigateToPage('billing')}
+      />
 
       {/* Per-page quick guide */}
       {guide && (

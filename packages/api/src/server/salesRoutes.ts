@@ -8,7 +8,8 @@
 
 import { randomUUID } from 'crypto';
 import express from 'express';
-import type { Request, Response, Router } from 'express';
+import type { Response, Router } from 'express';
+import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
 import { buildSalesEngine, type SalesEngine } from './sales/salesEngine.ts';

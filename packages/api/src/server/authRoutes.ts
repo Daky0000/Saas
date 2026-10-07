@@ -1,7 +1,8 @@
 import bcrypt from 'bcryptjs';
 import { createHmac, randomBytes } from 'crypto';
 import { randomUUID } from 'crypto';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import { Resend } from 'resend';
 import { z } from 'zod';
@@ -177,7 +178,7 @@ export function registerAuthRoutes(deps: AuthDeps): Router {
       }
 
       const user = await findUserByIdentifier(loginIdentifier);
-      if (!user) return res.status(400).json({ success: false, error: 'Invalid credentials' });
+      if (!user || user.status !== 'active') return res.status(400).json({ success: false, error: 'Invalid credentials' });
 
       if (user.locked_until && new Date(user.locked_until) > new Date()) {
         const minutesLeft = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);

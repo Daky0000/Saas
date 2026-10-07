@@ -1,5 +1,11 @@
+import { randomUUID } from 'node:crypto';
+import { encryptIntegrationSecret, decryptIntegrationSecret, logIntegrationEvent } from '../integration-helpers.ts';
+import { inMemoryPlatformConfigs } from '../user-auth.ts';
+import { OAUTH_AUTH_URLS, resolveOAuthRedirectUri, formatSocialAccountLabel, getMetaOAuthScopeString } from '../platform-helpers.ts';
+import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, type SocialConnectDeps } from './socialConnectRoutes.ts';
 import axios from 'axios';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
@@ -10,11 +16,12 @@ import { getVisibleUserPlatformSlugs } from '../platform-helpers.ts';
 // ─── Deps ─────────────────────────────────────────────────────────────────────
 
 export interface SocialDeps {
+  socialConnectDeps: SocialConnectDeps;
   requireAuth: (req: Request, res: Response) => { userId: string; role: string; tokenVersion: number | null } | null;
   requireAdmin: (req: Request, res: Response) => Promise<{ userId: string } | null>;
   hasDatabase: () => boolean;
   pool: Pool | null;
-  dbQuery: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
+  dbQuery: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[]; rowCount: number }>;
   getPlatformConfig: (platform: string) => Promise<Record<string, string>>;
   getPublishableSocialConnection: (userId: string, platformId: string) => Promise<any>;
   normalizePlatformId: (value: string) => string;
@@ -64,6 +71,13 @@ export function registerSocialRoutes(deps: SocialDeps): Router {
     enqueueSocialAutomationTask, syncSocialAutomationForPost,
   } = deps;
   const router = Router();
+  const connection = deps.socialConnectDeps;
+  const getOAuthStateRow = (state: string) => stateImpl(dbQuery,state);
+  const exchangeFacebookCode = (code: string,uri?: string) => facebookImpl(getPlatformConfig,resolveOAuthRedirectUri,code,uri);
+  const exchangeOAuthCode = (platform: string,code: string,verifier?: string,req?: Request) => exchangeImpl(getPlatformConfig,resolveOAuthRedirectUri,connection.parseLinkedInScopeList,connection.computeIsoFromTtlSeconds,platform,code,verifier,req);
+  const storeUserConnection = (userId: string,platform: string,data: unknown) => storeImpl(connection,userId,platform,data);
+  const getUserSettingValue = async (userId: string,key: string) => (await dbQuery('SELECT value FROM user_settings WHERE user_id=$1 AND key=$2',[userId,key])).rows[0]?.value || null;
+
 
 
 // GET /api/v1/social/facebook/connect — start OAuth and redirect to Facebook
@@ -956,7 +970,7 @@ router.post('/v1/posts/:postId/social-settings', async (req: Request, res: Respo
 
     const visiblePlatforms = await getVisibleUserPlatformSlugs();
 
-    let settingId = randomUUID();
+    let settingId: string = randomUUID();
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1302,7 +1316,7 @@ router.patch('/admin/platform-configs/:platform/toggle', async (req: Request, re
           [platform, Boolean(enabled)]
         );
       }
-      void recordAuditLog(admin.id, 'admin_platform_toggled', [], { platform, enabled: Boolean(enabled) });
+      void recordAuditLog(admin.userId, 'admin_platform_toggled', [], { platform, enabled: Boolean(enabled) });
       return res.json({ success: true, enabled: Boolean(enabled) });
     }
     return res.json({ success: true, enabled: Boolean(enabled) });
@@ -1368,17 +1382,7 @@ router.get('/admin/platform-configs/:platform/test', async (req: Request, res: R
         if (resp.status === 200) return res.json({ success: true, message: 'Webflow credentials valid' });
         return res.json({ success: false, error: 'Invalid Webflow API token' });
       }
-      case 'stripe': {
-        const { secretKey } = cfg;
-        if (!secretKey) return res.json({ success: false, error: 'Missing Stripe secret key' });
-        const resp = await axios.get('https://api.stripe.com/v1/balance', {
-          headers: { Authorization: `Bearer ${secretKey}` },
-          validateStatus: () => true,
-          timeout: 8000,
-        });
-        if (resp.status === 200) return res.json({ success: true, message: 'Stripe credentials valid' });
-        return res.json({ success: false, error: 'Invalid Stripe secret key' });
-      }
+
       case 'linear': {
         const { apiKey } = cfg;
         if (!apiKey) return res.json({ success: false, error: 'Missing Linear API key' });

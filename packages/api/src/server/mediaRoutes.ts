@@ -1,12 +1,52 @@
+import { validateRasterDataUrl } from './mediaValidation.ts';
+import { assertSafePublicUrl } from '../ssrf-guard.ts';
+import { randomUUID } from 'node:crypto';
+import type { DbUserRow } from '../user-auth.ts';
+import type { DbDesign } from './userDesignRoutes.ts';
 import axios from 'axios';
 import path from 'path';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import { config } from '../config.ts';
 import { logger } from '../logger.ts';
 
 // ─── Deps ─────────────────────────────────────────────────────────────────────
+
+export type DbMediaImageRow = {
+  id: string;
+  user_id: string;
+  file_name: string;
+  original_name: string;
+  file_size: number;
+  file_type: string;
+  width: number | null;
+  height: number | null;
+  upload_date: string | null;
+  url: string;
+  thumbnail_url: string | null;
+  alt_text: string | null;
+  caption: string | null;
+  description: string | null;
+  tags: string[] | null;
+  used_in: unknown;
+  category: string | null;
+};
+
+type MediaSourceTable = 'users' | 'blog_posts' | 'user_designs' | 'card_templates';
+export type EnsureMediaRecordOptions = {
+  userId: string;
+  sourceTable: MediaSourceTable;
+  sourceId: string;
+  sourceField: string;
+  url: string | null | undefined;
+  thumbnailUrl?: string | null;
+  fileName?: string;
+  fileType?: string;
+  tags?: string[];
+  category?: 'user' | 'admin';
+};
 
 export interface MediaDeps {
   requireAuth: (req: Request, res: Response) => { userId: string; role: string; tokenVersion: number | null } | null;
@@ -19,6 +59,7 @@ export interface MediaDeps {
 
 export interface MediaModule {
   router: Router;
+  ensureMediaRecordForSource: (options: EnsureMediaRecordOptions) => Promise<{ row: DbMediaImageRow; created: boolean } | null>;
   syncProfileMedia: (user: any) => Promise<number>;
   syncBlogPostMedia: (userId: string, post: any) => Promise<number>;
   syncUserDesignMedia: (userId: string, design: any) => Promise<number>;
@@ -47,40 +88,11 @@ function buildMediaServeUrl(id: string, fileName: string): string {
   return `${getMediaServerBase()}/media/${encodeURIComponent(id)}/${encodeURIComponent(fileName)}`;
 }
 
-type DbMediaImageRow = {
-  id: string;
-  user_id: string;
-  file_name: string;
-  original_name: string;
-  file_size: number;
-  file_type: string;
-  width: number | null;
-  height: number | null;
-  upload_date: string | null;
-  url: string;
-  thumbnail_url: string | null;
-  alt_text: string | null;
-  caption: string | null;
-  description: string | null;
-  tags: string[] | null;
-  used_in: unknown;
-  category: string | null;
-};
 
-type MediaSourceTable = 'users' | 'blog_posts' | 'user_designs' | 'card_templates';
 
-type EnsureMediaRecordOptions = {
-  userId: string;
-  sourceTable: MediaSourceTable;
-  sourceId: string;
-  sourceField: string;
-  url: string | null | undefined;
-  thumbnailUrl?: string | null;
-  fileName?: string;
-  fileType?: string;
-  tags?: string[];
-  category?: 'user' | 'admin';
-};
+
+
+
 
 function transformMediaRow(row: any): any {
   if (!row) return row;
@@ -546,7 +558,8 @@ router.get('/media/:id/:filename', async (req: Request, res: Response) => {
     if (!dataUrl.startsWith('data:')) return res.redirect(dataUrl);
     const commaIdx = dataUrl.indexOf(',');
     if (commaIdx === -1) return res.status(500).send('Invalid image format');
-    const mime = dataUrl.slice(5, commaIdx).replace(';base64', '') || row.file_type || 'image/jpeg';
+    const mime = row.file_type;
+    if (!['image/jpeg','image/png','image/webp'].includes(mime)) return res.status(415).send('Unsupported media content');
     const buffer = Buffer.from(dataUrl.slice(commaIdx + 1), 'base64');
     res.setHeader('Content-Type', mime);
     res.setHeader('Content-Length', buffer.length);
@@ -569,9 +582,16 @@ router.post('/api/media/upload', async (req: Request, res: Response) => {
     };
   if (!url || !file_name || !original_name || !file_type)
     return res.status(400).json({ success: false, error: 'Missing required fields' });
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (!allowedTypes.includes(file_type))
     return res.status(400).json({ success: false, error: 'Unsupported image type' });
+  try {
+    if (url.startsWith('data:')) {
+      const bytes=validateRasterDataUrl(url,file_type);
+      if (Number(file_size)!==bytes.length) return res.status(400).json({ error: 'Image size does not match the uploaded bytes' });
+    } else { await assertSafePublicUrl(url); }
+  } catch(error) { return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid image' }); }
+  if (!Number.isFinite(Number(file_size)) || Number(file_size)<=0) return res.status(400).json({ error: 'Invalid file size' });
   const MAX_SIZE = 10 * 1024 * 1024;
   if (file_size > MAX_SIZE)
     return res.status(400).json({ success: false, error: 'Image exceeds the maximum upload size of 10MB.' });
@@ -1063,5 +1083,5 @@ router.post('/api/admin/media/fix-integrity', async (req: Request, res: Response
   }
 });
 
-  return { router, syncProfileMedia, syncBlogPostMedia, syncUserDesignMedia, syncCardTemplateMedia };
+  return { router, ensureMediaRecordForSource, syncProfileMedia, syncBlogPostMedia, syncUserDesignMedia, syncCardTemplateMedia };
 }
