@@ -1,3 +1,4 @@
+import { runCreditMigrations } from './credit-migrations.ts';
 import type { Pool } from 'pg';
 
 export async function runPaymentMigrations(pool: Pool) {
@@ -55,4 +56,5 @@ export async function runPaymentMigrations(pool: Pool) {
     );
     CREATE INDEX IF NOT EXISTS campaign_email_jobs_due ON campaign_email_jobs(status,run_at);
   `);
+  await runCreditMigrations(pool);
 }

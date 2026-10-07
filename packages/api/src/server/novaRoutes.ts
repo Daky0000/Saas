@@ -1557,7 +1557,7 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
       }
     } catch (_err) { /* proceed */ }
     if (!(await hasAICredits(auth.userId))) {
-      return res.status(402).json({ success: false, error: "You're out of AI credits for this month. Upgrade your plan or wait for your monthly reset." });
+      return res.status(402).json({ success: false, error: "You need more AI credits. Buy credits without changing your plan, or wait for your monthly allowance reset." });
     }
     try {
       const extraInstr = instruction || brief;
@@ -1954,7 +1954,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             }
             const { rows: cRows } = await dbQuery(`SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]).catch(() => ({ rows: [] as any[] }));
             const currentCredits = cRows[0]?.credits ?? 0;
-            if (cRows.length > 0 && currentCredits < freepikCreditCost) { send({ type: 'error', message: `Insufficient credits (need ${freepikCreditCost}, have ${currentCredits}). Please upgrade your plan.` }); send({ type: 'done' }); return res.end(); }
+            if (cRows.length > 0 && currentCredits < freepikCreditCost) { send({ type: 'error', message: `Insufficient credits (need ${freepikCreditCost}, have ${currentCredits}). Buy credits at /credits.` }); send({ type: 'done' }); return res.end(); }
             const freepikApiKey = await getFreepikApiKey(pool);
             if (!freepikApiKey) { send({ type: 'error', message: 'Freepik not configured — add FREEPIK_API_KEY in environment or Admin settings.' }); send({ type: 'done' }); return res.end(); }
             send({ type: 'prompt_ready', prompt: freepikPrompt, model: freepikModel, has_memory: hasBrandMemory, needs_input: false });
@@ -1978,7 +1978,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             const vidCreditCost = vidModelCfg.credits;
             const { rows: vcRows } = await dbQuery(`SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]).catch(() => ({ rows: [] as any[] }));
             const vcCredits = vcRows[0]?.credits ?? 0;
-            if (vcRows.length > 0 && vcCredits < vidCreditCost) { send({ type: 'error', message: `Insufficient credits for video (need ${vidCreditCost}, have ${vcCredits}). Please upgrade your plan.` }); send({ type: 'done' }); return res.end(); }
+            if (vcRows.length > 0 && vcCredits < vidCreditCost) { send({ type: 'error', message: `Insufficient credits for video (need ${vidCreditCost}, have ${vcCredits}). Buy credits at /credits.` }); send({ type: 'done' }); return res.end(); }
             const vidApiKey = await getMagnificApiKey(pool);
             if (!vidApiKey) {
               const fallbackVideoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
@@ -2280,11 +2280,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
       const result = await freepikGenerateImage(model, prompt.trim(), freepikAspect, apiKey);
       if (result.error) return res.status(400).json({ error: result.error });
       const imageUrl = result.url!;
-      await dbQuery(
-        `INSERT INTO user_credits (user_id, credits, updated_at) VALUES ($1, GREATEST(0, 50 - $2), NOW())
-         ON CONFLICT (user_id) DO UPDATE SET credits = GREATEST(0, user_credits.credits - $2), updated_at = NOW()`,
-        [auth.userId, creditCost],
-      ).catch(() => undefined);
+      await chargeAICredits(auth.userId,creditCost,'image_generate_freepik',{ source:'freepik_design' });
       let designId: string | null = null;
       if (save && imageUrl) {
         designId = randomUUID();

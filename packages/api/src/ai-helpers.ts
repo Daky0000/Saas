@@ -1,6 +1,7 @@
+import { account, spend, grant, creditAllowance } from './server/creditAccounting.ts';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getPlatformConfig, getUserPlanName } from './user-auth.ts';
+import { getPlatformConfig } from './user-auth.ts';
 import { decryptIntegrationSecret } from './integration-helpers.ts';
 import { pool, dbQuery } from './db.ts';
 import { logger } from './logger.ts';
@@ -98,40 +99,9 @@ export function creditsForCostUsd(costUsd: number): number {
   return Math.max(1, Math.ceil((costUsd * AI_PROFIT_MULTIPLIER) / CREDIT_USD));
 }
 
-export const PLAN_AI_CREDITS: Record<string, number> = {
-  free: 100,
-  pro: 2000,
-  agency: 6000,
-  enterprise: 25000,
-  'os pro': 25000,
-};
 
-export const CREDIT_TOPUP_PACKS = [
-  {
-    id: 'starter',
-    name: 'Starter Boost Pack',
-    credits: 1000,
-    priceUsd: 12,
-    badge: 'Quick Top-Up',
-    description: '1,000 never-expiring AI credits for chat, agents & image generation.',
-  },
-  {
-    id: 'growth',
-    name: 'Creator & Growth Pack',
-    credits: 5000,
-    priceUsd: 49,
-    badge: 'Most Popular · Save 18%',
-    description: '5,000 never-expiring AI credits + priority generation queue.',
-  },
-  {
-    id: 'agency',
-    name: 'Agency & OS Mega-Vault',
-    credits: 20000,
-    priceUsd: 149,
-    badge: 'Best Value · Save 38%',
-    description: '20,000 never-expiring AI credits for high-volume video & Dakyworld OS.',
-  },
-] as const;
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic AI Response Cache & Token Efficiency Telemetry
@@ -187,84 +157,23 @@ export function getTokenEfficiencyTelemetry() {
   };
 }
 
-async function getMonthlyCreditAllowance(userId: string): Promise<number> {
-  try {
-    const plan = (await getUserPlanName(userId)).toLowerCase();
-    for (const [key, credits] of Object.entries(PLAN_AI_CREDITS)) {
-      if (plan.includes(key)) return credits;
-    }
-  } catch { /* fall through */ }
-  return PLAN_AI_CREDITS.free;
-}
-
-export async function ensureCreditAccount(userId: string): Promise<{ credits: number; resetDate: string | null; autoRecharge?: boolean; autoRechargePack?: string }> {
-  const allowance = await getMonthlyCreditAllowance(userId);
-  await dbQuery(
-    `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
-     VALUES ($1, $2, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
-     ON CONFLICT (user_id) DO NOTHING`,
-    [userId, allowance]
-  ).catch(() => undefined);
-  const { rows: reset } = await dbQuery<{ credits: number }>(
-    `UPDATE user_credits SET credits = purchased_credits + $2, reset_date = date_trunc('month', NOW()) + INTERVAL '1 month', updated_at = NOW()
-     WHERE user_id = $1 AND reset_date IS NOT NULL AND reset_date <= NOW() RETURNING credits`,
-    [userId, allowance]
-  ).catch(() => ({ rows: [] as any[] }));
-  if (reset.length) {
-    await recordCreditLedger(userId, allowance, reset[0].credits, 'monthly_reset', {});
-  }
-  const { rows } = await dbQuery<{ credits: number; reset_date: string | null; auto_recharge?: boolean; auto_recharge_pack?: string }>(
-    `SELECT credits, reset_date, purchased_credits, auto_recharge, auto_recharge_pack FROM user_credits WHERE user_id = $1`, [userId]
-  );
-  return {
-    credits: Number(rows[0]?.credits ?? allowance),
-    resetDate: rows[0]?.reset_date ?? null,
-    autoRecharge: Boolean((rows[0] as any)?.auto_recharge),
-    autoRechargePack: String((rows[0] as any)?.auto_recharge_pack || 'starter'),
-  };
+export async function ensureCreditAccount(userId: string) {
+  return account(pool,userId,await creditAllowance(pool,userId));
 }
 
 export async function hasAICredits(userId: string): Promise<boolean> {
-  const { credits } = await ensureCreditAccount(userId);
-  return credits > 0;
-}
-
-async function recordCreditLedger(userId: string, delta: number, balanceAfter: number, reason: string, meta: Record<string, unknown>): Promise<void> {
-  await dbQuery(
-    `INSERT INTO credit_ledger (id, user_id, delta, balance_after, reason, meta) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
-    [randomUUID(), userId, delta, balanceAfter, reason.slice(0, 60), JSON.stringify(meta ?? {})]
-  ).catch((err) => logger.warn({ err }, 'credit_ledger_insert_failed'));
+  const { credits,spendingBlocked } = await ensureCreditAccount(userId);
+  return credits > 0 && !spendingBlocked;
 }
 
 export async function chargeAICredits(userId: string, credits: number, reason: string, meta: Record<string, unknown> = {}): Promise<void> {
   if (credits <= 0) return;
   await ensureCreditAccount(userId);
-  const result = await dbQuery<{ credits: number }>(
-    `WITH debited AS (
-      UPDATE user_credits SET purchased_credits=GREATEST(0,purchased_credits-GREATEST(0,$1-(credits-purchased_credits))),
-      credits=credits-$1,updated_at=NOW() WHERE user_id=$2 AND credits >= $1 RETURNING credits
-    ), logged AS (
-      INSERT INTO credit_ledger(id,user_id,delta,balance_after,reason,meta)
-      SELECT $3,$2,-$1,credits,$4,$5::jsonb FROM debited RETURNING balance_after
-    ) SELECT balance_after AS credits FROM logged`,
-    [credits,userId,randomUUID(),reason.slice(0,60),JSON.stringify(meta)]
-  );
-  if (!result.rows.length) throw new Error('Insufficient AI credits');
-
+  await spend(pool,userId,credits,reason,meta);
 }
 
 export async function grantCredits(userId: string, credits: number, reason: string, meta: Record<string, unknown> = {}): Promise<number | null> {
-  if (credits <= 0) return null;
-  const { rows } = await dbQuery<{ credits: number }>(
-    `INSERT INTO user_credits (user_id, credits, reset_date, updated_at)
-     VALUES ($1, $2, date_trunc('month', NOW()) + INTERVAL '1 month', NOW())
-     ON CONFLICT (user_id) DO UPDATE SET credits = user_credits.credits + $2, updated_at = NOW()
-     RETURNING credits`,
-    [userId, credits]
-  ).catch(() => ({ rows: [] as any[] }));
-  if (!rows.length) return null;
-  await recordCreditLedger(userId, credits, rows[0].credits, reason, meta);
-  return rows[0].credits;
+  return grant(pool,userId,credits,reason,meta);
 }
 
 export async function recordAIUsage(params: {

@@ -1,3 +1,4 @@
+import CreditManagement from './CreditManagement';
 import { useEffect, useState } from 'react';
 import {
   AlertCircle,
@@ -900,6 +901,7 @@ const PaymentManagement = () => {
           </div>
         )}
       </div>
+      <CreditManagement />
     </div>
   );
 };

@@ -9,7 +9,7 @@ import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFast
 import { buildSharedAgentContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
 
-const OUT_OF_CREDITS_MSG = "You're out of AI credits for this month. Upgrade your plan or wait for your monthly reset to keep using AI features.";
+const OUT_OF_CREDITS_MSG = "You need more AI credits. Buy credits without changing your plan, or wait for your monthly allowance reset.";
 
 type AuthResult = { userId: string; role?: string } | null;
 

@@ -10,9 +10,6 @@ import {
   Sparkles,
   AlertTriangle,
   X,
-  Zap,
-  Cpu,
-  ShieldCheck,
 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
 
@@ -63,29 +60,6 @@ type Invoice = {
   paid_at: string | null;
   period_start: string | null;
   created_at: string;
-};
-
-type CreditPack = {
-  id: string;
-  name: string;
-  credits: number;
-  priceUsd: number;
-  badge: string;
-  description: string;
-};
-
-type CreditsSummary = {
-  credits: number;
-  planAllowance: number;
-  autoRecharge: { enabled: boolean; packId: string; threshold: number };
-  tokenEfficiency: {
-    cacheHits: number;
-    cacheMisses: number;
-    cacheHitRatePct: number;
-    tokensSavedEstimated: number;
-    batchedCompilations: number;
-    agentCallsSaved: number;
-  };
 };
 
 type BillingData = {
@@ -148,10 +122,6 @@ function UsageBar({ value, max, label }: { value: number; max: number | null; la
 export default function Billing() {
   const [data, setData] = useState<BillingData | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [packs, setPacks] = useState<CreditPack[]>([]);
-  const [creditsSummary, setCreditsSummary] = useState<CreditsSummary | null>(null);
-  const [purchasingPackId, setPurchasingPackId] = useState<string | null>(null);
-  const [, setAutoRechargeSaving] = useState(false);
   const [topUpSuccess, setTopUpSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
@@ -164,16 +134,12 @@ export default function Billing() {
     setLoading(true);
     setError(null);
     try {
-      const [billingRes, invRes, packsRes, balanceRes] = await Promise.all([
+      const [billingRes, invRes] = await Promise.all([
         fetchJson<{ success: boolean } & BillingData>(`${API_BASE_URL}/api/v1/billing/subscription`),
         fetchJson<{ success: boolean; invoices: Invoice[] }>(`${API_BASE_URL}/api/v1/billing/invoices`),
-        fetchJson<{ success: boolean; packs: CreditPack[] }>(`${API_BASE_URL}/api/credits/packs`).catch(() => ({ success: false, packs: [] })),
-        fetchJson<{ success: boolean } & CreditsSummary>(`${API_BASE_URL}/api/credits/balance`).catch(() => null),
       ]);
       setData({ subscription: billingRes.subscription, plan: billingRes.plan, usage: billingRes.usage, paystackConfigured: billingRes.paystackConfigured, paymentMode: billingRes.paymentMode, sandbox: billingRes.sandbox });
       setInvoices(invRes.invoices ?? []);
-      if (packsRes.packs) setPacks(packsRes.packs);
-      if (balanceRes) setCreditsSummary(balanceRes);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -195,50 +161,6 @@ export default function Billing() {
     };
     void initialize();
   }, []);
-
-  const purchaseCreditPack = async (pack: CreditPack) => {
-    setPurchasingPackId(pack.id);
-    setError(null);
-    setTopUpSuccess(null);
-    try {
-      const idempotencyKey = `topup-${pack.id}-${Date.now()}`;
-      const res = await fetchJson<{ success: boolean; url: string; mode: string }>(
-        `${API_BASE_URL}/api/credits/purchase`,
-        {
-          method: 'POST',
-          headers: { 'Idempotency-Key': idempotencyKey },
-          body: JSON.stringify({ packId: pack.id }),
-        },
-      );
-      window.location.assign(res.url);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setPurchasingPackId(null);
-    }
-  };
-
-  const toggleAutoRecharge = async (enabled: boolean, packId?: string) => {
-    setAutoRechargeSaving(true);
-    setError(null);
-    try {
-      const selectedPack = packId || creditsSummary?.autoRecharge?.packId || 'growth';
-      const res = await fetchJson<{ success: boolean; autoRecharge: { enabled: boolean; packId: string; threshold: number } }>(
-        `${API_BASE_URL}/api/credits/auto-recharge`,
-        {
-          method: 'PUT',
-          body: JSON.stringify({ enabled, packId: selectedPack }),
-        },
-      );
-      if (creditsSummary) {
-        setCreditsSummary({ ...creditsSummary, autoRecharge: res.autoRecharge });
-      }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setAutoRechargeSaving(false);
-    }
-  };
 
   const openPortal = async () => {
     setPortalLoading(true);
@@ -422,151 +344,12 @@ export default function Billing() {
         </div>
       </div>
 
-      {/* AI Credits, Auto-Recharge & Token Efficiency Telemetry */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <Zap size={20} />
-            </div>
-            <div>
-              <h2 className="text-base font-black text-slate-900">AI Credits & Token Efficiency Engine</h2>
-              <p className="text-xs text-slate-500">Powers all 21 AI agents, Nova Studio images/videos, and Dakyworld OS calls</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Available Balance</p>
-            <p className="text-2xl font-black text-slate-900">
-              {(creditsSummary?.credits ?? 0).toLocaleString()} <span className="text-xs font-semibold text-slate-400">credits</span>
-            </p>
-          </div>
-        </div>
+      <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-6">
+        <div><h2 className="font-semibold text-slate-900">AI credits</h2><p className="mt-1 text-sm text-slate-500">Buy non-expiring credits independently of your plan. Manage balances, receipts, and optional recharge.</p></div>
+        <a href="/credits" className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700">Buy credits</a>
+      </section>
 
-        {topUpSuccess && (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-            <BadgeCheck size={16} className="text-emerald-600 shrink-0" />
-            {topUpSuccess}
-          </div>
-        )}
-
-        {/* Token Efficiency Telemetry */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-              <Cpu size={13} className="text-blue-600" />
-              Prompt & Response Cache
-            </div>
-            <p className="mt-1 text-lg font-black text-slate-900">
-              {creditsSummary?.tokenEfficiency?.cacheHitRatePct ?? 0}% Hit Rate
-            </p>
-            <p className="text-[11px] text-slate-500">
-              ~{(creditsSummary?.tokenEfficiency?.tokensSavedEstimated ?? 0).toLocaleString()} tokens saved via SHA-256 & ephemeral cache
-            </p>
-          </div>
-          <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-              <Sparkles size={13} className="text-purple-600" />
-              21-Agent Batch Compiler
-            </div>
-            <p className="mt-1 text-lg font-black text-slate-900">Measured token savings</p>
-            <p className="text-[11px] text-slate-500">
-              {creditsSummary?.tokenEfficiency?.agentCallsSaved ?? 0} redundant LLM calls eliminated
-            </p>
-          </div>
-          <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-              <ShieldCheck size={13} className="text-emerald-600" />
-              Zero-Waste Credit Guard
-            </div>
-            <p className="mt-1 text-lg font-black text-slate-900">Post-Completion Billing</p>
-            <p className="text-[11px] text-slate-500">
-              Provider failures are reported before completion.
-            </p>
-          </div>
-        </div>
-
-        {/* Auto-Recharge Toggle */}
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
-          <div>
-            <p className="text-sm font-bold text-slate-900">Manual credit top-ups</p>
-            <p className="text-xs text-slate-600">
-              Complete a verified Paystack checkout to add credits. Automatic recharge is unavailable.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <select
-              value={creditsSummary?.autoRecharge?.packId ?? 'growth'}
-              onChange={(e) => void toggleAutoRecharge(Boolean(creditsSummary?.autoRecharge?.enabled), e.target.value)}
-              disabled={true}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
-            >
-              <option value="starter">Starter Boost (+1,000 cr — $9)</option>
-              <option value="growth">Creator & Growth (+5,000 cr — $29)</option>
-              <option value="agency">Agency Mega-Vault (+25,000 cr — $99)</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => void toggleAutoRecharge(!creditsSummary?.autoRecharge?.enabled)}
-              disabled={true}
-              className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                creditsSummary?.autoRecharge?.enabled
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-              }`}
-            >
-              {creditsSummary?.autoRecharge?.enabled ? 'Auto-Recharge ON' : 'Enable Auto-Recharge'}
-            </button>
-          </div>
-        </div>
-
-        {/* Pay-As-You-Go Credit Top-Up Store */}
-        <div className="space-y-3 pt-1">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Instant Pay-As-You-Go Credit Top-Up Packs</h3>
-            <span className="text-xs text-slate-400">Credits never expire</span>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {(packs.length > 0 ? packs : [
-              { id: 'starter', name: 'Starter Boost', credits: 1000, priceUsd: 9, badge: 'Quick Refill', description: '1,000 instant AI credits for chat, copy, and 200+ studio images.' },
-              { id: 'growth', name: 'Creator & Growth Pack', credits: 5000, priceUsd: 29, badge: 'Most Popular · Save 28%', description: '5,000 AI credits for multi-agent campaigns, Kling videos, and OS workflows.' },
-              { id: 'agency', name: 'Agency & OS Mega-Vault', credits: 25000, priceUsd: 99, badge: 'Best Value · Save 45%', description: '25,000 AI credits for high-volume Dakyworld OS automation & video production.' },
-            ]).map((pack) => (
-              <div
-                key={pack.id}
-                className={`flex flex-col justify-between rounded-2xl border p-4 transition ${
-                  pack.id === 'growth' ? 'border-blue-500 bg-blue-50/20 shadow-sm' : 'border-slate-200 bg-white'
-                }`}
-              >
-                <div>
-                  <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                    pack.id === 'growth' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {pack.badge}
-                  </span>
-                  <h4 className="mt-2.5 text-sm font-bold text-slate-900">{pack.name}</h4>
-                  <p className="mt-1 text-2xl font-black text-slate-900">
-                    ${pack.priceUsd} <span className="text-xs font-medium text-slate-500">/ +{pack.credits.toLocaleString()} cr</span>
-                  </p>
-                  <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">{pack.description}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void purchaseCreditPack(pack)}
-                  disabled={purchasingPackId === pack.id}
-                  className={`mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition ${
-                    pack.id === 'growth'
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'border border-slate-200 bg-slate-900 text-white hover:bg-slate-800'
-                  } disabled:opacity-50`}
-                >
-                  {purchasingPackId === pack.id ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
-                  Top Up +{pack.credits.toLocaleString()} Credits
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      {topUpSuccess && <p role="status" className="text-sm text-emerald-700">{topUpSuccess}</p>}
 
       {/* Invoice history */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">

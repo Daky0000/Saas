@@ -2,7 +2,9 @@ import axios from 'axios';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { config } from '../config.ts';
-import { CREDIT_TOPUP_PACKS } from '../ai-helpers.ts';
+import { addPurchase } from './creditAccounting.ts';
+import { quotedPack, creditFeature } from './creditCatalog.ts';
+import { encryptIntegrationSecret } from '../integration-helpers.ts';
 
 export type PaymentMode = 'test' | 'live';
 export type ConfigReader = (platform: string) => Promise<Record<string, string>>;
@@ -44,6 +46,8 @@ export interface PaymentOrder {
   plan_id: string | null; pack_id: string | null; credits: number; amount_subunits: number;
   currency: string; billing_period: string | null; customer_email: string;
   status: string; fulfilled_at: string | null;
+  provider_transaction_id?: string;
+  save_card?: boolean; purchase_source?: string; pack_name?: string;
 }
 
 export function validateVerifiedCharge(order: PaymentOrder, data: Record<string, any>) {
@@ -63,7 +67,7 @@ export function buildPaystackService({ pool, readConfig, http = axios }: { pool:
     return rows[0];
   }
 
-  async function checkout(userId: string, kind: 'plan' | 'credits', productId: string) {
+  async function checkout(userId: string, kind: 'plan' | 'credits', productId: string, options: { catalogVersion?: string; saveCard?: boolean } = {}) {
     const saved = await readConfig('paystack');
     if (saved._enabled === 'false') throw new PaymentError('Paystack checkout is disabled', 503);
     const cfg = resolvePaystackConfig(saved);
@@ -72,7 +76,7 @@ export function buildPaystackService({ pool, readConfig, http = axios }: { pool:
     const user = users[0];
     if (!user || user.status !== 'active') throw new PaymentError('Account is not active', 403);
     if (cfg.mode === 'test' && user.role !== 'admin') throw new PaymentError('Test checkout is available to administrators only. Live checkout is not yet enabled.', 503);
-    let price: number; let period: string | null = null; let credits = 0;
+    let price: number; let period: string | null = null; let credits = 0; let packName: string | null = null; let catalogVersion: string | null = null;
     if (kind === 'plan') {
       const { rows } = await pool.query<{ price: string; billing_period: string; discount_percentage: string; is_on_sale: boolean }>('SELECT price, billing_period, discount_percentage, is_on_sale FROM pricing_plans WHERE id=$1 AND is_active=true', [productId]);
       if (!rows[0]) throw new PaymentError('Plan not found', 404);
@@ -80,21 +84,30 @@ export function buildPaystackService({ pool, readConfig, http = axios }: { pool:
       price = Number(rows[0].price);
       if (rows[0].is_on_sale) price *= 1 - Number(rows[0].discount_percentage || 0) / 100;
     } else {
-      const pack = CREDIT_TOPUP_PACKS.find(p => p.id === productId);
-      if (!pack) throw new PaymentError('Credit pack not found', 404);
-      price = pack.priceUsd; credits = pack.credits;
+      if (!creditFeature('manual',cfg.mode)) throw new PaymentError('Credit checkout is disabled',503);
+      const quote = await quotedPack(pool,async()=>saved,productId,options.catalogVersion);
+      productId = quote.pack.id; price = quote.pack.priceUsd; credits = quote.pack.credits;
+      packName = quote.pack.name; catalogVersion = quote.catalog.version;
     }
     const amount = Math.round(price * cfg.fxRate * 100);
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 2_000_000_000) throw new PaymentError('Invalid checkout amount');
-    const reference = `dw_${cfg.mode}_${randomUUID().replaceAll('-', '')}`;
+    const reference = `dw-${cfg.mode}-${randomUUID().replaceAll('-', '')}`;
     // Persist the price and ownership before contacting the provider. Provider metadata is never the source of entitlements.
-    await pool.query(`INSERT INTO paystack_orders (reference,user_id,mode,kind,plan_id,pack_id,credits,amount_subunits,currency,billing_period,customer_email)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [reference,userId,cfg.mode,kind,kind === 'plan' ? productId : null,kind === 'credits' ? productId : null,credits,amount,cfg.currency,period,user.email]);
-    const response = await http.post('https://api.paystack.co/transaction/initialize', {
+    await pool.query(`INSERT INTO paystack_orders (reference,user_id,mode,kind,plan_id,pack_id,credits,amount_subunits,currency,billing_period,customer_email,pack_name,price_usd,fx_rate,catalog_version,save_card)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, [reference,userId,cfg.mode,kind,kind === 'plan' ? productId : null,kind === 'credits' ? productId : null,credits,amount,cfg.currency,period,user.email,packName,price,cfg.fxRate,catalogVersion,kind === 'credits' && options.saveCard === true]);
+    let response;
+    try { response = await http.post('https://api.paystack.co/transaction/initialize', {
       email: user.email, amount, currency: cfg.currency, reference,
-      callback_url: `${config.appUrl}/billing?paystack_reference=${reference}`,
+      callback_url: `${config.appUrl}/${kind === 'credits' ? 'credits' : 'billing'}?paystack_reference=${reference}`,
       metadata: { order_reference: reference },
-    }, { headers: { Authorization: `Bearer ${cfg.secretKey}` }, timeout: 15_000 });
+      ...(options.saveCard && kind === 'credits' ? { channels: ['card'] } : {}),
+    }, { headers: { Authorization: `Bearer ${cfg.secretKey}` }, timeout: 15_000 }); }
+    catch(error) {
+      const definitive = axios.isAxiosError(error) && error.response && error.response.status>=400 && error.response.status<500;
+      await pool.query('UPDATE paystack_orders SET status=$2 WHERE reference=$1',[reference,definitive?'failed':'unknown']);
+      if(kind==='credits' && !definitive) return { url:null,checkoutUrl:null,reference,mode:cfg.mode,amount:amount/100,currency:cfg.currency,status:'pending' };
+      throw new PaymentError('Checkout unavailable. Check payment history before retrying.',502);
+    }
     const data = response.data?.data;
     if (!response.data?.status || data?.reference !== reference || !data.authorization_url) throw new PaymentError('Paystack could not initialize checkout', 502);
     const url = new URL(data.authorization_url);
@@ -115,26 +128,28 @@ export function buildPaystackService({ pool, readConfig, http = axios }: { pool:
       if (locked.fulfilled_at) { await client.query('COMMIT'); return { fulfilled: true, replay: true, mode: locked.mode }; }
       // A provider transaction can fulfill only one order; the unique index also protects concurrent deliveries.
       await client.query(`UPDATE paystack_orders SET provider_transaction_id=$2, status='successful', paid_at=$3, updated_at=NOW() WHERE reference=$1`, [locked.reference, String(data.id), data.paid_at]);
-      if (locked.mode === 'test') {
-        await client.query(`INSERT INTO paystack_sandbox_accounts(user_id,plan_id,credits,current_period_end)
-          VALUES ($1,$2,$3,CASE WHEN $2::text IS NOT NULL THEN NOW() + $4::interval ELSE NULL END)
-          ON CONFLICT(user_id) DO UPDATE SET plan_id=COALESCE(EXCLUDED.plan_id,paystack_sandbox_accounts.plan_id),
-          credits=paystack_sandbox_accounts.credits+EXCLUDED.credits, current_period_end=COALESCE(EXCLUDED.current_period_end,paystack_sandbox_accounts.current_period_end)`,
-          [locked.user_id, locked.plan_id, locked.credits, locked.billing_period === 'yearly' ? '1 year' : '1 month']);
-      } else if (locked.kind === 'credits') {
-        await client.query(`INSERT INTO user_credits(user_id,credits,purchased_credits,reset_date,updated_at) VALUES($1,$2,$2,date_trunc('month',NOW()) + INTERVAL '1 month',NOW())
-          ON CONFLICT(user_id) DO UPDATE SET credits=user_credits.credits+$2,purchased_credits=user_credits.purchased_credits+$2,updated_at=NOW()`, [locked.user_id, locked.credits]);
-        const { rows: balances } = await client.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id=$1', [locked.user_id]);
-        await client.query(`INSERT INTO credit_ledger(id,user_id,delta,balance_after,reason,meta) VALUES($1,$2,$3,$4,'paystack_topup',$5::jsonb)`,
-          [randomUUID(),locked.user_id,locked.credits,balances[0].credits,JSON.stringify({ reference: locked.reference, pack_id: locked.pack_id })]);
+      if (locked.kind === 'credits') {
+        await addPurchase(client,locked);
+      } else if (locked.mode === 'test') {
+        await client.query(`INSERT INTO paystack_sandbox_accounts(user_id,plan_id,current_period_end)
+          VALUES ($1,$2,NOW()+$3::interval) ON CONFLICT(user_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,current_period_end=EXCLUDED.current_period_end`,
+          [locked.user_id,locked.plan_id,locked.billing_period === 'yearly' ? '1 year' : '1 month']);
       } else {
-        await activatePlan(client, locked);
+        await activatePlan(client,locked);
+      }
+      if (locked.kind === 'credits' && locked.save_card && data.authorization?.reusable === true && data.authorization?.authorization_code && data.authorization?.signature) {
+        const auth = data.authorization;
+        await client.query(`INSERT INTO credit_payment_methods(id,user_id,mode,signature,email,authorization_encrypted,brand,last4,exp_month,exp_year)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(user_id,mode,signature) DO UPDATE SET authorization_encrypted=EXCLUDED.authorization_encrypted,
+          email=EXCLUDED.email,active=true,brand=EXCLUDED.brand,last4=EXCLUDED.last4,exp_month=EXCLUDED.exp_month,exp_year=EXCLUDED.exp_year`,
+          [randomUUID(),locked.user_id,locked.mode,auth.signature,locked.customer_email,encryptIntegrationSecret(JSON.stringify(auth)),auth.card_type,auth.last4,auth.exp_month,auth.exp_year]);
       }
       if (locked.mode === 'live') {
         await client.query(`INSERT INTO billing_invoices(id,user_id,status,subtotal_cents,total_cents,currency,paid_at,paystack_reference)
           VALUES($1,$2,'paid',$3,$3,$4,$5,$6)`, [randomUUID(), locked.user_id, locked.amount_subunits, locked.currency.toLowerCase(), data.paid_at, locked.reference]);
       }
       await client.query('UPDATE paystack_orders SET fulfilled_at=NOW(),updated_at=NOW() WHERE reference=$1', [locked.reference]);
+      await client.query("UPDATE credit_recharge_jobs SET status='successful' WHERE order_reference=$1",[locked.reference]);
       await client.query('COMMIT');
       return { fulfilled: true, replay: false, mode: locked.mode };
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
@@ -142,12 +157,17 @@ export function buildPaystackService({ pool, readConfig, http = axios }: { pool:
 
   async function verify(reference: string, userId?: string) {
     const order = await orderByReference(reference, userId);
+    if(order.fulfilled_at) return { fulfilled:order.status!=='refunded',status:order.status,mode:order.mode,replay:true };
     const cfg = await getPaystackConfig(readConfig, order.mode);
     if (!cfg) throw new PaymentError(`Configure Paystack ${order.mode} credentials to verify this order`, 503);
     const response = await http.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, { headers: { Authorization: `Bearer ${cfg.secretKey}` }, timeout: 15_000 });
     if (!response.data?.status || !response.data.data) throw new PaymentError('Payment verification is unavailable', 502);
     const data = response.data.data;
-    if (data.status !== 'success') return { fulfilled: false, status: data.status, mode: order.mode };
+    if (data.status !== 'success') {
+      const status = ['failed','abandoned','reversed'].includes(data.status) ? data.status : 'pending';
+      await pool.query('UPDATE paystack_orders SET status=$2,last_checked_at=NOW() WHERE reference=$1 AND fulfilled_at IS NULL',[reference,status]);
+      return { fulfilled: false,status,mode: order.mode };
+    }
     return { ...await fulfill(order, data), status: 'successful' };
   }
   return { checkout, verify, fulfill, orderByReference };

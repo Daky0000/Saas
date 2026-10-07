@@ -45,7 +45,7 @@ export default function QuotaUpgradeModal({
             Plan Limit or Credit Threshold Reached
           </div>
           <h3 className="text-lg font-black text-slate-900">
-            Unlock Higher Workspace Capacity
+            {!payload.resource && /credit/i.test(payload.error) ? 'You need more AI credits' : 'Workspace limit reached'}
           </h3>
           <p className="text-sm text-slate-600 leading-relaxed">
             {payload.error || 'You have reached the quota for your current subscription tier.'}
@@ -72,7 +72,7 @@ export default function QuotaUpgradeModal({
             }}
             className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
           >
-            Top Up Credits / Billing
+            Buy credits
           </button>
           <button
             type="button"

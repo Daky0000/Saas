@@ -66,8 +66,8 @@ test('Paystack PostgreSQL integration: purchases, isolation, ownership, concurre
       const f = await fixture('live'); const checkout = await f.service.checkout(f.userId,'credits','starter');
       await Promise.all([f.service.verify(checkout.reference,f.userId),f.service.verify(checkout.reference,f.userId)]);
       const balance = await pool.query('SELECT credits,purchased_credits FROM user_credits WHERE user_id=$1',[f.userId]);
-      assert.equal(balance.rows[0].credits,1000);assert.equal(balance.rows[0].purchased_credits,1000);
-      assert.equal((await pool.query('SELECT * FROM credit_ledger WHERE user_id=$1',[f.userId])).rows.length,1);
+      assert.equal(balance.rows[0].credits,1100);assert.equal(balance.rows[0].purchased_credits,1000);
+      assert.equal((await pool.query('SELECT * FROM credit_ledger WHERE user_id=$1',[f.userId])).rows.length,2);
       assert.equal((await pool.query('SELECT * FROM billing_invoices WHERE user_id=$1',[f.userId])).rows.length,1);
     });
     await t.test('foreign references are rejected before contacting Paystack',async () => {
@@ -107,7 +107,10 @@ test('Paystack PostgreSQL integration: purchases, isolation, ownership, concurre
       assert.equal((await request(app).post('/payments/paystack/webhook').set('x-paystack-signature','bad').send(body)).status,401);
       assert.equal(f.verifyCalls(),0);
       for(let i=0;i<2;i++)assert.equal((await request(app).post('/payments/paystack/webhook').set('x-paystack-signature',signature).send(body)).status,200);
-      assert.equal((await pool.query('SELECT credits FROM user_credits WHERE user_id=$1',[f.userId])).rows[0].credits,1000);
+      assert.equal((await pool.query("SELECT status FROM paystack_event_inbox WHERE payload->'data'->>'reference'=$1",[checkout.reference])).rows[0].status,'pending');
+      const { buildCreditJobs }=await import('../src/server/creditJobs.ts');
+      await buildCreditJobs(pool,async()=>({ ...saved,mode:'live' }),f.http as any).events();
+      assert.equal((await pool.query('SELECT credits FROM user_credits WHERE user_id=$1',[f.userId])).rows[0].credits,1100);
     });
   } finally { await pool.end(); }
 });

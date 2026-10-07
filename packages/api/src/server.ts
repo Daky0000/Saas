@@ -1,3 +1,4 @@
+import { buildCreditJobs } from './server/creditJobs.ts';
 import { processCampaignEmails } from './server/campaignEmailWorker.ts';
 import { processOutboundWebhookJobs } from './middleware/planQuotaMiddleware.ts';
 // Sentry first: its uncaught-exception / unhandled-rejection integrations
@@ -1001,6 +1002,11 @@ if (config.nodeEnv !== 'test') {
   await initialization;
   const httpServer = app.listen(PORT, () => {
     logger.info({ port: PORT }, 'api_listening');
+    const creditJobs=buildCreditJobs(pool,getPlatformConfig);
+    let creditJobsRunning=false;
+    const processCredits=async()=>{ if(creditJobsRunning)return;creditJobsRunning=true;try{await creditJobs.run();}catch(err){logger.error({err},'credit_worker_failed');}finally{creditJobsRunning=false;} };
+    void processCredits();
+    setInterval(()=>void processCredits(),5*60_000);
     const deliverHooks=() => processOutboundWebhookJobs(pool).catch(err=>logger.error({ err },'webhook_worker_failed'));
     const deliverEmails=()=>processCampaignEmails(pool,getResendConfig).catch(err=>logger.error({ err },'campaign_email_worker_failed'));
     void deliverEmails();

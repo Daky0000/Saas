@@ -1,3 +1,4 @@
+import { acceptPaystackEvent } from './creditJobs.ts';
 import express from 'express';
 import type { Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -36,14 +37,13 @@ export function registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
         if (cfg && verifyPaystackSignature(raw,signature,cfg.secretKey)) { mode = candidate; break; }
       }
       if (!mode) return res.status(401).json({ received: false });
-      if (req.body?.event !== 'charge.success') return res.json({ received: true });
-      const reference = String(req.body?.data?.reference || '');
-      let order;
-      try { order = await service.orderByReference(reference); }
-      catch (error) { if (error instanceof PaymentError && error.status === 404) return res.json({ received: true,ignored: true }); throw error; }
-      if (order.mode !== mode) return res.status(400).json({ received: false });
-      await service.verify(reference);
-      return res.json({ received: true });
+      const reference = String(req.body?.data?.reference || req.body?.data?.transaction_reference || '');
+      if (reference) {
+        const order = (await pool.query('SELECT mode FROM paystack_orders WHERE reference=$1',[reference])).rows[0];
+        if (order && order.mode !== mode) return res.status(400).json({ received:false });
+      }
+      await acceptPaystackEvent(pool,mode,raw,req.body);
+      return res.json({ received:true,queued:true });
     } catch (error) { return fail(res,error); }
   });
   router.get('/admin/paystack/orders', async (req,res) => {

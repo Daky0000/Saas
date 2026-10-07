@@ -82,6 +82,7 @@ const PublicSurvey = lazy(() => import('./pages/PublicSurvey'));
 const Workspace = lazy(() => import('./pages/Workspace'));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
 const Billing = lazy(() => import('./pages/Billing'));
+const Credits = lazy(() => import('./pages/Credits'));
 const Memory = lazy(() => import('./pages/Memory'));
 const Changelog = lazy(() => import('./pages/Changelog'));
 const AITeam = lazy(() => import('./pages/AITeam'));
@@ -145,6 +146,7 @@ export type PageType =
   | 'connector-setup'
   | 'connector-sync'
   | 'workspace'
+  | 'credits'
   | 'billing'
   | 'pricing'
   | 'tasks'
@@ -203,6 +205,7 @@ const PAGE_PATHS: Record<PageType, string> = {
   'connector-setup': '/connectors/setup',
   'connector-sync': '/connectors/sync',
   workspace: '/workspace',
+  credits: '/credits',
   billing: '/billing',
   tasks: '/tasks',
   'project-settings': '/project/settings',
@@ -783,6 +786,9 @@ function AppSidebar({
             </>
           )}
 
+          <button type="button" onClick={() => go('credits')} className={cls(currentPage === 'credits')}>
+            <CreditCard size={15} className="shrink-0" /><span className="flex-1 text-left">Buy credits</span>
+          </button>
           {navOn('billing') && (
             <button type="button" data-tour-id="nav-billing" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
               <CreditCard size={15} className="shrink-0" />
@@ -905,7 +911,7 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AppUser | null>(() => getStoredUser());
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currentPathname, setCurrentPathname] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [postsMenuOpen, setPostsMenuOpen] = useState(false);
   const [marketingMenuOpen, setMarketingMenuOpen] = useState(false);
@@ -1300,6 +1306,7 @@ function App() {
       ) : <ConnectorHub onNavigateToSetup={(d) => { setConnectorSetupDomain(d); navigateToPage('connector-setup'); }} onNavigateToSync={() => navigateToPage('connector-sync')} />;
       case 'connector-sync': return <ConnectorSyncDashboard onBack={() => navigateToPage('connector-hub')} />;
       case 'workspace': return <Workspace />;
+      case 'credits': return <Credits />;
       case 'billing': return <Billing />;
       case 'memory': return <Memory />;
       case 'notifications': return <Notifications />;
@@ -1387,7 +1394,7 @@ function App() {
         payload={quotaModalPayload}
         onClose={() => setQuotaModalPayload(null)}
         onNavigateToPricing={() => navigateToPage('pricing')}
-        onNavigateToBilling={() => navigateToPage('billing')}
+        onNavigateToBilling={() => navigateToPage('credits')}
       />
 
       {/* Per-page quick guide */}

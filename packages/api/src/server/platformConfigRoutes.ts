@@ -109,6 +109,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         return res.status(400).json({ success: false, error: 'config object is required' });
       }
 
+
       const now = new Date().toISOString();
       const normalizedConfig: Record<string, string> = { ...(config as any) };
       if (platform === 'stripe') return res.status(410).json({ success: false, error: 'Use Paystack in Payments.' });
@@ -116,6 +117,10 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         const { resolvePaystackConfig } = await import('./paystackService.ts');
         for (const mode of ['test', 'live'] as const) resolvePaystackConfig(normalizedConfig, mode);
         if (!resolvePaystackConfig(normalizedConfig)) return res.status(400).json({ success: false, error: 'The selected payment mode needs credentials.' });
+      }
+      if (platform === 'paystack' && hasDatabase()) {
+        const old=await getPlatformConfig('paystack');
+        if(old.currency!==config.currency || old.fxRate!==config.fxRate) await dbQuery("UPDATE credit_recharge_agreements SET enabled=false,pause_reason='Currency or conversion changed. Renew consent.',updated_at=NOW()");
       }
       const meta = oauthAuthUrls[platform];
       if (meta) {
