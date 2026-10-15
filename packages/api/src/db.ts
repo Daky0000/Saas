@@ -23,7 +23,7 @@ export const localTables: Record<string, any[]> = {
     { id: 'mem-2', user_id: 'admin-1', category: 'audience', title: 'Target Audience', content: 'SaaS founders, digital agencies, creators, and marketing teams scaling multi-channel operations.', sort_order: 2, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   ],
   brand_profiles: [
-    { user_id: 'admin-1', brand_name: 'Dakyworld', niche: 'AI Marketing & SaaS OS', tone: 'Authoritative, modern, concise', audience: 'Founders, agencies, and growth marketers', goals: ['Grow MRR', 'Automate multi-channel publishing', 'Connect Dakyworld OS'], website: 'https://marketing.dakyworld.com' },
+    { user_id: 'admin-1', brand_name: 'Dakyworld', niche: 'AI Marketing & SaaS OS', tone: 'Authoritative, modern, concise', audience: 'Founders, agencies, and growth marketers', goals: ['Grow MRR', 'Automate multi-channel publishing', 'Connect Dakyworld OS'], website: 'https://marketing.dakyx.com' },
   ],
   user_agents: [],
   user_agent_memory: [],

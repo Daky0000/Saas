@@ -123,8 +123,8 @@ export function registerHubtelRoutes({ requireAuth, requireAdmin, hasDatabase, d
         totalAmount: Number(amount),
         description: description || 'Payment',
         callbackUrl: `${backendUrl}/api/payments/hubtel/callback`,
-        returnUrl: `${process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com'}/payments/success`,
-        cancellationUrl: `${process.env.FRONTEND_ORIGIN || 'https://marketing.dakyworld.com'}/payments/cancel`,
+        returnUrl: `${process.env.FRONTEND_ORIGIN || 'https://marketing.dakyx.com'}/payments/success`,
+        cancellationUrl: `${process.env.FRONTEND_ORIGIN || 'https://marketing.dakyx.com'}/payments/cancel`,
         merchantAccountNumber: hubtel.merchantAccountNumber,
         clientReference,
       };

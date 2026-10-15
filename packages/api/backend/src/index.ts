@@ -22,6 +22,7 @@ const configuredOrigins = (process.env.FRONTEND_URL || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const defaultAllowedOrigins = [
+  "https://marketing.dakyx.com",
   "https://marketing.dakyworld.com",
   "https://daky0000.github.io",
   "http://localhost:5173",

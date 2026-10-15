@@ -135,7 +135,7 @@ export const config = {
   frontendOrigins: env.FRONTEND_ORIGINS
     ? env.FRONTEND_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
     : undefined,
-  appUrl: (env.VITE_APP_URL ?? 'https://marketing.dakyworld.com').replace(/\/$/, ''),
+  appUrl: (env.VITE_APP_URL ?? 'https://marketing.dakyx.com').replace(/\/$/, ''),
   redisUrl: env.REDIS_URL ?? env.BULLMQ_REDIS_URL ?? '',
   twitterMonthlyWriteLimit: Math.max(env.TWITTER_MONTHLY_WRITE_LIMIT, env.X_MONTHLY_WRITE_LIMIT),
   socialTokenSafetyMarginDays: env.SOCIAL_TOKEN_SAFETY_MARGIN_DAYS,

@@ -168,7 +168,7 @@ router.get('/v1/social/facebook/authorize-url', async (req: Request, res: Respon
 
 // GET /api/v1/social/facebook/callback — OAuth redirect URI
 router.get('/v1/social/facebook/callback', async (req: Request, res: Response) => {
-  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com';
   const fallbackOk = `${FRONTEND_URL}/posts?view=automation&subtab=connections`;
   const fallbackErr = (msg: string) => `${FRONTEND_URL}/posts?view=automation&subtab=connections&error=${encodeURIComponent(msg)}`;
 
@@ -1259,7 +1259,7 @@ router.delete('/admin/platform-configs/:platform', async (req: Request, res: Res
 // GET /auth/:platform/callback — OAuth redirect URI for platform integrations (Instagram/Facebook/LinkedIn/etc.)
 // Uses stored `state` (bound to user + platform) to persist tokens, then redirects back to the SPA.
 router.get('/auth/:platform/callback', async (req: Request, res: Response) => {
-  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+  const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com';
   const platformId = String(req.params.platform || '').trim().toLowerCase();
 
   const fallbackOk = `${FRONTEND_URL}/integrations?success=true`;

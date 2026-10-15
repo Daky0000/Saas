@@ -9,7 +9,7 @@ const router = Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://marketing.dakyworld.com";
+  process.env.FRONTEND_URL || "https://marketing.dakyx.com";
 
 type StatePayload = {
   type: "integration_state";

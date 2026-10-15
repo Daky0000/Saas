@@ -33,4 +33,4 @@ const msg = `Point frontend to production backend (${url})`;
 execSync(`git commit -m "${msg}\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"`, { stdio: 'inherit' });
 execSync('git push origin master', { stdio: 'inherit' });
 
-console.log('\n✅ Done! Your site at marketing.dakyworld.com now points to the production backend.');
+console.log('\n✅ Done! Your site at marketing.dakyx.com now points to the production backend.');

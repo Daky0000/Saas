@@ -264,6 +264,7 @@ app.use(
         connectSrc: [
           "'self'",
           config.appUrl,
+          ...(config.frontendOrigins ?? []),
           'https://www.google-analytics.com',
         ],
         frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.facebook.com'],
@@ -396,7 +397,7 @@ const X_USERS_ME_API = `${X_API_BASE}/2/users/me`;
 const extraOrigins = config.frontendOrigins ?? [];
 
 const allowedOrigins = new Set([
-  config.appUrl,   // set VITE_APP_URL in env — defaults to https://marketing.dakyworld.com
+  config.appUrl,   // set VITE_APP_URL in env — defaults to https://marketing.dakyx.com
   ...extraOrigins, // set FRONTEND_ORIGINS (comma-separated) for additional frontend domains
 ]);
 if (config.nodeEnv !== 'production') {
@@ -856,7 +857,7 @@ app.use('/api/public/surveys', registerPublicSurveyRoutes({ pool: pool!, fireAut
 const GS_CLIENT_ID = process.env.GOOGLE_SHEETS_CLIENT_ID || '';
 const GS_CLIENT_SECRET = process.env.GOOGLE_SHEETS_CLIENT_SECRET || '';
 const GS_REDIRECT = (process.env.API_URL || config.appUrl).replace(/\/$/, '') + '/api/google-sheets/callback';
-const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com';
 const leadsDeps = { requireAuth, pool: pool!, frontendUrl: FRONTEND_URL, gsClientId: GS_CLIENT_ID, gsClientSecret: GS_CLIENT_SECRET, gsRedirect: GS_REDIRECT };
 app.use('/api/leads', registerLeadsRoutes(leadsDeps));
 app.use('/api/google-sheets', registerGoogleSheetsRoutes(leadsDeps));

@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/', // Custom domain (marketing.dakyworld.com) serves from root
+  base: '/', // Custom domain (marketing.dakyx.com) serves from root
   server: {
     port: 3000,
     proxy: {

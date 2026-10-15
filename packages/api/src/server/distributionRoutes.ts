@@ -155,7 +155,7 @@ function toHashtags(tags: unknown): string {
 }
 
 function buildPostUrl(post: Record<string, any>): string {
-  const base = (process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com').replace(/\/$/, '');
+  const base = (process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com').replace(/\/$/, '');
   const slug = String(post.slug || '').trim();
   if (!slug) return base;
   return `${base}/blog/${encodeURIComponent(slug)}`;
@@ -2760,7 +2760,7 @@ router.post(['/meta/data-deletion', '/api/meta/data-deletion'], async (req: Requ
       if (deleted) await updateDeletionRequestStatus(confirmationCode, 'completed');
     }
 
-    const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyworld.com';
+    const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com';
     const statusUrl = `${FRONTEND_URL.replace(/\/$/, '')}/data-deletion?code=${encodeURIComponent(confirmationCode)}`;
 
     // Meta expects: { url, confirmation_code }
