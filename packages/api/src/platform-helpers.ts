@@ -149,14 +149,15 @@ export async function getUserConnectedAccounts(userId: string): Promise<any[]> {
 }
 
 const META_BASE_SCOPES = ['public_profile', 'pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
-const META_INSTAGRAM_SCOPES = ['public_profile', 'pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'];
+export const META_INSTAGRAM_SCOPES = ['public_profile', 'pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'];
+export const INSTAGRAM_BUSINESS_SCOPES = ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_messages', 'instagram_business_manage_comments'];
 
 export function getMetaOAuthScopeString(extraScopes: string[] = []): string {
   return Array.from(new Set([...META_BASE_SCOPES, ...extraScopes])).join(',');
 }
 
 export const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
-  instagram: { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: META_INSTAGRAM_SCOPES.join(','), idField: 'appId' },
+  instagram: { authUrl: 'https://www.instagram.com/oauth/authorize', scopes: INSTAGRAM_BUSINESS_SCOPES.join(','), idField: 'appId' },
   facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: META_BASE_SCOPES.join(','), idField: 'appId' },
   linkedin:  {
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',

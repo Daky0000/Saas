@@ -153,7 +153,7 @@ import {
 import {
   getUserSaaSContext, getEnabledPlatformSlugs, isOAuthClientSecretRequired,
   getVisibleUserPlatformSlugs, formatSocialAccountLabel, getUserConnectedAccounts,
-  OAUTH_AUTH_URLS, resolveOAuthRedirectUri,
+  OAUTH_AUTH_URLS, resolveOAuthRedirectUri, META_INSTAGRAM_SCOPES,
 } from './platform-helpers.ts';
 import { runDueDateAlerts, publishDuePosts, runTaskReminders } from './scheduler.ts';
 
@@ -592,10 +592,17 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
     const { state } = req.query as { state?: string };
     if (!state) return res.status(400).json({ success: false, error: 'Missing state' });
 
-    const meta = OAUTH_AUTH_URLS[platform];
+    let meta = OAUTH_AUTH_URLS[platform];
     if (!meta) return res.status(400).json({ success: false, error: 'Unsupported platform' });
 
-    const cfg = await getPlatformConfig(platform);
+    let cfg = await getPlatformConfig(platform);
+    if (platform === 'instagram' && (!cfg.appId || !cfg.appSecret)) {
+      const fbCfg = await getPlatformConfig('facebook');
+      if (fbCfg.appId && fbCfg.appSecret) {
+        cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
+      }
+    }
+
     const clientId = cfg[meta.idField];
     const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
 
@@ -603,7 +610,21 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
       return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
     }
 
-    const scopeParam = String(cfg.scopes || meta.scopes || '').trim();
+    let authUrl = meta.authUrl;
+    let scopeParam = String(cfg.scopes || meta.scopes || '').trim();
+
+    const isFbInstagramMethod = platform === 'instagram' && (
+      String(req.query.method || cfg.loginType || '').toLowerCase() === 'facebook' ||
+      Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com'))
+    );
+
+    if (isFbInstagramMethod) {
+      authUrl = 'https://www.facebook.com/v19.0/dialog/oauth';
+      if (!cfg.scopes) {
+        scopeParam = META_INSTAGRAM_SCOPES.join(',');
+      }
+    }
+
     const params =
       platform === 'tiktok'
         ? new URLSearchParams({
@@ -622,6 +643,10 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
             state,
             scope: scopeParam,
           });
+
+    if (platform === 'instagram' && !isFbInstagramMethod) {
+      params.set('enable_fb_login', 'true');
+    }
 
     if (platform === 'twitter') {
       const { code_challenge, code_challenge_method } = req.query as { code_challenge?: string; code_challenge_method?: string };
@@ -652,7 +677,7 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
       }
     }
 
-    return res.json({ success: true, url: `${meta.authUrl}?${params.toString()}` });
+    return res.json({ success: true, url: `${authUrl}?${params.toString()}` });
   } catch (err) {
     logger.error('Authorize URL error:', err);
     return res.status(500).json({ success: false, error: 'Failed to build authorization URL' });

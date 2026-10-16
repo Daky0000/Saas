@@ -548,19 +548,176 @@ async function exchangeInstagramCode(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   code: string,
+  req?: Request,
 ) {
-  const cfg = await getPlatformConfig('instagram');
-  const data = new URLSearchParams({
-    client_id: cfg.appId || process.env.VITE_INSTAGRAM_APP_ID || '',
-    client_secret: cfg.appSecret || process.env.INSTAGRAM_APP_SECRET || '',
+  const cleanCode = String(code || '').replace(/#_.*$/, '').trim();
+  const cfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
+  const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+  const clientId = String(cfg.appId || fbCfg.appId || process.env.VITE_INSTAGRAM_APP_ID || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+  const clientSecret = String(cfg.appSecret || fbCfg.appSecret || process.env.INSTAGRAM_APP_SECRET || process.env.FACEBOOK_APP_SECRET || '').trim();
+  const redirectUri = resolveOAuthRedirectUri('instagram', cfg.redirectUri || fbCfg.redirectUri, req);
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Instagram app credentials not configured. Please add App ID and Secret under Admin → Integrations → Instagram.');
+  }
+
+  // 1. First attempt: Direct Instagram OAuth token endpoint (Business Login for Instagram)
+  const instagramData = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
     grant_type: 'authorization_code',
-    redirect_uri: resolveOAuthRedirectUri('instagram', cfg.redirectUri || process.env.VITE_INSTAGRAM_REDIRECT_URI),
-    code,
+    redirect_uri: redirectUri,
+    code: cleanCode,
   });
-  const response = await axios.post('https://api.instagram.com/oauth/access_token', data, {
+
+  let response = await axios.post('https://api.instagram.com/oauth/access_token', instagramData.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    validateStatus: () => true,
+    timeout: 15000,
   });
-  return response.data;
+
+  // 2. Fallback: If user authenticated via Facebook dialog, exchange code via Facebook Graph API
+  if (response.status >= 400) {
+    const fbFallback = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: {
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        code: cleanCode,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+    if (fbFallback.status < 400) {
+      response = fbFallback;
+    }
+  }
+
+  if (response.status >= 400) {
+    const errData: any = response.data || {};
+    const detail = errData?.error_message || errData?.error?.message || errData?.message || errData?.error_description || `HTTP ${response.status}`;
+    logger.error('Instagram token exchange failed:', { status: response.status, body: response.data, redirectUri });
+    throw new Error(`Instagram token exchange failed: ${detail}`);
+  }
+
+  const tokenData: any = response.data || {};
+  const shortLivedToken = String(tokenData?.access_token || '').trim();
+
+  if (shortLivedToken) {
+    // 3. Exchange short-lived token for long-lived 60-day token
+    try {
+      const longRes = await axios.get('https://graph.instagram.com/access_token', {
+        params: {
+          grant_type: 'ig_exchange_token',
+          client_secret: clientSecret,
+          access_token: shortLivedToken,
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (longRes.status < 400 && (longRes.data as any)?.access_token) {
+        tokenData.short_lived_access_token = shortLivedToken;
+        tokenData.access_token = String((longRes.data as any).access_token || '').trim();
+        if ((longRes.data as any)?.expires_in) {
+          tokenData.expires_in = (longRes.data as any).expires_in;
+        }
+      }
+    } catch (err) {
+      logger.warn('Instagram long-lived token exchange warning:', err);
+    }
+
+    if (!tokenData.short_lived_access_token) {
+      try {
+        const fbLongRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+          params: {
+            grant_type: 'fb_exchange_token',
+            client_id: clientId,
+            client_secret: clientSecret,
+            fb_exchange_token: shortLivedToken,
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (fbLongRes.status < 400 && (fbLongRes.data as any)?.access_token) {
+          tokenData.short_lived_access_token = shortLivedToken;
+          tokenData.access_token = String((fbLongRes.data as any).access_token || '').trim();
+          if ((fbLongRes.data as any)?.expires_in) {
+            tokenData.expires_in = (fbLongRes.data as any).expires_in;
+          }
+        }
+      } catch (_e) { /* ignore */ }
+    }
+
+    const currentToken = String(tokenData.access_token || shortLivedToken).trim();
+
+    // 4. Resolve Instagram user profile via Instagram Graph API
+    try {
+      const meResp = await axios.get('https://graph.instagram.com/v21.0/me', {
+        params: {
+          fields: 'user_id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count',
+          access_token: currentToken,
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (meResp.status < 400 && meResp.data) {
+        const me: any = meResp.data;
+        const uid = String(me.user_id || me.id || '').trim();
+        if (uid) {
+          tokenData.user_id = uid;
+          tokenData.id = uid;
+          tokenData.sub = uid;
+        }
+        if (me.username) tokenData.username = String(me.username).trim();
+        if (me.name) tokenData.name = String(me.name).trim();
+        else if (me.username) tokenData.name = String(me.username).trim();
+        if (me.profile_picture_url) tokenData.avatar_url = String(me.profile_picture_url);
+        if (me.followers_count !== undefined) tokenData.followers_count = Number(me.followers_count);
+        if (me.media_count !== undefined) tokenData.media_count = Number(me.media_count);
+        if (me.account_type) tokenData.account_type = String(me.account_type);
+      }
+    } catch (err) {
+      logger.warn('Instagram /me profile fetch error:', err);
+    }
+
+    // 5. If profile not resolved via graph.instagram.com, check Facebook Pages for linked Instagram Business Account
+    if (!tokenData.user_id || !tokenData.username) {
+      try {
+        const fbAccounts = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
+          params: {
+            fields: 'id,name,access_token,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}',
+            access_token: currentToken,
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (fbAccounts.status < 400 && Array.isArray(fbAccounts.data?.data)) {
+          for (const page of fbAccounts.data.data) {
+            const ig = page.instagram_business_account;
+            if (ig && ig.id) {
+              tokenData.user_id = String(ig.id).trim();
+              tokenData.id = String(ig.id).trim();
+              tokenData.username = String(ig.username || '').trim();
+              tokenData.name = String(ig.name || ig.username || page.name || '').trim();
+              if (ig.profile_picture_url) tokenData.avatar_url = String(ig.profile_picture_url);
+              if (ig.followers_count !== undefined) tokenData.followers_count = Number(ig.followers_count);
+              if (ig.media_count !== undefined) tokenData.media_count = Number(ig.media_count);
+              if (page.access_token) {
+                tokenData.pageAccessToken = page.access_token;
+                tokenData.pageId = page.id;
+                tokenData.pageName = page.name;
+              }
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn('Facebook accounts Instagram lookup error:', err);
+      }
+    }
+  }
+
+  return tokenData;
 }
 
 async function exchangeTwitterCode(
@@ -958,7 +1115,7 @@ export async function exchangeOAuthCode(
 ) {
   switch ((platformId || '').trim().toLowerCase()) {
     case 'instagram':
-      return exchangeInstagramCode(getPlatformConfig, resolveOAuthRedirectUri, code);
+      return exchangeInstagramCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
     case 'twitter':
       return exchangeTwitterCode(getPlatformConfig, resolveOAuthRedirectUri, code, codeVerifier, req);
     case 'linkedin':
@@ -1339,11 +1496,20 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
 
       const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
       const accessToken = String(fbConn?.access_token || '').trim();
-      if (!accessToken) return res.status(400).json({ success: false, error: 'Meta access token missing or expired — reconnect Facebook to load Instagram business accounts' });
+      if (!accessToken) {
+        return res.json({
+          success: true,
+          facebookConnected: false,
+          targets: [],
+          missingPermissions: ['facebook_not_connected'],
+          warnings: ['Facebook is not connected yet. Connect your Facebook account with Page permissions to discover linked Instagram professional accounts.'],
+        });
+      }
 
       const result = await listInstagramPageTargets(accessToken);
       return res.json({
         success: true,
+        facebookConnected: true,
         targets: result.targets.map(({ pageAccessToken, ...target }: any) => target),
         missingPermissions: result.missingPermissions,
         warnings: result.warnings,

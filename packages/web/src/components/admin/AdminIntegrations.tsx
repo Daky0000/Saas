@@ -24,6 +24,7 @@ type PlatformField = {
   placeholder: string;
   type: 'text' | 'password';
   helpText: string;
+  required?: boolean;
 };
 
 type PlatformDef = {
@@ -132,22 +133,25 @@ const PLATFORMS: PlatformDef[] = [
   {
     id: 'instagram',
     name: 'Instagram',
-    description: 'OAuth credentials for Instagram Graph API — publishing and engagement metrics.',
+    description: 'OAuth credentials for Instagram Platform — supports Direct Business Login for Instagram and Meta Graph API with Facebook Login.',
     fields: [
-      { id: 'appId', label: 'App ID', placeholder: 'Instagram / Meta App ID', type: 'text', helpText: 'From Meta for Developers. Can be the same app as Facebook.' },
-      { id: 'appSecret', label: 'App Secret', placeholder: 'Instagram / Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
-      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/instagram/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI in your Meta app settings.' },
-      { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'public_profile,pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,instagram_manage_insights', type: 'text', helpText: 'Leave empty for default Instagram publishing scopes. Requires Instagram permissions enabled in Meta Developer Console.' },
+      { id: 'appId', label: 'App ID', placeholder: 'Instagram / Meta App ID', type: 'text', helpText: 'From Meta for Developers (developers.facebook.com). Can be the same app as Facebook.' },
+      { id: 'appSecret', label: 'App Secret', placeholder: 'Instagram / Meta App Secret', type: 'password', helpText: 'From Meta for Developers → App Settings → Basic. Used server-side for secure token exchange.' },
+      { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/instagram/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI registered in your Meta app settings.' },
+      { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments', type: 'text', required: false, helpText: 'Leave empty for recommended defaults. For direct Instagram Login: instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments. For Facebook Login: public_profile,pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,instagram_manage_insights.' },
     ],
     docsUrl: 'https://developers.facebook.com/docs/instagram-platform/',
-    redirectHint: 'Instagram uses the Meta app flow. Paste the Valid OAuth Redirect URI, Deauthorize Callback URL, and Data Deletion Request URL in Meta App Settings.',
+    redirectHint: 'Paste the Valid OAuth Redirect URI, Deauthorize Callback URL, and Data Deletion Request URL into your Meta App Settings.',
     redirectFieldId: 'redirectUri',
     expectedCallbackPath: '/auth/instagram/callback',
     usesMetaComplianceRoutes: true,
     setupSteps: [
-      'In Meta for Developers → Products → Instagram → API setup with Instagram login (or Facebook Login), copy the App ID and App Secret.',
-      'Add the Valid OAuth Redirect URI (`/auth/instagram/callback`), Deauthorize Callback URL (`/api/meta/deauthorize`), and Data Deletion Request URL (`/api/meta/data-deletion`) in your Meta app settings.',
-      'Use the Redirect URI Validator below to confirm exact match before saving.',
+      '1. Meta App Type: Create or use an app of type "Business" on Meta for Developers (developers.facebook.com).',
+      '2. Add Use Case / Product: In your Meta App Dashboard under Use Cases or Add Products, add "Instagram Graph API" or "Instagram API with Instagram Login". (CRITICAL: If this use case is missing, Meta will reject authorization with the error: "Invalid Scopes: email, instagram_basic...").',
+      '3. Roles in Development Mode: While the Meta App is in Development Mode, only users added under App Roles → Roles as Administrators, Developers, or Testers can connect. Add your Instagram account handle or personal Facebook profile as a Tester.',
+      '4. Professional Account: The Instagram account MUST be a Professional Account (Business or Creator — free to switch in the Instagram mobile app under Settings → Account type and tools). For Facebook Page connection, link the Instagram account to a Facebook Page.',
+      '5. Configure Callbacks: In Meta App Dashboard, paste the Valid OAuth Redirect URI (`/auth/instagram/callback`), Deauthorize Callback URL (`/api/meta/deauthorize`), and Data Deletion Request URL (`/api/meta/data-deletion`).',
+      '6. Verify: Use the Redirect URI Validator below to confirm exact match before saving.',
     ],
   },
   {
@@ -776,7 +780,14 @@ export default function AdminIntegrations() {
             const row = rows[p.id] || { platform: p.id, config: {}, enabled: false };
             const isEnabled = Boolean(row.enabled);
             const isToggling = toggling === p.id;
-            const isConfigured = p.fields.length === 0 ? true : p.fields.every((f) => String(row.config?.[f.id] || '').trim());
+            const isConfigured =
+              p.fields.length === 0
+                ? true
+                : p.id === 'instagram' && !row.config?.appId && rows['facebook']?.config?.appId
+                  ? Boolean(rows['facebook'].config.appId && rows['facebook'].config.appSecret)
+                  : p.fields
+                      .filter((f) => f.required !== false && f.id !== 'scopes')
+                      .every((f) => String(row.config?.[f.id] || '').trim());
 
             const redirectUrl = buildRedirectUri(p);
             const deauthorizeUrl = buildDeauthorizeUrl(p);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, CheckCircle, Copy, ExternalLink, Loader2, Plug, Settings2, ShieldCheck, Unplug } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle, Copy, ExternalLink, Info, Instagram, Layers, Loader2, Plug, RefreshCw, Settings2, ShieldCheck, Sparkles, Unplug } from 'lucide-react';
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
 import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
@@ -137,6 +137,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [igLoading, setIgLoading] = useState(false);
   const [igMissingPermissions, setIgMissingPermissions] = useState<string[]>([]);
   const [igWarnings, setIgWarnings] = useState<string[]>([]);
+  const [igModalTab, setIgModalTab] = useState<'direct' | 'pages'>('direct');
+  const [igFacebookConnected, setIgFacebookConnected] = useState<boolean>(true);
   const igReturnHandled = useRef(false);
 
   // LinkedIn targets
@@ -389,14 +391,15 @@ export default function Integrations({ onNavigateSettings }: Props) {
     try {
       const res = await integrationService.listInstagramTargets();
       if (!res.success) throw new Error(res.error || 'Failed to load Instagram targets');
+      setIgFacebookConnected(res.facebookConnected !== false);
       setIgTargets(res.targets || []);
       setIgMissingPermissions(res.missingPermissions || []);
       setIgWarnings(res.warnings || []);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to load Instagram targets');
+      setIgFacebookConnected(false);
       setIgTargets([]);
       setIgMissingPermissions([]);
-      setIgWarnings([]);
+      setIgWarnings([e instanceof Error ? e.message : 'Could not query Facebook Pages for linked Instagram accounts.']);
     } finally {
       setIgLoading(false);
     }
@@ -838,18 +841,28 @@ export default function Integrations({ onNavigateSettings }: Props) {
       >
         {slug === 'instagram' ? (
           <>
+            {!item.connected ? (
+              <button
+                type="button"
+                onClick={() => void startOAuth('instagram', '/integrations?igConnected=1')}
+                disabled={Boolean(instagramDisabledReason) || busy === 'instagram'}
+                className={PRIMARY_ACTION}
+                title="Connect directly with Instagram Business or Creator account (no Facebook Page required)"
+              >
+                {busy === 'instagram' ? <Loader2 size={16} className="animate-spin" /> : <Instagram size={16} />} Connect Instagram
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() =>
-                facebookConnected
-                  ? void openInstagramTargets()
-                  : void startOAuth('facebook', '/integrations?igConnected=1')
-              }
+              onClick={() => {
+                setIgModalTab('pages');
+                void openInstagramTargets();
+              }}
               disabled={Boolean(instagramDisabledReason) || busy === 'facebook'}
-              className={PRIMARY_ACTION}
-              title={instagramDisabledReason || (!facebookConnected ? 'Connect Meta/Facebook first to discover Instagram professional accounts' : '')}
+              className={SECONDARY_ACTION}
+              title="Connect or manage Instagram professional accounts linked to your Facebook Pages"
             >
-              {busy === 'facebook' ? <Loader2 size={16} className="animate-spin" /> : <Settings2 size={16} />} {facebookConnected ? (item.connected ? 'Manage' : 'Connect') : 'Connect Meta Access'}
+              {busy === 'facebook' ? <Loader2 size={16} className="animate-spin" /> : <Layers size={16} />} {item.connected ? 'Manage' : 'Via Facebook Page'}
             </button>
             {item.connected ? (
               <button
@@ -1510,130 +1523,255 @@ export default function Integrations({ onNavigateSettings }: Props) {
               ) : null}
 
               {modal.type === 'instagram' ? (
-                <div className="space-y-3">
-                  {igLoading ? (
-                    <div className="flex items-center justify-center py-10">
-                      <Loader2 size={22} className="animate-spin text-slate-400" />
-                    </div>
-                  ) : igTargets.filter((t) => t.instagramId).length === 0 ? (
-                    <>
-                      {igMissingPermissions.length > 0 ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-                          Missing Instagram permissions: {igMissingPermissions.join(', ')}. Reconnect Meta/Facebook and approve them to load linked Instagram professional accounts.
-                        </div>
-                      ) : null}
-                      {igWarnings.length > 0 ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-                          {igWarnings.join(' ')}
-                        </div>
-                      ) : null}
-                      <div className="text-sm text-slate-500">
-                        No Instagram professional accounts were found on your Pages. Link an Instagram Business or Creator account to a Facebook Page first.
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {igMissingPermissions.length > 0 ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-                          Missing Instagram permissions: {igMissingPermissions.join(', ')}. Reconnect Meta/Facebook and approve them to load linked Instagram professional accounts.
-                        </div>
-                      ) : null}
-                      {igWarnings.length > 0 ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-                          {igWarnings.join(' ')}
-                        </div>
-                      ) : null}
-                      <div className="grid gap-3">
-                        {igTargets
-                          .filter((t) => t.instagramId)
-                          .map((t) => (
-                            <div
-                              key={`${t.pageId}:${t.instagramId}`}
-                              className="rounded-2xl border border-slate-200 bg-white p-4"
-                            >
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="flex min-w-0 gap-3">
-                                  {t.instagramProfilePicture ? (
-                                    <img
-                                      src={t.instagramProfilePicture}
-                                      alt=""
-                                      className="h-12 w-12 rounded-2xl object-cover"
-                                    />
-                                  ) : (
-                                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-sm font-bold text-slate-600">
-                                      {(t.instagramUsername || t.pageName || 'I').slice(0, 1).toUpperCase()}
-                                    </div>
-                                  )}
-                                  <div className="min-w-0">
-                                    <div className="truncate text-sm font-semibold text-slate-900">
-                                      @{t.instagramUsername || t.instagramId}
-                                    </div>
-                                    {t.instagramName ? (
-                                      <div className="truncate text-xs text-slate-500">{t.instagramName}</div>
-                                    ) : null}
-                                    <div className="mt-1 text-xs text-slate-500">Linked from Page: {t.pageName}</div>
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    if (!t.instagramId) return;
-                                    setBusy(`ig-${t.instagramId}`);
-                                    try {
-                                      const res = await integrationService.connectInstagram(t.pageId, t.instagramId, t.instagramUsername);
-                                      if (!res.success) throw new Error(res.error || 'Failed to connect Instagram');
-                                      alert('Instagram connected.');
-                                      await load();
-                                      setModal({ type: 'none' });
-                                    } catch (e) {
-                                      alert(e instanceof Error ? e.message : 'Failed to connect Instagram');
-                                    } finally {
-                                      setBusy(null);
-                                    }
-                                  }}
-                                  disabled={busy === `ig-${t.instagramId}`}
-                                  className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                                >
-                                  {busy === `ig-${t.instagramId}` ? <Loader2 size={14} className="animate-spin" /> : null}
-                                  {t.canPublish === false ? 'Save Account' : 'Connect'}
-                                </button>
-                              </div>
+                <div className="space-y-4">
+                  {/* Mode switcher tabs */}
+                  <div className="flex rounded-xl border border-line bg-soft p-1">
+                    <button
+                      type="button"
+                      onClick={() => setIgModalTab('direct')}
+                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                        igModalTab === 'direct'
+                          ? 'bg-white text-ink shadow-xs'
+                          : 'text-muted hover:text-ink'
+                      }`}
+                    >
+                      <Sparkles size={14} className="text-blue" />
+                      Direct Instagram Login
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIgModalTab('pages');
+                        if (igTargets.length === 0 && !igLoading) {
+                          void openInstagramTargets();
+                        }
+                      }}
+                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                        igModalTab === 'pages'
+                          ? 'bg-white text-ink shadow-xs'
+                          : 'text-muted hover:text-ink'
+                      }`}
+                    >
+                      <Layers size={14} />
+                      Via Facebook Page
+                    </button>
+                  </div>
 
-                              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                                {t.instagramAccountType ? (
-                                  <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-600">
-                                    {t.instagramAccountType.replace(/_/g, ' ')}
-                                  </span>
-                                ) : null}
-                                {typeof t.instagramFollowers === 'number' ? (
-                                  <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-600">
-                                    {t.instagramFollowers.toLocaleString()} followers
-                                  </span>
-                                ) : null}
-                                {typeof t.instagramMediaCount === 'number' ? (
-                                  <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-600">
-                                    {t.instagramMediaCount.toLocaleString()} posts
-                                  </span>
-                                ) : null}
-                                {t.canPublish === false ? (
-                                  <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">
-                                    Publishing permission missing
-                                  </span>
-                                ) : null}
-                                {t.canInsights === false ? (
-                                  <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">
-                                    Insights permission missing
-                                  </span>
-                                ) : null}
-                              </div>
-
-                              {t.instagramBio ? (
-                                <div className="mt-3 text-xs leading-5 text-slate-500 line-clamp-3">{t.instagramBio}</div>
-                              ) : null}
+                  {igModalTab === 'direct' ? (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-line bg-soft p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue/10 text-blue">
+                            <Instagram size={20} />
+                          </div>
+                          <div>
+                            <div className="text-sm font-bold text-ink">Instagram Login for Business</div>
+                            <div className="mt-1 text-xs text-muted leading-relaxed">
+                              Sign in directly with your Instagram credentials to grant ContentFlow permissions to publish posts, stories, reels, and view insights. No Facebook Page link required!
                             </div>
-                          ))}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 space-y-2 rounded-xl border border-line bg-white p-3 text-xs text-muted">
+                          <div className="font-semibold text-ink">Requirements for Instagram Login:</div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald" />
+                            <span><strong>Professional Account:</strong> Must be set to Business or Creator (free to switch in Instagram mobile app under <em>Settings → Account type</em>).</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald" />
+                            <span><strong>Developer App Access:</strong> If your Meta app is in Development Mode, your Instagram handle must be added under <em>App Roles → Testers</em> in Meta Developer Portal.</span>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void startOAuth('instagram', '/integrations?igConnected=1')}
+                            disabled={busy === 'instagram'}
+                            className="inline-flex items-center gap-2 rounded-xl bg-navy px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800 disabled:opacity-50"
+                          >
+                            {busy === 'instagram' ? <Loader2 size={14} className="animate-spin" /> : <Instagram size={14} />}
+                            Launch Instagram Login
+                          </button>
+                        </div>
                       </div>
-                    </>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {igLoading ? (
+                        <div className="flex items-center justify-center py-10">
+                          <Loader2 size={22} className="animate-spin text-muted" />
+                        </div>
+                      ) : !igFacebookConnected ? (
+                        <div className="rounded-2xl border border-amber/30 bg-amber/10 p-4 text-xs text-amber-800 space-y-3">
+                          <div className="flex items-center gap-2 font-semibold">
+                            <AlertCircle size={16} />
+                            Facebook is not connected
+                          </div>
+                          <p>
+                            To discover Instagram accounts linked to Facebook Pages, connect your Facebook account with Page management permissions first.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void startOAuth('facebook', '/integrations?igConnected=1')}
+                            disabled={busy === 'facebook'}
+                            className="inline-flex items-center gap-2 rounded-xl bg-navy px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 shadow-xs"
+                          >
+                            {busy === 'facebook' ? <Loader2 size={14} className="animate-spin" /> : <Settings2 size={14} />}
+                            Connect Facebook Access
+                          </button>
+                        </div>
+                      ) : igTargets.filter((t) => t.instagramId).length === 0 ? (
+                        <div className="space-y-3">
+                          {igMissingPermissions.length > 0 ? (
+                            <div className="rounded-2xl border border-amber/30 bg-amber/10 px-4 py-3 text-xs text-amber-800">
+                              Missing Instagram permissions: {igMissingPermissions.join(', ')}. Reconnect Meta/Facebook and approve these permissions.
+                            </div>
+                          ) : null}
+                          {igWarnings.length > 0 ? (
+                            <div className="rounded-2xl border border-amber/30 bg-amber/10 px-4 py-3 text-xs text-amber-800">
+                              {igWarnings.join(' ')}
+                            </div>
+                          ) : null}
+
+                          <div className="rounded-2xl border border-line bg-soft p-4">
+                            <div className="flex items-center gap-2 text-sm font-bold text-ink">
+                              <Info size={16} className="text-blue" />
+                              No Linked Instagram Professional Accounts Found
+                            </div>
+                            <p className="mt-2 text-xs text-muted leading-relaxed">
+                              Your Facebook Pages were scanned, but none have an Instagram Business or Creator account connected. Follow these steps to link your account:
+                            </p>
+                            <ol className="mt-3 list-decimal list-inside space-y-1.5 text-xs text-muted">
+                              <li>Open the Instagram app on your phone and go to your profile.</li>
+                              <li>Tap <strong>Edit profile</strong> → <strong>Public business information</strong> → <strong>Page</strong>.</li>
+                              <li>Select or create your Facebook Page and confirm the connection.</li>
+                              <li>Ensure your Instagram account is switched to <strong>Business</strong> or <strong>Creator</strong> (free in Account settings).</li>
+                            </ol>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void openInstagramTargets()}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-soft"
+                              >
+                                <RefreshCw size={13} /> Check Again
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void startOAuth('facebook', '/integrations?igConnected=1')}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 shadow-xs"
+                              >
+                                Reconnect Meta with Instagram Scopes
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {igMissingPermissions.length > 0 ? (
+                            <div className="rounded-2xl border border-amber/30 bg-amber/10 px-4 py-3 text-xs text-amber-800">
+                              Missing permissions: {igMissingPermissions.join(', ')}. Reconnect Meta to approve publishing rights.
+                            </div>
+                          ) : null}
+                          {igWarnings.length > 0 ? (
+                            <div className="rounded-2xl border border-amber/30 bg-amber/10 px-4 py-3 text-xs text-amber-800">
+                              {igWarnings.join(' ')}
+                            </div>
+                          ) : null}
+
+                          <div className="grid gap-3">
+                            {igTargets
+                              .filter((t) => t.instagramId)
+                              .map((t) => (
+                                <div
+                                  key={`${t.pageId}:${t.instagramId}`}
+                                  className="rounded-2xl border border-line bg-white p-4 transition-colors hover:border-slate-300"
+                                >
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex min-w-0 gap-3">
+                                      {t.instagramProfilePicture ? (
+                                        <img
+                                          src={t.instagramProfilePicture}
+                                          alt=""
+                                          className="h-12 w-12 rounded-2xl object-cover border border-line"
+                                        />
+                                      ) : (
+                                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-soft text-sm font-bold text-ink">
+                                          {(t.instagramUsername || t.pageName || 'I').slice(0, 1).toUpperCase()}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0">
+                                        <div className="truncate text-sm font-semibold text-ink">
+                                          @{t.instagramUsername || t.instagramId}
+                                        </div>
+                                        {t.instagramName ? (
+                                          <div className="truncate text-xs text-muted">{t.instagramName}</div>
+                                        ) : null}
+                                        <div className="mt-1 text-xs text-muted">Linked Page: {t.pageName}</div>
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        if (!t.instagramId) return;
+                                        setBusy(`ig-${t.instagramId}`);
+                                        try {
+                                          const res = await integrationService.connectInstagram(t.pageId, t.instagramId, t.instagramUsername);
+                                          if (!res.success) throw new Error(res.error || 'Failed to connect Instagram');
+                                          await load();
+                                          setModal({ type: 'none' });
+                                        } catch (e) {
+                                          alert(e instanceof Error ? e.message : 'Failed to connect Instagram');
+                                        } finally {
+                                          setBusy(null);
+                                        }
+                                      }}
+                                      disabled={busy === `ig-${t.instagramId}`}
+                                      className="inline-flex items-center gap-1.5 rounded-xl bg-navy px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60 shadow-xs"
+                                    >
+                                      {busy === `ig-${t.instagramId}` ? <Loader2 size={14} className="animate-spin" /> : null}
+                                      {t.canPublish === false ? 'Save Account' : 'Connect'}
+                                    </button>
+                                  </div>
+
+                                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted">
+                                    {t.instagramAccountType ? (
+                                      <span className="rounded-full bg-soft px-2.5 py-0.5 font-semibold text-ink">
+                                        {t.instagramAccountType.replace(/_/g, ' ')}
+                                      </span>
+                                    ) : null}
+                                    {typeof t.instagramFollowers === 'number' ? (
+                                      <span className="rounded-full bg-soft px-2.5 py-0.5 font-semibold text-ink">
+                                        {t.instagramFollowers.toLocaleString()} followers
+                                      </span>
+                                    ) : null}
+                                    {typeof t.instagramMediaCount === 'number' ? (
+                                      <span className="rounded-full bg-soft px-2.5 py-0.5 font-semibold text-ink">
+                                        {t.instagramMediaCount.toLocaleString()} posts
+                                      </span>
+                                    ) : null}
+                                    {t.canPublish === false ? (
+                                      <span className="rounded-full bg-amber/15 px-2.5 py-0.5 font-semibold text-amber">
+                                        Publishing permission missing
+                                      </span>
+                                    ) : null}
+                                    {t.canInsights === false ? (
+                                      <span className="rounded-full bg-amber/15 px-2.5 py-0.5 font-semibold text-amber">
+                                        Insights permission missing
+                                      </span>
+                                    ) : null}
+                                  </div>
+
+                                  {t.instagramBio ? (
+                                    <div className="mt-2.5 text-xs leading-5 text-muted line-clamp-2">{t.instagramBio}</div>
+                                  ) : null}
+                                </div>
+                              ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               ) : null}

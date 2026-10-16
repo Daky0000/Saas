@@ -312,11 +312,13 @@ export const integrationService = {
       canPublish?: boolean;
       canInsights?: boolean;
     }>;
+    facebookConnected?: boolean;
     missingPermissions?: string[];
     warnings?: string[];
     error?: string;
   }> {
     const response = await fetchApiJson<{
+      facebookConnected?: boolean;
       targets?: Array<{
         pageId: string;
         pageName: string;
@@ -346,6 +348,7 @@ export const integrationService = {
     if (!response.ok) return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to load Instagram targets') };
     return {
       success: true,
+      facebookConnected: response.payload?.facebookConnected,
       targets: response.payload?.targets || [],
       missingPermissions: response.payload?.missingPermissions || [],
       warnings: response.payload?.warnings || [],
