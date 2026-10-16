@@ -111,7 +111,7 @@ const PALETTE_ITEMS: PaletteItem[] = [
       frame: { x: 10, y: 10, width: 20, height: 20 },
       styles: createStyleConfig({
         backgroundType: 'solid',
-        backgroundColor: '#6366f1',
+        backgroundColor: '#2563EB',
         borderRadius: 8,
       }),
     }),

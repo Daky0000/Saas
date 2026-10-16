@@ -315,7 +315,7 @@ export default function GmailAgent() {
               <button
                 onClick={() => void loadBody(msg.id)}
                 disabled={msg.loadingBody}
-                className="text-xs text-[#5b6cf9] hover:underline flex items-center gap-1 disabled:opacity-50"
+                className="text-xs text-[#2563EB] hover:underline flex items-center gap-1 disabled:opacity-50"
               >
                 {msg.loadingBody ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                 {msg.loadingBody ? 'Loading…' : 'Show full email'}
@@ -342,9 +342,9 @@ export default function GmailAgent() {
                     <button
                       key={att.id}
                       onClick={() => downloadAttachment(msg.id, att)}
-                      className="flex items-center gap-2 text-xs text-[#5b6cf9] hover:underline group"
+                      className="flex items-center gap-2 text-xs text-[#2563EB] hover:underline group"
                     >
-                      <Download className="w-3 h-3 text-gray-400 group-hover:text-[#5b6cf9]" />
+                      <Download className="w-3 h-3 text-gray-400 group-hover:text-[#2563EB]" />
                       <span className="truncate max-w-xs">{att.filename}</span>
                       <span className="text-gray-400">({fmtSize(att.size)})</span>
                     </button>
@@ -399,7 +399,7 @@ export default function GmailAgent() {
                 <button
                   onClick={onSummarize}
                   disabled={isSummarizing}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#5b6cf9] text-white text-xs font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2563EB] text-white text-xs font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
                 >
                   {isSummarizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                   {isSummarizing ? 'Summarizing…' : 'Summarize'}
@@ -407,7 +407,7 @@ export default function GmailAgent() {
               </div>
             )}
             {summary && (
-              <button onClick={onSummarize} disabled={isSummarizing} className="mt-2 text-[11px] text-[#5b6cf9] hover:underline flex items-center gap-1 disabled:opacity-50">
+              <button onClick={onSummarize} disabled={isSummarizing} className="mt-2 text-[11px] text-[#2563EB] hover:underline flex items-center gap-1 disabled:opacity-50">
                 {isSummarizing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
                 Refresh
               </button>
@@ -448,7 +448,7 @@ export default function GmailAgent() {
             <button
               key={t}
               onClick={() => { setTab(t); setSelectedChat(null); setSelectedCompany(null); }}
-              className={`px-4 py-1.5 text-sm font-medium border-r last:border-0 border-gray-200 transition-colors ${tab === t ? 'bg-[#5b6cf9] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              className={`px-4 py-1.5 text-sm font-medium border-r last:border-0 border-gray-200 transition-colors ${tab === t ? 'bg-[#2563EB] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
             >
               {t === 'inbox' ? 'Inbox' : 'By Company'}
             </button>
@@ -457,7 +457,7 @@ export default function GmailAgent() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
           <input
-            className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+            className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
             placeholder={tab === 'inbox' ? 'Search contacts…' : 'Search companies…'}
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -495,7 +495,7 @@ export default function GmailAgent() {
                       <div
                         key={chat.email}
                         onClick={() => void openChat(chat)}
-                        className={`flex items-start gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors ${selectedChat?.email === chat.email ? 'bg-indigo-50 border-r-2 border-[#5b6cf9]' : ''}`}
+                        className={`flex items-start gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors ${selectedChat?.email === chat.email ? 'bg-indigo-50 border-r-2 border-[#2563EB]' : ''}`}
                       >
                         <div className={`w-9 h-9 rounded-full ${bg} ${text} flex items-center justify-center flex-shrink-0 font-semibold text-sm`}>{ini}</div>
                         <div className="flex-1 min-w-0">
@@ -511,7 +511,7 @@ export default function GmailAgent() {
                             <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{chat.company}</span>
                             <span className="text-[10px] text-gray-400">{chat.messageCount} emails</span>
                             {chat.unreadCount > 0 && (
-                              <span className="text-[10px] text-white bg-[#5b6cf9] px-1.5 py-0.5 rounded-full font-medium">{chat.unreadCount} new</span>
+                              <span className="text-[10px] text-white bg-[#2563EB] px-1.5 py-0.5 rounded-full font-medium">{chat.unreadCount} new</span>
                             )}
                           </div>
                         </div>
@@ -581,7 +581,7 @@ export default function GmailAgent() {
                     <div
                       key={group.domain}
                       onClick={() => void openCompany(group)}
-                      className={`flex items-start gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors ${selectedCompany?.domain === group.domain ? 'bg-indigo-50 border-r-2 border-[#5b6cf9]' : ''}`}
+                      className={`flex items-start gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors ${selectedCompany?.domain === group.domain ? 'bg-indigo-50 border-r-2 border-[#2563EB]' : ''}`}
                     >
                       <CompanyLogo domain={group.domain} name={group.name} size="w-9 h-9" />
                       <div className="flex-1 min-w-0">

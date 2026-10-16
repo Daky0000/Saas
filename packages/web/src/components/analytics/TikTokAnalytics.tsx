@@ -142,7 +142,7 @@ export default function TikTokAnalytics({ days }: Props) {
           <div className="mb-3 flex items-center gap-2">
             <span className="text-sm font-bold text-slate-900">{profile.display_name}</span>
             {profile.handle && <span className="text-sm text-slate-400">@{profile.handle}</span>}
-            {profile.is_verified && <BadgeCheck size={15} className="text-[#5b6cf9]" />}
+            {profile.is_verified && <BadgeCheck size={15} className="text-[#2563EB]" />}
           </div>
         )}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -304,7 +304,7 @@ export default function TikTokAnalytics({ days }: Props) {
                           <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
                             {video.share_url && (
                               <a href={video.share_url} target="_blank" rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-xs font-semibold text-[#5b6cf9] hover:underline">
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-[#2563EB] hover:underline">
                                 <ExternalLink size={11} /> View on TikTok
                               </a>
                             )}

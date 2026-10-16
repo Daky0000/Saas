@@ -196,7 +196,7 @@ function ActivityItem({ act }: { act: Activity }) {
                 </span>
               )}
             </div>
-            {meetingTime && <p className="text-xs text-[#5b6cf9] mt-0.5 font-medium">{meetingTime}</p>}
+            {meetingTime && <p className="text-xs text-[#2563EB] mt-0.5 font-medium">{meetingTime}</p>}
             {!meetingTime && contactName && <p className="text-xs text-gray-400 mt-0.5">{contactName}</p>}
             {isMeeting && Array.isArray(act.attendees) && act.attendees.length > 0 && (
               <p className="text-xs text-gray-400 mt-0.5">
@@ -214,7 +214,7 @@ function ActivityItem({ act }: { act: Activity }) {
               : <p className={`text-xs text-gray-500 ${!expanded ? 'line-clamp-2' : ''}`}>{bodyPlain}</p>
             }
             {(bodyPlain?.length ?? 0) > 120 && (
-              <button onClick={() => setExpanded(e => !e)} className="text-xs text-[#5b6cf9] mt-0.5 hover:underline">
+              <button onClick={() => setExpanded(e => !e)} className="text-xs text-[#2563EB] mt-0.5 hover:underline">
                 {expanded ? 'Show less' : 'Show more'}
               </button>
             )}
@@ -321,7 +321,7 @@ function NoteItem({ note, onUpdate, onDelete }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-semibold text-gray-800">
-              Note by <span className="text-[#5b6cf9]">{note.author_name ?? 'You'}</span>
+              Note by <span className="text-[#2563EB]">{note.author_name ?? 'You'}</span>
             </span>
             <span className="text-xs text-gray-400 flex-shrink-0">{when}</span>
           </div>
@@ -342,7 +342,7 @@ function NoteItem({ note, onUpdate, onDelete }: {
                     Cancel
                   </button>
                   <button onClick={() => void handleSave()} disabled={saving || !stripHtml(editBody).trim()}
-                    className="px-3 py-1.5 rounded-lg bg-[#5b6cf9] text-xs font-semibold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors">
+                    className="px-3 py-1.5 rounded-lg bg-[#2563EB] text-xs font-semibold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors">
                     {saving ? 'Saving…' : 'Save changes'}
                   </button>
                 </div>
@@ -354,7 +354,7 @@ function NoteItem({ note, onUpdate, onDelete }: {
                   : <p className="text-xs text-gray-400 italic">No content</p>}
                 <div className="flex items-center gap-3 mt-2.5">
                   <button onClick={e => { e.stopPropagation(); setEditBody(currentBody); setEditing(true); }}
-                    className="text-xs text-[#5b6cf9] hover:underline font-medium">Edit</button>
+                    className="text-xs text-[#2563EB] hover:underline font-medium">Edit</button>
                   <button onClick={e => { e.stopPropagation(); onDelete(note.id); }}
                     className="text-xs text-red-400 hover:text-red-600 hover:underline">Delete</button>
                 </div>
@@ -403,7 +403,7 @@ function NoteItem({ note, onUpdate, onDelete }: {
                   className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 />
                 <button onClick={() => void handleAddComment()} disabled={!newComment.trim() || sendingComment}
-                  className="px-3 py-1.5 rounded-lg bg-[#5b6cf9] text-[11px] font-bold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors flex-shrink-0">
+                  className="px-3 py-1.5 rounded-lg bg-[#2563EB] text-[11px] font-bold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors flex-shrink-0">
                   Send
                 </button>
               </div>
@@ -449,7 +449,7 @@ function CreateNoteModal({ companyId, companyName, onCreated, onClose }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-[15px] font-bold text-gray-900 flex items-center gap-2">
-            <PenLine size={15} className="text-[#5b6cf9]" /> Note
+            <PenLine size={15} className="text-[#2563EB]" /> Note
           </h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X size={16} /></button>
         </div>
@@ -475,7 +475,7 @@ function CreateNoteModal({ companyId, companyName, onCreated, onClose }: {
           <button
             onClick={() => void handleCreate()}
             disabled={saving || !stripHtml(body).trim()}
-            className="rounded-xl bg-[#5b6cf9] px-5 py-2 text-[13px] font-bold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors"
+            className="rounded-xl bg-[#2563EB] px-5 py-2 text-[13px] font-bold text-white hover:bg-[#4a5be8] disabled:opacity-40 transition-colors"
           >
             {saving ? 'Saving…' : 'Create note'}
           </button>
@@ -517,7 +517,7 @@ function NotesView({ notes, companyId, companyName, onNoteCreated, onNoteUpdated
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#5b6cf9] text-white text-[12px] font-semibold hover:bg-[#4a5be8] transition-colors flex-shrink-0"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2563EB] text-white text-[12px] font-semibold hover:bg-[#4a5be8] transition-colors flex-shrink-0"
         >
           <PenLine size={13} /> Create a note
         </button>
@@ -531,7 +531,7 @@ function NotesView({ notes, companyId, companyName, onNoteCreated, onNoteUpdated
           </div>
           <p className="text-sm text-gray-400">{search ? 'No notes match your search' : 'No notes yet'}</p>
           {!search && (
-            <button onClick={() => setShowModal(true)} className="mt-3 text-xs text-[#5b6cf9] hover:underline">
+            <button onClick={() => setShowModal(true)} className="mt-3 text-xs text-[#2563EB] hover:underline">
               Create the first note
             </button>
           )}
@@ -614,7 +614,7 @@ function AddContactToCompanyModal({
       <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-[15px] font-bold text-gray-900 flex items-center gap-2">
-            <Users size={15} className="text-[#5b6cf9]" /> Add Contact to {companyName}
+            <Users size={15} className="text-[#2563EB]" /> Add Contact to {companyName}
           </h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X size={16} /></button>
         </div>
@@ -622,7 +622,7 @@ function AddContactToCompanyModal({
           <div className="relative">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
             <input
-              className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+              className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
               placeholder="Search contacts by name or email…"
               value={query}
               onChange={e => handleSearch(e.target.value)}
@@ -647,7 +647,7 @@ function AddContactToCompanyModal({
                     <button
                       onClick={() => void linkContact(c)}
                       disabled={saving === c.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5b6cf9] text-white text-xs font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-60 flex-shrink-0"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2563EB] text-white text-xs font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-60 flex-shrink-0"
                     >
                       {saving === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
                       Add
@@ -948,29 +948,29 @@ export default function CRMCompanies() {
           {formError && <p className="text-sm text-red-500 bg-red-50 px-3 py-2 rounded-lg">{formError}</p>}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1.5">Company Name *</label>
-            <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Acme Inc." />
+            <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Acme Inc." />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Domain</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.domain} onChange={e => setForm(f => ({ ...f, domain: e.target.value }))} placeholder="acme.com" />
+              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.domain} onChange={e => setForm(f => ({ ...f, domain: e.target.value }))} placeholder="acme.com" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Website</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://acme.com" />
+              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://acme.com" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Industry</label>
-              <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white" value={form.industry} onChange={e => setForm(f => ({ ...f, industry: e.target.value }))}>
+              <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] bg-white" value={form.industry} onChange={e => setForm(f => ({ ...f, industry: e.target.value }))}>
                 <option value="">Select…</option>
                 {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Company Size</label>
-              <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white" value={form.size} onChange={e => setForm(f => ({ ...f, size: e.target.value }))}>
+              <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] bg-white" value={form.size} onChange={e => setForm(f => ({ ...f, size: e.target.value }))}>
                 <option value="">Select…</option>
                 {SIZE_OPTIONS.map(s => <option key={s} value={s}>{s} employees</option>)}
               </select>
@@ -979,31 +979,31 @@ export default function CRMCompanies() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Email</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="info@acme.com" />
+              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="info@acme.com" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Phone</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+1 555 000 0000" />
+              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+1 555 000 0000" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">City</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} placeholder="New York" />
+              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} placeholder="New York" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Country</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]" value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} placeholder="United States" />
+              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]" value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} placeholder="United States" />
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1.5">Description</label>
-            <textarea className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] resize-none" rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Brief description…" />
+            <textarea className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] resize-none" rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Brief description…" />
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
           <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
-          <button onClick={saveCompany} disabled={saving} className="px-5 py-2 bg-[#5b6cf9] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors">
+          <button onClick={saveCompany} disabled={saving} className="px-5 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors">
             {saving ? 'Saving…' : editingCompany ? 'Update Company' : 'Create Company'}
           </button>
         </div>
@@ -1051,7 +1051,7 @@ export default function CRMCompanies() {
                     href={selected.website || `https://${selected.domain}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-xs text-[#5b6cf9] hover:underline mt-0.5 truncate max-w-full flex items-center gap-1"
+                    className="text-xs text-[#2563EB] hover:underline mt-0.5 truncate max-w-full flex items-center gap-1"
                   >
                     <Globe className="w-3 h-3" />{selected.domain || selected.website}
                   </a>
@@ -1082,7 +1082,7 @@ export default function CRMCompanies() {
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-semibold text-gray-700">Key information</p>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => openEdit(selected)} className="text-[11px] text-[#5b6cf9] hover:underline">Actions</button>
+                    <button onClick={() => openEdit(selected)} className="text-[11px] text-[#2563EB] hover:underline">Actions</button>
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -1141,7 +1141,7 @@ export default function CRMCompanies() {
                   <button
                     key={t}
                     onClick={() => setDetailTab(t)}
-                    className={`px-6 py-3.5 text-sm font-semibold border-b-2 transition-colors capitalize ${detailTab === t ? 'border-[#5b6cf9] text-[#5b6cf9]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    className={`px-6 py-3.5 text-sm font-semibold border-b-2 transition-colors capitalize ${detailTab === t ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                   >
                     {t === 'catchup' ? 'Catch-up' : 'Activities'}
                   </button>
@@ -1162,7 +1162,7 @@ export default function CRMCompanies() {
                       <button
                         key={t}
                         onClick={() => setActivitySubTab(t)}
-                        className={`px-3 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${activitySubTab === t ? 'border-[#5b6cf9] text-[#5b6cf9]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                        className={`px-3 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${activitySubTab === t ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                       >
                         {t}
                         {t !== 'All activities' && (() => {
@@ -1214,7 +1214,7 @@ export default function CRMCompanies() {
                   {contactsExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
                   Contacts ({selected.contacts?.length ?? selected.contact_count ?? 0})
                 </button>
-                <button onClick={() => setShowAddContactModal(true)} className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</button>
+                <button onClick={() => setShowAddContactModal(true)} className="text-xs text-[#2563EB] cursor-pointer hover:underline">+ Add</button>
               </div>
               {contactsExpanded && (
                 <div className="px-4 pb-3 space-y-2">
@@ -1229,10 +1229,10 @@ export default function CRMCompanies() {
                           <div className={`w-6 h-6 rounded-full ${bg} ${text} flex items-center justify-center text-[10px] font-semibold flex-shrink-0`}>
                             {(c.first_name?.[0] || c.email[0]).toUpperCase()}
                           </div>
-                          <a href={`mailto:${c.email}`} className="text-xs font-medium text-[#5b6cf9] hover:underline truncate">{c.email}</a>
+                          <a href={`mailto:${c.email}`} className="text-xs font-medium text-[#2563EB] hover:underline truncate">{c.email}</a>
                         </div>
                         <p className="text-xs text-gray-600 pl-8">{name !== c.email ? name : ''}</p>
-                        <p className="text-xs text-gray-400 pl-8">Email: <a href={`mailto:${c.email}`} className="text-[#5b6cf9] hover:underline">{c.email}</a></p>
+                        <p className="text-xs text-gray-400 pl-8">Email: <a href={`mailto:${c.email}`} className="text-[#2563EB] hover:underline">{c.email}</a></p>
                         {c.is_primary && (
                           <div className="pl-8 mt-1">
                             <span className="text-[9px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-medium">Contact with Primary Company</span>
@@ -1242,7 +1242,7 @@ export default function CRMCompanies() {
                     );
                   })}
                   {(selected.contacts?.length ?? 0) > 0 && (
-                    <button className="text-xs text-[#5b6cf9] hover:underline mt-1">View all associated Contacts ↗</button>
+                    <button className="text-xs text-[#2563EB] hover:underline mt-1">View all associated Contacts ↗</button>
                   )}
                 </div>
               )}
@@ -1255,7 +1255,7 @@ export default function CRMCompanies() {
                   {dealsExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
                   Deals ({selected.deals?.length ?? selected.open_deals_count ?? 0})
                 </button>
-                <span className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</span>
+                <span className="text-xs text-[#2563EB] cursor-pointer hover:underline">+ Add</span>
               </div>
               {dealsExpanded && (
                 <div className="px-4 pb-4">
@@ -1283,7 +1283,7 @@ export default function CRMCompanies() {
             <div className="border-b border-gray-100">
               <div className="flex items-center justify-between px-4 py-3">
                 <span className="text-sm font-semibold text-gray-700">Tickets (0)</span>
-                <span className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">+ Add</span>
+                <span className="text-xs text-[#2563EB] cursor-pointer hover:underline">+ Add</span>
               </div>
               <div className="px-4 pb-4 flex flex-col items-center text-center">
                 <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center mb-2">
@@ -1297,7 +1297,7 @@ export default function CRMCompanies() {
             <div className="border-b border-gray-100">
               <div className="flex items-center justify-between px-4 py-3">
                 <span className="text-sm font-semibold text-gray-700">Attachments</span>
-                <span className="text-xs text-[#5b6cf9] cursor-pointer hover:underline">Add ▼</span>
+                <span className="text-xs text-[#2563EB] cursor-pointer hover:underline">Add ▼</span>
               </div>
               <div className="px-4 pb-4 flex flex-col items-center text-center">
                 <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center mb-2">
@@ -1383,13 +1383,13 @@ export default function CRMCompanies() {
           <div className="flex items-center gap-0 border border-gray-200 rounded-lg overflow-hidden">
             <button
               onClick={() => setListTab('all')}
-              className={`px-4 py-1.5 text-sm font-medium transition-colors ${listTab === 'all' ? 'bg-[#5b6cf9] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              className={`px-4 py-1.5 text-sm font-medium transition-colors ${listTab === 'all' ? 'bg-[#2563EB] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
             >
               Companies <span className={`ml-1 text-xs ${listTab === 'all' ? 'text-indigo-200' : 'text-gray-400'}`}>{listTab === 'all' ? total : ''}</span>
             </button>
             <button
               onClick={() => setListTab('mine')}
-              className={`px-4 py-1.5 text-sm font-medium border-l border-gray-200 transition-colors ${listTab === 'mine' ? 'bg-[#5b6cf9] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              className={`px-4 py-1.5 text-sm font-medium border-l border-gray-200 transition-colors ${listTab === 'mine' ? 'bg-[#2563EB] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
             >
               My Companies <span className={`ml-1 text-xs ${listTab === 'mine' ? 'text-indigo-200' : 'text-gray-400'}`}>{listTab === 'mine' ? total : ''}</span>
             </button>
@@ -1407,7 +1407,7 @@ export default function CRMCompanies() {
                 {isRunning ? 'Syncing…' : 'Sync Gmail'}
               </button>
             )}
-            <button onClick={openCreate} className="flex items-center gap-1.5 px-4 py-1.5 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
+            <button onClick={openCreate} className="flex items-center gap-1.5 px-4 py-1.5 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
               <Plus className="w-4 h-4" /> Add Company
             </button>
           </div>
@@ -1417,7 +1417,7 @@ export default function CRMCompanies() {
         <div className="relative max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
-            className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+            className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
             placeholder={listTab === 'mine' ? 'Search your companies…' : 'Search companies…'}
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -1430,12 +1430,12 @@ export default function CRMCompanies() {
         <div className={`flex-shrink-0 border-b px-6 py-2.5 ${isRunning ? 'bg-indigo-50 border-indigo-100' : 'bg-red-50 border-red-100'}`}>
           {isRunning ? (
             <div className="flex items-center gap-3">
-              <Loader2 className="w-4 h-4 text-[#5b6cf9] animate-spin flex-shrink-0" />
+              <Loader2 className="w-4 h-4 text-[#2563EB] animate-spin flex-shrink-0" />
               <div className="flex items-center gap-3 flex-1">
                 <p className="text-sm font-medium text-gray-700">Scanning Gmail for companies…</p>
                 <div className="flex items-center gap-2 flex-1 max-w-xs">
                   <div className="flex-1 h-1.5 rounded-full bg-indigo-100 overflow-hidden">
-                    <div className="h-full rounded-full bg-[#5b6cf9] transition-all" style={{ width: `${pct}%` }} />
+                    <div className="h-full rounded-full bg-[#2563EB] transition-all" style={{ width: `${pct}%` }} />
                   </div>
                   <span className="text-xs text-gray-400 flex-shrink-0">{pct}%</span>
                 </div>
@@ -1475,7 +1475,7 @@ export default function CRMCompanies() {
                 : 'Sync Gmail to auto-create companies from business email domains'
               }
             </p>
-            <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Company</button>
+            <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Company</button>
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
@@ -1488,7 +1488,7 @@ export default function CRMCompanies() {
                 <div className="flex-1 flex items-center gap-3 min-w-0">
                   <CompanyLogo name={company.name} domain={company.domain} size="w-8 h-8" />
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate group-hover:text-[#5b6cf9] transition-colors">{company.name}</p>
+                    <p className="text-sm font-medium text-gray-900 truncate group-hover:text-[#2563EB] transition-colors">{company.name}</p>
                     {company.industry && <p className="text-xs text-gray-400 truncate">{company.industry}</p>}
                   </div>
                 </div>

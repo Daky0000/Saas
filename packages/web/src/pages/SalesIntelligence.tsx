@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { salesService, type SalesIntelligence as Intelligence } from '../services/salesService';
 
-const ACCENT = '#5b6cf9';
+const ACCENT = '#2563EB';
 
 function StatCard({
   label, value, sub, icon, accent = ACCENT,
@@ -151,7 +151,7 @@ export default function SalesIntelligence() {
           value={funnel?.interested ?? 0}
           sub={`${funnel?.conversations ?? 0} conversations analysed`}
           icon={<TrendingUp size={18} />}
-          accent="#8b5cf6"
+          accent="#2563EB"
         />
         <StatCard
           label="Meetings booked"
@@ -209,7 +209,7 @@ export default function SalesIntelligence() {
                     />
                     <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={16}>
                       {data.objections.map((_, i) => (
-                        <Cell key={i} fill={i === 0 ? ACCENT : '#c7d2fe'} />
+                        <Cell key={i} fill={i === 0 ? ACCENT : '#D2D7DF'} />
                       ))}
                     </Bar>
                   </BarChart>

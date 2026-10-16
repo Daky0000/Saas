@@ -543,33 +543,25 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
   return (
     <div className="fixed inset-0 z-[300] flex flex-col bg-white overflow-hidden">
       {/* Top progress bar */}
-      <div className="h-1 w-full bg-gray-100 shrink-0">
+      <div className="h-1 w-full bg-soft shrink-0">
         <div
-          className="h-full bg-indigo-600 transition-all duration-500 ease-out"
+          className="h-full bg-blue transition-all duration-500 ease-out"
           style={{ width: `${progress}%` }}
         />
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left panel — live brand brief */}
-        <div className="hidden md:flex w-[420px] shrink-0 flex-col bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 text-white p-10 relative overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-white/10 blur-3xl" />
-            <div className="absolute -bottom-24 -right-24 w-96 h-96 rounded-full bg-white/10 blur-3xl" />
-          </div>
-
-          <div className="relative z-10 flex items-center gap-2">
-            <div className="h-7 w-7 rounded-lg bg-white/20 flex items-center justify-center">
-              <span className="text-xs font-black text-white">D</span>
-            </div>
-            <span className="text-sm font-bold text-white/80">Dakyworld Hub</span>
+        {/* Left panel — live brand brief on DakyXTech navy dot-field */}
+        <div className="hidden md:flex w-[420px] shrink-0 flex-col bg-navy dot-field text-white p-10 relative overflow-hidden">
+          <div className="relative z-10 flex items-center justify-between gap-2">
+            <img src="/brand/lockup-on-dark.png" alt="DakyXTech" className="h-7 w-auto" />
           </div>
 
           <div className="relative z-10 mt-10">
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-white/60">
+            <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-blue-light">
               <Sparkles size={13} /> Your AI brand brief
             </div>
-            <p className="mt-1 text-[13px] text-white/70 leading-relaxed">
+            <p className="mt-1 text-[13px] text-white/75 leading-relaxed">
               Every agent reads this before every task. Watch it build as you answer.
             </p>
           </div>
@@ -699,13 +691,16 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
               onSubmit={(e) => { e.preventDefault(); next(); }}
             >
               {/* Step header */}
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500">
-                  <StepIcon size={18} className="text-white" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-navy">
+                    <StepIcon size={18} className="text-white" />
+                  </div>
+                  <span className="font-mono text-xs font-medium uppercase tracking-[0.12em] text-muted">
+                    Step {step + 1} of {STEP_META.length} — {STEP_META[step].title}
+                  </span>
                 </div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                  Step {step + 1} of {STEP_META.length} — {STEP_META[step].title}
-                </span>
+                <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="h-6 w-auto" />
               </div>
 
               {step > 0 && analysis.state === 'loading' && (

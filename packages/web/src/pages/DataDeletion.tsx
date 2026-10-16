@@ -2,27 +2,35 @@ import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock, Mail, ShieldCheck } from 'lucide-react';
 
 type DeletionStatusResponse =
-  | { success: true; data: { code: string; status: 'received' | 'completed' | 'unknown'; createdAt: string; completedAt: string | null } }
+  | {
+      success: true;
+      data: {
+        code: string;
+        status: 'received' | 'completed' | 'unknown';
+        createdAt: string;
+        completedAt: string | null;
+      };
+    }
   | { success: false; error?: string };
 
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = rawApiBaseUrl.includes('api.yourdomain.com') ? '' : rawApiBaseUrl.replace(/\/$/, '');
 
 const Card = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8">
-    <h2 className="text-xl font-black tracking-[-0.02em] text-slate-950">{title}</h2>
-    <div className="mt-4 space-y-4 text-sm leading-6 text-slate-600">{children}</div>
+  <section className="rounded-[22px] border border-line bg-white p-6 md:p-8">
+    <h2 className="text-xl font-normal tracking-[-0.03em] text-ink">{title}</h2>
+    <div className="mt-4 space-y-4 text-sm leading-6 text-muted">{children}</div>
   </section>
 );
 
 const InlineCode = ({ children }: { children: string }) => (
-  <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[12px] text-slate-800">
+  <span className="rounded-md border border-line bg-soft px-2 py-0.5 font-mono text-[12px] text-ink">
     {children}
   </span>
 );
 
 export default function DataDeletion() {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://yourdomain.com';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dakyx.com';
 
   const urls = useMemo(() => {
     const apiBase = API_BASE_URL || origin;
@@ -32,7 +40,9 @@ export default function DataDeletion() {
   }, [origin]);
 
   const [code, setCode] = useState<string>('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'received' | 'completed' | 'unknown' | 'not_found' | 'error'>('idle');
+  const [status, setStatus] = useState<
+    'idle' | 'loading' | 'received' | 'completed' | 'unknown' | 'not_found' | 'error'
+  >('idle');
   const [statusMessage, setStatusMessage] = useState<string>('');
 
   useEffect(() => {
@@ -67,65 +77,83 @@ export default function DataDeletion() {
     };
   }, [urls.statusUrl]);
 
-  const supportEmail = (import.meta.env.VITE_SUPPORT_EMAIL || 'support@yourdomain.com').trim();
+  const supportEmail = (import.meta.env.VITE_SUPPORT_EMAIL || 'support@dakyx.com').trim();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 px-4 py-10">
-      <div className="mx-auto w-full max-w-4xl space-y-6">
-        <div className="rounded-[32px] border border-slate-200 bg-white px-6 py-6 md:px-8">
-          <h1 className="text-[2.2rem] font-black tracking-[-0.03em] text-slate-950">Data Deletion</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-500 md:text-base">
-            This page explains how to request deletion of your data from Dakyworld Hub.
+    <div className="min-h-screen bg-canvas px-3 py-10 sm:px-6">
+      <div className="mx-auto w-full max-w-3xl space-y-4">
+        <div className="rounded-[22px] border border-line bg-white px-6 py-7 md:px-8">
+          <div className="mb-6 flex items-center justify-between gap-4 border-b border-line pb-4">
+            <a href="/" className="inline-flex items-center gap-2">
+              <img src="/brand/header-lockup-on-light.png" alt="DakyXTech" className="h-6 w-auto" />
+            </a>
+            <a href="/" className="text-[13px] font-medium text-blue hover:underline">
+              &larr; Back to home
+            </a>
+          </div>
+          <span className="os-eyebrow">Legal · Privacy &amp; Data</span>
+          <h1 className="mt-2 text-[34px] font-normal tracking-[-0.035em] text-ink">Data Deletion</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted">
+            This page explains how to request deletion of your account and connected channel data from
+            DakyXTech Marketing.
           </p>
         </div>
 
-        <Card title="How to Request Deletion">
+        <Card title="How to request deletion">
           <div className="flex items-start gap-3">
-            <div className="mt-0.5 text-slate-400"><ShieldCheck size={16} /></div>
+            <div className="mt-0.5 text-blue">
+              <ShieldCheck size={16} />
+            </div>
             <div className="min-w-0">
-              <div className="text-sm text-slate-700">
-                Email us from the address you used in the app. Include:
-              </div>
-              <ul className="mt-2 list-disc pl-5 text-sm text-slate-600">
+              <div className="text-sm text-ink">Email us from the address you used in the app. Include:</div>
+              <ul className="mt-2 list-disc pl-5 text-sm text-muted space-y-1">
                 <li>Your account email</li>
-                <li>Which Meta-connected accounts you want removed (Facebook/Instagram/Threads)</li>
+                <li>Which Meta-connected accounts you want removed (Facebook / Instagram / Threads)</li>
                 <li>If you know it: your Facebook user ID (optional)</li>
                 <li>Any relevant screenshots or error messages (optional)</li>
               </ul>
-              <div className="mt-3 text-xs text-slate-500">
-                We will delete/disconnect any stored OAuth tokens and related account connection data we can identify for your account.
+              <div className="mt-3 text-xs text-muted">
+                We will delete and disconnect any stored OAuth tokens and related account connection data
+                we can identify for your account.
               </div>
-              <div className="mt-3">
+              <div className="mt-4">
                 <a
-                  href={`mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent('Data deletion request')}`}
-                  className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                  href={`mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent(
+                    'Data deletion request'
+                  )}`}
+                  className="btn-primary"
                 >
-                  <Mail size={16} /> Email support
+                  <Mail size={15} /> Email support
                 </a>
-                <div className="mt-2 text-xs text-slate-500">Contact: <InlineCode>{supportEmail}</InlineCode></div>
+                <div className="mt-2.5 text-xs text-muted">
+                  Contact: <InlineCode>{supportEmail}</InlineCode>
+                </div>
               </div>
             </div>
           </div>
         </Card>
 
-        <Card title="Request Status (If You Have a Confirmation Code)">
+        <Card title="Request status (if you have a confirmation code)">
           {!code && (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              If you were redirected here after submitting a deletion request, you’ll have a <InlineCode>code</InlineCode> in the URL.
+            <div className="rounded-xl border border-line bg-soft px-4 py-3 text-sm text-muted">
+              If you were redirected here after submitting a deletion request, you&apos;ll have a{' '}
+              <InlineCode>code</InlineCode> in the URL.
             </div>
           )}
 
           {code && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-xs font-bold text-slate-600">Confirmation code</div>
-              <div className="mt-1 text-sm"><InlineCode>{code}</InlineCode></div>
+            <div className="rounded-xl border border-line bg-soft p-4">
+              <div className="micro">Confirmation code</div>
+              <div className="mt-1 text-sm">
+                <InlineCode>{code}</InlineCode>
+              </div>
 
               <div className="mt-4 flex items-start gap-3">
-                <div className="mt-0.5 text-slate-400">
+                <div className="mt-0.5 text-blue">
                   {status === 'completed' ? <CheckCircle2 size={16} /> : <Clock size={16} />}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-sm font-bold text-slate-900">
+                  <div className="text-sm font-medium text-ink">
                     {status === 'loading' && 'Loading status…'}
                     {status === 'received' && 'Request received'}
                     {status === 'completed' && 'Request completed'}
@@ -134,11 +162,15 @@ export default function DataDeletion() {
                     {status === 'error' && 'Could not load status'}
                     {status === 'idle' && '—'}
                   </div>
-                  <div className="mt-1 text-sm text-slate-600">
-                    {status === 'received' && 'Your request is recorded. If you need help, email support with this code.'}
-                    {status === 'completed' && 'We completed best-effort deletion for any data we can match automatically.'}
-                    {status === 'unknown' && 'We recorded your request, but we could not determine the current status.'}
-                    {status === 'not_found' && 'This confirmation code does not exist (or has not been recorded yet).'}
+                  <div className="mt-1 text-sm text-muted">
+                    {status === 'received' &&
+                      'Your request is recorded. If you need help, email support with this code.'}
+                    {status === 'completed' &&
+                      'We completed deletion for all data matched to this request.'}
+                    {status === 'unknown' &&
+                      'We recorded your request, but could not determine the current status.'}
+                    {status === 'not_found' &&
+                      'This confirmation code does not exist (or has not been recorded yet).'}
                     {status === 'error' && (statusMessage || 'Please try again later.')}
                   </div>
                 </div>

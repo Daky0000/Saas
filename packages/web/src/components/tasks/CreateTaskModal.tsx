@@ -66,7 +66,7 @@ export default function CreateTaskModal({
   const [availableLabels, setAvailableLabels] = useState<TaskLabel[]>(propLabels ?? []);
   const [loadedMembers, setLoadedMembers]     = useState<{ id: string; name: string; avatar_url: string | null }[]>(propMembers ?? []);
   const [newLabelName, setNewLabelName] = useState('');
-  const [newLabelColor, setNewLabelColor] = useState('#6366f1');
+  const [newLabelColor, setNewLabelColor] = useState('#2563EB');
   const [actions, setActions]         = useState<ActionDraft[]>([]);
   const [saving, setSaving]           = useState(false);
   const titleRef      = useRef<HTMLInputElement>(null);
@@ -266,7 +266,7 @@ export default function CreateTaskModal({
                   </p>
                   <button
                     onClick={() => setCustomReminderDate('')}
-                    className="text-[10px] text-[#5b6cf9] hover:underline font-semibold"
+                    className="text-[10px] text-[#2563EB] hover:underline font-semibold"
                   >
                     Change
                   </button>

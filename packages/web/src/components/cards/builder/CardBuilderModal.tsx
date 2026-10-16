@@ -742,7 +742,7 @@ export default function CardBuilderModal({
                 <div
                   className="pointer-events-none absolute inset-0"
                   style={{
-                    backgroundImage: `linear-gradient(rgba(99,102,241,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.18) 1px, transparent 1px)`,
+                    backgroundImage: `linear-gradient(rgba(37, 99, 235,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(37, 99, 235,0.18) 1px, transparent 1px)`,
                     backgroundSize: `${50 * canvasScale}px ${50 * canvasScale}px`,
                   }}
                 />

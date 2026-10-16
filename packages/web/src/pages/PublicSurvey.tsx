@@ -298,17 +298,18 @@ export default function PublicSurvey({ surveyId }: { surveyId: string }) {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
+    <div className="min-h-screen bg-canvas py-12 px-4">
       {isPreview && (
-        <div className="max-w-xl mx-auto mb-4 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium text-center">
+        <div className="max-w-xl mx-auto mb-4 px-4 py-2 bg-warn-surface border border-warn-line rounded-[12px] text-xs text-warn-text font-medium text-center">
           Preview mode — responses will not be saved
         </div>
       )}
       <div className="max-w-xl mx-auto">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-8">
-            <h1 className="text-2xl font-bold text-white mb-2">{survey.title}</h1>
-            {survey.description && <p className="text-blue-100 text-sm">{survey.description}</p>}
+        <div className="bg-white rounded-[22px] shadow-panel border border-line overflow-hidden">
+          <div className="bg-navy dot-field px-8 py-8">
+            <img src="/brand/lockup-on-dark.png" alt="DakyXTech" className="h-6 w-auto mb-4" />
+            <h1 className="text-2xl font-normal text-white mb-2">{survey.title}</h1>
+            {survey.description && <p className="text-white/75 text-sm">{survey.description}</p>}
           </div>
 
           <form onSubmit={handleSubmit} className="px-8 py-8">

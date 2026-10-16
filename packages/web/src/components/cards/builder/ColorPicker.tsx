@@ -50,7 +50,7 @@ export function parseAlpha(color: string): number {
 
 const SAVED_DEFAULTS = [
   '#6b7280', '#3b82f6', '#22c55e', '#f97316',
-  '#ef4444', '#eab308', '#14b8a6', '#8b5cf6',
+  '#ef4444', '#eab308', '#14b8a6', '#2563EB',
 ];
 
 export interface ColorPickerProps {

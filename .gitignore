@@ -113,3 +113,5 @@ packages/**/.env.*.local
 # Generated business docs (regenerable via scripts/generate-*-doc.mjs)
 /PRICING_FINANCIALS.docx
 /SYSTEM_OVERVIEW.docx
+
+files/

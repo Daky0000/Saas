@@ -139,7 +139,7 @@ function MarketingAnalyticsTab() {
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                 <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} unit="%" />
                 <Tooltip formatter={(v: number) => [`${v}%`, '']} contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }} />
-                <Bar dataKey="value" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="value" fill="#2563EB" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -157,7 +157,7 @@ function MarketingAnalyticsTab() {
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                 <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
                 <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }} />
-                <Bar dataKey="count" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="count" fill="#2563EB" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (

@@ -574,7 +574,7 @@ export default function PropertiesPanel({
   // ── Text fill mode (solid vs gradient) ────────────────────────────────────
   const [textFillMode, setTextFillMode] = useState<'solid' | 'gradient'>('solid');
   const [textGradStops, setTextGradStops] = useState<GradientStop[]>([
-    { id: 'ta', offset: 0, color: '#6366f1', opacity: 100 },
+    { id: 'ta', offset: 0, color: '#2563EB', opacity: 100 },
     { id: 'tb', offset: 1, color: '#ec4899', opacity: 100 },
   ]);
   const [textGradType, setTextGradType] = useState<'linear' | 'radial'>('linear');

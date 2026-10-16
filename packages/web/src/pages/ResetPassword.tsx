@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { API_BASE_URL } from '../utils/apiBase';
+import { AuthFrame } from './Auth';
+import { Notice } from '../components/ui';
 
 export default function ResetPassword() {
   const [token, setToken] = useState('');
@@ -10,8 +12,6 @@ export default function ResetPassword() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    // Token is in the hash fragment (#token=...) so it's never sent to servers
-    // or recorded in access logs / Referer headers.
     const params = new URLSearchParams(window.location.hash.slice(1));
     setToken(params.get('token') ?? '');
   }, []);
@@ -19,10 +19,22 @@ export default function ResetPassword() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (newPassword.length < 8) { setError('Password must be at least 8 characters.'); return; }
-    if (newPassword.length > 72) { setError('Password must be at most 72 characters (bcrypt limitation).'); return; }
-    if (newPassword !== confirm) { setError('Passwords do not match.'); return; }
-    if (!token) { setError('Invalid or missing reset token. Please request a new link.'); return; }
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword.length > 72) {
+      setError('Password must be at most 72 characters (bcrypt limitation).');
+      return;
+    }
+    if (newPassword !== confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
+    if (!token) {
+      setError('Invalid or missing reset token. Please request a new link.');
+      return;
+    }
     setSubmitting(true);
     try {
       const r = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
@@ -30,8 +42,11 @@ export default function ResetPassword() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, newPassword }),
       });
-      const data = await r.json() as { success: boolean; error?: string; message?: string };
-      if (!data.success) { setError(data.error ?? 'Failed to reset password.'); return; }
+      const data = (await r.json()) as { success: boolean; error?: string; message?: string };
+      if (!data.success) {
+        setError(data.error ?? 'Failed to reset password.');
+        return;
+      }
       setSuccess(true);
     } catch {
       setError('Network error. Please try again.');
@@ -41,70 +56,67 @@ export default function ResetPassword() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FBFBFA', padding: 24, fontFamily: 'Inter, -apple-system, sans-serif' }}>
-      <div style={{ width: '100%', maxWidth: 400, background: '#fff', borderRadius: 20, border: '1px solid rgba(0,0,0,0.08)', padding: 40, boxShadow: '0 4px 32px rgba(0,0,0,0.06)' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: '#0A0A0B', marginBottom: 8 }}>Set new password</h1>
-        <p style={{ fontSize: 14, color: '#5C5C60', marginBottom: 28, lineHeight: 1.5 }}>Enter your new password below.</p>
+    <AuthFrame>
+      <h1 className="os-login-title">Set new password</h1>
+      <p className="os-login-lead">Enter your new password below to restore access to your workspace.</p>
 
-        {success ? (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="10" stroke="#16a34a" strokeWidth="1.5"/><path d="M6.5 11.5 L9.5 14.5 L15.5 8" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </div>
-            <p style={{ fontSize: 15, fontWeight: 600, color: '#0A0A0B', marginBottom: 8 }}>Password updated!</p>
-            <p style={{ fontSize: 13, color: '#5C5C60', marginBottom: 24 }}>You can now sign in with your new password.</p>
-            <a href="/login" style={{ display: 'inline-block', background: '#5b6cf9', color: '#fff', borderRadius: 10, padding: '11px 28px', fontSize: 14, fontWeight: 700, textDecoration: 'none' }}>Go to sign in</a>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} noValidate>
-            {error && (
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 20, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7" cy="7" r="6" stroke="currentColor"/><path d="M7 4V8M7 10V10.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                {error}
-              </div>
-            )}
+      {success ? (
+        <div className="mt-6 space-y-5">
+          <Notice tone="positive" title="Password updated">
+            You can now sign in with your new password.
+          </Notice>
+          <a href="/login" className="os-login-submit">
+            Go to sign in
+          </a>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} noValidate>
+          {error && (
+            <Notice tone="danger" className="mb-4">
+              {error}
+            </Notice>
+          )}
 
-            {!token && (
-              <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '10px 14px', color: '#92400e', fontSize: 13, marginBottom: 20 }}>
-                No reset token found. Please use the link from your email.
-              </div>
-            )}
+          {!token && (
+            <Notice tone="warn" className="mb-4">
+              No reset token found. Please use the link from your email.
+            </Notice>
+          )}
 
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#2A2A2C', marginBottom: 6 }}>New password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                placeholder="At least 8 characters"
-                autoComplete="new-password"
-                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid rgba(0,0,0,0.14)', borderRadius: 10, fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#2A2A2C', marginBottom: 6 }}>Confirm password</label>
-              <input
-                type="password"
-                value={confirm}
-                onChange={e => setConfirm(e.target.value)}
-                placeholder="Repeat your password"
-                autoComplete="new-password"
-                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid rgba(0,0,0,0.14)', borderRadius: 10, fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={submitting || !token}
-              style={{ width: '100%', background: '#5b6cf9', color: '#fff', border: 'none', borderRadius: 10, padding: '12px', fontSize: 14, fontWeight: 700, cursor: submitting || !token ? 'not-allowed' : 'pointer', opacity: submitting || !token ? 0.7 : 1 }}
-            >
-              {submitting ? 'Updating…' : 'Update password'}
-            </button>
-            <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#5C5C60' }}>
-              <a href="/login" style={{ color: '#5b6cf9', textDecoration: 'none', fontWeight: 600 }}>← Back to sign in</a>
-            </p>
-          </form>
-        )}
-      </div>
-    </div>
+          <label className="os-login-field">
+            <span>New password</span>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              className="input"
+            />
+          </label>
+          <label className="os-login-field">
+            <span>Confirm password</span>
+            <input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Repeat your password"
+              autoComplete="new-password"
+              className="input"
+            />
+          </label>
+
+          <button type="submit" disabled={submitting || !token} className="os-login-submit mt-6">
+            {submitting ? 'Updating…' : 'Update password'}
+          </button>
+
+          <p className="mt-5 text-center text-[13px] text-muted">
+            <a href="/login" className="font-medium text-blue hover:underline">
+              ← Back to sign in
+            </a>
+          </p>
+        </form>
+      )}
+    </AuthFrame>
   );
 }

@@ -58,7 +58,7 @@ interface SyncStats {
 const STATUS_CONFIG = {
   completed: { icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-50', label: 'Completed' },
   failed:    { icon: XCircle,      color: 'text-red-500',     bg: 'bg-red-50',     label: 'Failed' },
-  running:   { icon: Loader2,      color: 'text-[#5b6cf9]',   bg: 'bg-indigo-50',  label: 'Running' },
+  running:   { icon: Loader2,      color: 'text-[#2563EB]',   bg: 'bg-indigo-50',  label: 'Running' },
   cancelled: { icon: XCircle,      color: 'text-gray-400',    bg: 'bg-gray-50',    label: 'Cancelled' },
 };
 
@@ -114,7 +114,7 @@ function RunRow({ run }: { run: SyncRun }) {
         </td>
         <td className="py-3 px-4 text-xs text-gray-500">
           {run.records_created > 0 && <span className="text-emerald-600">+{run.records_created} </span>}
-          {run.records_updated > 0 && <span className="text-[#5b6cf9]">~{run.records_updated} </span>}
+          {run.records_updated > 0 && <span className="text-[#2563EB]">~{run.records_updated} </span>}
           {run.records_pulled > 0 && <span className="text-gray-400">{run.records_pulled} pulled</span>}
           {!run.records_created && !run.records_updated && !run.records_pulled && '—'}
         </td>
@@ -248,7 +248,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
             </button>
             <button
               onClick={() => setShowNewJob(v => !v)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors"
             >
               <Plus className="w-4 h-4" /> New Job
             </button>
@@ -262,12 +262,12 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
         {stats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
             {[
-              { label: 'Active Jobs',    value: stats.active_jobs,                      icon: Play,         color: 'text-[#5b6cf9]', bg: 'bg-indigo-50' },
+              { label: 'Active Jobs',    value: stats.active_jobs,                      icon: Play,         color: 'text-[#2563EB]', bg: 'bg-indigo-50' },
               { label: 'Completed Runs', value: parseInt(stats.completed_runs),          icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
               { label: 'Failed Runs',    value: parseInt(stats.failed_runs),             icon: XCircle,      color: 'text-red-500',    bg: 'bg-red-50' },
               { label: 'Running Now',    value: parseInt(stats.running_runs),            icon: Loader2,      color: 'text-amber-500',  bg: 'bg-amber-50' },
               { label: 'Records Created',value: parseInt(stats.total_created),          icon: Database,     color: 'text-emerald-600', bg: 'bg-emerald-50' },
-              { label: 'Records Updated',value: parseInt(stats.total_updated),          icon: BarChart2,    color: 'text-[#5b6cf9]', bg: 'bg-indigo-50' },
+              { label: 'Records Updated',value: parseInt(stats.total_updated),          icon: BarChart2,    color: 'text-[#2563EB]', bg: 'bg-indigo-50' },
             ].map(s => {
               const Icon = s.icon;
               return (
@@ -291,7 +291,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <div className="col-span-2">
                 <label className="text-xs text-gray-500 mb-1 block">Job name</label>
                 <input
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9]"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB]"
                   placeholder="e.g. HubSpot contact sync"
                   value={newJob.name}
                   onChange={e => setNewJob(j => ({ ...j, name: e.target.value }))}
@@ -300,7 +300,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Domain</label>
                 <select
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] bg-white"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] bg-white"
                   value={newJob.domain_slug}
                   onChange={e => setNewJob(j => ({ ...j, domain_slug: e.target.value }))}
                 >
@@ -313,7 +313,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Provider slug</label>
                 <input
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9]"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB]"
                   placeholder="e.g. hubspot"
                   value={newJob.provider_slug}
                   onChange={e => setNewJob(j => ({ ...j, provider_slug: e.target.value }))}
@@ -322,7 +322,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Sync type</label>
                 <select
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] bg-white"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] bg-white"
                   value={newJob.sync_type}
                   onChange={e => setNewJob(j => ({ ...j, sync_type: e.target.value }))}
                 >
@@ -334,7 +334,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Direction</label>
                 <select
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] bg-white"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] bg-white"
                   value={newJob.direction}
                   onChange={e => setNewJob(j => ({ ...j, direction: e.target.value }))}
                 >
@@ -346,7 +346,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Frequency</label>
                 <select
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] bg-white"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] bg-white"
                   value={newJob.frequency}
                   onChange={e => setNewJob(j => ({ ...j, frequency: e.target.value }))}
                 >
@@ -361,7 +361,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <button
                 onClick={createJob}
                 disabled={savingJob || !newJob.name.trim() || !newJob.domain_slug || !newJob.provider_slug}
-                className="text-sm px-4 py-2 bg-[#5b6cf9] text-white rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
+                className="text-sm px-4 py-2 bg-[#2563EB] text-white rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
               >
                 {savingJob ? 'Creating…' : 'Create job'}
               </button>
@@ -386,7 +386,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
               <p className="text-sm text-gray-400">No sync jobs yet.</p>
               <button
                 onClick={() => setShowNewJob(true)}
-                className="mt-3 text-sm text-[#5b6cf9] hover:underline"
+                className="mt-3 text-sm text-[#2563EB] hover:underline"
               >
                 Create your first sync job
               </button>
@@ -397,7 +397,7 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
                 <div key={job.id} className="flex items-center gap-4 px-6 py-4 hover:bg-gray-50 transition-colors">
                   <button
                     onClick={() => toggleJob(job)}
-                    className={`flex-shrink-0 transition-colors ${job.active ? 'text-[#5b6cf9]' : 'text-gray-300'}`}
+                    className={`flex-shrink-0 transition-colors ${job.active ? 'text-[#2563EB]' : 'text-gray-300'}`}
                     title={job.active ? 'Disable' : 'Enable'}
                   >
                     {job.active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
@@ -433,10 +433,10 @@ export default function ConnectorSyncDashboard({ onBack }: { onBack?: () => void
                       onClick={() => triggerRun(job.id)}
                       disabled={triggering === job.id}
                       title="Run now"
-                      className="p-1.5 text-gray-400 hover:text-[#5b6cf9] hover:bg-indigo-50 rounded-lg transition-colors"
+                      className="p-1.5 text-gray-400 hover:text-[#2563EB] hover:bg-indigo-50 rounded-lg transition-colors"
                     >
                       {triggering === job.id
-                        ? <Loader2 className="w-4 h-4 animate-spin text-[#5b6cf9]" />
+                        ? <Loader2 className="w-4 h-4 animate-spin text-[#2563EB]" />
                         : <Play className="w-4 h-4" />}
                     </button>
                     <button

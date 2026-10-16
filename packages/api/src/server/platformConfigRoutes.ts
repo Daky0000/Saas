@@ -246,6 +246,127 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
     }
   });
 
+  // Universal OAuth Deauthorize Callback URL (/api/oauth/:platform/deauthorize)
+  router.get('/oauth/:platform/deauthorize', (req: Request, res: Response) => {
+    const platform = normalizePlatformId(req.params.platform);
+    return res.status(200).json({
+      ok: true,
+      endpoint: 'oauth_deauthorize_callback',
+      platform,
+      message: `Send POST requests to deauthorize ${platform} accounts.`,
+    });
+  });
+
+  router.post('/oauth/:platform/deauthorize', async (req: Request, res: Response) => {
+    try {
+      const platform = normalizePlatformId(req.params.platform);
+      const body = (req.body || {}) as Record<string, any>;
+      const externalId = String(
+        body.user_id || body.account_id || body.sub || body.payload?.user_id || body.event?.user || ''
+      ).trim();
+
+      if (hasDatabase() && externalId) {
+        await dbQuery(
+          `UPDATE social_accounts
+              SET connected = FALSE, access_token = NULL, refresh_token = NULL, token_expires_at = NULL
+            WHERE LOWER(platform) = $1 AND account_id = $2`,
+          [platform, externalId]
+        ).catch(() => undefined);
+      }
+
+      logger.info({ platform, externalId: externalId || 'unspecified' }, 'oauth_deauthorize_callback_received');
+      return res.status(200).json({
+        success: true,
+        platform,
+        status: 'deauthorized',
+      });
+    } catch (e) {
+      logger.error({ e }, 'oauth_deauthorize_callback_error');
+      return res.status(500).json({ success: false, error: 'Failed to process deauthorization callback' });
+    }
+  });
+
+  // Universal OAuth Data Deletion Request Callback URL (/api/oauth/:platform/data-deletion)
+  router.get('/oauth/:platform/data-deletion', (req: Request, res: Response) => {
+    const platform = normalizePlatformId(req.params.platform);
+    const frontendBase = (process.env.FRONTEND_URL || 'https://marketing.dakyx.com').replace(/\/$/, '');
+    return res.status(200).json({
+      ok: true,
+      endpoint: 'oauth_data_deletion_callback',
+      platform,
+      instructions_url: `${frontendBase}/data-deletion`,
+    });
+  });
+
+  router.post('/oauth/:platform/data-deletion', async (req: Request, res: Response) => {
+    try {
+      const platform = normalizePlatformId(req.params.platform);
+      const body = (req.body || {}) as Record<string, any>;
+      const externalId = String(
+        body.user_id || body.account_id || body.sub || body.payload?.user_id || ''
+      ).trim();
+
+      if (hasDatabase() && externalId) {
+        await dbQuery(
+          `DELETE FROM social_accounts WHERE LOWER(platform) = $1 AND account_id = $2`,
+          [platform, externalId]
+        ).catch(() => undefined);
+      }
+
+      const confirmationCode = `del_${platform}_${Date.now()}_${randomBytes(3).toString('hex')}`;
+      const frontendBase = (process.env.FRONTEND_URL || 'https://marketing.dakyx.com').replace(/\/$/, '');
+      const statusUrl = `${frontendBase}/data-deletion?code=${encodeURIComponent(confirmationCode)}&platform=${encodeURIComponent(platform)}`;
+
+      logger.info({ platform, externalId: externalId || 'unspecified', confirmationCode }, 'oauth_data_deletion_callback_received');
+      return res.status(200).json({
+        url: statusUrl,
+        confirmation_code: confirmationCode,
+        status: 'completed',
+      });
+    } catch (e) {
+      logger.error({ e }, 'oauth_data_deletion_callback_error');
+      return res.status(500).json({ success: false, error: 'Failed to process data deletion request' });
+    }
+  });
+
+  // Redirect URI Validator endpoint for Admin Integrations & Auth Providers
+  router.post('/admin/platform-configs/:platform/validate-redirect-uri', async (req: Request, res: Response) => {
+    try {
+      const admin = await requireAdmin(req, res);
+      if (!admin) return;
+
+      const platform = String(req.params.platform || '').trim().toLowerCase();
+      const candidateUri = String(req.body?.redirectUri || '').trim();
+      const expectedPath = platform === 'google_calendar'
+        ? '/api/calendar/google/callback'
+        : platform === 'hubtel'
+          ? '/api/payments/hubtel/callback'
+          : platform === 'vapi'
+            ? '/webhooks/vapi'
+            : `/auth/${platform}/callback`;
+
+      const canonicalUri = platform === 'google_calendar' || platform === 'hubtel' || platform === 'vapi'
+        ? `${resolveOAuthRedirectUri('facebook', '', req).replace(/\/auth\/facebook\/callback$/, '')}${expectedPath}`
+        : resolveOAuthRedirectUri(platform, '', req);
+
+      const cfg = await getPlatformConfig(platform).catch(() => ({} as Record<string, string>));
+      const savedUri = String(cfg.redirectUri || cfg.calendarRedirectUri || '').trim();
+
+      return res.json({
+        success: true,
+        platform,
+        candidateUri,
+        expectedPath,
+        canonicalUri,
+        savedUri: savedUri || null,
+        matchesSaved: Boolean(savedUri && savedUri === candidateUri),
+        matchesCanonical: candidateUri === canonicalUri,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e?.message || 'Validation failed' });
+    }
+  });
+
   router.post('/integrations/validate', async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);

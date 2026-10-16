@@ -1,6 +1,29 @@
-import { BookOpen, Bot, ChevronDown, Clapperboard, CreditCard, FileText, Film, KeyRound, LayoutDashboard, Loader2, LogOut, Menu, Network, Plug, Receipt, Shield, SlidersHorizontal, Users, Waypoints, DollarSign, Image, X, Zap, Globe, Wand2 } from 'lucide-react';
+import {
+  BookOpen,
+  Bot,
+  ChevronDown,
+  Clapperboard,
+  CreditCard,
+  FileText,
+  Film,
+  KeyRound,
+  LayoutDashboard,
+  LogOut,
+  Network,
+  Plug,
+  Receipt,
+  SlidersHorizontal,
+  Users,
+  Waypoints,
+  DollarSign,
+  Image,
+  Zap,
+  Globe,
+  Wand2,
+} from 'lucide-react';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { AppUser, clearStoredUser } from '../utils/userSession';
+import { Loading } from '../components/ui';
 
 const AdminOverview = lazy(() => import('../components/admin/AdminOverview'));
 const UserManagementPage = lazy(() => import('../components/admin/UserManagementPage'));
@@ -95,6 +118,38 @@ const Admin = ({ currentUser }: AdminProps) => {
     mcp: '/admin/mcp',
   };
 
+  const TAB_LABELS: Record<AdminTab, string> = {
+    overview: 'Overview',
+    users: 'User Management',
+    pricing: 'Pricing Plans',
+    cards: 'Card Templates',
+    payments: 'Payments',
+    'auth-providers': 'Login Providers',
+    integrations: 'Integrations',
+    settings: 'Platform Settings',
+    audit: 'Audit Log',
+    'nav-settings': 'Navigation',
+    'pages-home': 'Homepage CMS',
+    'pages-tools': 'Tools Page CMS',
+    'pages-pricing-public': 'Pricing Page CMS',
+    'pages-login': 'Login / Signup CMS',
+    'pages-privacy': 'Privacy Policy CMS',
+    'pages-terms': 'Terms of Service CMS',
+    media: 'Media Library',
+    'ai-config': 'AI Configuration',
+    'ai-skills': 'Create AI Skill',
+    billing: 'Subscriptions',
+    apify: 'Apify Actors & Runs',
+    learn: 'Daky Learn',
+    agents: 'Agent Team',
+    magnific: 'Magnific AI',
+    kling: 'Kling AI',
+    google: 'Google AI',
+    openai: 'OpenAI',
+    higgsfield: 'Higgsfield AI',
+    mcp: 'MCP Servers',
+  };
+
   const PATH_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
     Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as AdminTab])
   );
@@ -102,21 +157,37 @@ const Admin = ({ currentUser }: AdminProps) => {
   const getInitialTab = (): AdminTab => {
     const fromPath = PATH_TO_TAB[window.location.pathname];
     if (fromPath) return fromPath;
-    // Bare /admin lands on Overview; unknown subpaths keep the old default
     return window.location.pathname === '/admin' || window.location.pathname === '/admin/' ? 'overview' : 'users';
   };
 
   const [activeTab, setActiveTab] = useState<AdminTab>(getInitialTab);
   const [pagesOpen, setPagesOpen] = useState(() => window.location.pathname.startsWith('/admin/pages'));
-  const [aiOpen, setAiOpen] = useState(() => ['/admin/ai','/admin/learn','/admin/magnific','/admin/kling','/admin/google','/admin/openai','/admin/higgsfield'].some(p => window.location.pathname.startsWith(p)));
+  const [aiOpen, setAiOpen] = useState(() =>
+    ['/admin/ai', '/admin/learn', '/admin/magnific', '/admin/kling', '/admin/google', '/admin/openai', '/admin/higgsfield'].some((p) =>
+      window.location.pathname.startsWith(p)
+    )
+  );
   const [apifyOpen, setApifyOpen] = useState(() => window.location.pathname.startsWith('/admin/apify'));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [filter, setFilter] = useState('');
   const currentAdminRole = 'Admin' as const;
 
   const navigateTab = (tab: AdminTab) => {
     setActiveTab(tab);
     window.history.pushState({}, '', TAB_PATHS[tab]);
     setMobileNavOpen(false);
+  };
+
+  const returnToWorkspace = () => {
+    window.history.pushState({}, document.title, '/dashboard');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_session');
+    localStorage.removeItem('auth_token');
+    clearStoredUser();
+    window.location.assign('/login');
   };
 
   const adminItems = [
@@ -151,12 +222,13 @@ const Admin = ({ currentUser }: AdminProps) => {
     { id: 'magnific', label: 'Magnific AI', icon: Wand2 },
     { id: 'kling', label: 'Kling AI', icon: Clapperboard },
     { id: 'google', label: 'Google AI', icon: Globe },
-    { id: 'openai', label: 'OpenAI',    icon: Bot   },
+    { id: 'openai', label: 'OpenAI', icon: Bot },
     { id: 'higgsfield', label: 'Higgsfield AI', icon: Film },
   ];
 
   const isPagesActive = activeTab.startsWith('pages-');
-  const isAIActive = activeTab.startsWith('ai-') || ['learn','magnific','kling','google','openai','higgsfield'].includes(activeTab);
+  const isAIActive =
+    activeTab.startsWith('ai-') || ['learn', 'magnific', 'kling', 'google', 'openai', 'higgsfield'].includes(activeTab);
   const isApifyActive = activeTab === 'apify';
 
   useEffect(() => {
@@ -165,7 +237,9 @@ const Admin = ({ currentUser }: AdminProps) => {
       if (tab) {
         setActiveTab(tab);
         setPagesOpen(tab.startsWith('pages-'));
-        setAiOpen(tab.startsWith('ai-') || ['learn','magnific','kling','google','openai','higgsfield'].includes(tab));
+        setAiOpen(
+          tab.startsWith('ai-') || ['learn', 'magnific', 'kling', 'google', 'openai', 'higgsfield'].includes(tab)
+        );
         setApifyOpen(tab === 'apify');
       }
     };
@@ -173,273 +247,284 @@ const Admin = ({ currentUser }: AdminProps) => {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  const SidebarContent = () => (
-    <>
-      <div className="border-b border-slate-200 px-6 py-6">
-        <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-slate-700">
-          <Shield size={14} />
-          Admin
+  const q = filter.trim().toLowerCase();
+  const matches = (label: string) => !q || label.toLowerCase().includes(q);
+  const adminName = currentUser?.name?.trim() || currentUser?.email || 'Admin';
+  const adminInitials = adminName.slice(0, 2).toUpperCase();
+
+  const SidebarContent = ({ mobile = false }: { mobile?: boolean }) => (
+    <div className="flex h-full flex-col bg-white">
+      <div className="os-brand">
+        <div className="min-w-0 flex-1">
+          <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="block h-6 w-auto" />
+          <span>Admin Console</span>
         </div>
-        <div className="mt-4 text-2xl font-black tracking-[-0.03em] text-slate-950">Admin Console</div>
-        <p className="mt-2 text-sm leading-6 text-slate-500">Platform controls, users, permissions, and account governance.</p>
+        {mobile && (
+          <button type="button" onClick={() => setMobileNavOpen(false)} className="os-nav-close">
+            Close
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 min-h-0 px-4 py-5 overflow-y-auto flex flex-col gap-1">
-        {adminItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              disabled={!item.active}
-              {...(item.tourId ? { 'data-tour-id': item.tourId } : {})}
-              onClick={() => item.active && navigateTab(item.id as AdminTab)}
-              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-                activeTab === item.id && item.active
-                  ? 'bg-slate-950 text-white'
-                  : item.active
-                    ? 'text-slate-700 hover:bg-slate-100'
-                    : 'cursor-not-allowed text-slate-400'
-              }`}
-            >
-              <Icon size={18} />
-              {item.label}
-            </button>
-          );
-        })}
-
-        {/* Agent Team — standalone top-level nav */}
-        <div className="my-1 border-t border-slate-100 pt-1">
+      {/* Mode switcher matching DakyXTech Layout.tsx */}
+      <div className="px-3 pt-3 pb-1">
+        <div className="flex rounded-xl bg-sunken p-1" role="group" aria-label="Workspace view mode">
           <button
             type="button"
-            data-tour-id="admin-tab-agents"
-            onClick={() => navigateTab('agents')}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-              activeTab === 'agents'
-                ? 'bg-slate-950 text-white'
-                : 'text-slate-700 hover:bg-slate-100'
-            }`}
+            className="flex-1 rounded-[10px] bg-white py-1.5 text-center text-[11px] font-medium text-ink shadow-[0_1px_2px_rgba(9,24,51,.08)]"
           >
-            <Network size={18} />
-            Agent Team
+            Admin OS
+          </button>
+          <button
+            type="button"
+            onClick={returnToWorkspace}
+            className="flex-1 rounded-[10px] py-1.5 text-center text-[11px] font-medium text-muted hover:text-ink transition"
+          >
+            Return to Dakyworld Hub
           </button>
         </div>
+      </div>
 
-        {/* AI Assistant accordion */}
-        <div>
-          <button
-            type="button"
-            data-tour-id="admin-accordion-ai"
-            onClick={() => setAiOpen((prev) => !prev)}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-              isAIActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <Bot size={18} />
-            <span className="flex-1">AI Assistant</span>
-            <ChevronDown
-              size={15}
-              className={`transition-transform duration-200 ${aiOpen || isAIActive ? 'rotate-180' : ''}`}
-            />
-          </button>
+      <div className="os-nav-search">
+        <input
+          aria-label="Find an admin screen"
+          placeholder="Find a setting"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
 
-          {(aiOpen || isAIActive) && (
-            <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
-              {aiItems.map((item) => {
-                const Icon = item.icon;
-                const tourIdMap: Partial<Record<typeof item.id, string>> = {
-                  'ai-config': 'admin-tab-ai-config',
-                  'learn': 'admin-tab-learn',
-                  'agents': 'admin-tab-agents',
-                };
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    {...(tourIdMap[item.id] ? { 'data-tour-id': tourIdMap[item.id] } : {})}
-                    onClick={() => navigateTab(item.id)}
-                    className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                      activeTab === item.id
-                        ? 'bg-slate-100 text-slate-950'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon size={14} />
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Apify accordion */}
-        <div>
-          <button
-            type="button"
-            onClick={() => setApifyOpen((prev) => !prev)}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-              isApifyActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <Globe size={18} />
-            <span className="flex-1">Apify</span>
-            <ChevronDown
-              size={15}
-              className={`transition-transform duration-200 ${apifyOpen || isApifyActive ? 'rotate-180' : ''}`}
-            />
-          </button>
-
-          {(apifyOpen || isApifyActive) && (
-            <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
-              <button
-                type="button"
-                onClick={() => navigateTab('apify')}
-                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                  activeTab === 'apify'
-                    ? 'bg-slate-100 text-slate-950'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-              >
-                <Globe size={14} />
-                Actors & Runs
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Pages accordion */}
-        <div>
-          <button
-            type="button"
-            onClick={() => setPagesOpen((prev) => !prev)}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
-              isPagesActive ? 'bg-slate-950 text-white' : 'text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <FileText size={18} />
-            <span className="flex-1">Pages</span>
-            <ChevronDown
-              size={15}
-              className={`transition-transform duration-200 ${pagesOpen || isPagesActive ? 'rotate-180' : ''}`}
-            />
-          </button>
-
-          {(pagesOpen || isPagesActive) && (
-            <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l-2 border-slate-100 pl-3">
-              {pagesItems.map((item) => (
+      <nav className="os-navigation flex flex-col" aria-label={mobile ? 'Mobile admin navigation' : 'Admin navigation'}>
+        <section className="os-nav-section">
+          <h2>Platform governance</h2>
+          {adminItems
+            .filter((item) => matches(item.label))
+            .map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id && item.active;
+              return (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => navigateTab(item.id)}
-                  className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                    activeTab === item.id
-                      ? 'bg-slate-100 text-slate-950'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                  }`}
+                  disabled={!item.active}
+                  {...(item.tourId ? { 'data-tour-id': item.tourId } : {})}
+                  onClick={() => item.active && navigateTab(item.id as AdminTab)}
+                  className={`os-nav-link ${isActive ? 'is-active' : ''}`}
                 >
-                  {item.label}
+                  <Icon size={15} className="shrink-0 opacity-75" />
+                  <span className="flex-1 text-left">{item.label}</span>
                 </button>
-              ))}
-            </div>
+              );
+            })}
+        </section>
+
+        <section className="os-nav-section">
+          <h2>Workforce &amp; AI</h2>
+          {matches('Agent Team') && (
+            <button
+              type="button"
+              data-tour-id="admin-tab-agents"
+              onClick={() => navigateTab('agents')}
+              className={`os-nav-link ${activeTab === 'agents' ? 'is-active' : ''}`}
+            >
+              <Network size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Agent Team</span>
+            </button>
           )}
-        </div>
+
+          {/* AI Assistant accordion */}
+          <div>
+            <button
+              type="button"
+              data-tour-id="admin-accordion-ai"
+              onClick={() => setAiOpen((prev) => !prev)}
+              className={`os-nav-link ${isAIActive ? 'is-active' : ''}`}
+            >
+              <Bot size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">AI Assistant</span>
+              <ChevronDown
+                size={12}
+                className={`text-faint transition-transform duration-200 ${aiOpen || isAIActive || Boolean(q) ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {(aiOpen || isAIActive || Boolean(q)) && (
+              <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                {aiItems
+                  .filter((item) => matches(`AI ${item.label}`))
+                  .map((item) => {
+                    const Icon = item.icon;
+                    const tourIdMap: Partial<Record<typeof item.id, string>> = {
+                      'ai-config': 'admin-tab-ai-config',
+                      learn: 'admin-tab-learn',
+                      agents: 'admin-tab-agents',
+                    };
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        {...(tourIdMap[item.id] ? { 'data-tour-id': tourIdMap[item.id] } : {})}
+                        onClick={() => navigateTab(item.id)}
+                        className={`os-nav-sublink ${activeTab === item.id ? 'is-active' : ''}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Icon size={13} className="shrink-0 opacity-75" />
+                          {item.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          {/* Apify accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setApifyOpen((prev) => !prev)}
+              className={`os-nav-link ${isApifyActive ? 'is-active' : ''}`}
+            >
+              <Globe size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Apify</span>
+              <ChevronDown
+                size={12}
+                className={`text-faint transition-transform duration-200 ${apifyOpen || isApifyActive || Boolean(q) ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {(apifyOpen || isApifyActive || Boolean(q)) && (
+              <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                {matches('Apify Actors & Runs') && (
+                  <button
+                    type="button"
+                    onClick={() => navigateTab('apify')}
+                    className={`os-nav-sublink ${activeTab === 'apify' ? 'is-active' : ''}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Globe size={13} className="shrink-0 opacity-75" />
+                      Actors &amp; Runs
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Pages CMS accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setPagesOpen((prev) => !prev)}
+              className={`os-nav-link ${isPagesActive ? 'is-active' : ''}`}
+            >
+              <FileText size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Pages</span>
+              <ChevronDown
+                size={12}
+                className={`text-faint transition-transform duration-200 ${pagesOpen || isPagesActive || Boolean(q) ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {(pagesOpen || isPagesActive || Boolean(q)) && (
+              <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                {pagesItems
+                  .filter((item) => matches(`Pages ${item.label}`))
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => navigateTab(item.id)}
+                      className={`os-nav-sublink ${activeTab === item.id ? 'is-active' : ''}`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+        </section>
       </nav>
 
-      <div className="space-y-2 border-t border-slate-200 px-4 py-4">
-        <button
-          type="button"
-          onClick={() => {
-            window.history.pushState({}, document.title, '/dashboard');
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }}
-          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-        >
-          Return to Dakyworld Hub
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            localStorage.removeItem('auth_session');
-            localStorage.removeItem('auth_token');
-            clearStoredUser();
-            // Hard redirect so all in-memory app state is reset
-            window.location.assign('/login');
-          }}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
-        >
-          <LogOut size={15} />
-          Log out
-        </button>
+      {/* Bottom account bar matching DakyXTech v22 Layout.tsx */}
+      <div className="os-account">
+        <div className="os-initials">{adminInitials}</div>
+        <div className="min-w-0 flex-1">
+          <strong>{adminName}</strong>
+          <span>{currentAdminRole}</span>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <button type="button" onClick={returnToWorkspace}>
+            Workspace
+          </button>
+          <button type="button" onClick={handleLogout} className="flex items-center gap-1 text-danger-text hover:!text-danger">
+            <LogOut size={11} />
+            Log out
+          </button>
+        </div>
       </div>
-    </>
+    </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#f5f6fa]">
-      {/* Mobile nav overlay */}
-      {mobileNavOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
-          onClick={() => setMobileNavOpen(false)}
-        />
-      )}
+    <div className="os-app os-shell">
+      <a href="#admin-workspace" className="os-skip">
+        Skip to content
+      </a>
 
-      {/* Mobile slide-in sidebar */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col bg-white shadow-2xl transition-transform duration-300 lg:hidden ${
-          mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-          <span className="text-sm font-bold text-slate-700">Admin Navigation</span>
-          <button type="button" onClick={() => setMobileNavOpen(false)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <SidebarContent />
-        </div>
+      {/* Desktop floating white sidebar panel */}
+      <aside className="os-sidebar">
+        <SidebarContent />
       </aside>
 
-      <div className="flex min-h-screen">
-        {/* Desktop sidebar */}
-        <aside className="hidden w-[280px] shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col h-screen sticky top-0">
-          <SidebarContent />
-        </aside>
+      {/* Mobile navigation layer */}
+      {mobileNavOpen && (
+        <div className="os-mobile-layer">
+          <div className="os-backdrop" onClick={() => setMobileNavOpen(false)} aria-hidden />
+          <aside className="os-mobile-nav" role="dialog" aria-modal="true" aria-label="Admin Navigation">
+            <SidebarContent mobile />
+          </aside>
+        </div>
+      )}
 
-        <div className="flex-1 min-w-0">
-          <header className="border-b border-slate-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
-            <div className="flex items-center gap-3">
-              {/* Mobile hamburger */}
-              <button
-                type="button"
-                onClick={() => setMobileNavOpen(true)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-50 lg:hidden"
-              >
-                <Menu size={18} />
-              </button>
-              <div className="flex flex-1 flex-col gap-1 min-w-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-slate-500 sm:text-sm">Admin Dashboard</div>
-                  <div className="text-lg font-black tracking-[-0.03em] text-slate-950 sm:text-2xl">Control center</div>
-                </div>
-                <div className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:px-4 sm:py-3 sm:text-sm">
-                  Signed in as{' '}
-                  <span className="font-semibold text-slate-900">
-                    {currentUser?.name?.trim() || currentUser?.email || 'Admin'}
-                  </span>{' '}
-                  · {currentAdminRole}
-                </div>
-              </div>
-            </div>
-          </header>
+      {/* Main viewport column */}
+      <div className="os-viewport">
+        <header className="os-topbar">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <button
+              type="button"
+              className="os-menu-button"
+              aria-expanded={mobileNavOpen}
+              onClick={() => setMobileNavOpen(true)}
+            >
+              Menu
+            </button>
+            <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="h-5 w-auto lg:hidden" />
+            <img src="/brand/mark-on-light-96.png" alt="DakyXTech" className="hidden lg:block h-5 w-5 rounded-[5px]" />
+            <span className="os-workspace-label">Admin Dashboard</span>
+            <span className="os-breadcrumb-divider">/</span>
+            <span className="truncate font-medium text-ink">{TAB_LABELS[activeTab] ?? 'Control center'}</span>
+          </div>
 
-          <main className="px-4 py-6 md:px-6">
+          <div className="flex items-center gap-4">
+            <span className="hidden sm:inline text-xs text-muted">
+              Signed in as <strong className="font-medium text-ink">{adminName}</strong> · {currentAdminRole}
+            </span>
+            <button type="button" onClick={returnToWorkspace} className="os-text-link">
+              Workspace
+            </button>
+            <span className="os-topbar-date">
+              {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date())}
+            </span>
+          </div>
+        </header>
+
+        <div className="os-page">
+          <main id="admin-workspace" tabIndex={-1} className="os-workspace">
             <Suspense
               fallback={
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+                <div className="py-12">
+                  <Loading rows={6} />
                 </div>
               }
             >
@@ -466,11 +551,16 @@ const Admin = ({ currentUser }: AdminProps) => {
               {activeTab === 'audit' && <AdminAuditLog />}
               {activeTab === 'nav-settings' && <AdminNavSettings />}
               {activeTab === 'higgsfield' && <AdminHiggsfield />}
-              {activeTab.startsWith('pages-') && (
-                <AdminPagesManagement activePage={activeTab} />
-              )}
+              {activeTab.startsWith('pages-') && <AdminPagesManagement activePage={activeTab} />}
             </Suspense>
           </main>
+          <footer className="os-workspace-footer">
+            <span className="inline-flex items-center gap-2">
+              <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="h-4 w-auto opacity-85" />
+              <span>Admin OS</span>
+            </span>
+            <span>Built for considered work.</span>
+          </footer>
         </div>
       </div>
     </div>

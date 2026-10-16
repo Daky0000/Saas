@@ -6,7 +6,7 @@ import {
 } from '../services/salesService';
 import VapiTestConsole from '../components/sales/VapiTestConsole';
 
-const ACCENT = '#5b6cf9';
+const ACCENT = '#2563EB';
 const DAYS = [
   { n: 1, label: 'Mon' }, { n: 2, label: 'Tue' }, { n: 3, label: 'Wed' },
   { n: 4, label: 'Thu' }, { n: 5, label: 'Fri' }, { n: 6, label: 'Sat' }, { n: 7, label: 'Sun' },

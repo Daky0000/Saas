@@ -63,7 +63,7 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
   const [showSupervisorPicker, setShowSupervisorPicker] = useState(false);
   const [supervisorWarning, setSupervisorWarning] = useState(false);
   const [newLabel, setNewLabel] = useState('');
-  const [newLabelColor, setNewLabelColor] = useState('#6366f1');
+  const [newLabelColor, setNewLabelColor] = useState('#2563EB');
   const [uploadError, setUploadError] = useState('');
   const [saving, setSaving] = useState(false);
   const currentUserId = getCurrentUserId();
@@ -395,7 +395,7 @@ export default function TaskDetailPanel({ task: initialTask, projectId, onClose,
                       <div className="relative flex h-16 w-16 shrink-0 items-center justify-center">
                         <svg className="h-16 w-16 -rotate-90" viewBox="0 0 36 36">
                           <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f1f5f9" strokeWidth="3.5" />
-                          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#6366f1" strokeWidth="3.5"
+                          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#2563EB" strokeWidth="3.5"
                             strokeDasharray={`${overallPct} ${100 - overallPct}`} strokeLinecap="round" />
                         </svg>
                         <span className="absolute text-[13px] font-black text-gray-900">{overallPct}%</span>

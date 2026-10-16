@@ -84,30 +84,33 @@ export default function ClientReviewPortal({ token }: ClientReviewPortalProps) {
   const snapshot = review.resource_snapshot || {};
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-4 sm:px-6">
+    <div className="min-h-screen bg-canvas py-12 px-4 sm:px-6">
       <div className="max-w-3xl mx-auto space-y-6">
         {/* Top White-Label Header */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="bg-white border border-line rounded-[22px] p-6 shadow-panel flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full mb-2">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Client Sign-Off Portal
+            <div className="flex items-center gap-3 mb-3">
+              <img src="/brand/header-lockup-on-light.png" alt="DakyXTech" className="h-6 w-auto" />
+              <div className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-d bg-pale px-2.5 py-1 rounded-full">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Client Sign-Off Portal
+              </div>
             </div>
-            <h1 className="text-xl font-black text-slate-900">{review.title}</h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Prepared by <span className="font-semibold text-slate-700">{review.agency_name || 'Your Agency Team'}</span>
+            <h1 className="text-xl font-medium text-ink">{review.title}</h1>
+            <p className="text-xs text-muted mt-1">
+              Prepared by <span className="font-medium text-ink">{review.agency_name || 'Your Agency Team'}</span>
               {review.client_name ? ` for ${review.client_name}` : ''}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <span
-              className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+              className={`px-3 py-1.5 rounded-full text-xs font-medium uppercase tracking-wider ${
                 review.status === 'approved'
-                  ? 'bg-emerald-100 text-emerald-800'
+                  ? 'bg-positive-surface text-positive-text border border-positive-line'
                   : review.status === 'changes_requested'
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-slate-100 text-slate-700'
+                  ? 'bg-warn-surface text-warn-text border border-warn-line'
+                  : 'bg-soft text-muted border border-line'
               }`}
             >
               {review.status.replace('_', ' ')}

@@ -142,15 +142,15 @@ export default function AdminMagnific() {
   return (
     <div className="space-y-8">
       {/* Replicate API Key — Primary provider (no Akamai block) */}
-      <div className="rounded-2xl border-2 border-[#5b6cf9]/30 bg-[#5b6cf9]/5 p-6">
+      <div className="rounded-2xl border-2 border-[#2563EB]/30 bg-[#2563EB]/5 p-6">
         <div className="flex items-center gap-3 mb-1">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#5b6cf9]/10">
-            <Key size={18} className="text-[#5b6cf9]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2563EB]/10">
+            <Key size={18} className="text-[#2563EB]" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Replicate API Token</h2>
-              <span className="rounded-full bg-[#5b6cf9] px-2 py-0.5 text-[10px] font-bold text-white">RECOMMENDED</span>
+              <span className="rounded-full bg-[#2563EB] px-2 py-0.5 text-[10px] font-bold text-white">RECOMMENDED</span>
             </div>
             <p className="text-xs text-slate-500">Primary image generation — same Flux models, no IP restrictions. Get a token at replicate.com</p>
           </div>
@@ -166,9 +166,9 @@ export default function AdminMagnific() {
         <div className="flex gap-2 mt-4 mb-3">
           <input type="password" value={rpKey} onChange={e => setRpKey(e.target.value)}
             placeholder={rpHasKey ? 'Enter new token to replace…' : 'r8_xxxxxxxxxxxxxxxxxxxx'}
-            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9]/20" />
+            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20" />
           <button type="button" disabled={!rpKey.trim() || rpSaving} onClick={saveReplicateKey}
-            className="flex items-center gap-1.5 rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-semibold text-white hover:bg-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition">
+            className="flex items-center gap-1.5 rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition">
             {rpSaving ? <Loader2 size={14} className="animate-spin" /> : null}Save
           </button>
         </div>
@@ -188,8 +188,8 @@ export default function AdminMagnific() {
       {/* Magnific API Key Section */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex items-center gap-3 mb-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#5b6cf9]/10">
-            <Key size={18} className="text-[#5b6cf9]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2563EB]/10">
+            <Key size={18} className="text-[#2563EB]" />
           </div>
           <div>
             <h2 className="text-base font-bold text-slate-900">API Key Configuration</h2>
@@ -210,10 +210,10 @@ export default function AdminMagnific() {
             value={apiKey}
             onChange={e => setApiKey(e.target.value)}
             placeholder={hasKey ? 'Enter new API key to replace…' : 'Enter Magnific API key…'}
-            className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9]/20"
+            className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20"
           />
           <button type="button" disabled={!apiKey.trim() || saving} onClick={saveKey}
-            className="flex items-center gap-1.5 rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-semibold text-white hover:bg-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition">
+            className="flex items-center gap-1.5 rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition">
             {saving ? <Loader2 size={14} className="animate-spin" /> : null}
             Save
           </button>
@@ -257,7 +257,7 @@ export default function AdminMagnific() {
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-semibold text-slate-800">{m.label}</span>
                       {'badge' in m && m.badge && (
-                        <span className="rounded-full bg-[#5b6cf9]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#5b6cf9]">{m.badge}</span>
+                        <span className="rounded-full bg-[#2563EB]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#2563EB]">{m.badge}</span>
                       )}
                     </div>
                   </td>
@@ -272,7 +272,7 @@ export default function AdminMagnific() {
                     </span>
                   </td>
                   <td className="py-2 pr-4 text-xs text-slate-500">{m.tier}</td>
-                  <td className="py-2 text-right text-xs font-bold text-[#5b6cf9]">✦{m.credits}</td>
+                  <td className="py-2 text-right text-xs font-bold text-[#2563EB]">✦{m.credits}</td>
                 </tr>
               ))}
             </tbody>
@@ -286,7 +286,7 @@ export default function AdminMagnific() {
           <h2 className="text-base font-bold text-slate-900">Generation History</h2>
           <div className="flex items-center gap-2">
             <select value={genTypeFilter} onChange={e => setGenTypeFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-[#5b6cf9]">
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-[#2563EB]">
               <option value="all">All types</option>
               <option value="image">Image</option>
               <option value="video">Video</option>
@@ -350,7 +350,7 @@ export default function AdminMagnific() {
                     <td className="py-2 text-right">
                       {g.result_url ? (
                         <a href={g.result_url} target="_blank" rel="noreferrer"
-                          className="inline-block rounded-lg overflow-hidden border border-slate-200 hover:border-[#5b6cf9] transition">
+                          className="inline-block rounded-lg overflow-hidden border border-slate-200 hover:border-[#2563EB] transition">
                           <img src={g.result_url} alt="" className="h-10 w-10 object-cover" />
                         </a>
                       ) : '—'}

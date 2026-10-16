@@ -77,7 +77,7 @@ function FormEditor({ form, onSaved, onClose }: { form: LeadForm | null; onSaved
   const [description, setDescription] = useState(form?.settings?.description ?? '');
   const [buttonText, setButtonText] = useState(form?.settings?.button_text ?? '');
   const [successMessage, setSuccessMessage] = useState(form?.settings?.success_message ?? '');
-  const [themeColor, setThemeColor] = useState(form?.settings?.theme_color ?? '#5b6cf9');
+  const [themeColor, setThemeColor] = useState(form?.settings?.theme_color ?? '#2563EB');
   const [tags, setTags] = useState((form?.settings?.tags ?? []).join(', '));
   const [enabledStandard, setEnabledStandard] = useState<Record<string, boolean>>(() => {
     const keys = new Set((form?.fields ?? []).map((f) => f.key));

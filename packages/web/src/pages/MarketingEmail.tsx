@@ -541,7 +541,7 @@ function AnalyticsTab() {
     { label: 'Total Contacts',  value: data.contacts.total.toLocaleString(),        sub: `${data.contacts.subscribed} subscribed`, icon: <Users size={16} className="text-slate-400" /> },
     { label: 'Unsubscribed',    value: data.contacts.unsubscribed.toLocaleString(),  sub: 'all time', icon: <X size={16} className="text-slate-400" /> },
     { label: 'Emails Sent',     value: data.campaigns.sent.toLocaleString(),         sub: `${data.campaigns.draft} drafts`, icon: <Send size={16} className="text-slate-400" /> },
-    { label: 'Open Rate',       value: `${data.rates.openRate}%`,                    sub: 'of delivered', icon: <Mail size={16} className="text-[#5b6cf9]" /> },
+    { label: 'Open Rate',       value: `${data.rates.openRate}%`,                    sub: 'of delivered', icon: <Mail size={16} className="text-[#2563EB]" /> },
     { label: 'Click Rate',      value: `${data.rates.clickRate}%`,                   sub: 'of delivered', icon: <MousePointerClick size={16} className="text-emerald-500" /> },
     { label: 'Bounce Rate',     value: `${data.rates.bounceRate}%`,                  sub: 'of delivered', icon: <TrendingUp size={16} className="text-red-400" /> },
   ];
@@ -580,7 +580,7 @@ function AnalyticsTab() {
               <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="Delivered" fill="#e2e8f0" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Opens" fill="#5b6cf9" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Opens" fill="#2563EB" radius={[4, 4, 0, 0]} />
               <Bar dataKey="Clicks" fill="#10b981" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -614,11 +614,11 @@ function AnalyticsTab() {
                       <div className="text-[11px] text-slate-400">{c.sent_at ? new Date(c.sent_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</div>
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-slate-700">{c.delivered.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-mono text-[#5b6cf9] font-semibold">{c.opens.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono text-[#2563EB] font-semibold">{c.opens.toLocaleString()}</td>
                     <td className="px-4 py-3 text-right font-mono text-emerald-600 font-semibold">{c.clicks.toLocaleString()}</td>
                     <td className="px-4 py-3 text-right font-mono text-red-400">{c.unsubscribes.toLocaleString()}</td>
                     <td className="px-4 py-3 text-right">
-                      <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-[#5b6cf9]">{c.open_rate}%</span>
+                      <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-[#2563EB]">{c.open_rate}%</span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-600">{c.click_rate}%</span>

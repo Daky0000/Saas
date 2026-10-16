@@ -91,14 +91,14 @@ const ACTION_OPTIONS: { subType: ActionSubType; label: string; desc: string; ico
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
 function nodeColor(type: NodeType) {
-  if (type === 'trigger')   return 'border-[#5b6cf9] bg-indigo-50/60';
+  if (type === 'trigger')   return 'border-[#2563EB] bg-indigo-50/60';
   if (type === 'condition') return 'border-amber-400 bg-amber-50/60';
   if (type === 'action')    return 'border-emerald-400 bg-emerald-50/60';
   return 'border-slate-300 bg-slate-50';
 }
 
 function nodeIconBg(type: NodeType) {
-  if (type === 'trigger')   return 'bg-[#5b6cf9] text-white';
+  if (type === 'trigger')   return 'bg-[#2563EB] text-white';
   if (type === 'condition') return 'bg-amber-400 text-white';
   if (type === 'action')    return 'bg-emerald-500 text-white';
   return 'bg-slate-300 text-white';
@@ -120,7 +120,7 @@ function statusBadge(status: Workflow['status']) {
 function runStatusIcon(status: WorkflowRun['status']) {
   if (status === 'completed') return <CheckCircle2 size={14} className="text-emerald-500" />;
   if (status === 'failed')    return <XCircle size={14} className="text-red-400" />;
-  if (status === 'running')   return <Loader2 size={14} className="animate-spin text-[#5b6cf9]" />;
+  if (status === 'running')   return <Loader2 size={14} className="animate-spin text-[#2563EB]" />;
   return <AlertCircle size={14} className="text-slate-400" />;
 }
 
@@ -160,7 +160,7 @@ function TemplateSelect({ value, onChange }: { value: string; onChange: (id: str
         const t = templates.find((t) => t.id === e.target.value);
         onChange(e.target.value, t?.name ?? '');
       }}
-      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
     >
       <option value="">— Select a template —</option>
       {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -183,7 +183,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
         <select
           value={cfg.platform ?? cfg.type ?? options[0]}
           onChange={(e) => onChange({ ...cfg, [node.subType === 'platform_is' ? 'platform' : 'type']: e.target.value })}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
         >
           {options.map((o) => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
         </select>
@@ -200,7 +200,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
           value={cfg.keyword ?? ''}
           onChange={(e) => onChange({ ...cfg, keyword: e.target.value })}
           placeholder="e.g. sale, launch, new…"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
         />
       </div>
     );
@@ -215,7 +215,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
           onChange={(e) => onChange({ ...cfg, message: e.target.value })}
           rows={3}
           placeholder="e.g. Your post was published successfully!"
-          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
         />
         <p className="text-[11px] text-slate-400">Use {'{{post_title}}'} to insert the post title.</p>
       </div>
@@ -230,7 +230,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
           <select
             value={cfg.model ?? 'flux-kontext-pro'}
             onChange={(e) => onChange({ ...cfg, model: e.target.value })}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
           >
             {['flux-2-turbo','flux-2-klein','seedream-v5-lite','flux-kontext-pro','flux-2-pro','mystic'].map((m) => (
               <option key={m} value={m}>{m}</option>
@@ -242,7 +242,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
             type="checkbox"
             checked={cfg.save_to_media ?? true}
             onChange={(e) => onChange({ ...cfg, save_to_media: e.target.checked })}
-            className="rounded border-slate-300 text-[#5b6cf9]"
+            className="rounded border-slate-300 text-[#2563EB]"
           />
           <span className="text-sm text-slate-700">Save result to Media Library</span>
         </label>
@@ -258,7 +258,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
         <select
           value={cfg.slot ?? 'Best time'}
           onChange={(e) => onChange({ ...cfg, slot: e.target.value })}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
         >
           {slots.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
@@ -274,7 +274,7 @@ function NodeConfigForm({ node, onChange }: { node: WFNode; onChange: (cfg: Reco
         <select
           value={cfg.platform ?? 'Any'}
           onChange={(e) => onChange({ ...cfg, platform: e.target.value })}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
         >
           {platforms.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
@@ -320,10 +320,10 @@ function AddStepPicker({
         </div>
 
         <div className="flex border-b border-slate-100 px-5">
-          <button onClick={() => setTab('condition')} className={`py-2.5 px-3 text-sm font-semibold border-b-2 transition-colors ${tab === 'condition' ? 'border-[#5b6cf9] text-[#5b6cf9]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          <button onClick={() => setTab('condition')} className={`py-2.5 px-3 text-sm font-semibold border-b-2 transition-colors ${tab === 'condition' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             Condition
           </button>
-          <button onClick={() => setTab('action')} className={`py-2.5 px-3 text-sm font-semibold border-b-2 transition-colors ${tab === 'action' ? 'border-[#5b6cf9] text-[#5b6cf9]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          <button onClick={() => setTab('action')} className={`py-2.5 px-3 text-sm font-semibold border-b-2 transition-colors ${tab === 'action' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             Action
           </button>
         </div>
@@ -380,16 +380,16 @@ function TriggerPicker({ onSelect, onClose }: { onSelect: (subType: TriggerSubTy
             <button
               key={o.subType}
               onClick={() => onSelect(o.subType, o.label)}
-              className="w-full flex items-center gap-3 rounded-xl border border-slate-200 hover:border-[#5b6cf9] hover:bg-indigo-50/40 px-4 py-3 text-left transition-all group"
+              className="w-full flex items-center gap-3 rounded-xl border border-slate-200 hover:border-[#2563EB] hover:bg-indigo-50/40 px-4 py-3 text-left transition-all group"
             >
-              <div className="w-8 h-8 rounded-lg bg-indigo-100 text-[#5b6cf9] flex items-center justify-center shrink-0 group-hover:bg-indigo-200 transition-colors">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 text-[#2563EB] flex items-center justify-center shrink-0 group-hover:bg-indigo-200 transition-colors">
                 {o.icon}
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-800">{o.label}</p>
                 <p className="text-xs text-slate-500">{o.desc}</p>
               </div>
-              <ChevronRight size={14} className="ml-auto text-slate-300 group-hover:text-[#5b6cf9]" />
+              <ChevronRight size={14} className="ml-auto text-slate-300 group-hover:text-[#2563EB]" />
             </button>
           ))}
         </div>
@@ -418,7 +418,7 @@ function FlowNodeCard({
       onClick={onSelect}
       className={`relative rounded-2xl border-2 px-4 py-3 cursor-pointer transition-all select-none
         ${nodeColor(node.type)}
-        ${isSelected ? 'ring-2 ring-offset-1 ring-[#5b6cf9] shadow-lg scale-[1.01]' : 'hover:shadow-md hover:scale-[1.005]'}`}
+        ${isSelected ? 'ring-2 ring-offset-1 ring-[#2563EB] shadow-lg scale-[1.01]' : 'hover:shadow-md hover:scale-[1.005]'}`}
     >
       <div className="flex items-center gap-3">
         <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${nodeIconBg(node.type)}`}>
@@ -464,7 +464,7 @@ function AddStepBtn({ onClick, label = '+ Add step' }: { onClick: () => void; la
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onClick(); }}
-        className="flex items-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#5b6cf9] hover:bg-indigo-50 px-4 py-2 text-xs font-bold text-slate-500 hover:text-[#5b6cf9] transition-all shadow-sm bg-white"
+        className="flex items-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#2563EB] hover:bg-indigo-50 px-4 py-2 text-xs font-bold text-slate-500 hover:text-[#2563EB] transition-all shadow-sm bg-white"
       >
         <Plus size={13} className="shrink-0" /> {label}
       </button>
@@ -697,7 +697,7 @@ function WorkflowBuilder({
           <p className="text-slate-500 text-sm font-medium">Start by choosing a trigger</p>
           <button
             onClick={() => setShowTriggerPicker(true)}
-            className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-bold text-white hover:bg-indigo-600 transition"
+            className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-bold text-white hover:bg-indigo-600 transition"
           >
             <Plus size={14} /> Choose Trigger
           </button>
@@ -749,7 +749,7 @@ function WorkflowBuilder({
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-1.5 rounded-xl bg-[#5b6cf9] px-4 py-1.5 text-xs font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition"
+              className="flex items-center gap-1.5 rounded-xl bg-[#2563EB] px-4 py-1.5 text-xs font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition"
             >
               {saving ? <Loader2 size={13} className="animate-spin" /> : null} Save
             </button>
@@ -838,7 +838,7 @@ function WorkflowBuilder({
                   type="text"
                   value={selectedNode.label}
                   onChange={(e) => updateNodeLabel(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none"
                 />
               </div>
             )}
@@ -860,7 +860,7 @@ function WorkflowBuilder({
                       ? 'Tell the AI exactly what to do at this step…\ne.g. "Generate a professional image matching the post theme"'
                       : 'Describe the condition logic…\ne.g. "Check if the post has at least one image attached"'
                   }
-                  className="w-full resize-none rounded-lg border border-indigo-200 bg-indigo-50/30 px-3 py-2 text-sm text-slate-700 focus:border-[#5b6cf9] focus:outline-none placeholder:text-slate-400/80 leading-relaxed"
+                  className="w-full resize-none rounded-lg border border-indigo-200 bg-indigo-50/30 px-3 py-2 text-sm text-slate-700 focus:border-[#2563EB] focus:outline-none placeholder:text-slate-400/80 leading-relaxed"
                 />
                 <p className="text-[10px] text-slate-400">The AI reads these instructions when executing this step.</p>
               </div>
@@ -1021,7 +1021,7 @@ export default function WorkflowPage() {
         <button
           onClick={createNew}
           disabled={creating}
-          className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition active:scale-[0.98]"
+          className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition active:scale-[0.98]"
         >
           {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} New Workflow
         </button>
@@ -1048,7 +1048,7 @@ export default function WorkflowPage() {
           <div className="relative w-24 h-24">
             <div className="absolute inset-0 rounded-3xl bg-indigo-100 rotate-6" />
             <div className="absolute inset-0 rounded-3xl bg-indigo-50 flex items-center justify-center">
-              <GitBranch size={36} className="text-[#5b6cf9]" />
+              <GitBranch size={36} className="text-[#2563EB]" />
             </div>
           </div>
           <div className="text-center">
@@ -1060,7 +1060,7 @@ export default function WorkflowPage() {
           <button
             onClick={createNew}
             disabled={creating}
-            className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition"
+            className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition"
           >
             {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
             {creating ? 'Creating…' : 'Create your first workflow'}
@@ -1069,7 +1069,7 @@ export default function WorkflowPage() {
           {/* How it works */}
           <div className="mt-6 grid grid-cols-3 gap-4 max-w-lg text-center">
             {[
-              { icon: <Zap size={18} className="text-[#5b6cf9]" />, title: 'Set a trigger', desc: 'Choose what starts the workflow' },
+              { icon: <Zap size={18} className="text-[#2563EB]" />, title: 'Set a trigger', desc: 'Choose what starts the workflow' },
               { icon: <GitBranch size={18} className="text-amber-500" />, title: 'Add conditions', desc: 'Branch based on your rules' },
               { icon: <Play size={18} className="text-emerald-500" />, title: 'Define actions', desc: 'Generate images, schedule, notify' },
             ].map((s) => (
@@ -1104,7 +1104,7 @@ export default function WorkflowPage() {
               >
                 {/* Icon */}
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${wf.status === 'active' ? 'bg-indigo-100' : 'bg-slate-100'}`}>
-                  <GitBranch size={18} className={wf.status === 'active' ? 'text-[#5b6cf9]' : 'text-slate-400'} />
+                  <GitBranch size={18} className={wf.status === 'active' ? 'text-[#2563EB]' : 'text-slate-400'} />
                 </div>
 
                 {/* Info */}
@@ -1116,7 +1116,7 @@ export default function WorkflowPage() {
                   <div className="flex items-center gap-3 mt-1 flex-wrap">
                     {triggerNode && (
                       <span className="flex items-center gap-1 text-[11px] text-slate-500">
-                        <Zap size={10} className="text-[#5b6cf9]" />{triggerNode.label}
+                        <Zap size={10} className="text-[#2563EB]" />{triggerNode.label}
                       </span>
                     )}
                     {condCount > 0 && (
@@ -1147,7 +1147,7 @@ export default function WorkflowPage() {
                     {toggling === wf.id
                       ? <Loader2 size={15} className="animate-spin" />
                       : wf.status === 'active'
-                        ? <ToggleRight size={18} className="text-[#5b6cf9]" />
+                        ? <ToggleRight size={18} className="text-[#2563EB]" />
                         : <ToggleLeft size={18} />
                     }
                   </button>

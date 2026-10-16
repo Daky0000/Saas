@@ -72,7 +72,7 @@ function ProviderCard({
 }) {
   return (
     <div className={`border rounded-xl p-4 transition-all ${
-      isActive ? 'border-[#5b6cf9] bg-[#5b6cf9]/5' :
+      isActive ? 'border-[#2563EB] bg-[#2563EB]/5' :
       provider.user_has_access ? 'border-gray-200 bg-white hover:border-gray-300' :
       'border-dashed border-gray-200 bg-gray-50'
     }`}>
@@ -84,7 +84,7 @@ function ProviderCard({
               <span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">Native</span>
             )}
             {isActive && (
-              <span className="text-xs bg-[#5b6cf9]/10 text-[#5b6cf9] px-1.5 py-0.5 rounded-full flex items-center gap-1">
+              <span className="text-xs bg-[#2563EB]/10 text-[#2563EB] px-1.5 py-0.5 rounded-full flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> Active
               </span>
             )}
@@ -128,7 +128,7 @@ function ProviderCard({
               title={!provider.user_has_access ? `Connect ${provider.name} from Integrations first` : undefined}
               className={`text-xs px-3 py-1.5 rounded-lg transition-colors font-medium ${
                 provider.user_has_access
-                  ? 'bg-[#5b6cf9] text-white hover:bg-[#4a5be8]'
+                  ? 'bg-[#2563EB] text-white hover:bg-[#4a5be8]'
                   : 'bg-gray-100 text-gray-400 cursor-not-allowed'
               }`}
             >
@@ -158,7 +158,7 @@ function FieldMapRow({
       ) : (
         <Minus className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
       )}
-      <span className="text-xs font-mono text-[#5b6cf9] flex-1 min-w-0 truncate">{map.native_field}</span>
+      <span className="text-xs font-mono text-[#2563EB] flex-1 min-w-0 truncate">{map.native_field}</span>
       <span className="text-xs text-gray-400 w-24 text-right flex-shrink-0">{DIRECTION_LABELS[map.direction]}</span>
       {map.transform && (
         <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded flex-shrink-0">{map.transform}</span>
@@ -385,7 +385,7 @@ export default function ConnectorProviderSetup({
                   </button>
                   <button
                     onClick={() => setShowAddMap(v => !v)}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#5b6cf9] text-white rounded-lg hover:bg-[#4a5be8] transition-colors"
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#2563EB] text-white rounded-lg hover:bg-[#4a5be8] transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5" /> Add mapping
                   </button>
@@ -398,7 +398,7 @@ export default function ConnectorProviderSetup({
               {/* Default suggestion banner */}
               {showDefaultsSuggestion && defaults.length > 0 && (
                 <div className="mb-4 flex items-start gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
-                  <AlertCircle className="w-4 h-4 text-[#5b6cf9] flex-shrink-0 mt-0.5" />
+                  <AlertCircle className="w-4 h-4 text-[#2563EB] flex-shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-700 font-medium">Suggested mappings available</p>
                     <p className="text-xs text-gray-500 mt-0.5">We have {defaults.length} default field mappings for {domain.name} → {activeProvider?.name}.</p>
@@ -407,7 +407,7 @@ export default function ConnectorProviderSetup({
                     <button
                       onClick={importDefaults}
                       disabled={savingMap}
-                      className="text-xs px-2.5 py-1 bg-[#5b6cf9] text-white rounded-lg hover:bg-[#4a5be8] transition-colors"
+                      className="text-xs px-2.5 py-1 bg-[#2563EB] text-white rounded-lg hover:bg-[#4a5be8] transition-colors"
                     >
                       Import all
                     </button>
@@ -425,7 +425,7 @@ export default function ConnectorProviderSetup({
                     <div>
                       <label className="text-xs text-gray-500 mb-1 block">External field</label>
                       <input
-                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] font-mono"
+                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] font-mono"
                         placeholder="e.g. firstname"
                         value={mapForm.external_field}
                         onChange={e => setMapForm(f => ({ ...f, external_field: e.target.value }))}
@@ -434,7 +434,7 @@ export default function ConnectorProviderSetup({
                     <div>
                       <label className="text-xs text-gray-500 mb-1 block">Native field</label>
                       <input
-                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] font-mono"
+                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] font-mono"
                         placeholder="e.g. first_name"
                         value={mapForm.native_field}
                         onChange={e => setMapForm(f => ({ ...f, native_field: e.target.value }))}
@@ -443,7 +443,7 @@ export default function ConnectorProviderSetup({
                     <div>
                       <label className="text-xs text-gray-500 mb-1 block">Direction</label>
                       <select
-                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9] bg-white"
+                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB] bg-white"
                         value={mapForm.direction}
                         onChange={e => setMapForm(f => ({ ...f, direction: e.target.value as any }))}
                       >
@@ -455,7 +455,7 @@ export default function ConnectorProviderSetup({
                     <div>
                       <label className="text-xs text-gray-500 mb-1 block">Transform <span className="text-gray-400">(optional)</span></label>
                       <input
-                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#5b6cf9]"
+                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#2563EB]"
                         placeholder="e.g. lowercase, trim"
                         value={mapForm.transform}
                         onChange={e => setMapForm(f => ({ ...f, transform: e.target.value }))}
@@ -469,7 +469,7 @@ export default function ConnectorProviderSetup({
                     <button
                       onClick={addFieldMap}
                       disabled={savingMap || !mapForm.external_field.trim() || !mapForm.native_field.trim()}
-                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#5b6cf9] text-white rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#2563EB] text-white rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
                     >
                       <Save className="w-3.5 h-3.5" /> Save
                     </button>

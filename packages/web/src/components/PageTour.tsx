@@ -80,12 +80,12 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
         type="button"
         onClick={openPanel}
         title={`Quick guide${pageTitle ? ` — ${pageTitle}` : ''}`}
-        className="fixed bottom-6 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white shadow-md text-gray-400 hover:text-indigo-600 hover:border-indigo-300 transition-all"
+        className="fixed bottom-6 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-white shadow-menu text-muted hover:text-blue hover:border-blue transition-all"
         style={{ position: 'fixed', right: 88 }}
       >
         <HelpCircle size={16} />
         {!seen && (
-          <span className="absolute -top-1 -right-1 w-3 h-3 bg-indigo-500 rounded-full border-2 border-white" style={{ animation: 'tourDot 2s ease-in-out infinite' }} />
+          <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue rounded-full border-2 border-white" style={{ animation: 'tourDot 2s ease-in-out infinite' }} />
         )}
       </button>
 
@@ -100,26 +100,26 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
             width: 320,
             background: '#fff',
             borderRadius: 16,
-            border: '1px solid rgba(0,0,0,0.08)',
-            boxShadow: '0 20px 60px -10px rgba(0,0,0,0.25), 0 8px 24px -8px rgba(0,0,0,0.15)',
-            animation: 'tourPanelIn 220ms cubic-bezier(0.22,1,0.36,1)',
+            border: '1px solid #E3E6EB',
+            boxShadow: '0 24px 64px -18px rgba(13, 21, 38, 0.24)',
+            animation: 'tourPanelIn 220ms cubic-bezier(0.2, 0.7, 0.2, 1)',
             overflow: 'hidden',
           }}
         >
           {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 12px', borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 12px', borderBottom: '1px solid #E3E6EB' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 26, height: 26, borderRadius: 7, background: 'rgba(91,108,249,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <HelpCircle size={14} color="#5B6CF9" />
+              <div style={{ width: 26, height: 26, borderRadius: 8, background: '#EAF1FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <HelpCircle size={14} color="#2563EB" />
               </div>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#0A0A0B' }}>{pageTitle || 'Quick guide'}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 500, color: '#0D1526' }}>{pageTitle || 'Quick guide'}</span>
             </div>
             <button
               type="button"
               onClick={closePanel}
-              style={{ width: 24, height: 24, border: 0, background: 'transparent', cursor: 'pointer', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8C8C90' }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#F5F5F3'; e.currentTarget.style.color = '#0A0A0B'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8C8C90'; }}
+              style={{ width: 24, height: 24, border: 0, background: 'transparent', cursor: 'pointer', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A91A0' }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#F6F7F9'; e.currentTarget.style.color = '#0D1526'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8A91A0'; }}
             >
               <X size={14} />
             </button>
@@ -132,44 +132,43 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
                 key={i}
                 style={{
                   display: 'flex', gap: 12, padding: '12px 16px',
-                  borderBottom: i < steps.length - 1 ? '1px solid rgba(0,0,0,0.04)' : 'none',
+                  borderBottom: i < steps.length - 1 ? '1px solid #E3E6EB' : 'none',
                 }}
               >
                 {/* Step number / emoji badge */}
                 <div style={{
                   width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-                  background: step.emoji ? 'rgba(91,108,249,0.07)' : '#5B6CF9',
+                  background: step.emoji ? '#EAF1FF' : '#2563EB',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: step.emoji ? 16 : 11, fontWeight: 700,
+                  fontSize: step.emoji ? 16 : 11, fontWeight: 500,
                   color: step.emoji ? 'inherit' : '#fff',
                   marginTop: 1,
                 }}>
                   {step.emoji || String(i + 1)}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0A0A0B', lineHeight: 1.3 }}>{step.title}</p>
-                  <p style={{ margin: '3px 0 0', fontSize: 12, color: '#5C5C60', lineHeight: 1.5 }}>{step.description}</p>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: '#0D1526', lineHeight: 1.3 }}>{step.title}</p>
+                  <p style={{ margin: '3px 0 0', fontSize: 12, color: '#5B6374', lineHeight: 1.5 }}>{step.description}</p>
                 </div>
               </div>
             ))}
           </div>
 
           {/* Footer */}
-          <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11, color: '#ACACB0' }}>{steps.length} tip{steps.length !== 1 ? 's' : ''}</span>
+          <div style={{ padding: '12px 16px', borderTop: '1px solid #E3E6EB', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, color: '#8A91A0' }}>{steps.length} tip{steps.length !== 1 ? 's' : ''}</span>
             <button
               type="button"
               onClick={closePanel}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '7px 14px', borderRadius: 9, border: 0,
-                background: '#5B6CF9', color: '#fff',
-                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                padding: '7px 14px', borderRadius: 10, border: 0,
+                background: '#2563EB', color: '#fff',
+                fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
                 fontFamily: 'inherit',
-                boxShadow: '0 4px 12px -4px rgba(91,108,249,0.6)',
               }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#4a5be0'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = '#5B6CF9'; }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#1D4ED8'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = '#2563EB'; }}
             >
               Got it <ChevronRight size={12} />
             </button>

@@ -1,5 +1,6 @@
 import PublicNav from '../components/landing/PublicNav';
 import PublicFooter from '../components/landing/PublicFooter';
+import { Badge } from '../components/ui';
 
 type Entry = {
   version: string;
@@ -9,21 +10,32 @@ type Entry = {
   items: string[];
 };
 
-const TAG_COLORS: Record<string, string> = {
-  New:      'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  Improved: 'bg-blue-50 text-blue-700 ring-blue-200',
-  Fixed:    'bg-amber-50 text-amber-700 ring-amber-200',
-  Removed:  'bg-red-50 text-red-700 ring-red-200',
+const TAG_TONE: Record<Entry['tags'][number], 'positive' | 'info' | 'warn' | 'danger'> = {
+  New: 'positive',
+  Improved: 'info',
+  Fixed: 'warn',
+  Removed: 'danger',
 };
 
 const ENTRIES: Entry[] = [
+  {
+    version: '2.5.0',
+    date: 'October 2026',
+    title: 'DakyXTech Design System v22 Unification',
+    tags: ['New', 'Improved'],
+    items: [
+      'Unified the entire web interface with the DakyXTech v21/v22 Design System across public marketing and signed-in workspace views.',
+      'Adopted self-hosted Outfit and JetBrains Mono variable typography and the floating white-panel-on-canvas architecture.',
+      'Redesigned workspace navigation, topbar breadcrumbs, executive KPI seam bar, and signed-out authentication frame.',
+    ],
+  },
   {
     version: '2.4.0',
     date: 'June 2025',
     title: 'Email Analytics & Template Library',
     tags: ['New', 'Improved'],
     items: [
-      'Email analytics dashboard: per-campaign open rate, click rate, and unsubscribe tracking with Recharts bar charts.',
+      'Email analytics dashboard: per-campaign open rate, click rate, and unsubscribe tracking with bar charts.',
       'Expanded email template library to 10 pre-built layouts across 6 categories (Onboarding, Marketing, Content, Events, Engagement, Basic).',
       'Visual mini-preview thumbnails in the template picker with category filter tabs.',
       'Per-campaign performance table with delivery, open, click, and unsubscribe counts.',
@@ -66,18 +78,6 @@ const ENTRIES: Entry[] = [
     ],
   },
   {
-    version: '2.0.0',
-    date: 'February 2025',
-    title: 'Rebrand & Primary Color Update',
-    tags: ['Improved'],
-    items: [
-      'Updated primary brand color from red #e6332a to indigo-blue #5b6cf9 across all components.',
-      'Refreshed card builder, email builder, and marketing pages with new palette.',
-      'JWT token lifecycle improved: version-specific force_auth_reset key per deploy.',
-      'Global fetch interceptor auto-logout on 401 responses.',
-    ],
-  },
-  {
     version: '1.9.0',
     date: 'January 2025',
     title: 'Social Media Analytics',
@@ -89,83 +89,72 @@ const ENTRIES: Entry[] = [
       'LinkedIn company pages: follower count, post performance, and organization sync.',
     ],
   },
-  {
-    version: '1.8.0',
-    date: 'December 2024',
-    title: 'Email Builder v2',
-    tags: ['New', 'Improved'],
-    items: [
-      'Multi-column section blocks with drag-and-drop reordering.',
-      'Video block with thumbnail preview support.',
-      'HTML block for custom markup injection.',
-      'Pre-send checklist with subject, recipient, and footer validation.',
-      'Mobile/desktop preview toggle with iframe rendering.',
-    ],
-  },
-  {
-    version: '1.7.0',
-    date: 'November 2024',
-    title: 'CRM & Lead Scoring',
-    tags: ['New'],
-    items: [
-      'CRM pipeline with Kanban-style deal stages.',
-      'Lead scoring automations: assign points on email open, click, or tag events.',
-      'Company profiles with linked contacts and activity timeline.',
-      'Gmail Agent integration for email-to-CRM activity sync.',
-    ],
-  },
 ];
 
 export default function Changelog() {
   return (
-    <div className="min-h-screen bg-white font-[Inter,sans-serif]">
-      <PublicNav activePath="/changelog" onLoginClick={() => { window.location.href = '/login'; }} />
+    <>
+      <PublicNav
+        activePath="/changelog"
+        onLoginClick={() => {
+          window.location.href = '/login';
+        }}
+      />
 
-      <div className="mx-auto max-w-3xl px-5 pb-24 pt-32 sm:px-8">
-        <div className="mb-14">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-[#5b6cf9] ring-1 ring-indigo-100">
-            Changelog
+      <main className="h-frame">
+        <section className="h-panel h-dots h-sec">
+          <div className="h-dotfield h-edge" />
+          <div className="h-in max-w-[820px]">
+            <span className="h-cap">Product changelog</span>
+            <h1 className="text-[clamp(36px,4.5vw,58px)] mt-3">
+              What&apos;s new.
+              <br />
+              <span className="text-muted">Every release, documented.</span>
+            </h1>
+            <p className="mt-4 text-[16.5px] text-muted">
+              New capabilities, interface refinements, and reliability improvements across the
+              DakyXTech Marketing platform.
+            </p>
+
+            <div className="mt-12 divide-y divide-line border-t border-line">
+              {ENTRIES.map((entry) => (
+                <article key={entry.version} className="py-9 grid grid-cols-1 md:grid-cols-[180px_1fr] gap-6">
+                  <div>
+                    <div className="font-mono text-xs font-medium text-ink">v{entry.version}</div>
+                    <div className="mt-1 text-xs text-muted">{entry.date}</div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {entry.tags.map((tag) => (
+                        <Badge key={tag} tone={TAG_TONE[tag]}>
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h2 className="text-[22px] font-normal tracking-[-0.03em] text-ink">
+                      {entry.title}
+                    </h2>
+                    <ul className="mt-4 space-y-2.5">
+                      {entry.items.map((item, j) => (
+                        <li
+                          key={j}
+                          className="flex items-start gap-2.5 text-[15px] text-muted leading-relaxed"
+                        >
+                          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue" aria-hidden />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
-          <h1 className="text-4xl font-black tracking-[-0.03em] text-slate-950 sm:text-5xl">What's new</h1>
-          <p className="mt-4 text-lg text-slate-500">
-            Every update, improvement, and fix — in one place.
-          </p>
-        </div>
+        </section>
 
-        <div className="relative">
-          <div className="absolute left-[7px] top-0 h-full w-px bg-slate-100" aria-hidden />
-
-          <div className="space-y-12">
-            {ENTRIES.map((entry, i) => (
-              <article key={entry.version} className="relative pl-8">
-                <div className={`absolute left-0 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-4 ring-white ${i === 0 ? 'bg-[#5b6cf9]' : 'bg-slate-300'}`} />
-
-                <div className="flex flex-wrap items-center gap-2 mb-3">
-                  <span className="text-xs font-bold text-slate-400 tabular-nums">{entry.date}</span>
-                  <span className="text-xs text-slate-300">·</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">v{entry.version}</span>
-                  {entry.tags.map(tag => (
-                    <span key={tag} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${TAG_COLORS[tag]}`}>{tag}</span>
-                  ))}
-                </div>
-
-                <h2 className="mb-3 text-xl font-black tracking-tight text-slate-950">{entry.title}</h2>
-
-                <ul className="space-y-1.5">
-                  {entry.items.map((item, j) => (
-                    <li key={j} className="flex gap-2.5 text-[15px] text-slate-600 leading-relaxed">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" aria-hidden />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <PublicFooter />
-    </div>
+        <PublicFooter />
+      </main>
+    </>
   );
 }

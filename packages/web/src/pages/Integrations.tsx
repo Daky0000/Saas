@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle, ExternalLink, Loader2, Plug, Settings2, Unplug } from 'lucide-react';
+import { Check, CheckCircle, Copy, ExternalLink, Loader2, Plug, Settings2, ShieldCheck, Unplug } from 'lucide-react';
 import { integrationService, type IntegrationCatalogItem } from '../services/integrationService';
 import { sanitizeApiErrorText } from '../utils/apiRequest';
 import { wordpressService } from '../services/wordpressService';
@@ -23,11 +23,10 @@ type ModalState =
   | { type: 'whatsapp' };
 
 const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
-  connected: { bg: 'bg-emerald-50', text: 'text-emerald-700' },
-  disconnected: { bg: 'bg-slate-100', text: 'text-slate-600' },
-  disabled: { bg: 'bg-amber-50', text: 'text-amber-700' },
+  connected: { bg: 'bg-emerald/10', text: 'text-emerald' },
+  disconnected: { bg: 'bg-soft', text: 'text-muted' },
+  disabled: { bg: 'bg-amber/15', text: 'text-amber' },
 };
-
 
 const formatDate = (value?: string | null) => {
   if (!value) return '';
@@ -37,9 +36,9 @@ const formatDate = (value?: string | null) => {
 };
 
 const PRIMARY_ACTION =
-  'inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60';
+  'inline-flex items-center gap-1.5 rounded-xl bg-navy px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 transition-colors shadow-xs';
 const SECONDARY_ACTION =
-  'inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60';
+  'inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3.5 py-1.5 text-xs font-semibold text-ink hover:bg-soft disabled:opacity-50 transition-colors';
 
 function Card({
   title,
@@ -62,22 +61,28 @@ function Card({
 }) {
   const badge = PLATFORM_BADGE[statusTone];
   return (
-    <div className="group rounded-[24px] border-2 border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl overflow-hidden shadow-sm">
-            {icon}
+    <div className="group flex flex-col justify-between rounded-2xl border border-line bg-white p-5 shadow-xs transition hover:border-slate-300 hover:shadow-md">
+      <div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl overflow-hidden shadow-xs border border-line/60 bg-soft">
+              {icon}
+            </div>
+            <div className="min-w-0">
+              <div className="text-base font-bold text-ink">{title}</div>
+              {meta ? <div className="mt-0.5 text-xs text-muted">{meta}</div> : null}
+            </div>
           </div>
-          <div className="min-w-0">
-            <div className="text-base font-black text-slate-950">{title}</div>
-            {meta ? <div className="mt-1 text-xs text-slate-500">{meta}</div> : null}
-          </div>
+          <span className={`rounded-lg px-2.5 py-1 text-[11px] font-bold ${badge.bg} ${badge.text}`}>{statusLabel}</span>
         </div>
-        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.text}`}>{statusLabel}</span>
+        <p className="mt-3 text-xs leading-5 text-muted">{description}</p>
+        {disabledReason ? (
+          <p className="mt-2.5 rounded-lg border border-amber/30 bg-amber/5 px-2.5 py-1.5 text-xs font-medium text-amber">
+            {disabledReason}
+          </p>
+        ) : null}
       </div>
-      <p className="mt-3 text-sm leading-6 text-slate-500">{description}</p>
-      {disabledReason ? <p className="mt-3 text-xs text-amber-700">{disabledReason}</p> : null}
-      <div className="mt-4 flex flex-wrap gap-2">{children}</div>
+      <div className="mt-4 flex flex-wrap gap-2 pt-3 border-t border-line/60">{children}</div>
     </div>
   );
 }
@@ -161,6 +166,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
   // Google Calendar
   const [gcalLoading, setGcalLoading] = useState(false);
   const [gcalMsg, setGcalMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  // Compliance reference copy state
+  const [copiedComplianceKey, setCopiedComplianceKey] = useState<string | null>(null);
+  const copyCompliance = (key: string, val: string) => {
+    navigator.clipboard?.writeText(val);
+    setCopiedComplianceKey(key);
+    setTimeout(() => {
+      setCopiedComplianceKey((prev) => (prev === key ? null : prev));
+    }, 2000);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1077,13 +1092,148 @@ export default function Integrations({ onNavigateSettings }: Props) {
             );
           })()}
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-              <CheckCircle size={16} className="text-emerald-600" />
-              Tip
+          {/* Compliance & Callback URLs Reference */}
+          <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-3.5">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={18} className="text-blue" />
+                <div>
+                  <h3 className="text-sm font-bold text-ink">Developer Callback & Compliance URLs Reference</h3>
+                  <p className="text-xs text-muted">
+                    URLs required when configuring custom apps in platform developer portals (Meta, X, LinkedIn, TikTok, Google, Zoom, Slack).
+                  </p>
+                </div>
+              </div>
+              {onNavigateSettings ? (
+                <button
+                  type="button"
+                  onClick={onNavigateSettings}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                >
+                  <ExternalLink size={12} />
+                  Open Admin Integrations & Validator
+                </button>
+              ) : null}
             </div>
-            <p className="mt-2 text-sm text-slate-500">
-              For automated publishing, connect a platform and then publish from Posts → Distribution.
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-xl border border-line bg-soft/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Public Data Deletion Page</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCompliance('page-del', `${window.location.origin}/data-deletion`)}
+                    className="shrink-0 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-ink hover:bg-soft"
+                  >
+                    {copiedComplianceKey === 'page-del' ? <Check size={11} className="inline text-emerald" /> : <Copy size={11} className="inline" />}
+                    {copiedComplianceKey === 'page-del' ? ' Copied' : ' Copy'}
+                  </button>
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted">
+                  {window.location.origin}/data-deletion
+                </div>
+                <p className="mt-1 text-[10px] text-muted">User-facing deletion request form.</p>
+              </div>
+
+              <div className="rounded-xl border border-line bg-soft/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Meta Data Deletion Callback</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCompliance('meta-del', `${window.location.origin}/api/meta/data-deletion`)}
+                    className="shrink-0 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-ink hover:bg-soft"
+                  >
+                    {copiedComplianceKey === 'meta-del' ? <Check size={11} className="inline text-emerald" /> : <Copy size={11} className="inline" />}
+                    {copiedComplianceKey === 'meta-del' ? ' Copied' : ' Copy'}
+                  </button>
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted">
+                  {window.location.origin}/api/meta/data-deletion
+                </div>
+                <p className="mt-1 text-[10px] text-muted">Meta App Settings → User Data Deletion.</p>
+              </div>
+
+              <div className="rounded-xl border border-line bg-soft/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Meta Deauthorize Callback</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCompliance('meta-deauth', `${window.location.origin}/api/meta/deauthorize`)}
+                    className="shrink-0 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-ink hover:bg-soft"
+                  >
+                    {copiedComplianceKey === 'meta-deauth' ? <Check size={11} className="inline text-emerald" /> : <Copy size={11} className="inline" />}
+                    {copiedComplianceKey === 'meta-deauth' ? ' Copied' : ' Copy'}
+                  </button>
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted">
+                  {window.location.origin}/api/meta/deauthorize
+                </div>
+                <p className="mt-1 text-[10px] text-muted">Meta App Settings → Deauthorize Callback URL.</p>
+              </div>
+
+              <div className="rounded-xl border border-line bg-soft/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Universal OAuth Deauthorize</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCompliance('univ-deauth', `${window.location.origin}/api/oauth/{platform}/deauthorize`)}
+                    className="shrink-0 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-ink hover:bg-soft"
+                  >
+                    {copiedComplianceKey === 'univ-deauth' ? <Check size={11} className="inline text-emerald" /> : <Copy size={11} className="inline" />}
+                    {copiedComplianceKey === 'univ-deauth' ? ' Copied' : ' Copy'}
+                  </button>
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted">
+                  {window.location.origin}/api/oauth/[tool]/deauthorize
+                </div>
+                <p className="mt-1 text-[10px] text-muted">Zoom, TikTok, Slack, X deauthorization webhook.</p>
+              </div>
+
+              <div className="rounded-xl border border-line bg-soft/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Universal OAuth Data Deletion</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCompliance('univ-del', `${window.location.origin}/api/oauth/{platform}/data-deletion`)}
+                    className="shrink-0 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-ink hover:bg-soft"
+                  >
+                    {copiedComplianceKey === 'univ-del' ? <Check size={11} className="inline text-emerald" /> : <Copy size={11} className="inline" />}
+                    {copiedComplianceKey === 'univ-del' ? ' Copied' : ' Copy'}
+                  </button>
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted">
+                  {window.location.origin}/api/oauth/[tool]/data-deletion
+                </div>
+                <p className="mt-1 text-[10px] text-muted">Universal compliance data deletion webhook.</p>
+              </div>
+
+              <div className="rounded-xl border border-line bg-soft/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Standard OAuth Redirect URI</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCompliance('univ-redir', `${window.location.origin}/auth/{platform}/callback`)}
+                    className="shrink-0 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-ink hover:bg-soft"
+                  >
+                    {copiedComplianceKey === 'univ-redir' ? <Check size={11} className="inline text-emerald" /> : <Copy size={11} className="inline" />}
+                    {copiedComplianceKey === 'univ-redir' ? ' Copied' : ' Copy'}
+                  </button>
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted">
+                  {window.location.origin}/auth/[tool]/callback
+                </div>
+                <p className="mt-1 text-[10px] text-muted">Valid OAuth Redirect URI format.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
+            <div className="flex items-center gap-2 text-sm font-bold text-ink">
+              <CheckCircle size={16} className="text-emerald" />
+              Publishing Workflow Tip
+            </div>
+            <p className="mt-1.5 text-xs text-muted">
+              For automated multi-platform publishing, connect your accounts above and then dispatch scheduled or immediate posts from <strong>Posts → Distribution</strong>.
             </p>
           </div>
         </>

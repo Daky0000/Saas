@@ -1711,7 +1711,7 @@ function ContactsAnalyticsTab() {
               <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} allowDecimals={false} width={30} />
               <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
-              <Line type="monotone" dataKey="cumulative" stroke="#6366f1" strokeWidth={2} dot={false} name="Total contacts" />
+              <Line type="monotone" dataKey="cumulative" stroke="#2563EB" strokeWidth={2} dot={false} name="Total contacts" />
               <Line type="monotone" dataKey="new_contacts" stroke="#10b981" strokeWidth={2} dot={false} name="New contacts" />
             </LineChart>
           </ResponsiveContainer>

@@ -162,14 +162,14 @@ function uid() { return `b${_id++}`; }
 
 function defaultLeaf(type: LeafBlockType): LeafBlock {
   switch (type) {
-    case 'header':  return { id: uid(), type: 'header', headline: 'Your Headline Here', subheadline: 'A short supporting tagline', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 40 };
+    case 'header':  return { id: uid(), type: 'header', headline: 'Your Headline Here', subheadline: 'A short supporting tagline', bgColor: '#2563EB', textColor: '#ffffff', align: 'center', padding: 40 };
     case 'text':    return { id: uid(), type: 'text', content: 'Write your email body here. You can use <strong>bold</strong>, <em>italic</em>, or <a href="#">links</a>.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.7 };
     case 'image':   return { id: uid(), type: 'image', src: '', alt: '', href: '', align: 'center', padding: 24 };
-    case 'button':  return { id: uid(), type: 'button', text: 'Get Started', href: '#', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 32, borderRadius: 8, fontSize: 16 };
+    case 'button':  return { id: uid(), type: 'button', text: 'Get Started', href: '#', bgColor: '#2563EB', textColor: '#ffffff', align: 'center', padding: 32, borderRadius: 8, fontSize: 16 };
     case 'divider': return { id: uid(), type: 'divider', color: '#e5e7eb', thickness: 1, padding: 16 };
     case 'spacer':  return { id: uid(), type: 'spacer', height: 24 };
     case 'footer':  return { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St, City', bgColor: '#f9fafb', textColor: '#6b7280' };
-    case 'social':  return { id: uid(), type: 'social', links: [{ platform: 'facebook', url: '#' }, { platform: 'twitter', url: '#' }, { platform: 'instagram', url: '#' }], align: 'center', bgColor: '#ffffff', padding: 24, iconColor: '#5b6cf9' };
+    case 'social':  return { id: uid(), type: 'social', links: [{ platform: 'facebook', url: '#' }, { platform: 'twitter', url: '#' }, { platform: 'instagram', url: '#' }], align: 'center', bgColor: '#ffffff', padding: 24, iconColor: '#2563EB' };
     case 'html':    return { id: uid(), type: 'html', content: '<p style="font-family:Arial,sans-serif;font-size:14px;color:#374151;">Custom HTML here</p>', padding: 24 };
     case 'video':   return { id: uid(), type: 'video', thumbnailUrl: '', videoUrl: '#', alt: 'Watch video', align: 'center', padding: 24 };
   }
@@ -194,9 +194,9 @@ interface Template {
 const TEMPLATES: Template[] = [
   {
     id: 'blank', name: 'Blank', emoji: '📄', description: 'Start from scratch', category: 'Basic',
-    accentColor: '#5b6cf9', headerBg: '#5b6cf9',
+    accentColor: '#2563EB', headerBg: '#2563EB',
     blocks: () => [
-      { id: uid(), type: 'header', headline: 'Your Headline Here', subheadline: 'A brief supporting tagline', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 40 },
+      { id: uid(), type: 'header', headline: 'Your Headline Here', subheadline: 'A brief supporting tagline', bgColor: '#2563EB', textColor: '#ffffff', align: 'center', padding: 40 },
       { id: uid(), type: 'text', content: 'Write your message here.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.7 },
       { id: uid(), type: 'footer', companyName: 'Your Company', address: '', bgColor: '#f9fafb', textColor: '#6b7280' },
     ],
@@ -214,13 +214,13 @@ const TEMPLATES: Template[] = [
   },
   {
     id: 'newsletter', name: 'Newsletter', emoji: '📰', description: 'Regular updates & roundup', category: 'Content',
-    accentColor: '#5b6cf9', headerBg: '#1e293b',
+    accentColor: '#2563EB', headerBg: '#1e293b',
     blocks: () => [
       { id: uid(), type: 'header', headline: 'Monthly Newsletter', subheadline: 'Your curated roundup', bgColor: '#1e293b', textColor: '#ffffff', align: 'center', padding: 48 },
       { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>Here\'s what\'s been happening this month. We\'ve curated the best stories and updates just for you.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
       { id: uid(), type: 'divider', color: '#e5e7eb', thickness: 1, padding: 8 },
       { id: uid(), type: 'text', content: '<strong>Top Story</strong><br/>Add your featured story or announcement here.', bgColor: '#ffffff', textColor: '#374151', fontSize: 15, padding: 24, lineHeight: 1.7 },
-      { id: uid(), type: 'button', text: 'Read More', href: '#', bgColor: '#5b6cf9', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 8, fontSize: 15 },
+      { id: uid(), type: 'button', text: 'Read More', href: '#', bgColor: '#2563EB', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 8, fontSize: 15 },
       { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St', bgColor: '#f9fafb', textColor: '#6b7280' },
     ],
   },
@@ -237,14 +237,14 @@ const TEMPLATES: Template[] = [
   },
   {
     id: 'product-launch', name: 'Product Launch', emoji: '🚀', description: 'Announce a new product or feature', category: 'Marketing',
-    accentColor: '#8b5cf6', headerBg: '#4c1d95',
+    accentColor: '#2563EB', headerBg: '#4c1d95',
     blocks: () => [
       { id: uid(), type: 'header', headline: 'Introducing Something New', subheadline: 'Your new product — now live', bgColor: '#4c1d95', textColor: '#ffffff', align: 'center', padding: 48 },
       { id: uid(), type: 'text', content: '<strong>Hi {{first_name}},</strong><br/><br/>We\'ve been working hard on something special, and today is finally the day. We\'re thrilled to introduce our latest product.', bgColor: '#ffffff', textColor: '#374151', fontSize: 16, padding: 32, lineHeight: 1.8 },
       { id: uid(), type: 'divider', color: '#e5e7eb', thickness: 1, padding: 8 },
       { id: uid(), type: 'text', content: '<strong>What\'s new</strong><br/>• Feature one description<br/>• Feature two description<br/>• Feature three description', bgColor: '#ffffff', textColor: '#374151', fontSize: 15, padding: 24, lineHeight: 1.8 },
-      { id: uid(), type: 'button', text: 'See It Now', href: '#', bgColor: '#8b5cf6', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
-      { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St', bgColor: '#f5f3ff', textColor: '#6b7280' },
+      { id: uid(), type: 'button', text: 'See It Now', href: '#', bgColor: '#2563EB', textColor: '#ffffff', align: 'center', padding: 24, borderRadius: 10, fontSize: 16 },
+      { id: uid(), type: 'footer', companyName: 'Your Company', address: '123 Main St', bgColor: '#EAF1FF', textColor: '#6b7280' },
     ],
   },
   {
@@ -334,11 +334,11 @@ function GapZone({ isActive }: { isActive: boolean }) {
       {isActive ? (
         /* Prominent blue insertion line */
         <div className="flex items-center px-2">
-          <div className="h-4 w-4 shrink-0 rounded-full bg-[#5b6cf9] ring-4 ring-[#5b6cf9]/20 flex items-center justify-center">
+          <div className="h-4 w-4 shrink-0 rounded-full bg-[#2563EB] ring-4 ring-[#2563EB]/20 flex items-center justify-center">
             <Plus size={9} className="text-white" />
           </div>
-          <div className="h-[2px] flex-1 bg-[#5b6cf9] rounded-full" />
-          <div className="h-2 w-2 shrink-0 rounded-full bg-[#5b6cf9]" />
+          <div className="h-[2px] flex-1 bg-[#2563EB] rounded-full" />
+          <div className="h-2 w-2 shrink-0 rounded-full bg-[#2563EB]" />
         </div>
       ) : (
         /* Subtle dashed line showing a potential drop point */
@@ -375,9 +375,9 @@ function ColumnCell({
   onDrop: (e: DragEvent<HTMLDivElement>) => void;
 }) {
   const outline = isSelected
-    ? 'border-[#5b6cf9] bg-indigo-50/40'
+    ? 'border-[#2563EB] bg-indigo-50/40'
     : isDragOver
-    ? 'border-[#5b6cf9] bg-indigo-50'
+    ? 'border-[#2563EB] bg-indigo-50'
     : isDraggingActive
     ? 'border-slate-300 bg-slate-50/60'
     : 'border-slate-200 hover:border-slate-400';
@@ -392,8 +392,8 @@ function ColumnCell({
       onDrop={onDrop}
     >
       {col.blocks.length === 0 ? (
-        <div className={`flex h-full min-h-[80px] flex-col items-center justify-center gap-1 text-sm font-medium ${isDragOver ? 'text-[#5b6cf9]' : 'text-slate-400'}`}>
-          {isDragOver ? <><Plus size={16} className="text-[#5b6cf9]" /> Drop here</> : 'Drop content here'}
+        <div className={`flex h-full min-h-[80px] flex-col items-center justify-center gap-1 text-sm font-medium ${isDragOver ? 'text-[#2563EB]' : 'text-slate-400'}`}>
+          {isDragOver ? <><Plus size={16} className="text-[#2563EB]" /> Drop here</> : 'Drop content here'}
         </div>
       ) : (
         <div className="p-1">
@@ -456,7 +456,7 @@ function SectionView({
   onDelete: (e: React.MouseEvent) => void;
 }) {
   const outline = isSelected
-    ? 'outline outline-2 outline-[#5b6cf9] outline-offset-[-2px]'
+    ? 'outline outline-2 outline-[#2563EB] outline-offset-[-2px]'
     : 'hover:outline hover:outline-1 hover:outline-slate-300 hover:outline-offset-[-1px]';
 
   return (
@@ -516,7 +516,7 @@ function LeafCanvasBlock({
   onDragEnd: () => void;
 }) {
   const ring = selected
-    ? 'outline outline-2 outline-[#5b6cf9] outline-offset-[-2px]'
+    ? 'outline outline-2 outline-[#2563EB] outline-offset-[-2px]'
     : 'hover:outline hover:outline-1 hover:outline-slate-300 hover:outline-offset-[-1px]';
 
   const toolbar = selected && (
@@ -623,7 +623,7 @@ function EditPanel({
     return (
       <div>
         <div className="sticky top-0 z-10 border-b border-slate-100 bg-white px-4 py-3">
-          <div className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-[#5b6cf9]" /><span className="text-xs font-bold text-slate-700">Edit Column</span></div>
+          <div className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-[#2563EB]" /><span className="text-xs font-bold text-slate-700">Edit Column</span></div>
         </div>
         <div className="p-4 space-y-4">
           {col.blocks.length === 0 ? (
@@ -646,7 +646,7 @@ function EditPanel({
             <div className="grid grid-cols-2 gap-1.5">
               {(['text', 'image', 'button', 'divider', 'social', 'html'] as LeafBlockType[]).map(t => (
                 <button key={t} onClick={() => onColModuleAdd(col.id, t)}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#5b6cf9] hover:bg-indigo-50 capitalize">
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#2563EB] hover:bg-indigo-50 capitalize">
                   <Plus size={10} /> {t}
                 </button>
               ))}
@@ -669,19 +669,19 @@ function EditPanel({
     return (
       <div>
         <div className="sticky top-0 z-10 border-b border-slate-100 bg-white px-4 py-3">
-          <div className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-[#5b6cf9]" /><span className="text-xs font-bold text-slate-700">Edit Section</span></div>
+          <div className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-[#2563EB]" /><span className="text-xs font-bold text-slate-700">Edit Section</span></div>
         </div>
         <div className="p-4 space-y-4">
           <div className="space-y-1.5">
             <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400">Background Color</label>
             <div className="flex items-center gap-2">
               <input type="color" value={block.bgColor} onChange={e => onChange({ ...block, bgColor: e.target.value })} className="h-8 w-8 shrink-0 cursor-pointer rounded border border-slate-200 p-0.5" />
-              <input value={block.bgColor} onChange={e => onChange({ ...block, bgColor: e.target.value })} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-[#5b6cf9]" />
+              <input value={block.bgColor} onChange={e => onChange({ ...block, bgColor: e.target.value })} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-[#2563EB]" />
             </div>
           </div>
           <div className="space-y-1.5">
             <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400">Padding (px)</label>
-            <input type="number" min={0} max={80} value={block.padding} onChange={e => onChange({ ...block, padding: Number(e.target.value) })} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#5b6cf9]" />
+            <input type="number" min={0} max={80} value={block.padding} onChange={e => onChange({ ...block, padding: Number(e.target.value) })} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#2563EB]" />
           </div>
           <p className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">Click an individual column to add or edit its content.</p>
         </div>
@@ -693,7 +693,7 @@ function EditPanel({
   return (
     <div>
       <div className="sticky top-0 z-10 border-b border-slate-100 bg-white px-4 py-3">
-        <div className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-[#5b6cf9]" /><span className="text-xs font-bold text-slate-700 capitalize">Edit {block.type}</span></div>
+        <div className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-[#2563EB]" /><span className="text-xs font-bold text-slate-700 capitalize">Edit {block.type}</span></div>
       </div>
       <div className="p-4">
         <LeafEditFields block={block} onChange={onChange as (b: LeafBlock) => void} />
@@ -712,15 +712,15 @@ function LeafEditFields({ block, onChange }: { block: LeafBlock; onChange: (b: L
     </div>
   );
   const inp = (key: string, value: string, placeholder?: string) => (
-    <input value={value} placeholder={placeholder} onChange={e => set(key, e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#5b6cf9]" />
+    <input value={value} placeholder={placeholder} onChange={e => set(key, e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2563EB]" />
   );
   const num = (key: string, value: number, min = 0, max = 999) => (
-    <input type="number" min={min} max={max} value={value} onChange={e => set(key, Number(e.target.value))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#5b6cf9]" />
+    <input type="number" min={min} max={max} value={value} onChange={e => set(key, Number(e.target.value))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2563EB]" />
   );
   const clr = (key: string, value: string) => (
     <div className="flex items-center gap-2">
       <input type="color" value={value} onChange={e => set(key, e.target.value)} className="h-8 w-8 shrink-0 cursor-pointer rounded border border-slate-200 p-0.5" />
-      <input value={value} onChange={e => set(key, e.target.value)} className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:border-[#5b6cf9]" />
+      <input value={value} onChange={e => set(key, e.target.value)} className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:border-[#2563EB]" />
     </div>
   );
   const aln = (key: string, value: Align) => (
@@ -733,7 +733,7 @@ function LeafEditFields({ block, onChange }: { block: LeafBlock; onChange: (b: L
     </div>
   );
   const ta = (key: string, value: string, rows = 5, placeholder?: string) => (
-    <textarea value={value} rows={rows} placeholder={placeholder} onChange={e => set(key, e.target.value)} className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#5b6cf9]" />
+    <textarea value={value} rows={rows} placeholder={placeholder} onChange={e => set(key, e.target.value)} className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2563EB]" />
   );
 
   return (
@@ -759,7 +759,7 @@ function LeafEditFields({ block, onChange }: { block: LeafBlock; onChange: (b: L
         {field('Background', clr('bgColor', block.bgColor))}
         {field('Text Color', clr('textColor', block.textColor))}
         {field('Font Size (px)', num('fontSize', block.fontSize, 10, 48))}
-        {field('Line Height', <input type="number" min={1} max={3} step={0.1} value={block.lineHeight} onChange={e => set('lineHeight', parseFloat(e.target.value))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#5b6cf9]" />)}
+        {field('Line Height', <input type="number" min={1} max={3} step={0.1} value={block.lineHeight} onChange={e => set('lineHeight', parseFloat(e.target.value))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2563EB]" />)}
         {field('Padding (px)', num('padding', block.padding, 0, 120))}
       </>}
       {block.type === 'image' && <>
@@ -808,7 +808,7 @@ function LeafEditFields({ block, onChange }: { block: LeafBlock; onChange: (b: L
               <button onClick={() => set('links', block.links.filter((_, j) => j !== i))} className="text-slate-300 hover:text-red-500"><X size={13} /></button>
             </div>
           ))}
-          <button onClick={() => set('links', [...block.links, { platform: 'facebook', url: '#' }])} className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-slate-200 py-1.5 text-xs text-slate-500 hover:border-[#5b6cf9] hover:text-[#5b6cf9]"><Plus size={11} /> Add Platform</button>
+          <button onClick={() => set('links', [...block.links, { platform: 'facebook', url: '#' }])} className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-slate-200 py-1.5 text-xs text-slate-500 hover:border-[#2563EB] hover:text-[#2563EB]"><Plus size={11} /> Add Platform</button>
         </div>
       </>}
       {block.type === 'html' && <>
@@ -856,8 +856,8 @@ function AddPanel({
         <span className="text-xs font-bold text-slate-700">Add</span>
       </div>
       <div className="flex border-b border-slate-100">
-        <button onClick={() => setTab('modules')} className={`flex-1 py-2.5 text-xs font-semibold ${tab === 'modules' ? 'border-b-2 border-[#5b6cf9] text-[#5b6cf9]' : 'text-slate-500 hover:text-slate-700'}`}>Modules</button>
-        <button onClick={() => setTab('sections')} className={`flex-1 py-2.5 text-xs font-semibold ${tab === 'sections' ? 'border-b-2 border-[#5b6cf9] text-[#5b6cf9]' : 'text-slate-500 hover:text-slate-700'}`}>Sections</button>
+        <button onClick={() => setTab('modules')} className={`flex-1 py-2.5 text-xs font-semibold ${tab === 'modules' ? 'border-b-2 border-[#2563EB] text-[#2563EB]' : 'text-slate-500 hover:text-slate-700'}`}>Modules</button>
+        <button onClick={() => setTab('sections')} className={`flex-1 py-2.5 text-xs font-semibold ${tab === 'sections' ? 'border-b-2 border-[#2563EB] text-[#2563EB]' : 'text-slate-500 hover:text-slate-700'}`}>Sections</button>
       </div>
       {tab === 'modules' && (
         <div className="p-3">
@@ -865,7 +865,7 @@ function AddPanel({
           <div className="grid grid-cols-2 gap-2">
             {MODULE_PALETTE.map(({ type, label, icon: Icon }) => (
               <div key={type} draggable onDragStart={e => onDragStartLeaf(e, type)} onClick={() => onAddLeaf(type)}
-                className="flex cursor-grab flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3 hover:border-[#5b6cf9] hover:bg-indigo-50 active:cursor-grabbing transition-colors">
+                className="flex cursor-grab flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3 hover:border-[#2563EB] hover:bg-indigo-50 active:cursor-grabbing transition-colors">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><Icon size={15} /></div>
                 <span className="text-xs font-semibold text-slate-700">{label}</span>
               </div>
@@ -879,7 +879,7 @@ function AddPanel({
           <div className="grid grid-cols-2 gap-2">
             {SECTION_PRESETS.map(preset => (
               <div key={preset.id} draggable onDragStart={e => onDragStartSection(e, preset)} onClick={() => onAddSection(preset)}
-                className="flex cursor-grab flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 hover:border-[#5b6cf9] hover:bg-indigo-50 active:cursor-grabbing transition-colors">
+                className="flex cursor-grab flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 hover:border-[#2563EB] hover:bg-indigo-50 active:cursor-grabbing transition-colors">
                 <SectionPreviewIcon preview={preset.preview} />
                 <span className="text-[11px] font-semibold text-slate-600 text-center">{preset.name}</span>
               </div>
@@ -898,8 +898,8 @@ function AddPanel({
 function LayerDropLine() {
   return (
     <div className="my-0.5 flex items-center px-1 pointer-events-none">
-      <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#5b6cf9]" />
-      <div className="h-[2px] flex-1 rounded-full bg-[#5b6cf9]" />
+      <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#2563EB]" />
+      <div className="h-[2px] flex-1 rounded-full bg-[#2563EB]" />
     </div>
   );
 }
@@ -990,7 +990,7 @@ function ContentsPanel({ blocks, selectedId, subject, previewText, onSelect, onR
                     dragIdx === i
                       ? 'opacity-40'
                       : selectedId === block.id
-                      ? 'bg-indigo-50 text-[#5b6cf9]'
+                      ? 'bg-indigo-50 text-[#2563EB]'
                       : 'text-slate-600 hover:bg-slate-50'
                   }`}
                 >
@@ -1077,7 +1077,7 @@ function TemplatePicker({ onSelect, onClose }: { onSelect: (t: Template) => void
         <div className="flex gap-1.5 overflow-x-auto border-b border-slate-100 px-6 py-3 scrollbar-hide">
           {TEMPLATE_CATEGORIES.map(cat => (
             <button key={cat} onClick={() => setActiveCategory(cat)}
-              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors ${activeCategory === cat ? 'bg-[#5b6cf9] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors ${activeCategory === cat ? 'bg-[#2563EB] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               {cat}
             </button>
           ))}
@@ -1085,12 +1085,12 @@ function TemplatePicker({ onSelect, onClose }: { onSelect: (t: Template) => void
         <div className="grid grid-cols-2 gap-3 overflow-y-auto p-6 sm:grid-cols-3 lg:grid-cols-4">
           {visible.map(t => (
             <button key={t.id} onClick={() => onSelect(t)}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-[#5b6cf9] hover:shadow-md transition-all">
+              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-[#2563EB] hover:shadow-md transition-all">
               <TemplateMiniPreview t={t} />
               <div className="flex items-start gap-1.5">
                 <span className="mt-0.5 text-base leading-none">{t.emoji}</span>
                 <div>
-                  <div className="text-xs font-bold text-slate-900 group-hover:text-[#5b6cf9] transition-colors">{t.name}</div>
+                  <div className="text-xs font-bold text-slate-900 group-hover:text-[#2563EB] transition-colors">{t.name}</div>
                   <div className="mt-0.5 text-[10px] text-slate-400">{t.description}</div>
                 </div>
               </div>
@@ -1354,12 +1354,12 @@ export default function EmailBuilder({
           <button className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-700"><Monitor size={14} /></button>
           <button className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-50"><Smartphone size={14} /></button>
         </div>
-        <select value={segmentId} onChange={e => onSegmentChange?.(e.target.value)} className="h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-600 outline-none focus:border-[#5b6cf9]">
+        <select value={segmentId} onChange={e => onSegmentChange?.(e.target.value)} className="h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-600 outline-none focus:border-[#2563EB]">
           <option value="">To: All contacts</option>
           {segments.map(s => <option key={s.id} value={s.id}>To: {s.name}</option>)}
         </select>
-        <input value={subject} onChange={e => onSubjectChange(e.target.value)} placeholder="Subject line…" className="h-7 w-48 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:border-[#5b6cf9]" />
-        <input value={previewText} onChange={e => onPreviewTextChange(e.target.value)} placeholder="Preview text…" className="h-7 w-36 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:border-[#5b6cf9]" />
+        <input value={subject} onChange={e => onSubjectChange(e.target.value)} placeholder="Subject line…" className="h-7 w-48 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:border-[#2563EB]" />
+        <input value={previewText} onChange={e => onPreviewTextChange(e.target.value)} placeholder="Preview text…" className="h-7 w-36 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:border-[#2563EB]" />
         <button onClick={() => setShowTemplatePicker(true)} className="h-7 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50">Templates</button>
       </div>
 
@@ -1370,7 +1370,7 @@ export default function EmailBuilder({
           <div className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-slate-100 bg-slate-50 py-3">
             {sidebarIcons.map(({ mode, icon: Icon, label, disabled }) => (
               <button key={mode} onClick={() => !disabled && setPanelMode(mode)} disabled={disabled} title={label}
-                className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${panelMode === mode ? 'bg-[#5b6cf9] text-white' : disabled ? 'cursor-not-allowed text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`}>
+                className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${panelMode === mode ? 'bg-[#2563EB] text-white' : disabled ? 'cursor-not-allowed text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`}>
                 <Icon size={16} />
               </button>
             ))}
@@ -1419,7 +1419,7 @@ export default function EmailBuilder({
                 {blocks.length === 0 ? (
                   <div className={`flex flex-col items-center justify-center py-24 transition-colors ${dragInfo ? 'bg-indigo-50' : ''}`}>
                     {dragInfo ? (
-                      <><div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#5b6cf9]/10 text-[#5b6cf9]"><Plus size={24} /></div><p className="text-sm font-semibold text-[#5b6cf9]">Drop to add</p></>
+                      <><div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#2563EB]/10 text-[#2563EB]"><Plus size={24} /></div><p className="text-sm font-semibold text-[#2563EB]">Drop to add</p></>
                     ) : (
                       <><Layout size={36} className="mb-4 opacity-30 text-slate-400" /><p className="text-sm font-semibold text-slate-600">Start building your email</p><p className="mt-1 text-xs text-slate-400">Drag modules from the left, or use a template.</p>
                       <div className="mt-5 flex gap-2">

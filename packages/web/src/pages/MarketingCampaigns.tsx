@@ -39,7 +39,7 @@ const CHANNEL_OPTIONS = [
   { value: 'instagram', label: 'Instagram', color: '#E1306C' },
   { value: 'twitter', label: 'X (Twitter)', color: '#000000' },
   { value: 'linkedin', label: 'LinkedIn', color: '#0A66C2' },
-  { value: 'email', label: 'Email', color: '#6366F1' },
+  { value: 'email', label: 'Email', color: '#2563EB' },
   { value: 'landing_page', label: 'Landing Page', color: '#10B981' },
 ];
 
@@ -53,14 +53,14 @@ const STATUS_STYLES: Record<CampaignStatus, string> = {
 
 const MEDIUM_OPTIONS = ['social', 'cpc', 'email', 'banner', 'affiliate', 'referral', 'organic'];
 
-const COLORS = ['#5b6cf9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+const COLORS = ['#2563EB', '#10b981', '#f59e0b', '#ef4444', '#2563EB', '#06b6d4'];
 
 const CAMPAIGN_TEMPLATES: Array<{ id: string; name: string; emoji: string; goal: CampaignGoal; hint: string; channels: string[]; color: string; type: string; tone: string; cta: string }> = [
-  { id: 'product_launch', name: 'Product Launch', emoji: '🚀', goal: 'sales', hint: 'Drive pre-orders, waitlist signups, and launch-day sales.', channels: ['email', 'instagram', 'facebook'], color: '#5b6cf9', type: 'product_marketing', tone: 'urgent', cta: 'Pre-Order Now' },
+  { id: 'product_launch', name: 'Product Launch', emoji: '🚀', goal: 'sales', hint: 'Drive pre-orders, waitlist signups, and launch-day sales.', channels: ['email', 'instagram', 'facebook'], color: '#2563EB', type: 'product_marketing', tone: 'urgent', cta: 'Pre-Order Now' },
   { id: 'seasonal_sale', name: 'Seasonal Sale', emoji: '🛍️', goal: 'sales', hint: 'Time-limited promotions with urgency messaging across social.', channels: ['email', 'instagram', 'facebook'], color: '#ef4444', type: 'paid_media', tone: 'urgent', cta: 'Shop Now' },
   { id: 'lead_gen', name: 'Lead Generation', emoji: '🎯', goal: 'leads', hint: 'Capture emails with a lead magnet or gated offer.', channels: ['linkedin', 'landing_page', 'email'], color: '#10b981', type: 'acquisition', tone: 'professional', cta: 'Get Free Access' },
   { id: 'brand_awareness', name: 'Brand Awareness', emoji: '📣', goal: 'awareness', hint: 'Maximize reach and impressions across social channels.', channels: ['instagram', 'twitter', 'facebook'], color: '#f59e0b', type: 'brand_development', tone: 'inspirational', cta: 'Learn More' },
-  { id: 'event_promo', name: 'Event Promo', emoji: '🎪', goal: 'traffic', hint: 'Drive registrations for a webinar, live event, or workshop.', channels: ['email', 'linkedin', 'landing_page'], color: '#8b5cf6', type: 'pr_awareness', tone: 'friendly', cta: 'Register Free' },
+  { id: 'event_promo', name: 'Event Promo', emoji: '🎪', goal: 'traffic', hint: 'Drive registrations for a webinar, live event, or workshop.', channels: ['email', 'linkedin', 'landing_page'], color: '#2563EB', type: 'pr_awareness', tone: 'friendly', cta: 'Register Free' },
   { id: 're_engagement', name: 'Re-engagement', emoji: '🔄', goal: 'engagement', hint: 'Win back inactive subscribers and followers.', channels: ['email', 'facebook'], color: '#06b6d4', type: 'email_marketing', tone: 'friendly', cta: 'Come Back' },
   { id: 'ugc', name: 'UGC Campaign', emoji: '📸', goal: 'engagement', hint: 'Invite users to share content with a branded hashtag.', channels: ['instagram', 'twitter', 'facebook'], color: '#ec4899', type: 'ugc', tone: 'playful', cta: 'Share Your Story' },
   { id: 'affiliate', name: 'Affiliate Launch', emoji: '🤝', goal: 'sales', hint: 'Activate creator referrals with tracked affiliate links.', channels: ['instagram', 'twitter', 'landing_page'], color: '#14b8a6', type: 'affiliate', tone: 'professional', cta: 'Join as Affiliate' },
@@ -141,7 +141,7 @@ function ChannelIcon({ value, size = 32 }: { value: string; size?: number }) {
   if (value === 'email') {
     return (
       <svg width={size} height={size} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="16" cy="16" r="16" fill="#6366F1" />
+        <circle cx="16" cy="16" r="16" fill="#2563EB" />
         <rect x="7" y="11" width="18" height="12" rx="2" stroke="white" strokeWidth="1.5" />
         <path d="M7 13.5l9 5.5 9-5.5" stroke="white" strokeWidth="1.5" strokeLinejoin="round" />
       </svg>
@@ -1287,7 +1287,7 @@ function HealthRing({ score }: { score: number }) {
 
 function KpiProgressBar({ kpi, onEdit, onDelete }: { kpi: CampaignKpi; onEdit: (k: CampaignKpi) => void; onDelete: (id: string) => void }) {
   const pct = Number(kpi.target_value) > 0 ? Math.min(100, Math.round((Number(kpi.current_value) / Number(kpi.target_value)) * 100)) : 0;
-  const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#5b6cf9' : pct >= 30 ? '#f59e0b' : '#ef4444';
+  const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#2563EB' : pct >= 30 ? '#f59e0b' : '#ef4444';
   return (
     <div className="group rounded-2xl border border-slate-200 bg-white p-4">
       <div className="mb-2 flex items-center justify-between">
@@ -1580,7 +1580,7 @@ function CampaignDetail({ campaign: initialCampaign, onBack }: { campaign: Campa
                   <div className="space-y-3">
                     {kpis.slice(0, 3).map(k => {
                       const pct = Number(k.target_value) > 0 ? Math.min(100, Math.round((Number(k.current_value) / Number(k.target_value)) * 100)) : 0;
-                      const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#5b6cf9' : pct >= 30 ? '#f59e0b' : '#ef4444';
+                      const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#2563EB' : pct >= 30 ? '#f59e0b' : '#ef4444';
                       return (
                         <div key={k.id} className="flex items-center gap-3">
                           <span className="w-32 shrink-0 text-xs font-semibold text-slate-600 truncate">{k.name}</span>

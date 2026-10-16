@@ -24,7 +24,7 @@ import {
 // point of having both.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ACCENT = '#5b6cf9';
+const ACCENT = '#2563EB';
 
 const DEFAULT_CONTEXT = `You are a friendly sales representative for our company. You are on a live phone call, so keep every reply to one or two sentences and then let the other person talk.
 

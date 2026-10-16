@@ -102,7 +102,7 @@ export default function CalendarPicker({ value, onChange, onCancel }: Props) {
           <button
             key={label}
             onClick={() => quickPick(days)}
-            className="px-3 py-1 rounded-full text-[11px] font-semibold border border-gray-200 text-gray-600 hover:border-[#5b6cf9] hover:text-[#5b6cf9] hover:bg-indigo-50 transition-colors"
+            className="px-3 py-1 rounded-full text-[11px] font-semibold border border-gray-200 text-gray-600 hover:border-[#2563EB] hover:text-[#2563EB] hover:bg-indigo-50 transition-colors"
           >
             {label}
           </button>
@@ -154,9 +154,9 @@ export default function CalendarPicker({ value, onChange, onCancel }: Props) {
                 'h-8 w-8 mx-auto flex items-center justify-center rounded-full text-[12px] font-medium transition-all',
                 !cell.own                              ? 'text-gray-200 cursor-default'                             : '',
                 past                                   ? 'text-gray-300 cursor-not-allowed'                        : '',
-                cell.own && !past && !today && !sel    ? 'text-gray-700 hover:bg-indigo-50 hover:text-[#5b6cf9]'  : '',
-                today && !sel && !past                 ? 'text-[#5b6cf9] font-bold ring-1 ring-[#5b6cf9]'          : '',
-                sel                                    ? 'bg-[#5b6cf9] text-white font-bold shadow-md scale-110'   : '',
+                cell.own && !past && !today && !sel    ? 'text-gray-700 hover:bg-indigo-50 hover:text-[#2563EB]'  : '',
+                today && !sel && !past                 ? 'text-[#2563EB] font-bold ring-1 ring-[#2563EB]'          : '',
+                sel                                    ? 'bg-[#2563EB] text-white font-bold shadow-md scale-110'   : '',
               ].join(' ')}
             >
               {cell.day}
@@ -198,7 +198,7 @@ export default function CalendarPicker({ value, onChange, onCancel }: Props) {
                 onClick={() => setAmpm(p)}
                 className={[
                   'px-3 py-1.5 text-[11px] font-bold transition-colors',
-                  ampm === p ? 'bg-[#5b6cf9] text-white' : 'text-gray-500 hover:bg-gray-50',
+                  ampm === p ? 'bg-[#2563EB] text-white' : 'text-gray-500 hover:bg-gray-50',
                 ].join(' ')}
               >
                 {p}
@@ -218,7 +218,7 @@ export default function CalendarPicker({ value, onChange, onCancel }: Props) {
         </button>
         <button
           onClick={confirm}
-          className="flex-1 rounded-xl bg-[#5b6cf9] py-2 text-[13px] font-bold text-white hover:bg-[#4a5be8] transition-colors shadow-sm"
+          className="flex-1 rounded-xl bg-[#2563EB] py-2 text-[13px] font-bold text-white hover:bg-[#4a5be8] transition-colors shadow-sm"
         >
           Confirm
         </button>

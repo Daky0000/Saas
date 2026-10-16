@@ -10,10 +10,8 @@ import {
   CreditCard,
   HelpCircle,
   Layers,
-  Loader2,
   LogOut,
   Megaphone,
-  Menu,
   Plus,
   Rocket,
   Shield,
@@ -33,8 +31,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ChatWidget from './components/ChatWidget';
 import ToastContainer from './components/ToastContainer';
 import { ToastContext, useToast, useToastState } from './hooks/useToast';
+import { Loading } from './components/ui';
 
-// Pages — lazy-loaded to split the 3.7 MB bundle into per-route chunks
+// Pages — lazy-loaded to split the bundle into per-route chunks
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Posts = lazy(() => import('./pages/Posts'));
 const Cards = lazy(() => import('./pages/Cards'));
@@ -107,8 +106,8 @@ import {
 } from './utils/userSession';
 
 const PageFallback = () => (
-  <div className="flex items-center justify-center h-full min-h-[200px]">
-    <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+  <div className="py-10">
+    <Loading rows={5} />
   </div>
 );
 
@@ -216,6 +215,52 @@ const PAGE_PATHS: Record<PageType, string> = {
   'social-inbox': '/social-inbox',
 };
 
+const PAGE_TITLES: Record<PageType, string> = {
+  dashboard: 'Dashboard',
+  notifications: 'Notifications',
+  posts: 'Posts & Calendar',
+  'post-automation': 'Post Automation',
+  cards: 'AI Studio & Cards',
+  media: 'Media Library',
+  analytics: 'Analytics',
+  pricing: 'Plans & Pricing',
+  admin: 'Admin Console',
+  profile: 'Profile',
+  memory: 'Brand Memory',
+  integrations: 'Integrations',
+  marketing: 'Marketing Overview',
+  'marketing-contacts': 'Contacts & Segments',
+  'marketing-email': 'Email Campaigns',
+  'marketing-campaigns': 'Campaigns & Funnels',
+  'marketing-surveys': 'Surveys',
+  'marketing-automations': 'Marketing Automations',
+  'marketing-forms': 'Lead Forms',
+  'marketing-leads': 'Lead Generation',
+  'marketing-leads-import': 'Import Leads',
+  'sales-leads': 'Sales Leads',
+  'sales-conversations': 'Sales Conversations',
+  'sales-followups': 'Follow-ups',
+  'sales-intelligence': 'Sales Intelligence',
+  'sales-settings': 'Sales Settings',
+  'crm-companies': 'Companies',
+  'crm-pipeline': 'Deals Pipeline',
+  'crm-scoring': 'Lead Scoring',
+  'gmail-agent': 'Gmail Agent',
+  'connector-hub': 'Connector Hub',
+  'connector-setup': 'Connector Setup',
+  'connector-sync': 'Sync Dashboard',
+  workspace: 'Workspace & Team',
+  credits: 'AI Credits',
+  billing: 'Billing & Subscription',
+  tasks: 'Project Tasks',
+  'project-settings': 'Project Settings',
+  settings: 'Settings & API',
+  workflow: 'Workflow Builder',
+  discover: 'Discover Library',
+  'ai-team': 'Workforce Floor',
+  'social-inbox': 'Unified Social Inbox',
+};
+
 const PATH_TO_PAGE = new Map<string, PageType>(
   Object.entries(PAGE_PATHS).map(([page, path]) => [path, page as PageType])
 );
@@ -223,8 +268,7 @@ PATH_TO_PAGE.set('/admin', 'admin');
 PATH_TO_PAGE.set('/mailing', 'marketing-email');
 PATH_TO_PAGE.set('/campaign', 'marketing-campaigns');
 
-// Sidebar groups — Content (incl. Analytics) is nested inside Marketing, so any
-// content page must expand both the Marketing menu and the Content submenu.
+// Sidebar groups
 const CONTENT_PAGES: PageType[] = ['posts', 'post-automation', 'media', 'cards', 'workflow', 'analytics'];
 const MARKETING_PAGES: PageType[] = [
   'marketing',
@@ -325,6 +369,7 @@ function AppSidebar({
   const { currentOrg, currentProject, projects, refresh } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [navSearch, setNavSearch] = useState('');
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -357,7 +402,6 @@ function AppSidebar({
     if (addingProject) newProjectRef.current?.focus();
   }, [addingProject]);
 
-  // Close add-project input on outside click
   const addProjectContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!addingProject) return;
@@ -385,7 +429,7 @@ function AppSidebar({
       await fetch(`${API_BASE_URL}/api/organizations/${currentOrg.id}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
-        body: JSON.stringify({ name: newProjectName.trim(), color: '#6366f1' }),
+        body: JSON.stringify({ name: newProjectName.trim(), color: '#2563EB' }),
       });
       await refresh();
       setNewProjectName('');
@@ -424,112 +468,121 @@ function AppSidebar({
 
   const wsName = currentOrg?.name ?? 'Workspace';
   const projName = currentProject?.name ?? 'Project';
-  const wsInitial = wsName[0].toUpperCase();
+  const wsInitial = wsName[0]?.toUpperCase() || 'D';
   const displayName = currentOrg?.name ?? authUser?.name ?? 'My Workspace';
-  const userInitial = displayName[0].toUpperCase();
+  const userInitial = displayName.slice(0, 2).toUpperCase();
   const planLabel = authUser?.planName?.trim() || 'Free';
   const isFreePlan = planLabel.toLowerCase() === 'free';
 
-  const cls = (active: boolean) =>
-    `flex w-full items-center gap-2.5 border-l-2 py-[7px] pl-4 pr-3 text-[13px] font-medium transition-colors ${
-      active
-        ? 'border-indigo-600 bg-indigo-50/60 text-indigo-600'
-        : 'border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800'
-    }`;
+  const q = navSearch.trim().toLowerCase();
+  const matches = (label: string) => !q || label.toLowerCase().includes(q);
 
-  const subCls = (active: boolean) =>
-    `flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${
-      active ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-700'
-    }`;
+  const cls = (active: boolean) => `os-nav-link${active ? ' is-active' : ''}`;
+  const subCls = (active: boolean) => `os-nav-sublink${active ? ' is-active' : ''}`;
 
   return (
     <div className="flex h-full flex-col bg-white">
-      {/* ── Workspace header ── */}
-      <div className="px-4 py-4 border-b border-gray-100">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm font-black select-none">
-            {wsInitial}
-          </div>
-          <div className="min-w-0">
-            <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{wsName}</p>
-            <p className="text-[13px] font-bold leading-snug text-gray-900 truncate">{projName}</p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">{authUser?.planName ?? 'Free'} Plan</p>
-          </div>
+      {/* ── DakyXTech v22 Brand Header ── */}
+      <div className="os-brand">
+        <div className="min-w-0 flex-1">
+          <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="block h-7 w-auto" />
+          <span className="truncate">{wsName} · {projName}</span>
         </div>
+        {onMobileClose && (
+          <button type="button" onClick={onMobileClose} className="os-nav-close">
+            Close
+          </button>
+        )}
       </div>
 
-      {/* ── Nav ── */}
-      <nav className="flex-1 overflow-y-auto py-2 flex flex-col">
+      {/* ── Quick Page Filter ── */}
+      <div className="os-nav-search">
+        <input
+          aria-label="Find a workspace page"
+          placeholder="Find a page"
+          value={navSearch}
+          onChange={(e) => setNavSearch(e.target.value)}
+        />
+      </div>
 
-        {/* Dashboard */}
-        {navOn('dashboard') && (
-          <button type="button" data-tour-id="nav-dashboard" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
-            <BarChart4 size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Dashboard</span>
-          </button>
-        )}
+      {/* ── Navigation ── */}
+      <nav className="os-navigation flex flex-col" aria-label="Main navigation">
+        {/* Workspace Section */}
+        <section className="os-nav-section">
+          <h2>Workspace</h2>
+          {navOn('dashboard') && matches('Dashboard') && (
+            <button type="button" data-tour-id="nav-dashboard" onClick={() => go('dashboard')} className={cls(currentPage === 'dashboard')}>
+              <BarChart4 size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Dashboard</span>
+            </button>
+          )}
+          {navOn('notifications') && matches('Notifications') && (
+            <button type="button" onClick={() => go('notifications')} className={cls(currentPage === 'notifications')}>
+              <Bell size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Notifications</span>
+            </button>
+          )}
+          {navOn('ai-team') && matches('AI Team Workforce') && (
+            <button type="button" onClick={() => go('ai-team')} className={cls(currentPage === 'ai-team')}>
+              <Bot size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">AI Team</span>
+            </button>
+          )}
+          {navOn('social-inbox') && matches('Social Inbox Approvals') && (
+            <button type="button" onClick={() => go('social-inbox')} className={cls(currentPage === 'social-inbox')}>
+              <Megaphone size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Social Inbox</span>
+            </button>
+          )}
+        </section>
 
-        {/* Notifications */}
-        {navOn('notifications') && (
-          <button type="button" onClick={() => go('notifications')} className={cls(currentPage === 'notifications')}>
-            <Bell size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Notifications</span>
-          </button>
-        )}
-
-        {/* AI Team */}
-        {navOn('ai-team') && (
-          <button type="button" onClick={() => go('ai-team')} className={cls(currentPage === 'ai-team')}>
-            <Bot size={15} className="shrink-0" />
-            <span className="flex-1 text-left">AI Team</span>
-          </button>
-        )}
-
-        {/* Unified Social Inbox & Approvals */}
-        {navOn('social-inbox') && (
-          <button type="button" onClick={() => go('social-inbox')} className={cls(currentPage === 'social-inbox')}>
-            <Megaphone size={15} className="shrink-0" />
-            <span className="flex-1 text-left">Social Inbox</span>
-          </button>
-        )}
-
-        {/* ── Projects ── */}
-        <div className="mt-1">
-          <div className="flex items-center border-l-2 border-transparent pl-4 pr-2">
-            <span className="flex-1 text-[11px] font-semibold uppercase tracking-widest text-gray-400">Projects</span>
+        {/* ── Projects Section ── */}
+        <section className="os-nav-section">
+          <div className="flex items-center justify-between px-2.5 pb-1">
+            <span className="text-[10.5px] font-medium uppercase tracking-[.14em] text-faint">Projects</span>
             <button
               type="button"
               title="New project"
               onClick={() => setAddingProject((p) => !p)}
-              className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+              className="rounded-[8px] p-1 text-muted hover:bg-sunken hover:text-ink transition-colors"
             >
               <Plus size={13} />
             </button>
           </div>
 
-          {/* No org — prompt to create workspace */}
           {!currentOrg && (
-            <div className="ml-4 mr-2 mt-1 mb-1">
+            <div className="px-1 my-1">
               {creatingWorkspace ? (
-                <div className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-2 py-1.5">
+                <div className="flex items-center gap-1.5 rounded-[10px] border border-line-2 bg-sunken px-2.5 py-1.5">
                   <input
                     autoFocus
                     value={newWorkspaceName}
                     onChange={(e) => setNewWorkspaceName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void createWorkspace(); if (e.key === 'Escape') setCreatingWorkspace(false); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void createWorkspace();
+                      if (e.key === 'Escape') setCreatingWorkspace(false);
+                    }}
                     placeholder="Workspace name…"
-                    className="flex-1 bg-transparent text-[12px] text-gray-800 placeholder-gray-400 focus:outline-none"
+                    className="flex-1 bg-transparent text-[12px] text-ink placeholder-faint focus:outline-none"
                   />
-                  {workspaceCreating
-                    ? <span className="text-indigo-400 text-[10px]">…</span>
-                    : <button type="button" onClick={createWorkspace} disabled={!newWorkspaceName.trim()} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-40">Create</button>
-                  }
+                  {workspaceCreating ? (
+                    <span className="text-muted text-[10px]">…</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={createWorkspace}
+                      disabled={!newWorkspaceName.trim()}
+                      className="text-[11px] font-medium text-blue hover:text-blue-d disabled:opacity-40"
+                    >
+                      Create
+                    </button>
+                  )}
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => setCreatingWorkspace(true)}
-                  className="w-full rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 px-3 py-2 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+                  className="w-full rounded-[10px] border border-dashed border-line-2 bg-sunken px-3 py-2 text-[11.5px] font-medium text-muted hover:border-blue hover:text-blue transition-colors"
                 >
                   + Create your workspace
                 </button>
@@ -537,66 +590,95 @@ function AppSidebar({
             </div>
           )}
 
-          {/* Inline new project input */}
           {addingProject && (
-            <div ref={addProjectContainerRef} className="ml-4 mr-2 mt-1 mb-1">
-              <div className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-2 py-1.5">
+            <div ref={addProjectContainerRef} className="px-1 my-1">
+              <div className="flex items-center gap-1.5 rounded-[10px] border border-line-2 bg-sunken px-2.5 py-1.5">
                 <input
                   ref={newProjectRef}
                   value={newProjectName}
                   onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void createProject(); if (e.key === 'Escape') setAddingProject(false); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void createProject();
+                    if (e.key === 'Escape') setAddingProject(false);
+                  }}
                   placeholder="Project name…"
-                  className="flex-1 bg-transparent text-[12px] text-gray-800 placeholder-gray-400 focus:outline-none"
+                  className="flex-1 bg-transparent text-[12px] text-ink placeholder-faint focus:outline-none"
                 />
-                {creatingProject
-                  ? <span className="text-indigo-400 text-[10px]">…</span>
-                  : <button type="button" onClick={createProject} disabled={!newProjectName.trim()} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-40">Add</button>
-                }
+                {creatingProject ? (
+                  <span className="text-muted text-[10px]">…</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={createProject}
+                    disabled={!newProjectName.trim()}
+                    className="text-[11px] font-medium text-blue hover:text-blue-d disabled:opacity-40"
+                  >
+                    Add
+                  </button>
+                )}
               </div>
             </div>
           )}
 
-          {/* Project list */}
           {projects.map((proj) => {
             const isExpanded = expandedProjects.has(proj.id);
             const isCurrent = currentProject?.id === proj.id;
+            if (q && !proj.name.toLowerCase().includes(q) && !'general team all tasks'.includes(q)) return null;
             return (
               <div key={proj.id}>
                 <button
                   type="button"
-                  onClick={() => { toggleProject(proj.id); }}
-                  className={`flex w-full items-center gap-2 border-l-2 py-[6px] pl-5 pr-3 text-[13px] font-medium transition-colors ${
-                    isCurrent ? 'border-indigo-400 text-indigo-600' : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                  }`}
+                  onClick={() => toggleProject(proj.id)}
+                  className={`os-nav-link ${isCurrent ? 'is-active' : ''}`}
                 >
                   <span
                     className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ background: proj.color || '#6366f1' }}
+                    style={{ background: proj.color || '#2563EB' }}
                   />
                   <span className="flex-1 truncate text-left">{proj.name}</span>
-                  <ChevronDown size={11} className={`shrink-0 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  <ChevronDown size={11} className={`shrink-0 text-faint transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                 </button>
-                {isExpanded && (
-                  <div className="ml-[22px] border-l border-gray-100 pl-3 pb-0.5 flex flex-col">
+                {(isExpanded || Boolean(q)) && (
+                  <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
                     <a
                       href={PAGE_PATHS['project-settings']}
-                      onClick={(e) => { e.preventDefault(); sessionStorage.removeItem('proj_settings_tab'); go('project-settings'); }}
-                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'project-settings' && typeof window !== 'undefined' && !window.location.search.includes('tab=team') ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        sessionStorage.removeItem('proj_settings_tab');
+                        go('project-settings');
+                      }}
+                      className={subCls(
+                        currentPage === 'project-settings' &&
+                          typeof window !== 'undefined' &&
+                          !window.location.search.includes('tab=team')
+                      )}
                     >
                       General
                     </a>
                     <a
                       href={PAGE_PATHS['project-settings']}
-                      onClick={(e) => { e.preventDefault(); sessionStorage.setItem('proj_settings_tab', 'team'); go('project-settings'); onMobileClose?.(); }}
-                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'project-settings' && typeof window !== 'undefined' && window.location.search.includes('tab=team') ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        sessionStorage.setItem('proj_settings_tab', 'team');
+                        go('project-settings');
+                        onMobileClose?.();
+                      }}
+                      className={subCls(
+                        currentPage === 'project-settings' &&
+                          typeof window !== 'undefined' &&
+                          window.location.search.includes('tab=team')
+                      )}
                     >
                       Team
                     </a>
                     <a
                       href={PAGE_PATHS['tasks']}
-                      onClick={(e) => { e.preventDefault(); goTasks('all'); onMobileClose?.(); }}
-                      className={`flex w-full items-center rounded py-[5px] px-3 text-[12px] font-medium transition-colors ${currentPage === 'tasks' ? 'text-indigo-600 font-semibold' : 'text-gray-400 hover:text-gray-700'}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        goTasks('all');
+                        onMobileClose?.();
+                      }}
+                      className={subCls(currentPage === 'tasks')}
                     >
                       All Tasks
                     </a>
@@ -605,154 +687,234 @@ function AppSidebar({
               </div>
             );
           })}
-        </div>
+        </section>
 
-        {/* ── Bottom nav items ── */}
-        <div className="mt-2 border-t border-gray-100 pt-2">
+        {/* ── Pipeline & Operations Section ── */}
+        <section className="os-nav-section">
+          <h2>Operations &amp; Growth</h2>
 
           {/* CRM */}
           {navOn('crm') && (
             <>
-              <div className={cls(
+              <div
+                className={cls(
                   currentPage === 'crm-companies' ||
-                  currentPage === 'crm-pipeline' ||
-                  currentPage === 'crm-scoring' ||
-                  currentPage === 'gmail-agent'
-                )}><button type="button" onClick={() => { setCrmMenuOpen(true); go('crm-pipeline'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                <Building2 size={15} className="shrink-0" />
-                <span className="flex-1 text-left">CRM</span>
-                </button><button type="button" aria-label="Toggle Crm submenu" aria-expanded={crmMenuOpen} onClick={(e) => { e.stopPropagation(); setCrmMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
-                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${crmMenuOpen ? 'rotate-180' : ''}`} />
+                    currentPage === 'crm-pipeline' ||
+                    currentPage === 'crm-scoring' ||
+                    currentPage === 'gmail-agent'
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCrmMenuOpen(true);
+                    go('crm-pipeline');
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                >
+                  <Building2 size={15} className="shrink-0 opacity-75" />
+                  <span className="flex-1 text-left">CRM</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Toggle Crm submenu"
+                  aria-expanded={crmMenuOpen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCrmMenuOpen((p) => !p);
+                  }}
+                  className="shrink-0 -m-1 p-1 rounded-[8px] hover:bg-sunken"
+                >
+                  <ChevronDown size={12} className={`text-faint transition-transform ${crmMenuOpen || Boolean(q) ? 'rotate-180' : ''}`} />
                 </button>
               </div>
-              {crmMenuOpen && (
-                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                  {([
-                    { id: 'crm-companies' as PageType, label: 'Companies', navKey: 'crm-companies' },
-                    { id: 'crm-pipeline' as PageType, label: 'Deals', navKey: 'crm-pipeline' },
-                    { id: 'crm-scoring' as PageType, label: 'Lead Scoring', navKey: 'crm-scoring' },
-                    { id: 'gmail-agent' as PageType, label: 'Gmail Agent', navKey: 'crm-gmail-agent' },
-                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
-                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                      {c.label}
-                    </button>
-                  ))}
+              {(crmMenuOpen || Boolean(q)) && (
+                <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                  {(
+                    [
+                      { id: 'crm-companies' as PageType, label: 'Companies', navKey: 'crm-companies' },
+                      { id: 'crm-pipeline' as PageType, label: 'Deals', navKey: 'crm-pipeline' },
+                      { id: 'crm-scoring' as PageType, label: 'Lead Scoring', navKey: 'crm-scoring' },
+                      { id: 'gmail-agent' as PageType, label: 'Gmail Agent', navKey: 'crm-gmail-agent' },
+                    ] as { id: PageType; label: string; navKey: string }[]
+                  )
+                    .filter((c) => navOn(c.navKey) && matches(`CRM ${c.label}`))
+                    .map((c) => (
+                      <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                        {c.label}
+                      </button>
+                    ))}
                 </div>
               )}
             </>
           )}
 
-          {/* Sales — sits beside CRM because it extends the same contact record */}
+          {/* Sales */}
           {navOn('sales') && (
             <>
-              <div className={cls(SALES_PAGES.includes(currentPage))}><button type="button" onClick={() => { setSalesMenuOpen(true); go('sales-leads'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                <PhoneCall size={15} className="shrink-0" />
-                <span className="flex-1 text-left">Sales</span>
-                </button><button type="button" aria-label="Toggle Sales submenu" aria-expanded={salesMenuOpen} onClick={(e) => { e.stopPropagation(); setSalesMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
-                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${salesMenuOpen ? 'rotate-180' : ''}`} />
+              <div className={cls(SALES_PAGES.includes(currentPage))}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSalesMenuOpen(true);
+                    go('sales-leads');
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                >
+                  <PhoneCall size={15} className="shrink-0 opacity-75" />
+                  <span className="flex-1 text-left">Sales</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Toggle Sales submenu"
+                  aria-expanded={salesMenuOpen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSalesMenuOpen((p) => !p);
+                  }}
+                  className="shrink-0 -m-1 p-1 rounded-[8px] hover:bg-sunken"
+                >
+                  <ChevronDown size={12} className={`text-faint transition-transform ${salesMenuOpen || Boolean(q) ? 'rotate-180' : ''}`} />
                 </button>
               </div>
-              {salesMenuOpen && (
-                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                  {([
-                    { id: 'sales-leads' as PageType, label: 'Leads', navKey: 'sales-leads' },
-                    { id: 'sales-conversations' as PageType, label: 'Conversations', navKey: 'sales-conversations' },
-                    { id: 'sales-followups' as PageType, label: 'Follow-ups', navKey: 'sales-followups' },
-                    { id: 'sales-intelligence' as PageType, label: 'Intelligence', navKey: 'sales-intelligence' },
-                    { id: 'sales-settings' as PageType, label: 'Settings', navKey: 'sales-settings' },
-                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
-                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                      {c.label}
-                    </button>
-                  ))}
+              {(salesMenuOpen || Boolean(q)) && (
+                <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                  {(
+                    [
+                      { id: 'sales-leads' as PageType, label: 'Leads', navKey: 'sales-leads' },
+                      { id: 'sales-conversations' as PageType, label: 'Conversations', navKey: 'sales-conversations' },
+                      { id: 'sales-followups' as PageType, label: 'Follow-ups', navKey: 'sales-followups' },
+                      { id: 'sales-intelligence' as PageType, label: 'Intelligence', navKey: 'sales-intelligence' },
+                      { id: 'sales-settings' as PageType, label: 'Settings', navKey: 'sales-settings' },
+                    ] as { id: PageType; label: string; navKey: string }[]
+                  )
+                    .filter((c) => navOn(c.navKey) && matches(`Sales ${c.label}`))
+                    .map((c) => (
+                      <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                        {c.label}
+                      </button>
+                    ))}
                 </div>
               )}
             </>
           )}
 
+          {/* Marketing */}
           {navOn('marketing') && (
             <>
-              <div className={cls(MARKETING_PAGES.includes(currentPage))}><button type="button" onClick={() => { setMarketingMenuOpen(true); go('marketing'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                <Megaphone size={15} className="shrink-0" />
-                <span className="flex-1 text-left">Marketing</span>
-                </button><button type="button" aria-label="Toggle Marketing submenu" aria-expanded={marketingMenuOpen} onClick={(e) => { e.stopPropagation(); setMarketingMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
-                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${marketingMenuOpen ? 'rotate-180' : ''}`} />
+              <div className={cls(MARKETING_PAGES.includes(currentPage))}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMarketingMenuOpen(true);
+                    go('marketing');
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                >
+                  <Megaphone size={15} className="shrink-0 opacity-75" />
+                  <span className="flex-1 text-left">Marketing</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Toggle Marketing submenu"
+                  aria-expanded={marketingMenuOpen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMarketingMenuOpen((p) => !p);
+                  }}
+                  className="shrink-0 -m-1 p-1 rounded-[8px] hover:bg-sunken"
+                >
+                  <ChevronDown size={12} className={`text-faint transition-transform ${marketingMenuOpen || Boolean(q) ? 'rotate-180' : ''}`} />
                 </button>
               </div>
-              {marketingMenuOpen && (
-                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                  {navOn('marketing-overview') && (
+              {(marketingMenuOpen || Boolean(q)) && (
+                <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                  {navOn('marketing-overview') && matches('Marketing Overview') && (
                     <button type="button" onClick={() => go('marketing')} className={subCls(currentPage === 'marketing')}>
                       Overview
                     </button>
                   )}
 
-                  {/* Content (Posts + Automation + Media + AI Studio + Workflow + Analytics) */}
+                  {/* Content submenu */}
                   {navOn('content') && (
                     <>
                       <button
                         type="button"
                         data-tour-id="nav-content"
-                        onClick={() => { setPostsMenuOpen(true); go('posts'); }}
+                        onClick={() => {
+                          setPostsMenuOpen(true);
+                          go('posts');
+                        }}
                         className={subCls(CONTENT_PAGES.includes(currentPage))}
                       >
                         <span className="flex-1 text-left">Content</span>
                         <span
                           role="button"
                           aria-label="Toggle submenu"
-                          onClick={(e) => { e.stopPropagation(); setPostsMenuOpen((p) => !p); }}
-                          className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPostsMenuOpen((p) => !p);
+                          }}
+                          className="shrink-0 -m-1 p-1 rounded-[8px] hover:bg-sunken"
                         >
-                          <ChevronDown size={11} className={`text-gray-400 transition-transform ${postsMenuOpen ? 'rotate-180' : ''}`} />
+                          <ChevronDown size={11} className={`text-faint transition-transform ${postsMenuOpen || Boolean(q) ? 'rotate-180' : ''}`} />
                         </span>
                       </button>
-                      {postsMenuOpen && (
-                        <div className="ml-2 border-l border-gray-100 pl-2.5 flex flex-col">
-                          {([
-                            { id: 'posts' as PageType, label: 'Posts', navKey: 'content-posts' },
-                            { id: 'post-automation' as PageType, label: 'Automation', navKey: 'content-automation' },
-                            { id: 'media' as PageType, label: 'Media', navKey: 'content-media' },
-                            { id: 'cards' as PageType, label: 'AI Studio', navKey: 'content-studio' },
-                            { id: 'workflow' as PageType, label: 'Workflow', navKey: 'content-workflow' },
-                            { id: 'analytics' as PageType, label: 'Analytics', navKey: 'analytics' },
-                          ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              {...(c.id === 'analytics' ? { 'data-tour-id': 'nav-analytics' } : {})}
-                              onClick={() => go(c.id)}
-                              className={subCls(currentPage === c.id)}
-                            >
-                              {c.label}
-                            </button>
-                          ))}
+                      {(postsMenuOpen || Boolean(q)) && (
+                        <div className="ml-2.5 border-l border-line pl-2.5 flex flex-col">
+                          {(
+                            [
+                              { id: 'posts' as PageType, label: 'Posts', navKey: 'content-posts' },
+                              { id: 'post-automation' as PageType, label: 'Automation', navKey: 'content-automation' },
+                              { id: 'media' as PageType, label: 'Media', navKey: 'content-media' },
+                              { id: 'cards' as PageType, label: 'AI Studio', navKey: 'content-studio' },
+                              { id: 'workflow' as PageType, label: 'Workflow', navKey: 'content-workflow' },
+                              { id: 'analytics' as PageType, label: 'Analytics', navKey: 'analytics' },
+                            ] as { id: PageType; label: string; navKey: string }[]
+                          )
+                            .filter((c) => navOn(c.navKey) && matches(`Content ${c.label}`))
+                            .map((c) => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                {...(c.id === 'analytics' ? { 'data-tour-id': 'nav-analytics' } : {})}
+                                onClick={() => go(c.id)}
+                                className={subCls(currentPage === c.id)}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
                         </div>
                       )}
                     </>
                   )}
 
-                  {([
-                    { id: 'marketing-contacts' as PageType, label: 'Contacts', navKey: 'marketing-contacts' },
-                    { id: 'marketing-email' as PageType, label: 'Email', navKey: 'marketing-email' },
-                    { id: 'marketing-campaigns' as PageType, label: 'Campaigns', navKey: 'marketing-campaigns' },
-                    { id: 'marketing-surveys' as PageType, label: 'Surveys', navKey: 'marketing-surveys' },
-                    { id: 'marketing-automations' as PageType, label: 'Automations', navKey: 'marketing-automations' },
-                    { id: 'marketing-forms' as PageType, label: 'Forms', navKey: 'marketing-forms' },
-                    { id: 'marketing-leads' as PageType, label: 'Lead Generation', navKey: 'marketing-leads' },
-                    { id: 'marketing-leads-import' as PageType, label: 'Import Leads', navKey: 'marketing-leads-import' },
-                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
-                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                      {c.label}
-                    </button>
-                  ))}
+                  {(
+                    [
+                      { id: 'marketing-contacts' as PageType, label: 'Contacts', navKey: 'marketing-contacts' },
+                      { id: 'marketing-email' as PageType, label: 'Email', navKey: 'marketing-email' },
+                      { id: 'marketing-campaigns' as PageType, label: 'Campaigns', navKey: 'marketing-campaigns' },
+                      { id: 'marketing-surveys' as PageType, label: 'Surveys', navKey: 'marketing-surveys' },
+                      { id: 'marketing-automations' as PageType, label: 'Automations', navKey: 'marketing-automations' },
+                      { id: 'marketing-forms' as PageType, label: 'Forms', navKey: 'marketing-forms' },
+                      { id: 'marketing-leads' as PageType, label: 'Lead Generation', navKey: 'marketing-leads' },
+                      { id: 'marketing-leads-import' as PageType, label: 'Import Leads', navKey: 'marketing-leads-import' },
+                    ] as { id: PageType; label: string; navKey: string }[]
+                  )
+                    .filter((c) => navOn(c.navKey) && matches(`Marketing ${c.label}`))
+                    .map((c) => (
+                      <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                        {c.label}
+                      </button>
+                    ))}
                 </div>
               )}
             </>
           )}
 
-          {navOn('integrations') && (
+          {navOn('integrations') && matches('Integrations') && (
             <button type="button" data-tour-id="nav-integrations" onClick={() => go('integrations')} className={cls(currentPage === 'integrations')}>
-              <Waypoints size={15} className="shrink-0" />
+              <Waypoints size={15} className="shrink-0 opacity-75" />
               <span className="flex-1 text-left">Integrations</span>
             </button>
           )}
@@ -760,147 +922,233 @@ function AppSidebar({
           {/* Connectors */}
           {navOn('connectors') && (
             <>
-              <div className={cls(
+              <div
+                className={cls(
                   currentPage === 'connector-hub' ||
-                  currentPage === 'connector-setup' ||
-                  currentPage === 'connector-sync'
-                )}><button type="button" onClick={() => { setConnectorMenuOpen(true); go('connector-hub'); }} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                <Layers size={15} className="shrink-0" />
-                <span className="flex-1 text-left">Connectors</span>
-                </button><button type="button" aria-label="Toggle Connector submenu" aria-expanded={connectorMenuOpen} onClick={(e) => { e.stopPropagation(); setConnectorMenuOpen((p) => !p); }} className="shrink-0 -m-1 p-1 rounded hover:bg-gray-200/60">
-                  <ChevronDown size={12} className={`text-gray-400 transition-transform ${connectorMenuOpen ? 'rotate-180' : ''}`} />
+                    currentPage === 'connector-setup' ||
+                    currentPage === 'connector-sync'
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConnectorMenuOpen(true);
+                    go('connector-hub');
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                >
+                  <Layers size={15} className="shrink-0 opacity-75" />
+                  <span className="flex-1 text-left">Connectors</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Toggle Connector submenu"
+                  aria-expanded={connectorMenuOpen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConnectorMenuOpen((p) => !p);
+                  }}
+                  className="shrink-0 -m-1 p-1 rounded-[8px] hover:bg-sunken"
+                >
+                  <ChevronDown size={12} className={`text-faint transition-transform ${connectorMenuOpen || Boolean(q) ? 'rotate-180' : ''}`} />
                 </button>
               </div>
-              {connectorMenuOpen && (
-                <div className="ml-[18px] border-l border-gray-100 pl-3 py-0.5 flex flex-col">
-                  {([
-                    { id: 'connector-hub' as PageType, label: 'Hub', navKey: 'connectors-hub' },
-                    { id: 'connector-sync' as PageType, label: 'Sync Dashboard', navKey: 'connectors-sync' },
-                  ] as { id: PageType; label: string; navKey: string }[]).filter(c => navOn(c.navKey)).map((c) => (
-                    <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
-                      {c.label}
-                    </button>
-                  ))}
+              {(connectorMenuOpen || Boolean(q)) && (
+                <div className="ml-4 border-l border-line pl-2.5 py-0.5 flex flex-col">
+                  {(
+                    [
+                      { id: 'connector-hub' as PageType, label: 'Hub', navKey: 'connectors-hub' },
+                      { id: 'connector-sync' as PageType, label: 'Sync Dashboard', navKey: 'connectors-sync' },
+                    ] as { id: PageType; label: string; navKey: string }[]
+                  )
+                    .filter((c) => navOn(c.navKey) && matches(`Connectors ${c.label}`))
+                    .map((c) => (
+                      <button key={c.id} type="button" onClick={() => go(c.id)} className={subCls(currentPage === c.id)}>
+                        {c.label}
+                      </button>
+                    ))}
                 </div>
               )}
             </>
           )}
+        </section>
 
-          <button type="button" onClick={() => go('credits')} className={cls(currentPage === 'credits')}>
-            <CreditCard size={15} className="shrink-0" /><span className="flex-1 text-left">Buy credits</span>
-          </button>
-          {navOn('billing') && (
+        {/* ── Account & System Section ── */}
+        <section className="os-nav-section">
+          <h2>System &amp; Billing</h2>
+          {matches('Buy credits') && (
+            <button type="button" onClick={() => go('credits')} className={cls(currentPage === 'credits')}>
+              <CreditCard size={15} className="shrink-0 opacity-75" />
+              <span className="flex-1 text-left">Buy credits</span>
+            </button>
+          )}
+          {navOn('billing') && matches('Billing') && (
             <button type="button" data-tour-id="nav-billing" onClick={() => go('billing')} className={cls(currentPage === 'billing')}>
-              <CreditCard size={15} className="shrink-0" />
+              <CreditCard size={15} className="shrink-0 opacity-75" />
               <span className="flex-1 text-left">Billing</span>
             </button>
           )}
-        </div>
-
-        {/* Admin */}
-        {authUser?.role === 'admin' && (
-          <div className="border-t border-gray-100 pt-2 mt-1">
+          {authUser?.role === 'admin' && matches('Admin Console') && (
             <button type="button" data-tour-id="nav-admin" onClick={() => go('admin')} className={cls(currentPage === 'admin')}>
-              <Shield size={15} className="shrink-0" />
+              <Shield size={15} className="shrink-0 opacity-75" />
               <span className="flex-1 text-left">Admin</span>
             </button>
-          </div>
-        )}
+          )}
+        </section>
       </nav>
 
-      {/* ── Notifications ── */}
-      <div className="border-t border-gray-100 px-3 py-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Notifications</span>
+      {/* ── Notifications Row ── */}
+      <div className="mx-3 border-t border-line py-2 px-1 flex items-center justify-between">
+        <span className="text-[10.5px] font-medium uppercase tracking-[.14em] text-faint">Notifications</span>
         <NotificationBell />
       </div>
 
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
-      {/* ── User card + dropdown ── */}
-      <div ref={userMenuRef} className="relative px-3 pb-3 pt-1">
+      {/* ── DakyXTech v22 Account Bar + Menu ── */}
+      <div ref={userMenuRef} className="relative">
         {userMenuOpen && (
-          <div role="menu" className="absolute bottom-full left-0 right-0 mb-1 rounded-2xl border border-gray-200 bg-white py-1.5 shadow-xl z-50 overflow-hidden">
+          <div
+            role="menu"
+            className="absolute bottom-full left-3 right-3 mb-1.5 rounded-2xl border border-line bg-white py-1.5 shadow-menu z-50 overflow-hidden"
+          >
             <div className="flex items-center gap-2.5 px-3.5 py-2.5">
               {authUser?.avatar ? (
-                <img src={authUser.avatar} alt="" className="h-7 w-7 shrink-0 rounded-lg object-cover" />
+                <img src={authUser.avatar} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
               ) : (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white text-[11px] font-black select-none">
-                  {wsInitial}
-                </div>
+                <div className="os-initials !h-7 !w-7 !text-[11px]">{wsInitial}</div>
               )}
               <div className="min-w-0 flex-1">
-                <p className="text-[12px] font-semibold text-gray-900 truncate">{displayName}</p>
-                {authUser?.email
-                  ? <p className="text-[10px] text-gray-400 truncate">{authUser.email}</p>
-                  : <p className="text-[10px] uppercase tracking-widest text-gray-400">{planLabel} Plan</p>}
+                <p className="text-[12.5px] font-medium text-ink truncate">{displayName}</p>
+                {authUser?.email ? (
+                  <p className="text-[11px] text-faint truncate">{authUser.email}</p>
+                ) : (
+                  <p className="text-[10px] uppercase tracking-[.12em] text-faint">{planLabel} Plan</p>
+                )}
               </div>
-              <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-indigo-600">{planLabel}</span>
+              <span className="shrink-0 rounded-[8px] bg-pale px-2 py-0.5 text-[10px] font-medium uppercase tracking-[.1em] text-blue-d">
+                {planLabel}
+              </span>
             </div>
-            <div className="mx-3 h-px bg-gray-100" />
+            <div className="mx-3 h-px bg-line" />
             {isFreePlan ? (
-              <button type="button" role="menuitem" onClick={() => go('billing')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => go('billing')}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-medium text-blue hover:bg-pale transition-colors"
+              >
                 <Star size={14} className="shrink-0" /> Upgrade
               </button>
             ) : (
-              <button type="button" role="menuitem" onClick={() => go('billing')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                <CreditCard size={14} className="shrink-0 text-gray-400" /> Billing
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => go('billing')}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+              >
+                <CreditCard size={14} className="shrink-0 text-muted" /> Billing
               </button>
             )}
-            <button type="button" role="menuitem" onClick={() => go('memory')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <Sparkles size={14} className="shrink-0 text-gray-400" /> Personalization
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => go('memory')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+            >
+              <Sparkles size={14} className="shrink-0 text-muted" /> Personalization
             </button>
-            <button type="button" role="menuitem" onClick={() => go('profile')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <User size={14} className="shrink-0 text-gray-400" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => go('profile')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+            >
+              <User size={14} className="shrink-0 text-muted" />
               <span className="flex-1 text-left">Profile</span>
               {profileNeedsAttention && (
-                <span className="flex shrink-0 items-center gap-1 text-[10px] font-semibold text-red-500">
+                <span className="flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-danger-text">
                   <AlertCircle size={12} /> Incomplete
                 </span>
               )}
             </button>
-            <button type="button" role="menuitem" onClick={() => go('workspace')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <Building2 size={14} className="shrink-0 text-gray-400" /> Workspace
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => go('workspace')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+            >
+              <Building2 size={14} className="shrink-0 text-muted" /> Workspace
             </button>
-            <button type="button" role="menuitem" onClick={() => go('settings')} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <Settings size={14} className="shrink-0 text-gray-400" /> Settings
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => go('settings')}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+            >
+              <Settings size={14} className="shrink-0 text-muted" /> Settings
             </button>
-            <div className="mx-3 my-1 h-px bg-gray-100" />
-            <button type="button" role="menuitem" onClick={() => { window.open('/changelog', '_blank', 'noopener'); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <Rocket size={14} className="shrink-0 text-gray-400" /> What's new
+            <div className="mx-3 my-1 h-px bg-line" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                window.open('/changelog', '_blank', 'noopener');
+                setUserMenuOpen(false);
+              }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+            >
+              <Rocket size={14} className="shrink-0 text-muted" /> What&apos;s new
             </button>
-            <button type="button" role="menuitem" onClick={() => { setHelpOpen(true); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              <HelpCircle size={14} className="shrink-0 text-gray-400" /> Help
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setHelpOpen(true);
+                setUserMenuOpen(false);
+              }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-normal text-ink hover:bg-sunken transition-colors"
+            >
+              <HelpCircle size={14} className="shrink-0 text-muted" /> Help
             </button>
-            <button type="button" role="menuitem" onClick={() => { handleLogout(); setUserMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium text-red-600 hover:bg-red-50 transition-colors">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                handleLogout();
+                setUserMenuOpen(false);
+              }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-medium text-danger-text hover:bg-danger-surface transition-colors"
+            >
               <LogOut size={14} className="shrink-0" /> Log out
             </button>
           </div>
         )}
-        <button
-          type="button"
-          aria-haspopup="menu"
-          aria-expanded={userMenuOpen}
-          onClick={() => setUserMenuOpen((v) => !v)}
-          className="flex w-full items-center gap-2.5 rounded-xl bg-gray-50 px-3 py-2.5 hover:bg-gray-100 transition-colors"
-        >
-          <div className="relative h-7 w-7 shrink-0">
-            {authUser?.avatar ? (
-              <img src={authUser.avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
-            ) : (
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white text-[11px] font-black select-none">
-                {userInitial}
-              </div>
-            )}
-            {profileNeedsAttention && (
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
-            )}
-          </div>
-          <div className="min-w-0 flex-1 text-left">
-            <p className="text-[12px] font-semibold text-gray-900 leading-tight truncate">{displayName}</p>
-            <p className="text-[10px] uppercase tracking-widest text-gray-400 leading-tight">{planLabel} Plan</p>
-          </div>
-          <ChevronDown size={13} className={`shrink-0 text-gray-400 transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`} />
-        </button>
+        <div className="os-account">
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+            onClick={() => setUserMenuOpen((v) => !v)}
+            className="flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1 hover:bg-sunken transition-colors text-left"
+          >
+            <div className="relative shrink-0">
+              {authUser?.avatar ? (
+                <img src={authUser.avatar} alt="" className="h-[34px] w-[34px] rounded-full object-cover" />
+              ) : (
+                <div className="os-initials">{userInitial}</div>
+              )}
+              {profileNeedsAttention && (
+                <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-white" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <strong>{displayName}</strong>
+              <span>{planLabel} Plan</span>
+            </div>
+            <ChevronDown size={13} className={`shrink-0 text-faint transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -936,10 +1184,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Use localStorage (not sessionStorage) so the flag survives cross-origin
-    // OAuth redirects (LinkedIn/Facebook/etc.). sessionStorage is cleared by some
-    // browsers (Safari, Firefox strict mode) after navigating to an external domain
-    // and back, causing auth_token to be wiped before OAuthCallback can read it.
     const resetFlag = 'force_auth_reset_v8';
     if (localStorage.getItem(resetFlag) === '1') {
       return;
@@ -1000,7 +1244,7 @@ function App() {
     [],
   );
 
-  // Global 401 & 402 handler — auto-attaches token for /api/, auto-logs out on 401, and opens QuotaUpgradeModal on 402
+  // Global 401 & 402 handler
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -1058,8 +1302,6 @@ function App() {
       .catch(() => {});
   }, [isAuthenticated]);
 
-  // First-run onboarding — completion is tracked server-side so the wizard never
-  // re-shows on a new device; localStorage is only a fast-path cache.
   useEffect(() => {
     if (!isAuthenticated || showOnboarding) return;
     if (localStorage.getItem('dw_onboarded')) return;
@@ -1215,6 +1457,7 @@ function App() {
   };
 
   const goToLogin = () => { navigatePath('/login', true); setCurrentPathname('/login'); };
+
   // Public pages — always accessible regardless of auth state
   if (currentPathname === '/privacy') return <Suspense fallback={<PageFallback />}><PrivacyPolicy /></Suspense>;
   if (currentPathname === '/terms') return <Suspense fallback={<PageFallback />}><TermsOfService /></Suspense>;
@@ -1342,83 +1585,116 @@ function App() {
   };
 
   const guide = PAGE_GUIDES[currentPage];
+  const screenName = PAGE_TITLES[currentPage] ?? 'Dashboard';
 
   return (
     <WorkspaceProvider>
-    <TemplateEditorProvider>
-      <div className="flex h-screen bg-gray-50">
+      <TemplateEditorProvider>
+        <div className="os-app os-shell">
+          <a href="#workspace" className="os-skip">Skip to content</a>
 
-        {/* Desktop sidebar — fixed width, always visible */}
-        <aside className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-gray-100 bg-white">
-          <AppSidebar {...sidebarProps} />
-        </aside>
+          {/* Desktop floating white sidebar panel */}
+          <aside className="os-sidebar">
+            <AppSidebar {...sidebarProps} />
+          </aside>
 
-        {/* Mobile overlay */}
-        {sidebarOpen && (
-          <>
-            <div
-              className="fixed inset-0 z-40 bg-black/30 md:hidden"
-              onClick={() => setSidebarOpen(false)}
-            />
-            <aside className="fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col bg-white shadow-xl md:hidden">
-              <AppSidebar {...sidebarProps} onMobileClose={() => setSidebarOpen(false)} />
-            </aside>
-          </>
+          {/* Mobile navigation layer */}
+          {sidebarOpen && (
+            <div className="os-mobile-layer">
+              <div
+                className="os-backdrop"
+                onClick={() => setSidebarOpen(false)}
+                aria-hidden
+              />
+              <aside className="os-mobile-nav" role="dialog" aria-modal="true" aria-label="Navigation">
+                <AppSidebar {...sidebarProps} onMobileClose={() => setSidebarOpen(false)} />
+              </aside>
+            </div>
+          )}
+
+          {/* Main viewport column: floating topbar + floating page panel */}
+          <div className="os-viewport">
+            <header className="os-topbar">
+              <div className="flex min-w-0 items-center gap-3.5">
+                <button
+                  type="button"
+                  className="os-menu-button"
+                  aria-expanded={sidebarOpen}
+                  onClick={() => setSidebarOpen((p) => !p)}
+                >
+                  Menu
+                </button>
+                <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="h-5 w-auto lg:hidden" />
+                <img src="/brand/mark-on-light-96.png" alt="DakyXTech" className="hidden lg:block h-5 w-5 rounded-[5px]" />
+                <span className="os-workspace-label">Workspace</span>
+                <span className="os-breadcrumb-divider">/</span>
+                <span className="truncate font-medium text-ink">{screenName}</span>
+              </div>
+
+              <div className="flex items-center gap-4">
+                {currentPage !== 'dashboard' && (
+                  <button
+                    type="button"
+                    className="os-text-link hidden sm:inline"
+                    onClick={() => navigateToPage('dashboard')}
+                  >
+                    Overview
+                  </button>
+                )}
+                <NotificationBell />
+                <span className="os-topbar-date">
+                  {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date())}
+                </span>
+              </div>
+            </header>
+
+            <div className="os-page">
+              <main id="workspace" tabIndex={-1} className="os-workspace">
+                <ErrorBoundary>
+                  <Suspense fallback={<PageFallback />}>{renderPage()}</Suspense>
+                </ErrorBoundary>
+              </main>
+              <footer className="os-workspace-footer">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/brand/lockup-on-light.png" alt="DakyXTech" className="h-4 w-auto opacity-85" />
+                  <span>Marketing OS</span>
+                </span>
+                <span>Built for considered work.</span>
+              </footer>
+            </div>
+          </div>
+        </div>
+
+        <AdvancedTemplateCardModal />
+        <ChatWidget />
+        <QuotaUpgradeModal
+          payload={quotaModalPayload}
+          onClose={() => setQuotaModalPayload(null)}
+          onNavigateToPricing={() => navigateToPage('pricing')}
+          onNavigateToBilling={() => navigateToPage('credits')}
+        />
+
+        {/* Per-page quick guide */}
+        {guide && (
+          <PageTour
+            key={currentPage}
+            steps={guide.steps}
+            pageTitle={guide.title}
+            forceStart={pendingTour}
+            onForceStartConsumed={() => setPendingTour(false)}
+          />
         )}
 
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Mobile topbar */}
-          <header className="flex items-center justify-between border-b border-gray-100 bg-white px-4 py-3 md:hidden">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen((p) => !p)}
-              className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
-            >
-              <Menu size={20} />
-            </button>
-            <span className="text-sm font-bold text-gray-900">Dakyworld Hub</span>
-            <NotificationBell />
-          </header>
-
-          <main className="flex-1 overflow-auto p-5 md:p-7">
-            <ErrorBoundary>
-              <Suspense fallback={<PageFallback />}>{renderPage()}</Suspense>
-            </ErrorBoundary>
-          </main>
-        </div>
-      </div>
-
-      <AdvancedTemplateCardModal />
-      <ChatWidget />
-      <QuotaUpgradeModal
-        payload={quotaModalPayload}
-        onClose={() => setQuotaModalPayload(null)}
-        onNavigateToPricing={() => navigateToPage('pricing')}
-        onNavigateToBilling={() => navigateToPage('credits')}
-      />
-
-      {/* Per-page quick guide */}
-      {guide && (
-        <PageTour
-          key={currentPage}
-          steps={guide.steps}
-          pageTitle={guide.title}
-          forceStart={pendingTour}
-          onForceStartConsumed={() => setPendingTour(false)}
-        />
-      )}
-
-      {/* First-time onboarding wizard (full-screen, shown before tour) */}
-      {showOnboarding && (
-        <OnboardingWizard
-          user={authUser}
-          onNavigate={(page) => navigateToPage(page as any)}
-          onComplete={() => { setShowOnboarding(false); setPendingTour(true); }}
-          onDismiss={() => setShowOnboarding(false)}
-        />
-      )}
-
-    </TemplateEditorProvider>
+        {/* First-time onboarding wizard */}
+        {showOnboarding && (
+          <OnboardingWizard
+            user={authUser}
+            onNavigate={(page) => navigateToPage(page as any)}
+            onComplete={() => { setShowOnboarding(false); setPendingTour(true); }}
+            onDismiss={() => setShowOnboarding(false)}
+          />
+        )}
+      </TemplateEditorProvider>
     </WorkspaceProvider>
   );
 }

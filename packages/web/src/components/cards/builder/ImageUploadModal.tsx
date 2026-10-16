@@ -176,11 +176,11 @@ export default function ImageUploadModal({ onConfirm, onClose }: ImageUploadModa
             ) : (
               <div className="flex flex-col items-center gap-3 text-center">
                 <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
-                  <rect width="52" height="52" rx="14" fill="#EEF2FF" />
-                  <path d="M14 38v-2a6 6 0 0 1 6-6h12a6 6 0 0 1 6 6v2" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" />
-                  <circle cx="26" cy="22" r="6" stroke="#6366F1" strokeWidth="2" />
-                  <path d="M22 19c.6-.7 1.8-2 3.2-1.4" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round" />
-                  <circle cx="35" cy="17" r="4" fill="#818CF8" />
+                  <rect width="52" height="52" rx="14" fill="#EAF1FF" />
+                  <path d="M14 38v-2a6 6 0 0 1 6-6h12a6 6 0 0 1 6 6v2" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" />
+                  <circle cx="26" cy="22" r="6" stroke="#2563EB" strokeWidth="2" />
+                  <path d="M22 19c.6-.7 1.8-2 3.2-1.4" stroke="#2563EB" strokeWidth="1.5" strokeLinecap="round" />
+                  <circle cx="35" cy="17" r="4" fill="#8FB2FF" />
                   <path d="M35 15v4M33 17h4" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
                 <div>

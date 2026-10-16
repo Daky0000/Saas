@@ -7,8 +7,8 @@ import { API_BASE_URL } from '../utils/apiBase';
 import { ColorPickerPopover } from '../components/cards/builder/ColorPicker';
 
 const PRESET_COLORS = [
-  '#6366f1', '#3b82f6', '#10b981', '#f59e0b',
-  '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6',
+  '#2563EB', '#3b82f6', '#10b981', '#f59e0b',
+  '#ef4444', '#2563EB', '#ec4899', '#14b8a6',
   '#f97316', '#64748b',
 ];
 
@@ -54,7 +54,7 @@ export default function ProjectSettings() {
   // General tab state
   const [name, setName] = useState(currentProject?.name ?? '');
   const [description, setDescription] = useState('');
-  const [color, setColor] = useState(currentProject?.color ?? '#6366f1');
+  const [color, setColor] = useState(currentProject?.color ?? '#2563EB');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -76,7 +76,7 @@ export default function ProjectSettings() {
     if (currentProject) {
       setName(currentProject.name);
       setDescription((currentProject as any).description ?? '');
-      setColor(currentProject.color ?? '#6366f1');
+      setColor(currentProject.color ?? '#2563EB');
     }
   }, [currentProject?.id]);
 

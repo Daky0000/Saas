@@ -89,7 +89,7 @@ const AGENT_DEFS = [
     description: 'Scans viral content, rising topics, and niche trends to keep your brand ahead of the curve.',
   },
   {
-    key: 'audience_research', name: 'Persona', role: 'Audience Research', icon: '◑', color: '#7C3AED',
+    key: 'audience_research', name: 'Persona', role: 'Audience Research', icon: '◑', color: '#2563EB',
     description: 'Builds detailed audience personas from pain points, objections, and buying motivations.',
   },
   {
@@ -98,7 +98,7 @@ const AGENT_DEFS = [
   },
   // Content Creation
   {
-    key: 'daky', name: 'Daky', role: 'Content Writer', icon: '✦', color: '#5b6cf9',
+    key: 'daky', name: 'Daky', role: 'Content Writer', icon: '✦', color: '#2563EB',
     description: 'Crafts long-form blog posts, articles, and marketing copy that drives traffic and conversions.',
   },
   {
@@ -136,7 +136,7 @@ const AGENT_DEFS = [
     description: 'Tracks KPIs, surfaces performance insights, and recommends data-driven optimizations.',
   },
   {
-    key: 'flux', name: 'Flux', role: 'Automation & Workflows', icon: '⟳', color: '#8B5CF6',
+    key: 'flux', name: 'Flux', role: 'Automation & Workflows', icon: '⟳', color: '#2563EB',
     description: 'Automates post scheduling, platform integrations, and end-to-end workflow orchestration.',
   },
   // Campaign Planning
@@ -601,8 +601,8 @@ function AgentCard({
 // ── Approval Queue ─────────────────────────────────────────────────────────────
 
 const AGENT_COLORS: Record<string, string> = {
-  daky: '#5b6cf9', nova: '#EC4899', sage: '#10B981', aria: '#F59E0B', flux: '#8B5CF6',
-  trend_research: '#06B6D4', audience_research: '#7C3AED', seo_research: '#059669',
+  daky: '#2563EB', nova: '#EC4899', sage: '#10B981', aria: '#F59E0B', flux: '#2563EB',
+  trend_research: '#06B6D4', audience_research: '#2563EB', seo_research: '#059669',
   hook_writing: '#D97706', social_caption: '#DB2777', video_script: '#DC2626',
   ad_copy: '#EA580C', thumbnail_design: '#9333EA', meta_ads: '#1877F2',
   campaign_brief: '#0EA5E9',
@@ -721,7 +721,7 @@ function ApprovalQueue({
       )}
 
       {pending.map((task) => {
-        const color = AGENT_COLORS[task.agent_key] ?? '#5b6cf9';
+        const color = AGENT_COLORS[task.agent_key] ?? '#2563EB';
         const icon  = AGENT_ICONS[task.agent_key] ?? '◆';
         const expiresIn = Math.max(0, Math.round((new Date(task.expires_at).getTime() - Date.now()) / 3600000));
         const isEditing = editingId === task.id;
@@ -833,7 +833,7 @@ function ApprovalQueue({
           <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Recent Decisions</p>
           <div className="space-y-2">
             {history.map((task) => {
-              const color = AGENT_COLORS[task.agent_key] ?? '#5b6cf9';
+              const color = AGENT_COLORS[task.agent_key] ?? '#2563EB';
               const icon  = AGENT_ICONS[task.agent_key] ?? '◆';
               return (
                 <div key={task.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-2.5">
@@ -1062,10 +1062,10 @@ function ContentCalendar({ tasks, drafts, onClose }: {
     }
   };
   tasks.filter(t => t.status === 'approved').forEach(t =>
-    addItem(t.decided_at, t.title, AGENT_COLORS[t.agent_key] ?? '#5b6cf9')
+    addItem(t.decided_at, t.title, AGENT_COLORS[t.agent_key] ?? '#2563EB')
   );
   drafts.forEach(d =>
-    addItem(d.created_at, d.title, AGENT_COLORS[d.agent_key] ?? '#5b6cf9')
+    addItem(d.created_at, d.title, AGENT_COLORS[d.agent_key] ?? '#2563EB')
   );
 
   const firstDay = new Date(year, month, 1).getDay();
@@ -1201,7 +1201,7 @@ function BrandVoiceModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
               {error && <p className="text-xs text-red-600">{error}</p>}
               <button type="button" onClick={extract} disabled={loading || samples.trim().length < 20}
                 className="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
-                style={{ background: '#5b6cf9' }}>
+                style={{ background: '#2563EB' }}>
                 {loading ? <><Loader2 size={14} className="animate-spin" /> Analysing…</> : <><Wand2 size={14} /> Extract Brand Voice</>}
               </button>
             </>
@@ -1331,7 +1331,7 @@ function AgentDraftsPanel({
       </div>
       <div className="space-y-2">
         {drafts.map((draft) => {
-          const color   = AGENT_COLORS[draft.agent_key] ?? '#5b6cf9';
+          const color   = AGENT_COLORS[draft.agent_key] ?? '#2563EB';
           const icon    = AGENT_ICONS[draft.agent_key]  ?? '◆';
           const DraftIcon = DRAFT_TYPE_ICONS[draft.task_type] ?? FileText;
           const isOpen  = expanded === draft.id;
@@ -1454,10 +1454,10 @@ type OrchStep = {
 
 const ORCH_PIPELINE: Omit<OrchStep, 'status'>[] = [
   { key: 'sage', name: 'Sage', role: 'Strategy', color: '#10B981', icon: '◈' },
-  { key: 'daky', name: 'Daky', role: 'Content', color: '#5b6cf9', icon: '✦' },
+  { key: 'daky', name: 'Daky', role: 'Content', color: '#2563EB', icon: '✦' },
   { key: 'nova', name: 'Nova', role: 'Visuals', color: '#EC4899', icon: '◉' },
   { key: 'aria', name: 'Aria', role: 'Analytics', color: '#F59E0B', icon: '⊕' },
-  { key: 'flux', name: 'Flux', role: 'Automation', color: '#8B5CF6', icon: '⟳' },
+  { key: 'flux', name: 'Flux', role: 'Automation', color: '#2563EB', icon: '⟳' },
 ];
 
 function OrchestrationPanel({
@@ -1543,7 +1543,7 @@ function OrchestrationPanel({
         disabled={running}
         onClick={onRun}
         className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition disabled:opacity-50"
-        style={{ background: '#5b6cf9' }}
+        style={{ background: '#2563EB' }}
       >
         {running
           ? <><Loader2 size={14} className="animate-spin" /> Orchestrating…</>
@@ -1914,7 +1914,7 @@ export default function AITeam() {
                 disabled={runningAll || runningAgents.size > 0}
                 onClick={launchCampaign}
                 className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
-                style={{ background: '#5b6cf9' }}
+                style={{ background: '#2563EB' }}
               >
                 <Rocket size={14} /> Begin All Agents
               </button>
@@ -1961,7 +1961,7 @@ export default function AITeam() {
                 disabled={runningAll || runningAgents.size > 0 || orchRunning}
                 onClick={() => setShowCampaignModal(true)}
                 className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:opacity-50"
-                style={{ background: '#5b6cf9' }}
+                style={{ background: '#2563EB' }}
               >
                 <Rocket size={13} /> Launch Campaign
               </button>

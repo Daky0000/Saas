@@ -55,7 +55,7 @@ function RuleRow({ rule, onToggle, onEdit, onDelete }: {
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
         <button onClick={onToggle} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors" title={rule.active ? 'Disable rule' : 'Enable rule'}>
-          {rule.active ? <ToggleRight className="w-5 h-5 text-[#5b6cf9]" /> : <ToggleLeft className="w-5 h-5" />}
+          {rule.active ? <ToggleRight className="w-5 h-5 text-[#2563EB]" /> : <ToggleLeft className="w-5 h-5" />}
         </button>
         <button onClick={onEdit} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"><Edit2 className="w-4 h-4" /></button>
         <button onClick={onDelete} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors"><Trash2 className="w-4 h-4" /></button>
@@ -149,7 +149,7 @@ export default function CRMLeadScoring() {
           <h1 className="text-2xl font-bold text-gray-900">Lead Scoring</h1>
           <p className="text-sm text-gray-500 mt-1">Define rules that automatically score your contacts based on their attributes and behavior.</p>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
+        <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8] transition-colors">
           <Plus className="w-4 h-4" /> Add Rule
         </button>
       </div>
@@ -186,7 +186,7 @@ export default function CRMLeadScoring() {
             <Zap className="w-10 h-10 text-gray-200 mx-auto mb-3" />
             <p className="text-gray-500 font-medium">No scoring rules yet</p>
             <p className="text-gray-400 text-sm mt-1">Create your first rule to start scoring contacts automatically.</p>
-            <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#5b6cf9] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Rule</button>
+            <button onClick={openCreate} className="mt-4 px-4 py-2 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#4a5be8]">Add Rule</button>
           </div>
         ) : (
           <div>
@@ -232,23 +232,23 @@ export default function CRMLeadScoring() {
               {formError && <p className="text-sm text-red-500 bg-red-50 px-3 py-2 rounded-lg">{formError}</p>}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">Rule Name *</label>
-                <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                   value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder='e.g. "Has newsletter tag"' />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">Condition</label>
                 <div className="space-y-2">
-                  <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white"
+                  <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] bg-white"
                     value={form.field} onChange={e => handleFieldChange(e.target.value)}>
                     {FIELD_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                   </select>
-                  <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white"
+                  <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] bg-white"
                     value={form.op} onChange={e => setForm(f => ({ ...f, op: e.target.value }))}>
                     {(OP_OPTIONS[form.field] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                   {NEEDS_VALUE(form.field) && (
-                    <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                    <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                       value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))} placeholder="Tag name (e.g. newsletter)" />
                   )}
                 </div>
@@ -259,18 +259,18 @@ export default function CRMLeadScoring() {
                 <div className="flex flex-wrap gap-2 mb-2">
                   {POINT_PRESETS.map(p => (
                     <button key={p} type="button" onClick={() => setForm(f => ({ ...f, points: String(p) }))}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${form.points === String(p) ? 'bg-[#5b6cf9] text-white' : p < 0 ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}>
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${form.points === String(p) ? 'bg-[#2563EB] text-white' : p < 0 ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}>
                       {p > 0 ? `+${p}` : p}
                     </button>
                   ))}
                 </div>
-                <input type="number" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                <input type="number" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                   value={form.points} onChange={e => setForm(f => ({ ...f, points: e.target.value }))} placeholder="e.g. 10" />
               </div>
             </div>
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
               <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
-              <button onClick={saveRule} disabled={saving} className="px-5 py-2 bg-[#5b6cf9] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors">
+              <button onClick={saveRule} disabled={saving} className="px-5 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors">
                 {saving ? 'Saving...' : editingRule ? 'Update Rule' : 'Create Rule'}
               </button>
             </div>

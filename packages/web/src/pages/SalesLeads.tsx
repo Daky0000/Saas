@@ -10,7 +10,7 @@ import {
   OBJECTION_LABELS,
 } from '../services/salesService';
 
-const ACCENT = '#5b6cf9';
+const ACCENT = '#2563EB';
 
 function StageBadge({ stage }: { stage: LeadStage | null }) {
   const s = stage ?? 'new';

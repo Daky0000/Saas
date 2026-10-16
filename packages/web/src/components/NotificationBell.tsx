@@ -238,12 +238,12 @@ export default function NotificationBell() {
           setOpen((v) => !v);
           if (!open && unreadCount > 0) void markAllRead();
         }}
-        className="relative flex items-center justify-center w-8 h-8 rounded-xl hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-800"
+        className="relative flex items-center justify-center w-8 h-8 rounded-[10px] hover:bg-soft transition-colors text-muted hover:text-ink"
         aria-label="Notifications"
       >
         <Bell size={16} />
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-black text-white">
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-danger font-mono text-[9px] font-medium text-white">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -254,17 +254,17 @@ export default function NotificationBell() {
         <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
           {toastQueue.map(n => (
             <div key={n.id}
-              className="pointer-events-auto flex items-start gap-3 w-80 rounded-2xl bg-white border border-orange-200 shadow-2xl px-4 py-3 animate-in slide-in-from-right-4 fade-in duration-300"
+              className="pointer-events-auto flex items-start gap-3 w-80 rounded-[16px] bg-white border border-warn-line shadow-menu px-4 py-3 animate-in slide-in-from-right-4 fade-in duration-300"
             >
-              <div className="mt-0.5 shrink-0 flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50">
-                <Clock size={15} className="text-orange-600" />
+              <div className="mt-0.5 shrink-0 flex h-8 w-8 items-center justify-center rounded-[10px] bg-warn-surface">
+                <Clock size={15} className="text-warn-text" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-gray-900 leading-snug">{n.title}</p>
-                <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{n.message}</p>
+                <p className="text-xs font-medium text-ink leading-snug">{n.title}</p>
+                <p className="text-[11px] text-muted leading-relaxed mt-0.5">{n.message}</p>
               </div>
               <button onClick={() => dismissToast(n.id)}
-                className="shrink-0 mt-0.5 text-gray-300 hover:text-gray-600 transition-colors">
+                className="shrink-0 mt-0.5 text-faint hover:text-ink transition-colors">
                 <X size={13} />
               </button>
             </div>
@@ -275,18 +275,18 @@ export default function NotificationBell() {
       {open && (
         <div
           ref={panelRef}
-          className="absolute bottom-full left-0 mb-2 w-80 rounded-2xl border border-gray-200 bg-white shadow-2xl z-50 overflow-hidden"
+          className="absolute bottom-full left-0 mb-2 w-80 rounded-[16px] border border-line bg-white shadow-menu z-50 overflow-hidden"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <span className="text-sm font-black text-gray-900">Notifications</span>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+            <span className="text-sm font-medium text-ink">Notifications</span>
             <div className="flex items-center gap-1">
               {nonPinnedCount > 0 && (
                 <>
                   <button
                     type="button"
                     onClick={markAllRead}
-                    className="rounded-lg p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                    className="rounded-[8px] p-1.5 text-faint hover:text-blue hover:bg-pale transition-colors"
                     title="Mark all read"
                   >
                     <CheckCheck size={13} />
@@ -294,7 +294,7 @@ export default function NotificationBell() {
                   <button
                     type="button"
                     onClick={clearAll}
-                    className="rounded-lg p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    className="rounded-[8px] p-1.5 text-faint hover:text-danger hover:bg-danger-surface transition-colors"
                     title="Clear all"
                   >
                     <Trash2 size={13} />
@@ -304,7 +304,7 @@ export default function NotificationBell() {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 transition-colors"
+                className="rounded-[8px] p-1.5 text-faint hover:bg-soft hover:text-ink transition-colors"
               >
                 <X size={13} />
               </button>

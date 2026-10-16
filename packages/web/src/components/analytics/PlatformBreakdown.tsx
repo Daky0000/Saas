@@ -22,7 +22,7 @@ type PlatformBreakdownProps = {
   performanceMode: boolean;
 };
 
-const COLORS = ['#0f172a', '#2563eb', '#14b8a6', '#f59e0b', '#e11d48', '#7c3aed'];
+const COLORS = ['#0f172a', '#2563eb', '#14b8a6', '#f59e0b', '#e11d48', '#2563EB'];
 
 const PlatformBreakdown = ({ data, performanceMode }: PlatformBreakdownProps) => {
   if (data.length === 0) {

@@ -151,7 +151,7 @@ function ActivityItem({ msg, onLoadBody }: { msg: EmailMessage; onLoadBody: (id:
     <div className="group relative pl-8">
       {/* Timeline dot */}
       <div className="absolute left-0 top-1.5 flex h-5 w-5 items-center justify-center">
-        <div className={`h-2.5 w-2.5 rounded-full border-2 border-white ring-1 ${msg.isSent ? 'bg-[#5b6cf9] ring-[#5b6cf9]' : 'bg-slate-300 ring-slate-300'}`} />
+        <div className={`h-2.5 w-2.5 rounded-full border-2 border-white ring-1 ${msg.isSent ? 'bg-[#2563EB] ring-[#2563EB]' : 'bg-slate-300 ring-slate-300'}`} />
       </div>
 
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -163,7 +163,7 @@ function ActivityItem({ msg, onLoadBody }: { msg: EmailMessage; onLoadBody: (id:
                 {msg.isSent ? 'Sent' : 'Received'}
               </span>
               {!msg.isRead && !msg.isSent && (
-                <span className="h-1.5 w-1.5 rounded-full bg-[#5b6cf9]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-[#2563EB]" />
               )}
             </div>
             <p className="mt-1 truncate text-sm font-semibold text-slate-900">
@@ -481,7 +481,7 @@ export default function GmailInbox({ onNavigateToCRM }: { onNavigateToCRM?: () =
               </p>
             </div>
             <div className="h-1.5 w-32 rounded-full bg-indigo-100 overflow-hidden">
-              <div className="h-full rounded-full bg-[#5b6cf9] transition-all" style={{ width: `${syncPct}%` }} />
+              <div className="h-full rounded-full bg-[#2563EB] transition-all" style={{ width: `${syncPct}%` }} />
             </div>
           </div>
         </div>
@@ -512,7 +512,7 @@ export default function GmailInbox({ onNavigateToCRM }: { onNavigateToCRM?: () =
                 <button
                   type="button"
                   onClick={onNavigateToCRM}
-                  className="flex items-center gap-1.5 rounded-xl border border-[#5b6cf9] bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                  className="flex items-center gap-1.5 rounded-xl border border-[#2563EB] bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
                 >
                   <ExternalLink size={12} />
                   View in CRM
@@ -574,7 +574,7 @@ export default function GmailInbox({ onNavigateToCRM }: { onNavigateToCRM?: () =
               <button
                 type="button"
                 onClick={() => void startSync()}
-                className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-6 py-2.5 text-sm font-bold text-white hover:bg-indigo-600"
+                className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-6 py-2.5 text-sm font-bold text-white hover:bg-indigo-600"
               >
                 <RefreshCw size={14} />
                 Sync Gmail Now
@@ -621,7 +621,7 @@ export default function GmailInbox({ onNavigateToCRM }: { onNavigateToCRM?: () =
                         {contact.name}
                       </p>
                       {contact.unreadCount > 0 && (
-                        <span className="rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white">
+                        <span className="rounded-full bg-[#2563EB] px-1.5 py-0.5 text-[9px] font-bold text-white">
                           {contact.unreadCount} new
                         </span>
                       )}

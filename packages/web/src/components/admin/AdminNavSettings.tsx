@@ -146,7 +146,7 @@ export default function AdminNavSettings() {
                 </div>
                 <button
                   onClick={() => toggle(item.key, item.children)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isDisabled ? 'bg-gray-200' : 'bg-[#5b6cf9]'}`}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isDisabled ? 'bg-gray-200' : 'bg-[#2563EB]'}`}
                   role="switch"
                   aria-checked={!isDisabled}
                 >
@@ -166,7 +166,7 @@ export default function AdminNavSettings() {
                         </p>
                         <button
                           onClick={() => toggle(child.key)}
-                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${childDisabled ? 'bg-gray-200' : 'bg-[#5b6cf9]'}`}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${childDisabled ? 'bg-gray-200' : 'bg-[#2563EB]'}`}
                           role="switch"
                           aria-checked={!childDisabled}
                         >
@@ -186,7 +186,7 @@ export default function AdminNavSettings() {
         <button
           onClick={save}
           disabled={saving}
-          className="px-5 py-2 bg-[#5b6cf9] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
+          className="px-5 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
         >
           {saving ? 'Saving…' : 'Save Changes'}
         </button>

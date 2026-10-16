@@ -51,7 +51,7 @@ export default function TaskOverview({ projectId }: Props) {
             <svg className="h-20 w-20 -rotate-90" viewBox="0 0 36 36">
               <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f1f5f9" strokeWidth="3" />
               <circle
-                cx="18" cy="18" r="15.9" fill="none" stroke="#6366f1" strokeWidth="3"
+                cx="18" cy="18" r="15.9" fill="none" stroke="#2563EB" strokeWidth="3"
                 strokeDasharray={`${pct} ${100 - pct}`} strokeLinecap="round"
               />
             </svg>

@@ -1,12 +1,15 @@
 function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
   return (
-    <div className={embedded ? '' : 'min-h-screen bg-gray-50 py-12 px-4'}>
-      <div className={embedded ? '' : 'max-w-3xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-8 sm:p-12'}>
+    <div className={embedded ? '' : 'min-h-screen bg-canvas py-10 px-3 sm:px-6'}>
+      <div className={embedded ? '' : 'max-w-3xl mx-auto bg-white rounded-[22px] border border-line p-8 sm:p-12'}>
         {!embedded && (
-          <div className="mb-8">
+          <div className="mb-8 flex items-center justify-between gap-4 border-b border-line pb-5">
+            <a href="/" className="inline-flex items-center gap-2">
+              <img src="/brand/header-lockup-on-light.png" alt="DakyXTech" className="h-6 w-auto" />
+            </a>
             <a
               href="/login"
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+              className="text-[13px] text-blue hover:underline font-medium"
               onClick={(e) => {
                 e.preventDefault();
                 window.history.back();
@@ -17,10 +20,11 @@ function PrivacyPolicy({ embedded = false }: { embedded?: boolean }) {
           </div>
         )}
 
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Privacy Policy</h1>
-        <p className="text-sm text-gray-500 mb-8">Last updated: March 8, 2026</p>
+        <span className="os-eyebrow">Legal · Privacy</span>
+        <h1 className="text-[34px] font-normal tracking-[-0.035em] text-ink mt-2 mb-1">Privacy Policy</h1>
+        <p className="text-xs font-mono text-muted mb-8">Last updated: March 8, 2026</p>
 
-        <div className="prose prose-slate max-w-none space-y-8 text-gray-700 leading-relaxed">
+        <div className="prose prose-slate max-w-none space-y-8 text-ink/85 leading-relaxed">
 
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">1. Introduction</h2>

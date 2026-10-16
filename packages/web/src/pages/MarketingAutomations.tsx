@@ -121,28 +121,28 @@ type NodeMeta = {
 };
 
 const NODE_META: Record<StepType, NodeMeta> = {
-  trigger:          { label: 'Starting Point',    color: '#6366f1', bg: '#eef2ff', icon: <Zap size={14} />,            category: 'trigger' },
+  trigger:          { label: 'Starting Point',    color: '#2563EB', bg: '#EAF1FF', icon: <Zap size={14} />,            category: 'trigger' },
   delay:            { label: 'Time Delay',         color: '#f59e0b', bg: '#fffbeb', icon: <Clock size={14} />,          category: 'rule'    },
-  wait_trigger:     { label: 'Wait for Trigger',   color: '#8b5cf6', bg: '#f5f3ff', icon: <Play size={14} />,           category: 'rule'    },
+  wait_trigger:     { label: 'Wait for Trigger',   color: '#2563EB', bg: '#EAF1FF', icon: <Play size={14} />,           category: 'rule'    },
   if_else:          { label: 'If / Else',           color: '#06b6d4', bg: '#ecfeff', icon: <GitBranch size={14} />,     category: 'rule'    },
   split:            { label: 'Percentage Split',    color: '#10b981', bg: '#ecfdf5', icon: <Percent size={14} />,       category: 'rule'    },
-  send_email:       { label: 'Send Email',          color: '#6366f1', bg: '#eef2ff', icon: <Mail size={14} />,          category: 'action'  },
+  send_email:       { label: 'Send Email',          color: '#2563EB', bg: '#EAF1FF', icon: <Mail size={14} />,          category: 'action'  },
   send_sms:         { label: 'Send SMS',            color: '#f59e0b', bg: '#fffbeb', icon: <MessageSquare size={14} />, category: 'action'  },
-  send_survey:      { label: 'Send Survey',         color: '#8b5cf6', bg: '#f5f3ff', icon: <Settings size={14} />,      category: 'action'  },
+  send_survey:      { label: 'Send Survey',         color: '#2563EB', bg: '#EAF1FF', icon: <Settings size={14} />,      category: 'action'  },
   tag:              { label: 'Add Tag',             color: '#10b981', bg: '#ecfdf5', icon: <Tag size={14} />,           category: 'action'  },
   untag:            { label: 'Remove Tag',          color: '#ef4444', bg: '#fef2f2', icon: <Tag size={14} />,           category: 'action'  },
   group:            { label: 'Add to Group',        color: '#06b6d4', bg: '#ecfeff', icon: <Users size={14} />,         category: 'action'  },
   ungroup:          { label: 'Remove from Group',   color: '#f97316', bg: '#fff7ed', icon: <Users size={14} />,         category: 'action'  },
-  update_contact:   { label: 'Update Contact',      color: '#6366f1', bg: '#eef2ff', icon: <Settings size={14} />,      category: 'action'  },
+  update_contact:   { label: 'Update Contact',      color: '#2563EB', bg: '#EAF1FF', icon: <Settings size={14} />,      category: 'action'  },
   unsubscribe:      { label: 'Unsubscribe',         color: '#ef4444', bg: '#fef2f2', icon: <UserMinus size={14} />,     category: 'action'  },
   archive:          { label: 'Archive Contact',     color: '#6b7280', bg: '#f9fafb', icon: <UserX size={14} />,         category: 'action'  },
   webhook:          { label: 'Webhook',             color: '#f97316', bg: '#fff7ed', icon: <Webhook size={14} />,       category: 'action'  },
   score_lead:       { label: 'Score Lead',          color: '#f59e0b', bg: '#fffbeb', icon: <Star size={14} />,          category: 'action'  },
-  notify_team:      { label: 'Notify Team',         color: '#6366f1', bg: '#eef2ff', icon: <Bell size={14} />,          category: 'action'  },
-  add_to_campaign:  { label: 'Add to Campaign',     color: '#8b5cf6', bg: '#f5f3ff', icon: <Target size={14} />,        category: 'action'  },
-  place_call:       { label: 'Place AI Call',       color: '#5b6cf9', bg: '#eef2ff', icon: <PhoneCall size={14} />,     category: 'action'  },
+  notify_team:      { label: 'Notify Team',         color: '#2563EB', bg: '#EAF1FF', icon: <Bell size={14} />,          category: 'action'  },
+  add_to_campaign:  { label: 'Add to Campaign',     color: '#2563EB', bg: '#EAF1FF', icon: <Target size={14} />,        category: 'action'  },
+  place_call:       { label: 'Place AI Call',       color: '#2563EB', bg: '#EAF1FF', icon: <PhoneCall size={14} />,     category: 'action'  },
   create_followup:  { label: 'Create Follow-up',    color: '#0ea5e9', bg: '#f0f9ff', icon: <CalendarClock size={14} />, category: 'action'  },
-  set_lead_stage:   { label: 'Set Sales Stage',     color: '#8b5cf6', bg: '#f5f3ff', icon: <Target size={14} />,        category: 'action'  },
+  set_lead_stage:   { label: 'Set Sales Stage',     color: '#2563EB', bg: '#EAF1FF', icon: <Target size={14} />,        category: 'action'  },
 };
 
 const RULE_TYPES: StepType[] = ['delay', 'wait_trigger', 'if_else', 'split'];
@@ -737,7 +737,7 @@ function StepNode({ step, onSelect, selectedId, onUpdate, onDelete, depth = 0 }:
           )}
           {step.type === 'split' && (
             <>
-              {renderBranch(`A — ${step.config.percent_a ?? 50}%`, '#6366f1', step.a_steps ?? [], s => onUpdate({ ...step, a_steps: s }))}
+              {renderBranch(`A — ${step.config.percent_a ?? 50}%`, '#2563EB', step.a_steps ?? [], s => onUpdate({ ...step, a_steps: s }))}
               {renderBranch(`B — ${100 - Number(step.config.percent_a ?? 50)}%`, '#10b981', step.b_steps ?? [], s => onUpdate({ ...step, b_steps: s }))}
             </>
           )}
@@ -1049,7 +1049,7 @@ function FlowCard({
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 hover:border-slate-300 hover:shadow-sm transition-all">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: '#eef2ff' }}>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: '#EAF1FF' }}>
           <Zap size={18} className="text-indigo-500" />
         </div>
         <div className="flex-1 min-w-0">
@@ -1138,8 +1138,8 @@ const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     name: 'Welcome new contacts',
     description: 'Send a warm welcome email as soon as someone joins your list.',
     emoji: '👋',
-    color: '#6366f1',
-    bg: '#eef2ff',
+    color: '#2563EB',
+    bg: '#EAF1FF',
     tags: ['Email', 'Welcome'],
     steps: [
       ts('trigger', { trigger: 'email_signup' }),
@@ -1152,8 +1152,8 @@ const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     name: 'Share exclusive content with new leads',
     description: 'Nurture new leads with a drip of valuable content over two weeks.',
     emoji: '🎁',
-    color: '#8b5cf6',
-    bg: '#f5f3ff',
+    color: '#2563EB',
+    bg: '#EAF1FF',
     tags: ['Email', 'Leads', 'Nurture'],
     steps: [
       ts('trigger', { trigger: 'tag_added' }),
@@ -1339,8 +1339,8 @@ const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     name: 'UTM Click Lead Scoring',
     description: 'When a contact clicks a UTM-tracked link, score them as a hot lead. If they reach the threshold, notify your sales team for immediate outreach.',
     emoji: '🎯',
-    color: '#8b5cf6',
-    bg: '#f5f3ff',
+    color: '#2563EB',
+    bg: '#EAF1FF',
     tags: ['Lead Score', 'Campaign', 'Sales Alert'],
     steps: [
       ts('trigger', { trigger: 'utm_link_clicked' }),

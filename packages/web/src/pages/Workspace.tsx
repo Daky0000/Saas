@@ -193,7 +193,7 @@ function ProjectsSection({ orgId, canManage }: { orgId: string; canManage: boole
   const { projects, refresh } = useWorkspace();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newColor, setNewColor] = useState('#5b6cf9');
+  const [newColor, setNewColor] = useState('#2563EB');
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

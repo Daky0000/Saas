@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Building2, CheckCircle, Loader2, XCircle } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
+import { AuthFrame } from './Auth';
+import { Notice } from '../components/ui';
 
 type InviteDetails = {
   id: string;
@@ -38,7 +40,10 @@ export default function AcceptInvite({ token, onLoginClick }: Props) {
 
   const accept = async () => {
     const authToken = localStorage.getItem('auth_token');
-    if (!authToken) { onLoginClick(); return; }
+    if (!authToken) {
+      onLoginClick();
+      return;
+    }
     setAccepting(true);
     setAcceptError(null);
     try {
@@ -62,92 +67,85 @@ export default function AcceptInvite({ token, onLoginClick }: Props) {
 
   if (!invite && !loadError) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-      </div>
+      <AuthFrame>
+        <div className="mt-8 flex items-center gap-3 text-sm text-muted">
+          <Loader2 className="h-5 w-5 animate-spin text-blue" />
+          <span>Loading workspace invitation…</span>
+        </div>
+      </AuthFrame>
     );
   }
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-4 shadow-sm">
-          <XCircle className="h-12 w-12 text-red-400 mx-auto" />
-          <h1 className="text-xl font-bold text-slate-900">Invitation unavailable</h1>
-          <p className="text-sm text-slate-500">{loadError}</p>
-          <button
-            type="button"
-            onClick={() => { window.history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }}
-            className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-700"
-          >
-            Go to home
-          </button>
-        </div>
-      </div>
+      <AuthFrame>
+        <h1 className="os-login-title">Invitation unavailable</h1>
+        <p className="os-login-lead">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => {
+            window.history.pushState({}, '', '/');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          className="os-login-submit mt-6"
+        >
+          Go to home
+        </button>
+      </AuthFrame>
     );
   }
 
   if (accepted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-4 shadow-sm">
-          <CheckCircle className="h-12 w-12 text-emerald-500 mx-auto" />
-          <h1 className="text-xl font-bold text-slate-900">You're in!</h1>
-          <p className="text-sm text-slate-500">
-            You've joined <span className="font-semibold text-slate-800">{invite!.org_name}</span>. Redirecting to your dashboard…
-          </p>
-        </div>
-      </div>
+      <AuthFrame>
+        <h1 className="os-login-title">You&apos;re in</h1>
+        <p className="os-login-lead">
+          You&apos;ve joined <strong className="font-medium text-ink">{invite!.org_name}</strong>. Redirecting to your
+          dashboard…
+        </p>
+        <Notice tone="positive">Workspace membership confirmed.</Notice>
+      </AuthFrame>
     );
   }
 
   const roleCap = invite!.role.charAt(0).toUpperCase() + invite!.role.slice(1);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 p-8 shadow-sm space-y-6">
-        <div className="text-center space-y-3">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600">
-            <Building2 className="h-7 w-7 text-white" />
-          </div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900">You're invited!</h1>
-          {invite!.invited_by_name && (
-            <p className="text-sm text-slate-500">
-              <span className="font-semibold text-slate-800">{invite!.invited_by_name}</span> invited you to join
-            </p>
-          )}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
-            <p className="text-lg font-bold text-slate-900">{invite!.org_name}</p>
-            <p className="mt-1 text-sm text-slate-500">
-              as <span className="font-semibold text-slate-700">{roleCap}</span>
-            </p>
-          </div>
-          <p className="text-xs text-slate-400">
-            This invite was sent to <span className="font-semibold">{invite!.email}</span>
-          </p>
-        </div>
-
-        {acceptError && (
-          <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600 text-center">{acceptError}</p>
+    <AuthFrame>
+      <h1 className="os-login-title">You&apos;re invited</h1>
+      <p className="os-login-lead">
+        {invite!.invited_by_name ? (
+          <>
+            <strong className="font-medium text-ink">{invite!.invited_by_name}</strong> invited you to join a workspace.
+          </>
+        ) : (
+          'You have been invited to join a workspace.'
         )}
+      </p>
 
-        <div className="space-y-3">
-          {!isLoggedIn && (
-            <p className="text-center text-sm text-slate-500">
-              You need to be logged in to accept this invitation.
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={accept}
-            disabled={accepting}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            {accepting && <Loader2 size={15} className="animate-spin" />}
-            {accepting ? 'Joining…' : isLoggedIn ? 'Accept invitation' : 'Log in to accept'}
-          </button>
-        </div>
+      <div className="rounded-2xl border border-line bg-soft p-5">
+        <p className="micro">Workspace</p>
+        <p className="mt-1 text-xl font-medium tracking-tight text-ink">{invite!.org_name}</p>
+        <p className="mt-1 text-sm text-muted">
+          Role: <span className="font-medium text-ink">{roleCap}</span> · Sent to{' '}
+          <span className="font-mono text-xs text-ink">{invite!.email}</span>
+        </p>
       </div>
-    </div>
+
+      {acceptError && (
+        <Notice tone="danger" className="mt-4">
+          {acceptError}
+        </Notice>
+      )}
+
+      {!isLoggedIn && (
+        <p className="mt-4 text-xs text-muted">You need to be signed in to accept this invitation.</p>
+      )}
+
+      <button type="button" onClick={accept} disabled={accepting} className="os-login-submit mt-6">
+        {accepting && <Loader2 size={15} className="animate-spin" />}
+        {accepting ? 'Joining…' : isLoggedIn ? 'Accept invitation' : 'Sign in to accept'}
+      </button>
+    </AuthFrame>
   );
 }

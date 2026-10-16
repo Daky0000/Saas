@@ -241,8 +241,8 @@ const Pricing = () => {
                   if (!creditCount) return null;
                   return (
                     <div className={`mt-5 flex items-center gap-2 rounded-xl px-3 py-2 ${isFeatured ? 'bg-white/10' : 'bg-indigo-50 border border-indigo-100'}`}>
-                      <span className={`text-base ${isFeatured ? 'text-white' : 'text-[#5b6cf9]'}`}>✦</span>
-                      <span className={`text-sm font-bold ${isFeatured ? 'text-white' : 'text-[#5b6cf9]'}`}>
+                      <span className={`text-base ${isFeatured ? 'text-white' : 'text-[#2563EB]'}`}>✦</span>
+                      <span className={`text-sm font-bold ${isFeatured ? 'text-white' : 'text-[#2563EB]'}`}>
                         {Number(creditCount).toLocaleString()} credits/month
                       </span>
                     </div>

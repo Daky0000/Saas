@@ -193,10 +193,10 @@ function parseFormFromText(text: string): { intro: string; questions: FormQuesti
 function SparkleAvatar({ size = 32 }: { size?: number }) {
   return (
     <div
-      className="flex shrink-0 items-center justify-center rounded-xl"
-      style={{ width: size, height: size, background: 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)' }}
+      className="flex shrink-0 items-center justify-center rounded-[10px] bg-navy text-white overflow-hidden"
+      style={{ width: size, height: size }}
     >
-      <Sparkles size={size * 0.52} className="text-white" />
+      <img src="/brand/mark-on-dark-96.png" alt="Daky" className="h-[68%] w-[68%] object-contain" />
     </div>
   );
 }
@@ -256,7 +256,7 @@ function FormCard({ msg, onSubmit }: { msg: FormMessage; onSubmit: (formatted: s
   return (
     <div className="rounded-xl border border-indigo-100 bg-white overflow-hidden shadow-sm text-xs">
       {/* Header */}
-      <div className="px-3.5 py-2.5 border-b border-indigo-50" style={{ background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)' }}>
+      <div className="px-3.5 py-2.5 border-b border-indigo-50" style={{ background: 'linear-gradient(135deg,#EAF1FF,#EAF1FF)' }}>
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-indigo-100">
             <Sparkles size={12} className="text-indigo-600" />
@@ -404,7 +404,7 @@ function SchedulerCard({
   return (
     <div className="rounded-xl border border-blue-100 bg-white overflow-hidden shadow-sm text-xs">
       {/* Header */}
-      <div className="px-3.5 py-2.5 border-b border-blue-50" style={{ background: 'linear-gradient(135deg,#eff6ff,#eef2ff)' }}>
+      <div className="px-3.5 py-2.5 border-b border-blue-50" style={{ background: 'linear-gradient(135deg,#eff6ff,#EAF1FF)' }}>
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-blue-100">
             <Calendar size={12} className="text-blue-600" />
@@ -512,7 +512,7 @@ function PollCard({ title }: { title?: string }) {
             <button key={i} type="button" onClick={() => setVoted(i)}
               className={`w-full rounded-lg overflow-hidden border text-left transition-all ${voted === i ? 'border-indigo-400' : 'border-slate-200 hover:border-indigo-200'}`}>
               <div className="relative px-2.5 py-1.5">
-                <div className="absolute inset-0 rounded-lg" style={{ width: `${pct}%`, background: voted === i ? 'rgba(99,102,241,0.15)' : 'rgba(148,163,184,0.1)' }} />
+                <div className="absolute inset-0 rounded-lg" style={{ width: `${pct}%`, background: voted === i ? 'rgba(37, 99, 235,0.15)' : 'rgba(148,163,184,0.1)' }} />
                 <div className="relative flex items-center justify-between">
                   <span className={voted === i ? 'font-semibold text-indigo-700' : 'text-slate-700'}>{opt}</span>
                   <span className="text-slate-400">{pct}%</span>
@@ -669,7 +669,7 @@ function PlanCard({
   return (
     <div className="rounded-xl border border-indigo-100 bg-white overflow-hidden shadow-sm text-xs">
       {/* Header */}
-      <div className="px-3.5 py-2.5 border-b border-indigo-50" style={{ background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)' }}>
+      <div className="px-3.5 py-2.5 border-b border-indigo-50" style={{ background: 'linear-gradient(135deg,#EAF1FF,#EAF1FF)' }}>
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-base">✦</div>
           <div className="flex-1 min-w-0">
@@ -1151,32 +1151,32 @@ export default function ChatWidget() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="fixed bottom-6 right-6 z-50 flex items-center justify-center rounded-2xl shadow-xl transition-all hover:scale-105 active:scale-95 focus:outline-none"
-        style={{ width: 52, height: 52, background: 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)' }}
+        className="fixed bottom-6 right-6 z-50 flex items-center justify-center rounded-[14px] bg-navy text-white shadow-menu transition-all hover:bg-blue focus:outline-none"
+        style={{ width: 48, height: 48 }}
         aria-label="Open Daky AI assistant"
       >
-        <Sparkles size={22} className="text-white" />
+        <Sparkles size={20} className="text-white" />
       </button>
 
       {/* Chat panel */}
       {open && (
         <div
-          className="fixed bottom-[4.5rem] right-5 z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          className="fixed bottom-[4.5rem] right-5 z-50 flex flex-col overflow-hidden rounded-[16px] border border-line bg-white shadow-menu"
           style={{ width: 340, height: 500, maxWidth: 'calc(100vw - 1.25rem)' }}
         >
           {/* Header */}
-          <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-2">
+          <div className="flex shrink-0 items-center gap-2 border-b border-line px-3.5 py-2.5">
             <SparkleAvatar size={26} />
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-bold text-slate-900 leading-none">Daky</div>
-              <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ACTIVE
+              <div className="text-xs font-medium text-ink leading-none">Daky</div>
+              <div className="flex items-center gap-1 text-[10px] font-mono text-muted mt-0.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-positive" /> ACTIVE
               </div>
             </div>
-            <button type="button" className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Settings">
+            <button type="button" className="flex h-6 w-6 items-center justify-center rounded-md text-faint hover:bg-soft hover:text-ink" aria-label="Settings">
               <Settings size={13} />
             </button>
-            <button type="button" onClick={() => setOpen(false)} className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
+            <button type="button" onClick={() => setOpen(false)} className="flex h-6 w-6 items-center justify-center rounded-md text-faint hover:bg-soft hover:text-ink" aria-label="Close">
               <X size={13} />
             </button>
           </div>
@@ -1185,20 +1185,20 @@ export default function ChatWidget() {
           <div className="flex-1 overflow-y-auto">
             {!hasMessages ? (
               <div className="flex flex-col items-center px-4 pt-5 pb-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl mb-3" style={{ background: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)' }}>
-                  <Sparkles size={20} className="text-indigo-500" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-pale mb-3">
+                  <Sparkles size={18} className="text-blue" />
                 </div>
-                <h2 className="text-base font-bold text-slate-900 mb-1">How can I help?</h2>
-                <p className="text-center text-xs text-slate-500 leading-relaxed mb-4">I'm Daky, your AI companion for writing, content, and brainstorming.</p>
+                <h2 className="text-base font-medium text-ink mb-1">How can I help?</h2>
+                <p className="text-center text-xs text-muted leading-relaxed mb-4">I'm Daky, your AI companion for writing, content, and brainstorming.</p>
                 <div className="w-full space-y-1.5">
                   {SUGGESTIONS.map((s) => (
                     <button key={s.title} type="button"
                       onClick={() => { setInput(s.prompt); inputRef.current?.focus(); }}
-                      className="flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:border-indigo-200 hover:bg-indigo-50 transition-colors">
+                      className="flex w-full items-center gap-2.5 rounded-[10px] border border-line bg-soft px-3 py-2 text-left hover:border-blue hover:bg-pale/50 transition-colors">
                       <span className="text-base shrink-0">{s.icon}</span>
                       <div className="min-w-0">
-                        <p className="text-[11px] font-bold text-slate-800">{s.title}</p>
-                        <p className="text-[10px] text-slate-400">{s.subtitle}</p>
+                        <p className="text-[11.5px] font-medium text-ink">{s.title}</p>
+                        <p className="text-[10.5px] text-muted">{s.subtitle}</p>
                       </div>
                     </button>
                   ))}

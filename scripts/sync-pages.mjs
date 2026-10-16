@@ -49,6 +49,22 @@ const mirrorStaticSite = (targetDir, label) => {
   mkdirSync(targetAssets, { recursive: true });
   cpSync(buildAssets, targetAssets, { recursive: true });
 
+  // Copy brand and fonts directories plus root favicons
+  for (const subDir of ['brand', 'fonts']) {
+    const srcSub = resolve(buildDir, subDir);
+    if (existsSync(srcSub)) {
+      const dstSub = resolve(targetDir, subDir);
+      mkdirSync(dstSub, { recursive: true });
+      cpSync(srcSub, dstSub, { recursive: true });
+    }
+  }
+  for (const rootAsset of ['favicon.svg', 'favicon.ico', 'favicon.png', 'apple-touch-icon.png', 'vite.svg']) {
+    const srcAsset = resolve(buildDir, rootAsset);
+    if (existsSync(srcAsset)) {
+      cpSync(srcAsset, resolve(targetDir, rootAsset));
+    }
+  }
+
   // Write index.html and 404.html (404 = SPA fallback for client-side routes)
   writeFileSync(resolve(targetDir, 'index.html'), builtHtml, 'utf8');
   writeFileSync(resolve(targetDir, '404.html'), builtHtml, 'utf8');

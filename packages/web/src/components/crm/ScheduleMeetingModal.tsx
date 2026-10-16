@@ -180,7 +180,7 @@ function MiniCalendar({
         </div>
         <div className="flex items-center justify-between gap-2">
           <label className="flex items-center gap-1.5 text-[11px] text-gray-500 cursor-pointer">
-            <input type="checkbox" checked={hideWeekends} onChange={() => onToggleWeekends()} className="rounded text-[#5b6cf9]" />
+            <input type="checkbox" checked={hideWeekends} onChange={() => onToggleWeekends()} className="rounded text-[#2563EB]" />
             Hide weekends
           </label>
           <div className="flex items-center gap-1.5">
@@ -191,13 +191,13 @@ function MiniCalendar({
               onChange={e => onCountryChange(e.target.value.toUpperCase().slice(0, 2))}
               maxLength={2}
               title="Country code for public holidays (e.g. GH, US, GB)"
-              className="w-8 text-center text-[11px] border border-gray-200 rounded px-1 py-0.5 uppercase focus:outline-none focus:ring-1 focus:ring-[#5b6cf9]/30"
+              className="w-8 text-center text-[11px] border border-gray-200 rounded px-1 py-0.5 uppercase focus:outline-none focus:ring-1 focus:ring-[#2563EB]/30"
             />
             <button
               onClick={onSync}
               disabled={syncing}
               title="Sync calendar"
-              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-gray-500 hover:text-[#5b6cf9] hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-gray-500 hover:text-[#2563EB] hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
               Sync
@@ -218,7 +218,7 @@ function MiniCalendar({
             return (
               <div key={d.toISOString()} className="flex-1 py-1.5 text-center border-l border-gray-100 first:border-l-0">
                 <p className="text-[10px] font-medium text-gray-400 uppercase">{d.toLocaleDateString('en-US', { weekday: 'short' })}</p>
-                <div className={`w-6 h-6 mx-auto rounded-full flex items-center justify-center text-xs font-semibold mt-0.5 ${isToday ? 'bg-[#5b6cf9] text-white' : 'text-gray-700'}`}>
+                <div className={`w-6 h-6 mx-auto rounded-full flex items-center justify-center text-xs font-semibold mt-0.5 ${isToday ? 'bg-[#2563EB] text-white' : 'text-gray-700'}`}>
                   {d.getDate()}
                 </div>
                 {holiday && (
@@ -535,7 +535,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
         <div className="flex flex-col w-96 flex-shrink-0 border-r border-gray-100">
           <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <h2 className="text-[15px] font-bold text-gray-900 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-[#5b6cf9]" /> Schedule Meeting
+              <Calendar className="w-4 h-4 text-[#2563EB]" /> Schedule Meeting
             </h2>
             <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
           </div>
@@ -551,7 +551,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Title *</label>
               <input
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                 placeholder="Meeting title…"
                 value={title}
                 onChange={e => setTitle(e.target.value)}
@@ -563,7 +563,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               <label className="block text-xs font-semibold text-gray-600 mb-1">Start date</label>
               <input
                 type="date"
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                 value={startDate}
                 onChange={e => setStartDate(e.target.value)}
               />
@@ -573,7 +573,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Start time</label>
                 <input
                   type="time"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                   value={startTime}
                   onChange={e => {
                     setStartTime(e.target.value);
@@ -588,7 +588,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                 <label className="block text-xs font-semibold text-gray-600 mb-1">End time</label>
                 <input
                   type="time"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                   value={endTime}
                   onChange={e => setEndTime(e.target.value)}
                 />
@@ -600,7 +600,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
                 <Repeat className="w-3 h-3" /> Repeat
               </label>
               <select
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9] bg-white"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] bg-white"
                 value={recurrence}
                 onChange={e => setRecurrence(e.target.value)}
               >
@@ -627,7 +627,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               </div>
               <div className="relative">
                 <input
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#5b6cf9]/20 focus:border-[#5b6cf9]"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB]"
                   placeholder="Search contacts to add…"
                   value={attendeeQuery}
                   onChange={e => { setAttendeeQuery(e.target.value); setShowAttendeeDropdown(true); }}
@@ -660,7 +660,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               <div className="flex flex-wrap gap-1.5">
                 {REMINDER_OPTIONS.map(o => (
                   <button key={o.value} type="button" onClick={() => toggleReminder(o.value)}
-                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${reminders.includes(o.value) ? 'bg-[#5b6cf9] text-white border-[#5b6cf9]' : 'bg-white text-gray-600 border-gray-200 hover:border-[#5b6cf9] hover:text-[#5b6cf9]'}`}>
+                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${reminders.includes(o.value) ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-gray-600 border-gray-200 hover:border-[#2563EB] hover:text-[#2563EB]'}`}>
                     {o.label}
                   </button>
                 ))}
@@ -691,7 +691,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               <button
                 onClick={() => void handleSave()}
                 disabled={saving || !title.trim()}
-                className="px-5 py-2 bg-[#5b6cf9] text-white text-sm font-bold rounded-xl hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
+                className="px-5 py-2 bg-[#2563EB] text-white text-sm font-bold rounded-xl hover:bg-[#4a5be8] disabled:opacity-50 transition-colors"
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Schedule meeting'}
               </button>
@@ -704,7 +704,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
           {calConnected === false ? (
             <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
               <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
-                <Calendar className="w-7 h-7 text-[#5b6cf9]" />
+                <Calendar className="w-7 h-7 text-[#2563EB]" />
               </div>
               <h3 className="text-sm font-bold text-gray-800 mb-1">Sync your Google Calendar</h3>
               <p className="text-xs text-gray-500 mb-5 max-w-xs leading-relaxed">
@@ -713,7 +713,7 @@ export default function ScheduleMeetingModal({ companyId, companyName, companyEm
               <button
                 onClick={() => void connectGoogleCalendar()}
                 disabled={connectingCal}
-                className="flex items-center gap-2 px-5 py-2.5 bg-[#5b6cf9] text-white text-sm font-semibold rounded-xl hover:bg-[#4a5be8] disabled:opacity-60 transition-colors"
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-xl hover:bg-[#4a5be8] disabled:opacity-60 transition-colors"
               >
                 {connectingCal ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
                 Connect Google Calendar

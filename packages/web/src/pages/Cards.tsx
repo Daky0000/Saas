@@ -68,7 +68,7 @@ function CreditBadge({ refreshKey = 0 }: { refreshKey?: number }) {
   if (credits === null) return null;
 
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-[#5b6cf9]">
+    <div className="flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-[#2563EB]">
       <span className="text-sm">✦</span>
       <span>{credits} credits</span>
     </div>
@@ -310,8 +310,8 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
       {/* Mode + model picker */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex items-center gap-3 mb-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#5b6cf9]/10">
-            <Wand2 size={20} className="text-[#5b6cf9]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2563EB]/10">
+            <Wand2 size={20} className="text-[#2563EB]" />
           </div>
           <div>
             <h2 className="text-lg font-black text-slate-900">AI Design Studio</h2>
@@ -357,12 +357,12 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 {IMAGE_MODELS_BY_PROVIDER[imageProvider].map((m) => (
                   <button key={m.id} type="button" onClick={() => setSelectedImageModel(m)}
                     className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
-                      selectedImageModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                      selectedImageModel.id === m.id ? 'border-[#2563EB] bg-indigo-50 text-[#2563EB]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                     }`}>
-                    {m.badge && <span className="absolute -top-2 -right-2 rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white">{m.badge}</span>}
+                    {m.badge && <span className="absolute -top-2 -right-2 rounded-full bg-[#2563EB] px-1.5 py-0.5 text-[9px] font-bold text-white">{m.badge}</span>}
                     <span className="text-xs font-bold">{m.label}</span>
                     <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
-                    <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                    <span className="mt-1 text-[10px] font-bold text-[#2563EB]">✦{m.creditCost} credits</span>
                   </button>
                 ))}
               </div>
@@ -397,11 +397,11 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                     if (!KLING_LAST_FRAME_MODELS.has(m.id)) setLastFrame(null);
                   }}
                     className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
-                      selectedVideoModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                      selectedVideoModel.id === m.id ? 'border-[#2563EB] bg-indigo-50 text-[#2563EB]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                     }`}>
                     <span className="text-xs font-bold">{m.label}</span>
                     <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
-                    <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                    <span className="mt-1 text-[10px] font-bold text-[#2563EB]">✦{m.creditCost} credits</span>
                   </button>
                 ))}
               </div>
@@ -413,11 +413,11 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 {TTS_MODELS.map((m) => (
                   <button key={m.id} type="button" onClick={() => setSelectedTTSModel(m)}
                     className={`flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
-                      selectedTTSModel.id === m.id ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                      selectedTTSModel.id === m.id ? 'border-[#2563EB] bg-indigo-50 text-[#2563EB]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                     }`}>
                     <span className="text-xs font-bold">{m.label}</span>
                     <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
-                    <span className="mt-1 text-[10px] font-bold text-[#5b6cf9]">✦{m.creditCost} credits</span>
+                    <span className="mt-1 text-[10px] font-bold text-[#2563EB]">✦{m.creditCost} credits</span>
                   </button>
                 ))}
               </div>
@@ -426,7 +426,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 {TTS_VOICES.map((v) => (
                   <button key={v} type="button" onClick={() => setTtsVoice(v)}
                     className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition ${
-                      ttsVoice === v ? 'border-[#5b6cf9] bg-indigo-50 text-[#5b6cf9]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                      ttsVoice === v ? 'border-[#2563EB] bg-indigo-50 text-[#2563EB]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
                     }`}>
                     {v}
                   </button>
@@ -446,14 +446,14 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !generating) generateImage(); }}
                 rows={4}
                 placeholder="Describe exactly what you want to generate…"
-                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition"
               />
               <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${prompt.length > selectedImageModel.maxChars * 0.9 ? 'text-rose-500' : 'text-slate-400'}`}>
                 {prompt.length}/{selectedImageModel.maxChars}
               </span>
             </div>
             <button type="button" disabled={!prompt.trim() || generating} onClick={generateImage}
-              className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
+              className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
               {generating ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Sparkles size={15} /> Generate ✦{selectedImageModel.creditCost}</>}
             </button>
             {errorMsg && (
@@ -475,7 +475,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                     First Frame <span className="normal-case font-normal text-slate-400">(optional)</span>
                   </label>
                   <button type="button" onClick={() => firstFrameRef.current?.click()}
-                    className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#5b6cf9] hover:bg-indigo-50 transition">
+                    className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#2563EB] hover:bg-indigo-50 transition">
                     {firstFrame ? (
                       <>
                         <img src={firstFrame} alt="First frame" className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200" />
@@ -507,7 +507,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                       : <span className="normal-case font-normal text-slate-300">— not supported by this model</span>}
                   </label>
                   <button type="button" disabled={!supportsLastFrame} onClick={() => lastFrameRef.current?.click()}
-                    className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#5b6cf9] hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#2563EB] hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed">
                     {lastFrame ? (
                       <>
                         <img src={lastFrame} alt="Last frame" className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200" />
@@ -538,14 +538,14 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 onChange={(e) => setVideoPrompt(e.target.value)}
                 rows={3}
                 placeholder={firstFrame ? 'Describe what happens in the video…' : 'Describe your video… e.g. a slow-motion ocean wave at sunset with cinematic lighting'}
-                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition"
               />
               <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${videoPrompt.length > selectedVideoModel.maxChars * 0.9 ? 'text-rose-500' : 'text-slate-400'}`}>
                 {videoPrompt.length}/{selectedVideoModel.maxChars}
               </span>
             </div>
             <button type="button" disabled={!videoPrompt.trim() || generatingVideo} onClick={generateVideo}
-              className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
+              className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
               {generatingVideo
                 ? <><Loader2 size={14} className="animate-spin" /> Generating…</>
                 : <><Play size={14} /> {firstFrame ? 'Animate Frame' : 'Generate Video'} ✦{selectedVideoModel.creditCost}</>}
@@ -567,14 +567,14 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                 onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !generatingTTS) generateTTS(); }}
                 rows={5}
                 placeholder="Enter the text you want to convert to speech…"
-                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#5b6cf9] focus:ring-1 focus:ring-[#5b6cf9] transition"
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition"
               />
               <span className={`absolute bottom-2.5 right-3 text-[10px] font-medium ${ttsPrompt.length > selectedTTSModel.maxChars * 0.9 ? 'text-rose-500' : 'text-slate-400'}`}>
                 {ttsPrompt.length}/{selectedTTSModel.maxChars}
               </span>
             </div>
             <button type="button" disabled={!ttsPrompt.trim() || generatingTTS} onClick={generateTTS}
-              className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
+              className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-600 disabled:opacity-40 transition active:scale-[0.98]">
               {generatingTTS ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><Mic size={14} /> Generate Speech ✦{selectedTTSModel.creditCost}</>}
             </button>
             {ttsError && (
@@ -592,9 +592,9 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
         <div className="rounded-2xl border border-slate-200 bg-white p-8 flex flex-col items-center gap-4">
           <div className="relative w-14 h-14">
             <div className="absolute inset-0 rounded-full border-4 border-indigo-100" />
-            <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#5b6cf9] animate-spin" />
+            <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#2563EB] animate-spin" />
             <div className="absolute inset-0 flex items-center justify-center">
-              <Sparkles size={18} className="text-[#5b6cf9]" />
+              <Sparkles size={18} className="text-[#2563EB]" />
             </div>
           </div>
           <div className="text-center">
@@ -644,7 +644,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
       {ttsAudioUrl && !generatingTTS && (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
           <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-            <Mic size={15} className="text-[#5b6cf9]" /> Generated Speech
+            <Mic size={15} className="text-[#2563EB]" /> Generated Speech
             <span className="ml-auto text-xs font-normal text-slate-400 capitalize">{ttsVoice} · {selectedTTSModel.label}</span>
           </div>
           <audio controls src={ttsAudioUrl} className="w-full" />
@@ -1233,7 +1233,7 @@ function GeneratePanel({
                 <span className="text-[11px] font-bold text-slate-700">Prompt</span>
                 <button type="button" disabled={!prompt.trim() || improvingPrompt} onClick={doImprovePrompt}
                   title="Improve prompt with Magnific AI"
-                  className="flex items-center gap-1 text-[10px] text-[#5b6cf9] hover:text-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition font-semibold">
+                  className="flex items-center gap-1 text-[10px] text-[#2563EB] hover:text-[#4a5ae0] disabled:opacity-40 disabled:cursor-not-allowed transition font-semibold">
                   {improvingPrompt ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
                   Improve
                 </button>
@@ -1307,18 +1307,18 @@ function GeneratePanel({
               <div className="relative">
                 <button type="button" onClick={() => setModelOpen(o => !o)}
                   className="w-full flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 hover:border-slate-300 transition">
-                  <Sparkles size={12} className="text-[#5b6cf9] shrink-0" />
+                  <Sparkles size={12} className="text-[#2563EB] shrink-0" />
                   <div className="flex-1 text-left">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] font-semibold text-slate-800">{currentModelInfo.label}</span>
                       {'badge' in currentModelInfo && currentModelInfo.badge && (
-                        <span className="rounded-full bg-[#5b6cf9]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#5b6cf9]">{currentModelInfo.badge}</span>
+                        <span className="rounded-full bg-[#2563EB]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#2563EB]">{currentModelInfo.badge}</span>
                       )}
                     </div>
                     <span className="text-[9px] text-slate-400">{currentModelInfo.desc}</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="text-[10px] font-bold text-[#5b6cf9]">✦{currentModelInfo.credits}</span>
+                    <span className="text-[10px] font-bold text-[#2563EB]">✦{currentModelInfo.credits}</span>
                     <ChevronDown size={12} className="text-slate-400" />
                   </div>
                 </button>
@@ -1333,17 +1333,17 @@ function GeneratePanel({
                           </div>
                           {tierModels.map(m => (
                             <button key={m.id} type="button" onClick={() => { setSelectedModel(m.id); setModelOpen(false); }}
-                              className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition ${selectedModel === m.id ? 'bg-[#5b6cf9]/5' : ''}`}>
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition ${selectedModel === m.id ? 'bg-[#2563EB]/5' : ''}`}>
                               <div className="flex-1">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-[11px] font-semibold text-slate-800">{m.label}</span>
                                   {'badge' in m && m.badge && (
-                                    <span className="rounded-full bg-[#5b6cf9]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#5b6cf9]">{m.badge}</span>
+                                    <span className="rounded-full bg-[#2563EB]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#2563EB]">{m.badge}</span>
                                   )}
                                 </div>
                                 <span className="text-[9px] text-slate-400">{m.desc}</span>
                               </div>
-                              <span className="text-[10px] font-bold text-[#5b6cf9]">✦{m.credits}</span>
+                              <span className="text-[10px] font-bold text-[#2563EB]">✦{m.credits}</span>
                             </button>
                           ))}
                         </div>
@@ -1397,11 +1397,11 @@ function GeneratePanel({
                 {EDIT_TOOLS.map(t => (
                   <button key={t.id} type="button" onClick={() => { setEditTool(t.id); setEditResult(null); setEditError(null); }}
                     className={`flex flex-col items-start rounded-xl border px-2.5 py-2 text-left transition ${
-                      editTool === t.id ? 'border-[#5b6cf9] bg-[#5b6cf9]/5' : 'border-slate-200 hover:border-slate-300'
+                      editTool === t.id ? 'border-[#2563EB] bg-[#2563EB]/5' : 'border-slate-200 hover:border-slate-300'
                     }`}>
                     <span className="text-[10px] font-bold text-slate-800">{t.label}</span>
                     <span className="text-[9px] text-slate-400 mt-0.5 leading-tight">{t.desc}</span>
-                    <span className="mt-1 text-[9px] font-bold text-[#5b6cf9]">✦{t.credits}</span>
+                    <span className="mt-1 text-[9px] font-bold text-[#2563EB]">✦{t.credits}</span>
                   </button>
                 ))}
               </div>
@@ -1478,7 +1478,7 @@ function GeneratePanel({
                 <div>
                   <p className="text-[10px] text-slate-400 mb-1.5">Lighting style</p>
                   <select value={relightStyle} onChange={e => setRelightStyle(e.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-[#5b6cf9]">
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-[#2563EB]">
                     {['standard','smooth','brighter','contrasted_n_hdr','warm','cool','dramatic','golden_hour','neon'].map(s => (
                       <option key={s} value={s}>{s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}</option>
                     ))}
@@ -1493,7 +1493,7 @@ function GeneratePanel({
                       <span className="text-[10px] font-bold text-slate-600">{styleStrength}%</span>
                     </div>
                     <input type="range" min={0} max={100} value={styleStrength} onChange={e => setStyleStrength(+e.target.value)}
-                      className="w-full accent-[#5b6cf9]" />
+                      className="w-full accent-[#2563EB]" />
                   </div>
                   <div>
                     <div className="flex justify-between mb-1">
@@ -1501,7 +1501,7 @@ function GeneratePanel({
                       <span className="text-[10px] font-bold text-slate-600">{structureStrength}%</span>
                     </div>
                     <input type="range" min={0} max={100} value={structureStrength} onChange={e => setStructureStrength(+e.target.value)}
-                      className="w-full accent-[#5b6cf9]" />
+                      className="w-full accent-[#2563EB]" />
                   </div>
                 </div>
               )}
@@ -1510,7 +1510,7 @@ function GeneratePanel({
                   <p className="text-[10px] text-slate-400 mb-1.5">Guidance prompt (optional)</p>
                   <textarea value={editPrompt} onChange={e => setEditPrompt(e.target.value)} rows={3}
                     placeholder="Describe the desired result…"
-                    className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-800 placeholder-slate-300 outline-none focus:border-[#5b6cf9]" />
+                    className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-800 placeholder-slate-300 outline-none focus:border-[#2563EB]" />
                 </div>
               )}
             </div>
@@ -1730,7 +1730,7 @@ const Cards = () => {
               >
                 {m.label}
                 {m.badge && (
-                  <span className="rounded-full bg-[#5b6cf9] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none">
+                  <span className="rounded-full bg-[#2563EB] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none">
                     {m.badge}
                   </span>
                 )}
@@ -1840,7 +1840,7 @@ const Cards = () => {
                 <button
                   type="button"
                   onClick={() => setTab('studio')}
-                  className="flex items-center gap-2 rounded-xl bg-[#5b6cf9] px-4 py-2 text-sm font-bold text-white hover:bg-indigo-600 transition"
+                  className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-bold text-white hover:bg-indigo-600 transition"
                 >
                   <Sparkles size={14} /> AI Studio
                 </button>
