@@ -95,6 +95,7 @@ import { buildNovaModule } from './server/novaRoutes.ts';
 import { registerAnalyticsRoutes, buildAnalyticsAutoSync } from './server/analyticsRoutes.ts';
 import { buildDistributionModule } from './server/distributionRoutes.ts';
 import { registerAuthRoutes } from './server/authRoutes.ts';
+import { registerDakyxRoutes, reconcileDakyxGrants, runDakyxMigrations } from './server/dakyxRoutes.ts';
 import { registerUserRoutes } from './server/userRoutes.ts';
 import { registerAIConfigRoutes } from './server/aiConfigRoutes.ts';
 import { registerPlatformConfigRoutes } from './server/platformConfigRoutes.ts';
@@ -117,7 +118,7 @@ import {
   inMemoryPricingPlansById, inMemoryCardTemplatesById, inMemoryPlatformConfigs,
   getPlatformConfig, isPlatformEnabled, getResendConfig,
   upsertInMemoryUser, seedInMemoryUsers,
-  getUserPlanName, userToAuthPayload, JWT_EXPIRES_IN, signToken, getAuthUser,
+  getUserPlanName, getEffectivePlan, userToAuthPayload, JWT_EXPIRES_IN, signToken, getAuthUser,
   findUserByEmail, findUserByUsername, findUserByIdentifier, getUserById,
   createUser, updateLastLogin, ensureSeedUser, ensureSeedUsers, ensureSeedPricingPlans,
   updateUserProfile,
@@ -467,6 +468,7 @@ async function ensureDatabase() {
 
   await runDatabaseMigrations(pool);
   await runPaymentMigrations(pool);
+  await runDakyxMigrations(pool);
   setDbReady(true);
 
 }
@@ -521,7 +523,7 @@ app.use('/api', registerAuthRoutes({
   requireAuth, hasDatabase, dbQuery,
   getUserById, findUserByEmail, findUserByUsername, findUserByIdentifier,
   createUser, updateUserProfile, updateLastLogin,
-  getUserPlanName, signToken, userToAuthPayload, checkTokenVersion,
+  getUserPlanName, getEffectivePlan, signToken, userToAuthPayload, checkTokenVersion,
   provisionUserAgents, createNotification, getResendConfig,
   jwtSecret: config.jwtSecret,
   appUrl: config.appUrl,
@@ -693,6 +695,11 @@ app.use('/api', registerPlatformConfigRoutes({
   isOAuthClientSecretRequired,
 }));
 
+
+// ─── DakyX accounts: "Continue with DakyX", retainer grants, change events ──
+// Above social auth on purpose: its `/api/auth/:provider/start` would take
+// "dakyx" for an unknown provider and answer 404.
+app.use(registerDakyxRoutes({ pool, dbQuery, hasDatabase, requireAuth, getUserById, signToken, appUrl: config.appUrl }));
 
 // ─── Social Auth: OAuth login + auth provider management ────────────────────
 app.use(registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool, jwtSecret: config.jwtSecret, jwtExpiresIn: JWT_EXPIRES_IN }));
@@ -1060,6 +1067,11 @@ if (config.nodeEnv !== 'test') {
     // Run due automation continuations (delay steps) every 2 minutes
     void automationEngine.processDueAutomationJobs();
     setInterval(() => void automationEngine.processDueAutomationJobs(), 2 * 60 * 1000);
+
+    // Re-read every DakyX-linked person's grants, for any event the OS never delivered
+    const reconcileDakyx = () => reconcileDakyxGrants({ dbQuery, appUrl: config.appUrl }).catch(err => logger.error({ err }, 'dakyx_reconcile_failed'));
+    void reconcileDakyx();
+    setInterval(() => void reconcileDakyx(), 60 * 60 * 1000);
 
     // Run due connector sync jobs (hourly/6h/daily/weekly schedules) every 5 minutes
     void processDueConnectorSyncJobs(pool);

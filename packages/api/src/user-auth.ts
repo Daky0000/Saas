@@ -7,6 +7,7 @@ import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { dbQuery, hasDatabase, normalizeEmail, normalizeUsername, pool } from './db.ts';
 import { decryptPlatformConfig } from './integration-helpers.ts';
+import { PLAN_TIER_NAMES, PLAN_TIER_ORDER, isPlanTierKey, resolvePlanTierKey, type PlanTierKey } from './middleware/planQuotaMiddleware.ts';
 
 const JWT_SECRET = config.jwtSecret;
 
@@ -160,24 +161,65 @@ export function seedInMemoryUsers() {
 
 
 
-export async function getUserPlanName(userId: string): Promise<string> {
-  if (!hasDatabase()) return 'Free';
+async function getLocalPlanName(userId: string): Promise<string> {
+  const { rows } = await dbQuery<{ name: string }>(
+    `SELECT pp.name FROM subscriptions s
+     JOIN pricing_plans pp ON pp.id = s.plan_id
+     WHERE s.user_id = $1 AND s.status IN ('active','trialing') AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
+     ORDER BY s.created_at DESC LIMIT 1`,
+    [userId]
+  );
+  return rows[0]?.name ?? 'Free';
+}
+
+/** How long a DakyX grant is honoured after DakyX was last heard from. */
+export const DAKYX_GRANT_STALE_HOURS = 72;
+
+export type EffectivePlan = {
+  name: string;
+  tier: PlanTierKey;
+  /** 'local' is a plan bought here; 'dakyx' is included with a DakyX retainer or comp. */
+  source: 'local' | 'dakyx';
+  reason?: string;
+};
+
+/**
+ * The plan a person is on: the higher of what they bought here and what DakyX
+ * grants them (a retainer includes every DakyX product). A grant is kept in
+ * `plan_grants`, never in `subscriptions` — that table is this app's own
+ * billing, one row per user, and a grant written there would be overwritten
+ * by the first local purchase, or overwrite it. See server/dakyxRoutes.ts.
+ */
+export async function getEffectivePlan(userId: string): Promise<EffectivePlan> {
+  if (!hasDatabase()) return { name: 'Free', tier: 'free', source: 'local' };
   try {
-    const { rows } = await dbQuery<{ name: string }>(
-      `SELECT pp.name FROM subscriptions s
-       JOIN pricing_plans pp ON pp.id = s.plan_id
-       WHERE s.user_id = $1 AND s.status IN ('active','trialing') AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
-       ORDER BY s.created_at DESC LIMIT 1`,
-      [userId]
-    );
-    return rows[0]?.name ?? 'Free';
+    const [localName, grants] = await Promise.all([
+      getLocalPlanName(userId),
+      dbQuery<{ tier: string; reason: string }>(
+        `SELECT tier, reason FROM plan_grants
+         WHERE user_id = $1 AND source = 'dakyx'
+           AND (valid_until IS NULL OR valid_until > NOW())
+           AND synced_at > NOW() - ($2 || ' hours')::interval`,
+        [userId, String(DAKYX_GRANT_STALE_HOURS)]
+      ).catch(() => ({ rows: [] as Array<{ tier: string; reason: string }> })),
+    ]);
+    const local: EffectivePlan = { name: localName, tier: resolvePlanTierKey(localName), source: 'local' };
+    const grant = grants.rows.find((row) => isPlanTierKey(row.tier));
+    if (!grant || !isPlanTierKey(grant.tier)) return local;
+    if (PLAN_TIER_ORDER.indexOf(grant.tier) <= PLAN_TIER_ORDER.indexOf(local.tier)) return local;
+    return { name: PLAN_TIER_NAMES[grant.tier], tier: grant.tier, source: 'dakyx', reason: grant.reason };
   } catch (err) {
     logger.error('Unhandled error:', err);
-    return 'Free';
+    return { name: 'Free', tier: 'free', source: 'local' };
   }
 }
 
-export function userToAuthPayload(user: DbUserRow, planName?: string) {
+/** The effective plan's name. Every quota check reads this, so a DakyX grant reaches all of them. */
+export async function getUserPlanName(userId: string): Promise<string> {
+  return (await getEffectivePlan(userId)).name;
+}
+
+export function userToAuthPayload(user: DbUserRow, planName?: string, planSource?: EffectivePlan['source']) {
   return {
     id: user.id,
     email: user.email,
@@ -190,6 +232,7 @@ export function userToAuthPayload(user: DbUserRow, planName?: string) {
     avatar: user.avatar_url,
     cover: user.cover_url,
     planName: planName ?? 'Free',
+    planSource: planSource ?? 'local',
     emailVerified: user.email_verified ?? false,
   };
 }

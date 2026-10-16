@@ -44,7 +44,9 @@ export const PLAN_QUOTA_BY_TIER: Record<string, PlanQuotaLimits> = {
     approval_links: 250,
   },
   pro: {
-    social_accounts: 8,
+    // Was 8 — fewer than Starter's 10, so "upgrading" to Pro took accounts away,
+    // and a DakyX retainer granting Pro would have been a downgrade.
+    social_accounts: 50,
     automations: 100,
     agent_schedules: 75,
     outbound_webhooks: 50,
@@ -59,13 +61,33 @@ export const PLAN_QUOTA_BY_TIER: Record<string, PlanQuotaLimits> = {
   },
 };
 
+export type PlanTierKey = keyof typeof PLAN_QUOTA_BY_TIER;
+
+/** Lowest first. A grant from DakyX names one of these keys, never a display name. */
+export const PLAN_TIER_ORDER: PlanTierKey[] = ['free', 'starter', 'growth', 'pro', 'agency'];
+export const PLAN_TIER_NAMES: Record<PlanTierKey, string> = { free: 'Free', starter: 'Starter', growth: 'Growth', pro: 'Pro', agency: 'Agency' };
+
+export function isPlanTierKey(value: unknown): value is PlanTierKey {
+  return typeof value === 'string' && (PLAN_TIER_ORDER as string[]).includes(value);
+}
+
+/**
+ * A locally sold plan's tier, guessed from its name. Only for `pricing_plans`
+ * rows, which have no tier column yet; a canonical name ('Pro', 'Agency' …)
+ * resolves exactly before any guessing happens.
+ */
+export function resolvePlanTierKey(planName: string | null | undefined): PlanTierKey {
+  const normalized = String(planName || 'starter').trim().toLowerCase();
+  if ((PLAN_TIER_ORDER as string[]).includes(normalized)) return normalized as PlanTierKey;
+  if (normalized.includes('agency') || normalized.includes('enterprise')) return 'agency';
+  if (normalized.includes('pro') || normalized.includes('scale')) return 'pro';
+  if (normalized.includes('growth') || normalized.includes('business')) return 'growth';
+  if (normalized.includes('free') || normalized.includes('trial')) return 'free';
+  return 'starter';
+}
+
 export function resolvePlanQuotaLimits(planName: string | null | undefined): PlanQuotaLimits {
-  const normalized = String(planName || 'starter').toLowerCase();
-  if (normalized.includes('agency') || normalized.includes('enterprise')) return PLAN_QUOTA_BY_TIER.agency;
-  if (normalized.includes('pro') || normalized.includes('scale')) return PLAN_QUOTA_BY_TIER.pro;
-  if (normalized.includes('growth') || normalized.includes('business')) return PLAN_QUOTA_BY_TIER.growth;
-  if (normalized.includes('free') || normalized.includes('trial')) return PLAN_QUOTA_BY_TIER.free;
-  return PLAN_QUOTA_BY_TIER.starter;
+  return PLAN_QUOTA_BY_TIER[resolvePlanTierKey(planName)];
 }
 
 export async function checkPlanQuota(

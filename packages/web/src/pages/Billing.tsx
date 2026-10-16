@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
+import { getStoredUser } from '../utils/userSession';
 
 function authHeaders(): Record<string, string> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
@@ -120,6 +121,7 @@ function UsageBar({ value, max, label }: { value: number; max: number | null; la
 }
 
 export default function Billing() {
+  const storedUser = getStoredUser();
   const [data, setData] = useState<BillingData | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [topUpSuccess, setTopUpSuccess] = useState<string | null>(null);
@@ -268,6 +270,15 @@ export default function Billing() {
             {reactivateLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Reactivate
           </button>
+        </div>
+      )}
+
+      {storedUser?.planSource === 'dakyx' && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-semibold text-emerald-900">{storedUser.planName ?? 'Your plan'} is included with your DakyX retainer</p>
+          <p className="mt-0.5 text-sm text-emerald-800">
+            There is nothing to pay here while your retainer is active. A plan you buy below only applies if it is higher.
+          </p>
         </div>
       )}
 

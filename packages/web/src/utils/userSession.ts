@@ -10,6 +10,8 @@ export type AppUser = {
   avatar: string | null;
   cover: string | null;
   planName: string | null;
+  /** 'dakyx' when the plan is included with a DakyX retainer rather than bought here. */
+  planSource: 'local' | 'dakyx';
   emailVerified: boolean;
 };
 
@@ -28,6 +30,7 @@ export function normalizeUser(input: Partial<AppUser> & { id: string; email: str
     avatar: input.avatar ?? null,
     cover: input.cover ?? null,
     planName: input.planName ?? null,
+    planSource: input.planSource === 'dakyx' ? 'dakyx' : 'local',
     emailVerified: input.emailVerified ?? false,
   };
 }

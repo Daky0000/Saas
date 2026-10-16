@@ -318,6 +318,9 @@ async function fetchCurrentUser(token: string): Promise<AppUser | null> {
       role: payload.user.role === 'admin' ? 'admin' : 'user',
       avatar: payload.user.avatar ?? null,
       cover: payload.user.cover ?? null,
+      // Without these the sidebar read "Free" for every paying customer.
+      planName: payload.user.planName ?? null,
+      planSource: payload.user.planSource,
     });
   } catch {
     return null;

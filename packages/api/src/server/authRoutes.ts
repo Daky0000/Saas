@@ -55,8 +55,10 @@ export interface AuthDeps {
   updateUserProfile: (userId: string, data: any) => Promise<any>;
   updateLastLogin: (userId: string) => Promise<void>;
   getUserPlanName: (userId: string) => Promise<string>;
+  /** The plan with where it came from, so the client can say "included with your DakyX retainer". */
+  getEffectivePlan?: (userId: string) => Promise<{ name: string; source: 'local' | 'dakyx' }>;
   signToken: (userId: string, email: string, tokenVersion?: number) => string;
-  userToAuthPayload: (user: any, planName?: string) => any;
+  userToAuthPayload: (user: any, planName?: string, planSource?: 'local' | 'dakyx') => any;
   checkTokenVersion: (auth: { userId: string; tokenVersion: number | null }, res: Response) => Promise<boolean>;
   provisionUserAgents: (userId: string) => Promise<void>;
   createNotification: (userId: string, type: string, title: string, body: string, meta: any) => Promise<void>;
@@ -133,7 +135,7 @@ export function registerAuthRoutes(deps: AuthDeps): Router {
     requireAuth, hasDatabase, dbQuery,
     getUserById, findUserByEmail, findUserByUsername, findUserByIdentifier,
     createUser, updateUserProfile, updateLastLogin,
-    getUserPlanName, signToken, userToAuthPayload, checkTokenVersion,
+    getUserPlanName, getEffectivePlan, signToken, userToAuthPayload, checkTokenVersion,
     provisionUserAgents, createNotification, getResendConfig,
     jwtSecret, appUrl, syncProfileMedia,
   } = deps;
@@ -219,8 +221,8 @@ export function registerAuthRoutes(deps: AuthDeps): Router {
       if (!auth) return;
       const user = await getUserById(auth.userId);
       if (!user) return res.status(404).json({ success: false, error: 'User not found' });
-      const planName = await getUserPlanName(auth.userId);
-      return res.json({ success: true, user: userToAuthPayload(user, planName) });
+      const plan = getEffectivePlan ? await getEffectivePlan(auth.userId) : { name: await getUserPlanName(auth.userId), source: 'local' as const };
+      return res.json({ success: true, user: userToAuthPayload(user, plan.name, plan.source) });
     } catch (error) {
       logger.error('Me error:', error);
       return res.status(500).json({ success: false, error: 'Failed to fetch user' });

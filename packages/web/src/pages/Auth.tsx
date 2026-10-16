@@ -160,6 +160,7 @@ function Auth({ onLogin }: AuthProps) {
   // Forgot-password state
   const [forgotEmail, setForgotEmail] = useState('');
   const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
+  const [dakyxEnabled, setDakyxEnabled] = useState(false);
   const [fbReady, setFbReady] = useState(false);
   const [fbLoginLoading, setFbLoginLoading] = useState(false);
   const [fbStatus, setFbStatus] = useState<'connected' | 'not_authorized' | 'unknown' | null>(null);
@@ -274,6 +275,16 @@ function Auth({ onLogin }: AuthProps) {
       .catch(() => {});
   }, []);
 
+  // ── DakyX accounts (DakyXTech OS) ───────────────────────────────────────────
+  // A DakyX retainer includes this product, so its clients sign in with the
+  // account they already have there. See api/src/server/dakyxRoutes.ts.
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/auth/dakyx/config`)
+      .then((r) => r.json())
+      .then((d: { enabled?: boolean }) => setDakyxEnabled(Boolean(d.enabled)))
+      .catch(() => {});
+  }, []);
+
   // ── OAuth callback token ────────────────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(
@@ -281,6 +292,16 @@ function Auth({ onLogin }: AuthProps) {
     );
     const token = params.get('auth_token');
     const authError = params.get('auth_error');
+    if (params.get('dakyx') === 'link_required') {
+      // This address already has an account here and DakyX could not vouch for
+      // it, so the two are joined only after the password proves it is theirs.
+      window.history.replaceState({}, '', window.location.pathname);
+      try { sessionStorage.setItem('dakyx_link_pending', '1'); } catch { /* private mode */ }
+      const email = params.get('email');
+      if (email) setLoginIdentifier(email);
+      setSuccessMessage('You already have an account with this email. Sign in with your password once and we will connect your DakyX account.');
+      return;
+    }
     if (token) {
       window.history.replaceState({}, '', window.location.pathname);
       try {
@@ -335,6 +356,14 @@ function Auth({ onLogin }: AuthProps) {
         throw new Error(d.error || 'Authentication failed');
       localStorage.setItem('auth_token', d.token);
       if (rememberMe) localStorage.setItem('remember_login', loginIdentifier.trim());
+      let linkPending = false;
+      try { linkPending = sessionStorage.getItem('dakyx_link_pending') === '1'; sessionStorage.removeItem('dakyx_link_pending'); } catch { /* private mode */ }
+      if (linkPending) {
+        const link = await fetch(`${API_BASE_URL}/api/auth/dakyx/link-start`, { method: 'POST', headers: { Authorization: `Bearer ${d.token}` } })
+          .then((res) => res.json() as Promise<{ success?: boolean; url?: string }>)
+          .catch(() => null);
+        if (link?.url) { window.location.href = link.url; return; }
+      }
       onLogin(
         normalizeUser({
           id: d.user.id,
@@ -445,7 +474,7 @@ function Auth({ onLogin }: AuthProps) {
     }
   };
 
-  const hasOAuth = socialProviders.length > 0 || !!FB_APP_ID;
+  const hasOAuth = socialProviders.length > 0 || !!FB_APP_ID || dakyxEnabled;
 
   const renderOAuth = () =>
     hasOAuth ? (
@@ -457,6 +486,15 @@ function Auth({ onLogin }: AuthProps) {
           </span>
           <div className="w-full border-t border-line" />
         </div>
+        {dakyxEnabled && (
+          <button
+            type="button"
+            onClick={() => handleSocialLogin('dakyx')}
+            className="mt-3 inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-[10px] border border-ink bg-ink px-3 text-[13px] font-medium text-white transition hover:opacity-90"
+          >
+            Continue with DakyX
+          </button>
+        )}
         <div className="mt-3 grid grid-cols-3 gap-2">
           {socialProviders.filter((p) => p.provider === 'google').length > 0 && (
             <button
