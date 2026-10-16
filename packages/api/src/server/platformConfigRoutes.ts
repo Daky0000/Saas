@@ -767,7 +767,8 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         ).catch(() => undefined);
       }
 
-      const params = new URLSearchParams({ redirect_uri: redirectUri, scope: meta.scopes, state, response_type: 'code' });
+      const scopeParam = String((cfg as any).scopes || meta.scopes || '').trim();
+      const params = new URLSearchParams({ redirect_uri: redirectUri, scope: scopeParam, state, response_type: 'code' });
       if (slug === 'tiktok') {
         params.set('client_key', clientId);
       } else {

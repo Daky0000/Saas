@@ -603,7 +603,7 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
       return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
     }
 
-    const scopeParam = meta.scopes;
+    const scopeParam = String(cfg.scopes || meta.scopes || '').trim();
     const params =
       platform === 'tiktok'
         ? new URLSearchParams({

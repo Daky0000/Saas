@@ -115,6 +115,7 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'appId', label: 'App ID', placeholder: 'Meta App ID', type: 'text', helpText: 'From Meta for Developers → App Settings → Basic.' },
       { id: 'appSecret', label: 'App Secret', placeholder: 'Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange and signed_request verification.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/facebook/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI in Meta Facebook Login → Settings.' },
+      { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'public_profile,pages_show_list,pages_read_engagement,pages_manage_posts', type: 'text', helpText: 'Leave empty for default Facebook page publishing scopes. Any scope requested must be added in Meta for Developers → App Review → Permissions and Features.' },
     ],
     docsUrl: 'https://developers.facebook.com/',
     redirectHint: 'Use `/auth/facebook/callback` in Facebook Login → Settings → Valid OAuth Redirect URIs.',
@@ -123,6 +124,7 @@ const PLATFORMS: PlatformDef[] = [
     usesMetaComplianceRoutes: true,
     setupSteps: [
       'Open Meta for Developers (developers.facebook.com) → Select your App → App Settings → Basic and copy your App ID and App Secret into the form below.',
+      'Under App Review → Permissions and Features (or Use Cases), ensure `pages_show_list`, `pages_read_engagement`, and `pages_manage_posts` are added to your app.',
       'In App Settings → Basic, paste the Deauthorize Callback URL and Data Deletion Request URL into the User Data Deletion & Deauthorize fields.',
       'In the left sidebar under Facebook Login → Settings, paste the Valid OAuth Redirect URI into "Valid OAuth Redirect URIs" and verify it with the Redirect URI Validator below.',
     ],
@@ -130,11 +132,12 @@ const PLATFORMS: PlatformDef[] = [
   {
     id: 'instagram',
     name: 'Instagram',
-    description: 'OAuth credentials for Instagram Graph / Basic Display API — publishing and engagement metrics.',
+    description: 'OAuth credentials for Instagram Graph API — publishing and engagement metrics.',
     fields: [
       { id: 'appId', label: 'App ID', placeholder: 'Instagram / Meta App ID', type: 'text', helpText: 'From Meta for Developers. Can be the same app as Facebook.' },
       { id: 'appSecret', label: 'App Secret', placeholder: 'Instagram / Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/instagram/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI in your Meta app settings.' },
+      { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'public_profile,pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,instagram_manage_insights', type: 'text', helpText: 'Leave empty for default Instagram publishing scopes. Requires Instagram permissions enabled in Meta Developer Console.' },
     ],
     docsUrl: 'https://developers.facebook.com/docs/instagram-platform/',
     redirectHint: 'Instagram uses the Meta app flow. Paste the Valid OAuth Redirect URI, Deauthorize Callback URL, and Data Deletion Request URL in Meta App Settings.',
