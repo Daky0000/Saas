@@ -11,10 +11,9 @@ import request from 'supertest';
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET ||= 'x'.repeat(32); process.env.INTEGRATIONS_ENCRYPTION_KEY ||= 'y'.repeat(32); process.env.WORDPRESS_ENCRYPTION_KEY ||= 'z'.repeat(32);
-if (process.env.TEST_DATABASE_URL) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 
-const { pool, dbQuery, setDbReady } = await import('../src/db.ts');
-const { getEffectivePlan, getUserById, signToken, requireAuth } = await import('../src/user-auth.ts');
+import { Pool } from 'pg';
+const { getEffectivePlan: getEffectivePlanFor, signToken, requireAuth } = await import('../src/user-auth.ts');
 const { checkPlanQuota, resolvePlanQuotaLimits, PLAN_QUOTA_BY_TIER } = await import('../src/middleware/planQuotaMiddleware.ts');
 const dakyx = await import('../src/server/dakyxRoutes.ts');
 
@@ -45,10 +44,14 @@ test('event signatures: right key and fresh only', () => {
 });
 
 test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !process.env.TEST_DATABASE_URL }, async () => {
-  await (await import('../src/db-migrations.ts')).runDatabaseMigrations(pool!);
-  await (await import('../src/payment-migrations.ts')).runPaymentMigrations(pool!);
-  await dakyx.runDakyxMigrations(pool!);
-  setDbReady(true);
+  // Its own pool, like credit-store.test.ts: under --test-isolation=none the
+  // shared db.ts module was loaded by an earlier file and points elsewhere.
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const dbQuery = (sql: string, params?: unknown[]) => pool.query(sql, params as any[]);
+  const getEffectivePlan = (userId: string) => getEffectivePlanFor(userId, dbQuery as any);
+  await (await import('../src/db-migrations.ts')).runDatabaseMigrations(pool);
+  await (await import('../src/payment-migrations.ts')).runPaymentMigrations(pool);
+  await dakyx.runDakyxMigrations(pool);
 
   // ── the OS, stubbed ─────────────────────────────────────────────────────────
   const os = { challenges: new Map<string, string>(), identities: new Map<string, any>(), entitlements: new Map<string, any>(), down: false, iss: 'https://os.example.test' };
@@ -69,6 +72,7 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
   const osServer = osApp.listen(0);
   const osBase = `http://127.0.0.1:${(osServer.address() as AddressInfo).port}`;
   const env = { DAKYX_BASE_URL: osBase, DAKYX_CLIENT_SECRET: 'client-secret', DAKYX_PARTNER_KEY: 'partner-key', DAKYX_ISSUER: 'https://os.example.test' } as NodeJS.ProcessEnv;
+  const getUserById = async (id: string) => (await pool.query('SELECT * FROM users WHERE id=$1', [id])).rows[0];
   const deps = { pool, dbQuery, hasDatabase: () => true, requireAuth, getUserById, signToken, appUrl: 'https://marketing.example.test', env };
 
   const app = express();
@@ -110,7 +114,7 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
     const amaId = userIdOf(tokenFrom(result.location)); created.push(amaId);
     const plan = await getEffectivePlan(amaId);
     assert.deepEqual([plan.name, plan.tier, plan.source], ['Pro', 'pro', 'dakyx'], 'on the plan their retainer includes');
-    assert.equal((await checkPlanQuota(pool!, amaId, 'social_accounts', plan.name)).limit, PLAN_QUOTA_BY_TIER.pro.social_accounts, 'and every quota reads it');
+    assert.equal((await checkPlanQuota(pool, amaId, 'social_accounts', plan.name)).limit, PLAN_QUOTA_BY_TIER.pro.social_accounts, 'and every quota reads it');
 
     // Signing in again finds the same account rather than making another.
     result = await signIn(ama);
@@ -128,12 +132,12 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
     // Somebody who already has an account here, unverified at DakyX: never merged.
     const kofiId = randomUUID(); created.push(kofiId);
     const kofiEmail = `kofi-${randomUUID()}@example.com`;
-    await pool!.query("INSERT INTO users(id,email,password_hash,role,status) VALUES($1,$2,'fixture','user','active')", [kofiId, kofiEmail]);
+    await pool.query("INSERT INTO users(id,email,password_hash,role,status) VALUES($1,$2,'fixture','user','active')", [kofiId, kofiEmail]);
     const kofi = { sub: `os_${randomUUID().slice(0, 12)}`, email: kofiEmail, email_verified: false, name: 'Kofi' };
     os.entitlements.set(kofi.sub, grantOf(kofi.sub, 'agency'));
     result = await signIn(kofi);
     assert.match(result.location, /dakyx=link_required/, 'an unverified matching email asks them to sign in and link');
-    assert.equal((await pool!.query("SELECT 1 FROM social_login_identities WHERE provider='dakyx' AND user_id=$1", [kofiId])).rows.length, 0, 'and links nothing');
+    assert.equal((await pool.query("SELECT 1 FROM social_login_identities WHERE provider='dakyx' AND user_id=$1", [kofiId])).rows.length, 0, 'and links nothing');
     assert.equal((await getEffectivePlan(kofiId)).source, 'local', 'and grants nothing');
 
     // …which they then do, signed in with their own token.
@@ -150,7 +154,7 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
     // A verified matching email links, like the existing social login does.
     const esiId = randomUUID(); created.push(esiId);
     const esiEmail = `esi-${randomUUID()}@example.com`;
-    await pool!.query("INSERT INTO users(id,email,password_hash,role,status) VALUES($1,$2,'fixture','user','active')", [esiId, esiEmail]);
+    await pool.query("INSERT INTO users(id,email,password_hash,role,status) VALUES($1,$2,'fixture','user','active')", [esiId, esiEmail]);
     const esi = { sub: `os_${randomUUID().slice(0, 12)}`, email: esiEmail, email_verified: true, name: 'Esi' };
     os.entitlements.set(esi.sub, grantOf(esi.sub, null));
     result = await signIn(esi);
@@ -159,11 +163,11 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
 
     // A local plan higher than the grant wins.
     const planId = randomUUID();
-    await pool!.query("INSERT INTO pricing_plans(id,name,description,price) VALUES($1,'Agency','fixture',99)", [planId]);
-    await pool!.query("INSERT INTO subscriptions(id,user_id,plan_id,status) VALUES($1,$2,$3,'active') ON CONFLICT (user_id) DO UPDATE SET plan_id=EXCLUDED.plan_id, status='active'", [randomUUID(), amaId, planId]);
+    await pool.query("INSERT INTO pricing_plans(id,name,description,price) VALUES($1,'Agency','fixture',99)", [planId]);
+    await pool.query("INSERT INTO subscriptions(id,user_id,plan_id,status) VALUES($1,$2,$3,'active') ON CONFLICT (user_id) DO UPDATE SET plan_id=EXCLUDED.plan_id, status='active'", [randomUUID(), amaId, planId]);
     assert.deepEqual([(await getEffectivePlan(amaId)).tier, (await getEffectivePlan(amaId)).source], ['agency', 'local'], 'a higher plan bought here wins');
-    await pool!.query('DELETE FROM subscriptions WHERE user_id=$1', [amaId]);
-    await pool!.query('DELETE FROM pricing_plans WHERE id=$1', [planId]);
+    await pool.query('DELETE FROM subscriptions WHERE user_id=$1', [amaId]);
+    await pool.query('DELETE FROM pricing_plans WHERE id=$1', [planId]);
 
     // ── events ────────────────────────────────────────────────────────────────
     const send = (body: object, key = 'partner-key', ts = String(Date.now())) => {
@@ -174,11 +178,11 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
     os.entitlements.set(ama.sub, grantOf(ama.sub, null));
     assert.equal((await send({ id: randomUUID(), event: 'entitlements.changed', data: { sub: ama.sub } }, 'wrong')).status, 401, 'a forged event is refused');
     assert.equal((await getEffectivePlan(amaId)).source, 'dakyx', 'and changed nothing');
-    const versionBefore = (await pool!.query('SELECT token_version FROM users WHERE id=$1', [amaId])).rows[0].token_version;
+    const versionBefore = (await pool.query('SELECT token_version FROM users WHERE id=$1', [amaId])).rows[0].token_version;
     const eventId = randomUUID();
     assert.equal((await send({ id: eventId, event: 'entitlements.changed', data: { sub: ama.sub } })).status, 200);
     assert.equal((await getEffectivePlan(amaId)).source, 'local', 'a churned retainer takes the plan away');
-    assert.equal((await pool!.query('SELECT token_version FROM users WHERE id=$1', [amaId])).rows[0].token_version, versionBefore + 1, 'and signs them out, having no plan of their own');
+    assert.equal((await pool.query('SELECT token_version FROM users WHERE id=$1', [amaId])).rows[0].token_version, versionBefore + 1, 'and signs them out, having no plan of their own');
     assert.equal((await send({ id: eventId, event: 'entitlements.changed', data: { sub: ama.sub } })).body.duplicate, true, 'a repeated delivery is recognised');
     assert.equal((await send({ id: randomUUID(), event: 'entitlements.changed', data: { sub: 'never-signed-in' } })).body.linked, false, 'somebody never seen here is a no-op');
 
@@ -190,18 +194,17 @@ test('DakyX sign-in, linking, grants and events against PostgreSQL', { skip: !pr
     const outcome = await dakyx.reconcileDakyxGrants(deps as any);
     assert.ok(outcome.failed >= 1);
     assert.equal((await getEffectivePlan(amaId)).tier, 'growth', 'DakyX being down does not take a plan away');
-    await pool!.query("UPDATE plan_grants SET synced_at = NOW() - INTERVAL '4 days' WHERE user_id=$1", [amaId]);
+    await pool.query("UPDATE plan_grants SET synced_at = NOW() - INTERVAL '4 days' WHERE user_id=$1", [amaId]);
     assert.equal((await getEffectivePlan(amaId)).source, 'local', 'but a grant not confirmed for three days lapses');
 
     // An older answer never overwrites a newer one.
     const later = Date.now() + 60_000;
     await dakyx.storeDakyxGrant(dbQuery as any, amaId, grantOf(ama.sub, 'agency', later));
     await dakyx.storeDakyxGrant(dbQuery as any, amaId, grantOf(ama.sub, 'starter', later - 1));
-    assert.equal((await pool!.query("SELECT tier FROM plan_grants WHERE user_id=$1", [amaId])).rows[0].tier, 'agency');
+    assert.equal((await pool.query("SELECT tier FROM plan_grants WHERE user_id=$1", [amaId])).rows[0].tier, 'agency');
   } finally {
     osServer.close();
-    await pool!.query('DELETE FROM users WHERE id = ANY($1)', [created]);
+    await pool.query('DELETE FROM users WHERE id = ANY($1)', [created]);
+    await pool.end();
   }
 });
-
-test.after(async () => { await pool?.end().catch(() => undefined); });

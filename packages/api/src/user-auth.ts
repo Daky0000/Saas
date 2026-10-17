@@ -161,8 +161,10 @@ export function seedInMemoryUsers() {
 
 
 
-async function getLocalPlanName(userId: string): Promise<string> {
-  const { rows } = await dbQuery<{ name: string }>(
+type PlanQuery = <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
+
+async function getLocalPlanName(userId: string, query: PlanQuery): Promise<string> {
+  const { rows } = await query<{ name: string }>(
     `SELECT pp.name FROM subscriptions s
      JOIN pricing_plans pp ON pp.id = s.plan_id
      WHERE s.user_id = $1 AND s.status IN ('active','trialing') AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
@@ -190,12 +192,13 @@ export type EffectivePlan = {
  * billing, one row per user, and a grant written there would be overwritten
  * by the first local purchase, or overwrite it. See server/dakyxRoutes.ts.
  */
-export async function getEffectivePlan(userId: string): Promise<EffectivePlan> {
-  if (!hasDatabase()) return { name: 'Free', tier: 'free', source: 'local' };
+export async function getEffectivePlan(userId: string, query?: PlanQuery): Promise<EffectivePlan> {
+  if (!query && !hasDatabase()) return { name: 'Free', tier: 'free', source: 'local' };
+  const run: PlanQuery = query ?? dbQuery;
   try {
     const [localName, grants] = await Promise.all([
-      getLocalPlanName(userId),
-      dbQuery<{ tier: string; reason: string }>(
+      getLocalPlanName(userId, run),
+      run<{ tier: string; reason: string }>(
         `SELECT tier, reason FROM plan_grants
          WHERE user_id = $1 AND source = 'dakyx'
            AND (valid_until IS NULL OR valid_until > NOW())
