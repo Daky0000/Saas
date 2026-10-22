@@ -880,6 +880,56 @@ Execute all three stages in sequence for the topic provided. Do not skip stages.
      ON CONFLICT (id) DO NOTHING`,
     [cgId, 'Content Generator', 'Three-stage content pipeline: research inspiration, keyword extraction, and full SEO article generation.', cgPrompt]
   );
+
+  const magSkillId = 'skill-magnific-multimodal-v1';
+  const magSkillPrompt = `## MAGNIFIC ACADEMY MULTIMODAL ENGINE & SPACES/FLOWS DOCTRINE
+Magnific (https://api.magnific.com & MCP https://mcp.magnific.com) is the primary engine for ALL non-text generation across the platform. Always specify the exact model, aspect ratio, resolution, and background rules explicitly:
+
+1. **Magnific One (\`magnific_one_generate\`) & Brand Kit**:
+   - Endpoint: \`POST /v1/ai/magnific-one\`
+   - **Draft → Final Funnel**: Explore with \`mode: "draft"\` and \`tiles: 16\` (exact proportions across all 10 aspect ratios; \`tiles: 8\` is only exact for \`1:1, 2:3, 3:2, 3:4\`), then recreate the winning composition in \`mode: "quality"\` at \`2k\` or \`4k\` (\`high\` or \`max\` quality).
+   - **2–3 Style Reference Sweet Spot**: Supports up to 10 \`reference_images\`, with **2 to 3 visually consistent style references** as the sweet spot. Keep text prompts concise when strong style references are attached.
+   - **3-Part Brand Pipeline**: Magnific One generates the image → Brand Kit enforces palette/style/tone/channel safe zones → Designer with Auto Layers refines deterministic typography, logos, and exact colors.
+
+2. **Nano Banana Pro & Nano Banana 2 (\`magnific_generate_image\`) — Product Text, Mockups & Character Sheets**:
+   - **Plain White Background & Character Profile Sheet Rule**: Generate reusable characters, vehicles, or products first on a **clean plain white studio background** using \`nano-banana-2\` in \`4k\` (\`3:4\` or \`4:3\`). Combine front, side, back, and passport face views into a single **Character Profile Sheet** to anchor consistency across all scenes. Keep Character, Location, and Object nodes separate.
+   - **Nano Banana Pro (\`nano-banana-pro\`) 7-Part Product Typography Hierarchy**: To keep small product text/logos tack-sharp without warped glyphs, structure prompts in this exact order:
+     1) **Composition First** (e.g. diagonal editorial still life + controlled directional lighting)
+     2) **Exact Product Identity** (lock proportions, silhouette, stitching, panel geometry to studio references)
+     3) **Dedicated Typography Block** (quote exact words, location, alignment, and state: "no misspellings, no extra letters, no warped glyphs")
+     4) **True Color Accuracy** (specific color names like "deep cobalt blue upper, neon lime laces" instead of "blue shoe")
+     5) **Lighting & Harmony**
+     6) **Optical Control** ("shallow depth of field, tack-sharp focus on the product and its typography, no oversaturation")
+     7) **Negative Constraints** ("no extra logos, no duplicated text, no invented branding, no distorted lettering").
+   - **Branded Surface Mockups (\`nano-banana-2\` in \`4k\`)**: Chain unbranded base product shots via references so lighting matches the same photoshoot → connect a black logo on a white background → specify physical surface finish: **deboss effect** (glass/bottles), **emboss finish** (packaging boxes), or **embroidered thread matching fabric color** (towels/apparel), respecting edge margins, contact shadows, and surface texture.
+   - **Sketches to Modular Interiors (\`nano-banana-pro\`)**: Turn Sketch 1 into a realistic standalone object (\`@img2\`) and Sketch 2 into a realistic room (\`@img1\`), then combine \`@img1\` + \`@img2\` with a minimal prompt defining **only their spatial relationship**.
+   - **Editing & Variations (\`magnific_edit_image\`)**: \`upscale\` (Creative), \`upscale-precision\` (faithful upscaling for clean designs, logos, and split Variations grids—since a 4K Variations grid applies 4K to the whole container, always split into a List and upscale individual frames), \`relight\`, \`style-transfer\`, \`remove-background\`, \`image-expand\`.
+
+3. **Cinematic Video Generation & Motion Control (\`magnific_generate_video\`)**:
+   - **Start/End Images vs. Image References**: Use \`image_url\` (Start) and \`end_image_url\` (End) to lock exact first/last visual states (e.g. closed door → reveal frame, or continuing from an extracted last frame). Use \`reference_images\` (Character Sheet + Location + Product without a rigid Start Image) in \`seedance-2-5\` or \`kling-3-0-omni\` for natural multi-shot movement.
+   - **Seedance 2.5 (\`seedance-2-5\`)**: Up to 30s, 50 references, multi-shot cuts, and 3D Scenes motion transfer (\`reference_video_url\`). **15-Second Chunking Rule**: Build 1-minute films in four 15s sections (\`480p/720p\` exploration → \`1080p\` production with 4 candidate outputs watched start-to-finish → \`4k\` Video Upscaler Precision/Creative + FPS Boost). **Multi-Clip Audio Rule**: Enable native dialogue/foley, **but set \`exclude_music: true\` (or write "no music" in the prompt)** so separate clips don't generate clashing soundtracks! **Surgical Corrections**: Never regenerate a full clip for one flaw—either extract the frame via Media Extractor (\`Manual selection\`) → fix with \`nano-banana-pro\` → generate a 2–3s replacement clip, or use Seedance 2.5 Clip Editor \`Modify\` mode.
+   - **Kling 3.0 (\`kling-3-0\` / \`kling-3-pro\`)**:
+     - *Single-Shot without Start Image*: Follow the **7-Part Formula** (1. Environment/Lighting -> 2. Shot Framing -> 3. Specific Character Traits -> 4. Physical Action -> 5. Cinematic Camera Move -> 6. Visual Detail -> 7. Ambient Sound).
+     - *Single-Shot with Start Image*: Do NOT re-describe the visible environment/character; prompt **only physical action and camera behavior**.
+     - *Multi-Shot Mode (\`shot_mode: "multi"\`, \`shots\`)*: Up to 6 scene cuts in one ≤15s generation; **each shot prompt must be ≤512 characters** (supports Start Image, no End Image).
+   - **Kling 3.0 Omni (\`kling-3-0-omni\`)**: Multi-reference character dialogue lip-sync, mid-shot object transformations, and keeping small product typography tack-sharp across motion using clean white studio product references.
+   - **Kling 2.6 Motion Control (\`kling-motion\`, 720p–1080p max)**: Transfers biomechanics from \`reference_video_url\` onto \`image_url\`. **CRITICAL**: **NEVER describe the physical action in the prompt!** Describe **ONLY camera framing and camera movement**. Swap backgrounds in \`nano-banana-pro\` *before* running Motion Control.
+
+4. **Lip Sync, 3-Layer Audio & Spaces/Lists/Flows (\`magnific_lip_sync\`, \`magnific_generate_audio\`, \`magnific_space_or_flow\`)**:
+   - **OmniHuman 1.5 & UGC Influencers**: Drive portrait/full-body images with voiceover audio, or combine white-background Character Profile Sheet + Car/Studio setting (\`9:16, 4k\`) + Product in hands + Voiceover/Kling 3.0 Omni.
+   - **3-Layer Audio Mixing**: (1) Native video audio for dialogue/foley ("no music"); (2) \`sound-effects\` (\`loop: true\`) for atmosphere; (3) \`music-generation\` (ElevenLabs Music) scored across story sections; plus \`audio-isolation\` (SAM Audio).
+   - **Spaces, Lists & Flows**: Use Assistant \`Export as List\` + \`List\` nodes (\`Keep items\` vs. \`Replace items\`) to batch-localize ads into 20+ languages or batch-upscale grouped images; organize productions in the 6-folder Candela structure (\`character, locations, still frames, videos, audio, final edit\`); always run \`simulate_cost\` before executing multi-node pipelines.`;
+
+  await pool.query(
+    `INSERT INTO ai_skills (id, name, description, system_prompt, scope, enabled, sort_order)
+     VALUES ($1, $2, $3, $4, 'all', true, 1)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       system_prompt = EXCLUDED.system_prompt,
+       updated_at = NOW()`,
+    [magSkillId, 'Magnific Academy Multimodal & Spaces/Flows Engine', 'Trains all agents on Magnific Academy methodologies: Magnific One (Draft->Final, 2-3 style refs, Brand Kit), Nano Banana Pro (7-part product typography, sketches, surgical edits), Nano Banana 2 (4K white-bg Character Profile Sheets & deboss/emboss/embroidered mockups), Seedance 2.5 (15s chunks, 50 refs, "no music" rule, surgical fixes), Kling 3.0 (7-part & 6-cut Multi-Shot), Kling 3.0 Omni, Kling 2.6 Motion Control (camera-only prompt rule), 3D Scenes, OmniHuman 1.5, 3-layer Audio, and Spaces/Lists/Flows.', magSkillPrompt]
+  );
 } catch (e) {
   logger.warn('ai_skills seed skipped:', e);
 }
@@ -3249,15 +3299,20 @@ await pool.query(`
 `).catch(() => undefined);
 await pool.query(`
   INSERT INTO agent_tools (key, name, description, type, config) VALUES
-  ('meigen_search',          'MeiGen AI Search',          'Search MeiGen AI for design templates and extract generation prompts',         'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
-  ('pinterest_search',       'Pinterest Search',          'Search Pinterest for visual design inspiration by keyword',                   'api',     '{"endpoint":"pinterest"}'),
-  ('claude_synthesize',      'Claude Synthesize',         'Use Claude AI to craft a tailored prompt from designs and brand memory',      'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
-  ('draft_content',          'Draft Content',             'Draft marketing copy, captions, or strategic content using Claude AI',        'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
-  ('summarize_content',      'Claude Summarize',          'Summarize and analyze text, data, or reports using Claude AI',               'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
-  ('generate_image',         'Generate Image (Magnific)', 'Generate an image using Magnific AI with the selected model',                'builtin', '{"fallback_model":"flux-2-turbo"}'),
-  ('freepik_generate_image', 'Generate Image (Freepik)',  'Generate a high-quality image via Freepik AI — uses credits per generation', 'api',     '{"provider":"freepik","fallback_model":"freepik-mystic","credits":5}'),
-  ('generate_video',         'Generate Video (Magnific)', 'Generate a short branded video clip via Magnific AI video models',           'builtin', '{"fallback_model":"wan-2-7-t2v"}'),
-  ('save_design',            'Save to Designs',           'Save the generated image to the user designs collection',                   'builtin', '{}')
+  ('meigen_search',           'MeiGen AI Search',                           'Search MeiGen AI for design templates and extract generation prompts',                                      'mcp',     '{"mcp_server":"meigen","tool":"search_designs"}'),
+  ('pinterest_search',        'Pinterest Search',                           'Search Pinterest for visual design inspiration by keyword',                                                'api',     '{"endpoint":"pinterest"}'),
+  ('claude_synthesize',       'Claude Synthesize',                          'Use Claude AI to craft a tailored prompt from designs and brand memory',                                   'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
+  ('draft_content',           'Draft Content',                              'Draft marketing copy, captions, or strategic content using Claude AI',                                     'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
+  ('summarize_content',       'Claude Summarize',                           'Summarize and analyze text, data, or reports using Claude AI',                                            'builtin', '{"model":"claude-haiku-4-5-20251001"}'),
+  ('magnific_one_generate',   'Magnific One (4K & Contact Sheets)',         'Flagship art-directed image generation with draft 8/16-tile contact sheets, 10 refs, and 4K quality mode', 'builtin', '{"provider":"magnific","endpoint":"/v1/ai/magnific-one","fallback_model":"magnific-one"}'),
+  ('generate_image',          'Generate Image (Magnific)',                  'Generate an image using Magnific AI (Magnific One, Mystic, Flux Kontext Pro, Seedream)',                   'builtin', '{"fallback_model":"magnific-one"}'),
+  ('magnific_edit_image',     'Magnific Edit / Upscale / Relight / Expand', 'Upscale (Creative/Precision), Relight, Style Transfer, Remove Background, or Outpaint (Image Expand)',     'builtin', '{"provider":"magnific","operations":["upscale","upscale-precision","relight","style-transfer","remove-background","image-expand","seedream-edit"]}'),
+  ('freepik_generate_image',  'Generate Image (Magnific / Freepik)',        'Generate a high-quality image via Magnific One / Mystic — uses credits per generation',                    'api',     '{"provider":"magnific","fallback_model":"magnific-one","credits":5}'),
+  ('generate_video',          'Generate Video (Magnific Kling / LTX / WAN)','Generate cinematic video via Magnific AI (Kling 2.6 Pro with audio, LTX 2 Pro 4K, WAN 2.6, Hailuo 2.3)',  'builtin', '{"fallback_model":"kling-v2-6-pro"}'),
+  ('magnific_lip_sync',       'Magnific Lip Sync (OmniHuman 1.5)',          'Generate a talking avatar video from a portrait image and speech audio or script via OmniHuman 1.5',        'builtin', '{"provider":"magnific","model":"omni-human-1-5"}'),
+  ('magnific_generate_audio', 'Magnific Audio (Music / SFX / SAM / TTS)',   'Generate royalty-free music, sound effects, TTS voiceovers, or SAM Audio stem isolation via Magnific',     'builtin', '{"provider":"magnific","audio_types":["music","sfx","isolation","tts"]}'),
+  ('magnific_space_flow',     'Magnific Space & Flow Pipeline',             'Create, simulate, and run multi-node Magnific Spaces or reusable Flows via Magnific MCP & Engine',         'mcp',     '{"mcp_server":"magnific","url":"https://mcp.magnific.com"}'),
+  ('save_design',             'Save to Designs',                            'Save the generated asset to the user designs collection',                                                 'builtin', '{}')
   ON CONFLICT (key) DO UPDATE SET
     name        = EXCLUDED.name,
     description = EXCLUDED.description,
@@ -3270,48 +3325,57 @@ await pool.query(`
     // ── Nova — Creative Director ───────────────────────────────────────────
     {
       agent_key: 'nova', name: 'Brand Identity Visual',
-      description: 'Search design concepts, tailor to brand memory, then generate a branded image via Freepik AI.',
+      description: 'Search design concepts, tailor to brand memory, then generate an art-directed image via Magnific One.',
       steps: [
-        { id: 'step_search',   name: 'Search Designs',        tool: 'meigen_search',          description: 'Find design templates matching the request', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
-        { id: 'step_extract',  name: 'Extract Style Prompts', tool: 'claude_synthesize',       description: 'Extract visual elements and generation prompts', prompt_template: 'From these design concepts, extract 3–5 key visual styles with image generation prompts.\n\nDesigns: {step_search.result}', params: {} },
-        { id: 'step_tailor',   name: 'Tailor to Brand',       tool: 'claude_synthesize',       description: 'Blend design inspiration with brand memory', prompt_template: 'Create one optimized image prompt combining design concepts with this brand:\nNiche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDesigns: {step_extract.result}\n\nReturn ONLY JSON (no markdown): { "prompt": "...", "model": "freepik-mystic", "style_notes": "..." }', params: {} },
-        { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image',  description: 'Generate the final brand image using Freepik AI', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
-        { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save generated image to designs collection', prompt_template: '', params: {} },
+        { id: 'step_search',   name: 'Search Designs',            tool: 'meigen_search',          description: 'Find design templates matching the request', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
+        { id: 'step_extract',  name: 'Extract Style Prompts',     tool: 'claude_synthesize',      description: 'Extract visual elements and generation prompts', prompt_template: 'From these design concepts, extract 3–5 key visual styles with image generation prompts.\n\nDesigns: {step_search.result}', params: {} },
+        { id: 'step_tailor',   name: 'Tailor to Brand',           tool: 'claude_synthesize',      description: 'Blend design inspiration with brand memory', prompt_template: 'Create one optimized Magnific One image prompt combining design concepts with this brand:\nNiche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDesigns: {step_extract.result}\n\nReturn ONLY JSON (no markdown): { "prompt": "...", "model": "magnific-one", "mode": "quality", "resolution": "2k", "style_notes": "..." }', params: {} },
+        { id: 'step_generate', name: 'Generate via Magnific One', tool: 'magnific_one_generate',  description: 'Generate the final brand image using Magnific One', prompt_template: '{step_tailor.prompt}', params: { mode: 'quality', resolution: '2k', auto_if_memory: true } },
+        { id: 'step_save',     name: 'Save Design',               tool: 'save_design',            description: 'Save generated image to designs collection', prompt_template: '', params: {} },
       ],
     },
     {
       agent_key: 'nova', name: 'Social Media Post Image',
-      description: 'Generate a platform-optimized social media image tailored to brand tone and audience.',
+      description: 'Generate a platform-optimized social media image tailored to brand tone and audience via Magnific One.',
       steps: [
-        { id: 'step_brief',    name: 'Draft Visual Brief',    tool: 'claude_synthesize',       description: 'Write a detailed visual brief for the social post', prompt_template: 'Write a detailed image generation brief for a {input} social media post.\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nAudience: {brand.audience}\n\nInclude: visual style, color scheme, composition, mood.\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic", "platform": "..." }', params: {} },
-        { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image',  description: 'Generate social media image via Freepik', prompt_template: '{step_brief.prompt}', params: {} },
-        { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save to designs collection', prompt_template: '', params: {} },
+        { id: 'step_brief',    name: 'Draft Visual Brief',        tool: 'claude_synthesize',      description: 'Write a detailed visual brief for the social post', prompt_template: 'Write a detailed Magnific One image generation brief for a {input} social media post.\nBrand niche: {brand.niche}\nBrand tone: {brand.tone}\nAudience: {brand.audience}\n\nInclude: visual style, color scheme, composition, mood.\nReturn ONLY JSON: { "prompt": "...", "model": "magnific-one", "platform": "..." }', params: {} },
+        { id: 'step_generate', name: 'Generate via Magnific One', tool: 'magnific_one_generate',  description: 'Generate social media image via Magnific One', prompt_template: '{step_brief.prompt}', params: { mode: 'quality', resolution: '2k' } },
+        { id: 'step_save',     name: 'Save Design',               tool: 'save_design',            description: 'Save to designs collection', prompt_template: '', params: {} },
       ],
     },
     {
       agent_key: 'nova', name: 'Product Promo Banner',
-      description: 'Create a promotional banner image for a product or service using brand memory and Freepik.',
+      description: 'Create a promotional banner image for a product or service using brand memory and Magnific One.',
       steps: [
-        { id: 'step_concept',  name: 'Build Promo Concept',   tool: 'claude_synthesize',       description: 'Generate a promo banner concept', prompt_template: 'Create a promotional banner concept for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nSpecify: layout, headline text, visual elements, brand colors.\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic", "headline": "...", "cta": "..." }', params: {} },
-        { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image',  description: 'Generate promo banner via Freepik', prompt_template: '{step_concept.prompt}', params: {} },
-        { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save banner to designs collection', prompt_template: '', params: {} },
+        { id: 'step_concept',  name: 'Build Promo Concept',       tool: 'claude_synthesize',      description: 'Generate a promo banner concept', prompt_template: 'Create a promotional banner concept for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nSpecify: layout, headline text, visual elements, brand colors.\nReturn ONLY JSON: { "prompt": "...", "model": "magnific-one", "headline": "...", "cta": "..." }', params: {} },
+        { id: 'step_generate', name: 'Generate via Magnific One', tool: 'magnific_one_generate',  description: 'Generate promo banner via Magnific One', prompt_template: '{step_concept.prompt}', params: { mode: 'quality', resolution: '2k', aspect_ratio: '16:9' } },
+        { id: 'step_save',     name: 'Save Design',               tool: 'save_design',            description: 'Save banner to designs collection', prompt_template: '', params: {} },
       ],
     },
     {
       agent_key: 'nova', name: 'AI Brand Video',
-      description: 'Generate a short branded video clip using Magnific AI video generation.',
+      description: 'Generate a cinematic branded video clip with synchronized audio using Magnific Kling 2.6 Pro / LTX 2 Pro.',
       steps: [
-        { id: 'step_script',   name: 'Write Video Brief',     tool: 'claude_synthesize',       description: 'Draft a video concept brief', prompt_template: 'Write a text-to-video generation prompt for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDescribe: scene, motion, style, colors, mood (max 120 words).\nReturn ONLY JSON: { "prompt": "...", "model": "wan-2-7-t2v" }', params: {} },
-        { id: 'step_generate', name: 'Generate Video',        tool: 'generate_video',          description: 'Generate branded video via Magnific', prompt_template: '{step_script.prompt}', params: {} },
+        { id: 'step_script',   name: 'Write Video Brief',         tool: 'claude_synthesize',      description: 'Draft a video concept brief', prompt_template: 'Write a cinematic video generation prompt for: {input}\nBrand niche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\n\nDescribe: scene, camera motion, lighting, style, colors, mood, and audio atmosphere (max 120 words).\nReturn ONLY JSON: { "prompt": "...", "model": "kling-v2-6-pro", "generate_audio": true }', params: {} },
+        { id: 'step_generate', name: 'Generate Video (Magnific)', tool: 'generate_video',         description: 'Generate branded video via Magnific Kling 2.6 Pro', prompt_template: '{step_script.prompt}', params: { model: 'kling-v2-6-pro', generate_audio: true } },
       ],
     },
     {
-      agent_key: 'nova', name: 'Content Mood Board',
-      description: 'Generate multiple visual concepts and image inspirations for a content campaign.',
+      agent_key: 'nova', name: 'Content Mood Board (Magnific One 16-Tile Sheet)',
+      description: 'Explore 16 visual variations in a single Magnific One draft contact sheet before rendering the hero asset.',
       steps: [
-        { id: 'step_concepts', name: 'Generate Visual Ideas', tool: 'claude_synthesize',       description: 'Create 5 visual mood board concepts', prompt_template: 'Generate 5 distinct visual mood board concepts for: {input}\nBrand: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\nFor each include: name, style, color palette, image prompt.\nReturn ONLY JSON array: [{ "name": "...", "style": "...", "colors": "...", "prompt": "..." }]', params: {} },
-        { id: 'step_generate', name: 'Generate Hero Image',   tool: 'freepik_generate_image',  description: 'Generate the primary mood board image via Freepik', prompt_template: '{step_concepts.result}', params: { use_first_prompt: true } },
-        { id: 'step_save',     name: 'Save Design',           tool: 'save_design',             description: 'Save mood board image to designs', prompt_template: '', params: {} },
+        { id: 'step_concepts', name: 'Draft Contact Sheet Brief', tool: 'claude_synthesize',      description: 'Create a rich art-directed prompt for a 16-tile Magnific One contact sheet', prompt_template: 'Write an art-directed Magnific One contact sheet prompt for: {input}\nBrand: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\nReturn ONLY JSON: { "prompt": "...", "mode": "draft", "tiles": 16, "aspect_ratio": "1:1" }', params: {} },
+        { id: 'step_generate', name: 'Generate 16-Tile Sheet',    tool: 'magnific_one_generate',  description: 'Generate a 16-tile contact sheet via Magnific One draft mode', prompt_template: '{step_concepts.prompt}', params: { mode: 'draft', tiles: 16, aspect_ratio: '1:1' } },
+        { id: 'step_save',     name: 'Save Contact Sheet',        tool: 'save_design',            description: 'Save mood board contact sheet to designs', prompt_template: '', params: {} },
+      ],
+    },
+    {
+      agent_key: 'nova', name: 'Magnific Multimodal Space (Image + Video + Audio)',
+      description: 'Execute a multi-node Magnific Space pipeline producing a 4K hero image, animated Kling 2.6 Pro video, and custom soundtrack.',
+      steps: [
+        { id: 'step_plan',     name: 'Design Multimodal Space',   tool: 'claude_synthesize',      description: 'Plan the Magnific Space nodes (image, video, music)', prompt_template: 'Design a 3-node Magnific Space for: {input}\nBrand: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\n\nReturn ONLY JSON: { "prompt": "...", "video_prompt": "...", "music_prompt": "..." }', params: {} },
+        { id: 'step_space',    name: 'Execute Magnific Space',    tool: 'magnific_space_flow',    description: 'Run the multi-node Magnific Space pipeline', prompt_template: '{step_plan.prompt}', params: { action: 'run_space', nodes: [{ id: 'hero', type: 'magnific-one', params: { mode: 'quality', resolution: '2k' } }, { id: 'motion', type: 'video', dependsOn: 'hero', params: { model: 'kling-v2-6-pro', duration: 5, generate_audio: true } }] } },
+        { id: 'step_save',     name: 'Save Hero Asset',           tool: 'save_design',            description: 'Save primary generated asset to designs', prompt_template: '', params: {} },
       ],
     },
     // ── Sage — Strategy Analyst ────────────────────────────────────────────

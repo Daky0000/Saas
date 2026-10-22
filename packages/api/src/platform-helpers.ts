@@ -149,8 +149,46 @@ export async function getUserConnectedAccounts(userId: string): Promise<any[]> {
 }
 
 const META_BASE_SCOPES = ['public_profile', 'pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
-export const META_INSTAGRAM_SCOPES = ['public_profile', 'pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'];
-export const INSTAGRAM_BUSINESS_SCOPES = ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_messages', 'instagram_business_manage_comments'];
+export const META_INSTAGRAM_SCOPES = [
+  'public_profile',
+  'pages_show_list',
+  'pages_read_engagement',
+  'business_management',
+  'instagram_basic',
+  'instagram_content_publish',
+  'instagram_manage_comments',
+  'instagram_manage_insights',
+  'instagram_manage_messages',
+];
+export const INSTAGRAM_BUSINESS_SCOPES = [
+  'instagram_business_basic',
+  'instagram_business_content_publish',
+  'instagram_business_manage_messages',
+  'instagram_business_manage_comments',
+];
+export const INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS = JSON.stringify({
+  setup: { channel: 'IG_API_ONBOARDING' },
+});
+
+export function isInstagramDirectLogin(input?: { accessToken?: string | null; tokenData?: any } | null): boolean {
+  const td = input?.tokenData && typeof input.tokenData === 'object' ? input.tokenData : {};
+  const graphHost = String(td.graph_host || td.graphHost || '').trim().toLowerCase();
+  const loginMethod = String(td.login_method || td.loginMethod || '').trim().toLowerCase();
+  if (graphHost === 'graph.instagram.com' || loginMethod === 'instagram' || loginMethod === 'instagram_direct') {
+    return true;
+  }
+  if (graphHost === 'graph.facebook.com' || loginMethod === 'facebook' || Boolean(td.pageId)) {
+    return false;
+  }
+  const tok = String(input?.accessToken || td.access_token || '').trim();
+  return tok.startsWith('IG');
+}
+
+export function resolveInstagramGraphBase(input?: { accessToken?: string | null; tokenData?: any } | null): string {
+  return isInstagramDirectLogin(input)
+    ? 'https://graph.instagram.com/v21.0'
+    : 'https://graph.facebook.com/v19.0';
+}
 
 export function getMetaOAuthScopeString(extraScopes: string[] = []): string {
   return Array.from(new Set([...META_BASE_SCOPES, ...extraScopes])).join(',');

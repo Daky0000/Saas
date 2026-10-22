@@ -12,7 +12,13 @@ import {
   getFreepikApiKey,
   magnificPost,
   pollMagnificTask,
+  magnificOneGenerate,
   magnificGenerateImage,
+  magnificEditImage,
+  magnificGenerateVideo,
+  magnificLipSync,
+  magnificGenerateAudio,
+  magnificExecuteSpaceOrFlow,
   freepikGenerateImage,
   sanitizeMagnificError,
   MAGNIFIC_IMAGE_MODELS,
@@ -20,6 +26,7 @@ import {
   ASPECT_RATIO_MAP,
   FREEPIK_IMAGE_MODELS,
 } from './magnificRoutes.ts';
+import { callMagnificMcpTool } from './mcpRoutes.ts';
 import {
   FAST_MODEL,
   recordAIUsage,
@@ -76,19 +83,26 @@ Your job is to review content the other agents produced against the user's brand
 You flag off-brand tone, factual overreach, weak hooks, and anything that would underperform — and you propose the concrete fix, not just the complaint.`,
 
   promo: `You are Promo, the Promotion & Media Planner on a user's marketing team.
-Your job is to generate 2-3 promotional content proposals — offers, launches, seasonal pushes — each pairing sharp copy with a described featured visual.
+Your job is to generate 2-3 promotional content proposals — offers, launches, seasonal pushes — each pairing sharp copy with a described featured visual powered by Magnific One, Nano Banana Pro, or Nano Banana 2.
 Use the user's liked-image style profile (agent_memory) when present so visuals match their taste.
-Each proposal must name the promotion angle, the copy hook, and the featured-image concept.`,
+Each proposal must name the promotion angle, the copy hook, and the exact Magnific prompt:
+- For editorial campaigns: Magnific One (draft 16-tile contact sheet -> 2K/4K quality render + 2-3 consistent style references + Brand Kit + Auto Layers).
+- For product photography with readable branding/labels: Nano Banana Pro using the 7-Part Typography Hierarchy (1. Composition First, 2. Exact Product Identity, 3. Dedicated Typography Block quoting exact text with no warped glyphs, 4. Specific Color Names, 5. Lighting Harmony, 6. Optical Control, 7. Negative Constraints).
+- For branded packaging/merchandise mockups: Nano Banana 2 in 4K with black-on-white logo reference and physical surface finish (deboss on glass/bottles, emboss on boxes, embroidered thread matching fabric on apparel/towels).`,
 
   daky: `You are Daky, a creative content writer AI agent working for a user's social media marketing team.
 Your job is to generate 2-3 concrete content proposals based on the user's brand profile, active platforms, and marketing goals.
-Each proposal should be a ready-to-use content piece or a clearly actionable content brief.
+Each proposal should be a ready-to-use content piece or a clearly actionable content brief, and when pairing with visuals, video, lip-sync avatars, or audio, specify the exact Magnific One, Nano Banana Pro/2, Seedance 2.5, Kling 3.0 / Omni, Kling 2.6 Motion Control, OmniHuman 1.5, or Magnific Audio prompt and parameters.
 You always match the user's brand tone and speak to their target audience.`,
 
-  nova: `You are Nova, an AI creative director working for a user's social media marketing team.
-Your job is to generate 2-3 visual content proposals — image concepts, campaign visuals, or design briefs — based on the user's brand.
-Each proposal should be specific enough that a designer or AI image generator can execute it immediately.
-Include style direction, color mood, and platform context in each proposal.`,
+  nova: `You are Nova, an AI creative director working for a user's social media marketing team and master of the Magnific Academy Multimodal Suite (Magnific One, Nano Banana Pro, Nano Banana 2, Mystic, Flux Kontext Pro, Creative & Precision Upscaler, Relight, Style Transfer, Image Expand, Variations Reframe/Storyboard, Designer Auto Layers, Seedance 2.5, Kling 3.0 Single/Multi-Shot, Kling 3.0 Omni, Kling 2.6 Motion Control, LTX 2 Pro, 3D Scenes, OmniHuman 1.5 Lip Sync, Sound Effects, ElevenLabs Music, SAM Audio Isolation, and Magnific Spaces, Lists & Flows).
+Your job is to generate 2-3 visual/multimodal proposals based on the user's brand.
+Follow Magnific Academy Golden Rules:
+1. Always specify exact model, aspect ratio, resolution, and background rules explicitly.
+2. For reusable characters/products: generate on a plain white studio background first ('nano-banana-2' in 4K) and build a single multi-view Character Profile Sheet (front, side, back, passport faces) to anchor consistency across all scenes; keep Character, Location, and Object nodes separate.
+3. For Magnific One: use Draft mode (tiles: 16 for exact aspect ratios across all 10 ratios) -> Final mode (2K/4K, High/Max), use 2-3 visually consistent style references (sweet spot), and pair with Brand Kit + Designer Auto Layers.
+4. For product micro-typography ('nano-banana-pro'): apply the 7-Part Hierarchy (Composition -> Exact Identity -> Dedicated Typography Block -> Specific Colors -> Lighting -> Optical Clarity -> Negative Constraints).
+5. For videos: use Seedance 2.5 in 15s chunks (480p/720p exploration -> 1080p production -> 4K Video Upscaler Precision/Creative + FPS Boost) with "no music" in multi-clip prompts (score music separately in ElevenLabs Music); use Kling 3.0 7-part formula (or action/camera-only when a Start Image is used, and <=512 chars/shot in Multi-Shot mode); use Kling 3.0 Omni with image references for multi-character lip-sync dialogue, object swaps, and product text stability in motion; and for Kling 2.6 Motion Control, NEVER describe the physical action in the prompt—only camera movement!`,
 
   sage: `You are Sage, an AI strategy analyst working for a user's social media marketing team.
 Your job is to generate 2-3 strategic marketing proposals based on the user's goals, audience, niche, and connected platforms.
@@ -101,8 +115,10 @@ Each proposal should identify a specific metric to track, an optimization to mak
 Be concrete — name the platform, the metric, and the expected impact.`,
 
   flux: `You are Flux, an AI automation and workflow specialist working for a user's social media marketing team.
-Your job is to generate 2-3 automation or workflow proposals based on the user's connected platforms and content cadence.
-Each proposal should describe a specific automation to set up — like cross-posting, scheduling cadences, or integration workflows.
+Your job is to generate 2-3 automation or workflow proposals based on the user's connected platforms, Magnific Spaces, Lists & Flows, and content cadence.
+Each proposal should describe a specific automation or reusable Magnific Flow to set up — such as:
+- Pre-flight cost simulation -> Assistant 'Export as List' -> List node batching (e.g. 20-language ad localization or Designer Node pink-placeholder multi-variant posts)
+- White-background Character Profile Sheet ('nano-banana-2' 4K) -> Scene Stills -> Seedance 2.5 / Kling 3.0 Omni video -> Media Extractor trim -> Video Combiner + ElevenLabs Music -> 4K Video Upscaler -> scheduled cross-posting.
 Be specific about which platforms, what triggers the automation, and what outcome it achieves.`,
 
   trend_research: `You are Trend, an AI trend research specialist for a user's marketing team.
@@ -125,24 +141,28 @@ Each proposal should be tied to a specific platform or content type and explain 
 Your job is to generate 2-3 platform-specific caption proposals with hooks, body copy, CTAs, and relevant hashtags.
 Tailor each proposal to the platform's format (Instagram, TikTok, LinkedIn, Twitter/X) and the brand's tone.`,
 
-  video_script: `You are Script, an AI video script writer for a user's marketing team.
-Your job is to generate 2-3 video script proposals — either short-form (under 60 seconds for Reels/TikTok) or long-form (YouTube).
-Each proposal should include a hook, structured outline, and key talking points with retention-focused transitions.`,
+  video_script: `You are Script, an AI video script and Magnific Academy Video/Lip-Sync director for a user's marketing team.
+Your job is to generate 2-3 video script proposals — UGC digital influencer reviews, Seedance 2.5 multi-clip narrative stories, Kling 3.0 Single/Multi-Shot sequences, Kling 3.0 Omni reference-driven dialogue scenes, Kling 2.6 Motion Control clips, or OmniHuman 1.5 talking avatars.
+Follow Magnific Academy Video Doctrine in every proposal:
+- For Seedance 2.5 stories: divide into 15-second chunks at 1080p, connect Character Profile Sheet + Location references, enable native dialogue/SFX but explicitly include "no music" in the video prompt (score music separately in ElevenLabs Music across emotional acts), and use Media Extractor / Clip Modify for surgical fixes.
+- For Kling 3.0 without Start Image: use the 7-Part Formula (Environment/Lighting -> Shot Framing -> Specific Character Traits -> Physical Action -> Cinematic Camera Move -> Visual Detail -> Ambient Sound). With a Start Image: prompt ONLY action and camera movement. In Multi-Shot mode: up to 6 shots, each <=512 characters, total <=15s.
+- For Kling 3.0 Omni: attach Character + Environment + Product references (no rigid Start Image) for expressive lip-sync dialogue or readable product typography in motion.
+- For Kling 2.6 Motion Control: NEVER describe the physical action in the prompt—describe ONLY camera framing and orbit/tracking movement!`,
 
   ad_copy: `You are Ads, an AI ad copywriter for a user's marketing team.
 Your job is to generate 2-3 ad copy proposals — each targeting a specific angle (pain, benefit, social proof) for Meta, Google, or YouTube ads.
 Include multiple headline and body copy variations per proposal with a clear CTA.`,
 
-  thumbnail_design: `You are Thumb, an AI thumbnail design strategist for a user's marketing team.
-Your job is to generate 2-3 thumbnail design proposals for YouTube or social ads — including concept direction, text overlay copy, color palette, and A/B test variants.
-Each proposal should be specific enough for a designer or AI image tool to execute.`,
+  thumbnail_design: `You are Thumb, an AI thumbnail design strategist for a user's marketing team powered by Magnific One, Nano Banana Pro, and Precision Upscaler.
+Your job is to generate 2-3 thumbnail design proposals for YouTube or social ads — including Magnific One 16:9 concept direction (draft 16-tile contact sheet -> 4K render with 2-3 consistent style references), Nano Banana Pro 7-part typography control, color palette, and A/B test variants.
+Each proposal should be specific enough for Magnific One or Nano Banana Pro to execute immediately.`,
 
   meta_ads: `You are Meta, an AI paid social manager for a user's marketing team.
 Your job is to generate 2-3 Meta (Facebook/Instagram) campaign proposals — including campaign objective, audience targeting, budget structure, and creative direction.
 Each proposal should include a brief performance optimization checklist.`,
 
   campaign_brief: `You are Brief, an AI campaign brief builder for a user's marketing team.
-Your job is to generate 2-3 complete, multi-channel campaign briefs with objectives, channel allocations, content calendar milestones, and KPI targets.
+Your job is to generate 2-3 complete, multi-channel campaign briefs with objectives, channel allocations, Magnific Space/Flow production pipelines (using the 6-folder Candela structure: character, locations, still frames, videos, audio, final edit), content calendar milestones, and KPI targets.
 Each proposal must be clear, actionable, and ready for immediate execution by the content and media team.`,
 };
 
@@ -151,17 +171,17 @@ const USER_AGENT_CHAT_PROMPTS: Record<string, string> = {
   trend_research: `You are Trend, an AI trend researcher. Chat with the user about viral formats, rising industry topics, and emerging consumer conversations in their niche. Keep replies energetic and timely.`,
   audience_research: `You are Persona, an AI audience researcher. Chat with the user about their ideal customer profile, deep emotional pain points, buying objections, and psychological triggers.`,
   seo_research: `You are SEO, an organic search keyword strategist. Chat with the user about search intent, high-converting keyword clusters, backlink angles, and ranking opportunities.`,
-  daky: `You are Daky, a creative content writer AI on the user's marketing team. Help them brainstorm content ideas, refine copy, and think through their content strategy. Be conversational, encouraging, and creative.`,
+  daky: `You are Daky, a creative content writer AI on the user's marketing team. Help them brainstorm content ideas, refine copy, and pair content with Magnific One visuals, Nano Banana Pro/2 product shots, Seedance 2.5 / Kling 3.0 Omni videos, or OmniHuman 1.5 talking avatars. Be conversational, encouraging, and creative.`,
   hook_writing: `You are Hook, an AI headline and hook master. Help the user craft scroll-stopping opening lines, subject lines, and attention-grabbing headlines. Always offer 2-3 variations.`,
   social_caption: `You are Caption, a social media copy specialist. Write platform-optimized captions with strong hooks, structured bodies, clear CTAs, and relevant hashtags for Instagram, TikTok, LinkedIn, or X.`,
-  video_script: `You are Script, a video retention scriptwriter. Help the user plan Reels, TikTok, YouTube Shorts, or long-form videos with tight pacing, retention resets, and visual cues.`,
-  nova: `You are Nova, a creative director AI. Chat with the user about visual concepts, design aesthetics, branding decisions, and campaign visuals. Be inspiring and specific.`,
+  video_script: `You are Script, a video retention scriptwriter and Magnific Academy Video/Lip-Sync director. Guide the user on Seedance 2.5 (15s chunks, 50 refs, "no music" multi-clip rule, surgical frame fixes & Modify), Kling 3.0 (7-part T2V formula, action-only I2V, 6-cut Multi-Shot <=512 chars/shot), Kling 3.0 Omni (multi-ref dialogue lip-sync & product text continuity), Kling 2.6 Motion Control (camera-only prompt rule), 3D Scenes motion transfer, and UGC influencer workflows.`,
+  nova: `You are Nova, a creative director AI and master of the Magnific Academy Suite: Magnific One (16-tile draft -> 4K final, 2-3 style ref sweet spot, Brand Kit + Auto Layers), Nano Banana Pro (7-part product typography hierarchy, sketch-to-modular interiors @img1+@img2, surgical frame/background edits), Nano Banana 2 (4K white-background Character Profile Sheets & deboss/emboss/embroidered mockups), Variations (Reframe/Storyboard + Split Grid + Upscaler), Seedance 2.5, Kling 3.0 / Omni / Motion Control, 3D Scenes, and Magnific Spaces, Lists & Flows.`,
   ad_copy: `You are Ads, a direct-response ad copywriter. Help the user craft high-converting Meta, Google, and TikTok ad angles (Pain, Transformation, Social Proof, Urgency).`,
-  thumbnail_design: `You are Thumb, a visual packaging and thumbnail strategist. Advise on high-CTR thumbnail layouts, color psychology, text badges, and facial emotion framing.`,
+  thumbnail_design: `You are Thumb, a visual packaging and thumbnail strategist using Magnific One, Nano Banana Pro, and Precision Upscaler. Advise on high-CTR thumbnail layouts, 7-part typography control, color psychology, text badges, and facial emotion framing.`,
   meta_ads: `You are Meta, a paid social performance manager. Advise the user on campaign budget optimization (CBO), creative testing structures, audience exclusions, and scaling setups.`,
   aria: `You are Aria, an analytics and performance AI. Help the user understand their KPIs, interpret metrics, and find optimisation opportunities. Be precise and quantitative.`,
-  flux: `You are Flux, an automation and workflow AI. Help the user design posting schedules, automation triggers, and workflow sequences. Be practical and step-by-step.`,
-  campaign_brief: `You are Brief, a full-funnel campaign planner. Help the user blueprint multi-week launch campaigns, channel coordination, promotional sequences, and success metrics.`,
+  flux: `You are Flux, an automation, Magnific Space/List/Flow, and workflow AI. Help the user design Assistant 'Export as List' batch pipelines (20-language ad translation, Designer Node pink-placeholder automation, Group->List->Batch Upscaler), reusable Flows, and cross-channel scheduling.`,
+  campaign_brief: `You are Brief, a full-funnel campaign planner. Help the user blueprint multi-week launch campaigns, 6-folder Magnific Space production pipelines (character, locations, still frames, videos, audio, final edit), channel coordination, and success metrics.`,
 };
 
 const REPLICATE_BASE = 'https://api.replicate.com';
@@ -181,6 +201,7 @@ const REPLICATE_MODEL_MAP: Record<string, { owner: string; name: string }> = {
   'seedream-v4':           { owner: 'black-forest-labs', name: 'flux-dev' },
   'gemini-flash':          { owner: 'black-forest-labs', name: 'flux-dev' },
   'nano-banana-pro':       { owner: 'black-forest-labs', name: 'flux-dev' },
+  'nano-banana-2':         { owner: 'black-forest-labs', name: 'flux-dev' },
   'mystic':                { owner: 'black-forest-labs', name: 'flux-dev' },
 };
 
@@ -260,44 +281,44 @@ type WfSeed = { name: string; description: string; steps: any[] };
 const WORKFLOW_DEFAULTS: Record<string, WfSeed[]> = {
   nova: [
     {
-      name: 'Brand Identity Visual', description: 'Search design concepts, tailor to brand memory, then generate a branded image via Freepik AI.',
+      name: 'Brand Identity Visual', description: 'Search design concepts, tailor to brand memory, then generate an art-directed hero image via Magnific One.',
       steps: [
         { id: 'step_search',   name: 'Search Designs',        tool: 'meigen_search',         description: 'Find design templates', prompt_template: 'Search for designs matching: {input}. Style niche: {brand.niche}', params: { top_n: 5 } },
-        { id: 'step_extract',  name: 'Extract Style Prompts', tool: 'claude_synthesize',      description: 'Extract visual styles and prompts', prompt_template: 'Extract 3–5 key visual styles with image prompts from:\n{step_search.result}', params: {} },
-        { id: 'step_tailor',   name: 'Tailor to Brand',       tool: 'claude_synthesize',      description: 'Blend inspiration with brand memory', prompt_template: 'Create one optimized image prompt for brand:\nNiche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\nDesigns: {step_extract.result}\n\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic" }', params: {} },
-        { id: 'step_generate', name: 'Generate via Freepik',  tool: 'freepik_generate_image', description: 'Generate image via Freepik AI', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true } },
+        { id: 'step_extract',  name: 'Extract Style Prompts', tool: 'claude_synthesize',      description: 'Extract visual styles and prompts', prompt_template: 'Extract 2–3 visually consistent style directions with image prompts from:\n{step_search.result}', params: {} },
+        { id: 'step_tailor',   name: 'Tailor to Brand',       tool: 'claude_synthesize',      description: 'Blend inspiration with brand memory', prompt_template: 'Create one optimized Magnific One creative-director intent prompt (subject, context, lighting, palette — no --ar flags) for brand:\nNiche: {brand.niche}\nTone: {brand.tone}\nAudience: {brand.audience}\nDesigns: {step_extract.result}\n\nReturn ONLY JSON: { "prompt": "...", "model": "magnific-one", "mode": "quality", "resolution": "2k" }', params: {} },
+        { id: 'step_generate', name: 'Generate via Magnific One', tool: 'magnific_one_generate', description: 'Generate art-directed image via Magnific One', prompt_template: '{step_tailor.prompt}', params: { auto_if_memory: true, mode: 'quality', resolution: '2k' } },
         { id: 'step_save',     name: 'Save Design',           tool: 'save_design',            description: 'Save to designs collection', prompt_template: '', params: {} },
       ],
     },
     {
-      name: 'Social Media Post Image', description: 'Generate a platform-optimized social media image tailored to brand and audience.',
+      name: 'Product Photography & Typography (Nano Banana Pro)', description: 'Generate tack-sharp product photography with accurate micro-typography using the 7-Part Magnific Academy Hierarchy.',
       steps: [
-        { id: 'step_brief',    name: 'Draft Visual Brief',   tool: 'claude_synthesize',       description: 'Write image brief for the post', prompt_template: 'Image brief for {input} social media post.\nNiche: {brand.niche}, tone: {brand.tone}, audience: {brand.audience}\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic" }', params: {} },
-        { id: 'step_generate', name: 'Generate via Freepik', tool: 'freepik_generate_image',  description: 'Generate via Freepik', prompt_template: '{step_brief.prompt}', params: {} },
-        { id: 'step_save',     name: 'Save Design',          tool: 'save_design',             description: 'Save to designs', prompt_template: '', params: {} },
+        { id: 'step_brief',    name: '7-Part Typography Prompt', tool: 'claude_synthesize',    description: 'Structure 7-part Nano Banana Pro prompt', prompt_template: 'Write a structured Nano Banana Pro prompt for {input} following the exact 7-Part Hierarchy:\n1. Composition First (diagonal/editorial framing & directional light)\n2. Exact Product Identity (proportions, silhouette, stitching, geometry)\n3. Dedicated Typography Block (exact quoted text, placement, alignment, "no misspellings, no extra letters, no warped glyphs")\n4. True Color Accuracy (specific color names)\n5. Lighting & Harmony\n6. Optical Control (shallow depth of field, tack-sharp focus on product and typography)\n7. Negative Constraints ("no extra logos, no duplicated text, no invented branding, no distorted lettering").\nBrand: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON: { "prompt": "...", "model": "nano-banana-pro" }', params: {} },
+        { id: 'step_generate', name: 'Render via Nano Banana Pro', tool: 'generate_image',     description: 'Generate product shot with Nano Banana Pro', prompt_template: '{step_brief.prompt}', params: { model: 'nano-banana-pro', resolution: '2k' } },
+        { id: 'step_save',     name: 'Save Design',              tool: 'save_design',          description: 'Save to designs', prompt_template: '', params: {} },
       ],
     },
     {
-      name: 'Product Promo Banner', description: 'Create a promotional banner using brand memory and Freepik generation.',
+      name: 'Branded Surface Mockup (Nano Banana 2 4K)', description: 'Create a 4K branded mockup with realistic deboss, emboss, or embroidered surface integration via Nano Banana 2.',
       steps: [
-        { id: 'step_concept',  name: 'Build Promo Concept',  tool: 'claude_synthesize',       description: 'Generate banner concept', prompt_template: 'Promo banner for: {input}\nNiche: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON: { "prompt": "...", "model": "freepik-mystic", "headline": "..." }', params: {} },
-        { id: 'step_generate', name: 'Generate via Freepik', tool: 'freepik_generate_image',  description: 'Generate banner via Freepik', prompt_template: '{step_concept.prompt}', params: {} },
-        { id: 'step_save',     name: 'Save Design',          tool: 'save_design',             description: 'Save to designs', prompt_template: '', params: {} },
+        { id: 'step_concept',  name: 'Build Surface Mockup Prompt', tool: 'claude_synthesize', description: 'Define surface finish (deboss/emboss/embroidery)', prompt_template: 'Write a Nano Banana 2 4K branded mockup prompt for: {input}\nNiche: {brand.niche}, tone: {brand.tone}\nSpecify clean editorial composition and physical brand integration (deboss on glass/bottles, emboss on packaging boxes, or embroidered thread matching fabric on apparel/towels), respecting edge margins, contact shadows, and surface texture.\nReturn ONLY JSON: { "prompt": "...", "model": "nano-banana-2", "aspect_ratio": "3:4" }', params: {} },
+        { id: 'step_generate', name: 'Render via Nano Banana 2',    tool: 'generate_image',    description: 'Generate 4K mockup via Nano Banana 2', prompt_template: '{step_concept.prompt}', params: { model: 'nano-banana-2', aspect_ratio: '3:4', resolution: '4k' } },
+        { id: 'step_save',     name: 'Save Design',                 tool: 'save_design',       description: 'Save to designs', prompt_template: '', params: {} },
       ],
     },
     {
-      name: 'AI Brand Video', description: 'Generate a short branded video clip using Magnific AI.',
+      name: 'AI Brand Video (Seedance 2.5 / Kling 3.0)', description: 'Generate a cinematic branded video using the Magnific Academy 7-Part Video Formula (Kling 3.0 / Seedance 2.5).',
       steps: [
-        { id: 'step_script',   name: 'Write Video Brief', tool: 'claude_synthesize',          description: 'Draft video concept', prompt_template: 'Text-to-video prompt for: {input}\nNiche: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON: { "prompt": "...", "model": "wan-2-7-t2v" }', params: {} },
-        { id: 'step_generate', name: 'Generate Video',    tool: 'generate_video',             description: 'Generate branded video', prompt_template: '{step_script.prompt}', params: {} },
+        { id: 'step_script',   name: 'Write 7-Part Video Brief', tool: 'claude_synthesize',    description: 'Draft structured 7-part video prompt', prompt_template: 'Write a cinematic video prompt (under 140 words) for: {input}\nNiche: {brand.niche}, tone: {brand.tone}\nFollow the Magnific Academy 7-Part Video Formula: (1) Environment & Lighting, (2) Shot Framing, (3) Specific Character/Subject Details, (4) Main Physical Action, (5) Cinematic Camera Movement (slow dolly-in, handheld tracking, orbit), (6) Visual Detail, (7) Synchronized Ambient Sound.\nReturn ONLY JSON: { "prompt": "...", "model": "kling-3-0" }', params: {} },
+        { id: 'step_generate', name: 'Generate Video',           tool: 'generate_video',       description: 'Generate branded video via Magnific', prompt_template: '{step_script.prompt}', params: { model: 'kling-3-0' } },
       ],
     },
     {
-      name: 'Content Mood Board', description: 'Generate multiple visual concepts for a content campaign via Freepik.',
+      name: 'Magnific One 16-Tile Draft & 4K Space', description: 'Explore 16 visual directions in a draft contact sheet, then render a 4K hero image in a Magnific Space.',
       steps: [
-        { id: 'step_concepts', name: 'Generate Visual Ideas', tool: 'claude_synthesize',      description: 'Create 5 mood board concepts', prompt_template: '5 visual mood board concepts for: {input}\nBrand: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON array: [{ "name": "...", "prompt": "..." }]', params: {} },
-        { id: 'step_generate', name: 'Generate Hero Image',   tool: 'freepik_generate_image', description: 'Generate hero image via Freepik', prompt_template: '{step_concepts.result}', params: { use_first_prompt: true } },
-        { id: 'step_save',     name: 'Save Design',           tool: 'save_design',            description: 'Save to designs', prompt_template: '', params: {} },
+        { id: 'step_concepts', name: 'Art Direction Brief', tool: 'claude_synthesize',        description: 'Draft art-direction intent prompt', prompt_template: 'Art-directed campaign visual prompt for: {input}\nBrand: {brand.niche}, tone: {brand.tone}\nReturn ONLY JSON: { "prompt": "...", "aspect_ratio": "16:9" }', params: {} },
+        { id: 'step_space',    name: 'Run Magnific Space',  tool: 'magnific_space_flow',      description: 'Execute 16-tile draft -> 4K hero Space', prompt_template: '{step_concepts.result}', params: { action: 'run_space' } },
+        { id: 'step_save',     name: 'Save Design',         tool: 'save_design',              description: 'Save to designs', prompt_template: '', params: {} },
       ],
     },
   ],
@@ -1909,14 +1930,27 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             stepResults[step.id] = { result };
             send({ type: 'step_done', step_id: step.id });
 
-          } else if (step.tool === 'generate_image') {
+          } else if (step.tool === 'generate_image' || step.tool === 'magnific_one_generate') {
             let finalPrompt = description || 'professional brand design';
-            let finalModel = 'flux-2-turbo';
-            const tailorResult = stepResults['step_tailor']?.result ?? '';
-            const parsed = _extractJsonFromText(tailorResult);
-            if (parsed?.prompt) { finalPrompt = parsed.prompt; finalModel = parsed.model ?? finalModel; }
-            else if (tailorResult) { finalPrompt = tailorResult.slice(0, 900); }
-            if (!MAGNIFIC_IMAGE_MODELS[finalModel]) finalModel = 'flux-2-turbo';
+            let finalModel = step.tool === 'magnific_one_generate' ? 'magnific-one' : 'magnific-one';
+            let mode = step.params?.mode || 'quality';
+            let resolution = step.params?.resolution || '2k';
+            let aspectRatio = step.params?.aspect_ratio || '1:1';
+            for (const k of Object.keys(stepResults)) {
+              const r = stepResults[k]?.result ?? '';
+              if (r) {
+                const parsed = _extractJsonFromText(r);
+                if (parsed?.prompt) {
+                  finalPrompt = parsed.prompt;
+                  if (parsed.model && MAGNIFIC_IMAGE_MODELS[parsed.model]) finalModel = parsed.model;
+                  if (parsed.mode) mode = parsed.mode;
+                  if (parsed.resolution) resolution = parsed.resolution;
+                  if (parsed.aspect_ratio) aspectRatio = parsed.aspect_ratio;
+                  break;
+                }
+              }
+            }
+            if (!MAGNIFIC_IMAGE_MODELS[finalModel]) finalModel = 'magnific-one';
             if (!hasBrandMemory && !auto) {
               send({ type: 'prompt_ready', prompt: _addPlaceholders(finalPrompt), model: finalModel, has_memory: false, needs_input: true });
               send({ type: 'done' }); return res.end();
@@ -1924,25 +1958,35 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             send({ type: 'prompt_ready', prompt: finalPrompt, model: finalModel, has_memory: hasBrandMemory, needs_input: false });
             const magnificApiKey = await getMagnificApiKey(pool);
             if (!magnificApiKey) { send({ type: 'error', message: 'Image generation not configured — set up Magnific in Admin.' }); send({ type: 'done' }); return res.end(); }
-            send({ type: 'step_progress', step_id: step.id, message: `Submitting to Magnific…` });
+            send({ type: 'step_progress', step_id: step.id, message: `Submitting to Magnific (${finalModel})…` });
             const genId = randomUUID();
             await dbQuery(`INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status) VALUES ($1, $2, 'image', $3, $4, $5, 'pending')`,
-              [genId, auth.userId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow' })]).catch(() => undefined);
+              [genId, auth.userId, finalModel, finalPrompt, JSON.stringify({ source: 'nova_workflow', mode, resolution, aspect_ratio: aspectRatio })]).catch(() => undefined);
             let imageUrl: string | null = null;
+            let imageUrls: string[] = [];
             try {
-              const genResult = await magnificGenerateImage(finalModel, finalPrompt, 'square_1_1', magnificApiKey, (status) => send({ type: 'step_progress', step_id: step.id, message: `Generation ${status}…` }));
+              const genResult = await magnificGenerateImage(
+                finalModel,
+                finalPrompt,
+                aspectRatio,
+                magnificApiKey,
+                (status) => send({ type: 'step_progress', step_id: step.id, message: `Magnific ${status}…` }),
+                { mode, resolution, tiles: step.params?.tiles, reference_images: step.params?.reference_images }
+              );
               if (genResult.error) throw new Error(genResult.error);
               if (genResult.taskId) await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [genResult.taskId, genId]).catch(() => undefined);
               imageUrl = genResult.url;
+              imageUrls = genResult.urls ?? (imageUrl ? [imageUrl] : []);
             } catch (e: any) {
               const errMsg = e?.message ?? 'Generation failed';
               await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
               send({ type: 'error', message: errMsg }); send({ type: 'done' }); return res.end();
             }
             await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
-            stepResults[step.id] = { url: imageUrl, gen_id: genId, model: finalModel, prompt: finalPrompt };
+            await chargeAICredits(auth.userId, MAGNIFIC_IMAGE_MODELS[finalModel]?.credits ?? 6, 'image_generate_magnific', { source: 'agent_workflow', gen_id: genId });
+            stepResults[step.id] = { url: imageUrl, urls: imageUrls, gen_id: genId, model: finalModel, prompt: finalPrompt };
             send({ type: 'step_done', step_id: step.id });
-            send({ type: 'image_ready', url: imageUrl, model: finalModel, prompt: finalPrompt });
+            send({ type: 'image_ready', url: imageUrl, urls: imageUrls, model: finalModel, prompt: finalPrompt });
 
           } else if (step.tool === 'freepik_generate_image') {
             let freepikPrompt = description || 'professional brand design';
@@ -1955,8 +1999,22 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             const { rows: cRows } = await dbQuery(`SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]).catch(() => ({ rows: [] as any[] }));
             const currentCredits = cRows[0]?.credits ?? 0;
             if (cRows.length > 0 && currentCredits < freepikCreditCost) { send({ type: 'error', message: `Insufficient credits (need ${freepikCreditCost}, have ${currentCredits}). Buy credits at /credits.` }); send({ type: 'done' }); return res.end(); }
+            // Prefer Magnific One / Mystic if Magnific is configured
+            const magnificApiKey = await getMagnificApiKey(pool);
+            if (magnificApiKey) {
+              send({ type: 'prompt_ready', prompt: freepikPrompt, model: 'magnific-one', has_memory: hasBrandMemory, needs_input: false });
+              send({ type: 'step_progress', step_id: step.id, message: 'Submitting to Magnific One…' });
+              const magRes = await magnificOneGenerate({ prompt: freepikPrompt, mode: 'quality', resolution: '2k' }, magnificApiKey, (status) => send({ type: 'step_progress', step_id: step.id, message: `Magnific One: ${status}…` }));
+              if (!magRes.error && magRes.url) {
+                await chargeAICredits(auth.userId, 6, 'image_generate_magnific_one', { source: 'agent_workflow' });
+                stepResults[step.id] = { url: magRes.url, urls: magRes.urls, model: 'magnific-one', prompt: freepikPrompt };
+                send({ type: 'step_done', step_id: step.id });
+                send({ type: 'image_ready', url: magRes.url, urls: magRes.urls, model: 'magnific-one', prompt: freepikPrompt });
+                continue;
+              }
+            }
             const freepikApiKey = await getFreepikApiKey(pool);
-            if (!freepikApiKey) { send({ type: 'error', message: 'Freepik not configured — add FREEPIK_API_KEY in environment or Admin settings.' }); send({ type: 'done' }); return res.end(); }
+            if (!freepikApiKey) { send({ type: 'error', message: 'Magnific / Freepik not configured — add API key in Admin → Magnific AI.' }); send({ type: 'done' }); return res.end(); }
             send({ type: 'prompt_ready', prompt: freepikPrompt, model: freepikModel, has_memory: hasBrandMemory, needs_input: false });
             send({ type: 'step_progress', step_id: step.id, message: 'Submitting to Freepik…' });
             const freepikResult = await freepikGenerateImage(freepikModel, freepikPrompt, 'square_1_1', freepikApiKey, (status) => send({ type: 'step_progress', step_id: step.id, message: `Freepik: ${status}…` }));
@@ -1967,14 +2025,30 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
             send({ type: 'step_done', step_id: step.id });
             send({ type: 'image_ready', url: freepikImageUrl, model: freepikModel, prompt: freepikPrompt });
 
+          } else if (step.tool === 'magnific_edit_image') {
+            const magnificApiKey = await getMagnificApiKey(pool);
+            if (!magnificApiKey) { send({ type: 'error', message: 'Magnific not configured in Admin.' }); send({ type: 'done' }); return res.end(); }
+            const prevStep = Object.values(stepResults).reverse().find((r: any) => r?.url);
+            const editRes = await magnificEditImage({
+              type: step.params?.type || 'upscale',
+              image_url: step.params?.image_url || prevStep?.url,
+              prompt: step.params?.prompt || description,
+              scale_factor: step.params?.scale_factor || '2x',
+            }, magnificApiKey);
+            if (editRes.error || !editRes.url) { send({ type: 'error', message: editRes.error || 'Magnific edit failed' }); send({ type: 'done' }); return res.end(); }
+            await chargeAICredits(auth.userId, 5, 'image_edit_magnific', { source: 'agent_workflow' });
+            stepResults[step.id] = { url: editRes.url, model: step.params?.type || 'upscale', prompt: description };
+            send({ type: 'step_done', step_id: step.id });
+            send({ type: 'image_ready', url: editRes.url, model: step.params?.type || 'upscale', prompt: description });
+
           } else if (step.tool === 'generate_video') {
             let videoPrompt = description || 'professional branded video';
-            let videoModel = 'wan-2-7-t2v';
+            let videoModel = step.params?.model || 'kling-v2-6-pro';
             for (const k of Object.keys(stepResults)) {
               const r = stepResults[k]?.result ?? '';
               if (r) { const p = _extractJsonFromText(r); if (p?.prompt) { videoPrompt = p.prompt; if (p.model && MAGNIFIC_VIDEO_MODELS[p.model]) videoModel = p.model; break; } }
             }
-            const vidModelCfg = MAGNIFIC_VIDEO_MODELS[videoModel] ?? MAGNIFIC_VIDEO_MODELS['wan-2-7-t2v'];
+            const vidModelCfg = MAGNIFIC_VIDEO_MODELS[videoModel] ?? MAGNIFIC_VIDEO_MODELS['kling-v2-6-pro'];
             const vidCreditCost = vidModelCfg.credits;
             const { rows: vcRows } = await dbQuery(`SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]).catch(() => ({ rows: [] as any[] }));
             const vcCredits = vcRows[0]?.credits ?? 0;
@@ -1986,18 +2060,87 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
               send({ type: 'step_done', step_id: step.id });
               send({ type: 'video_ready', url: fallbackVideoUrl, model: videoModel, prompt: videoPrompt });
             } else {
-              send({ type: 'step_progress', step_id: step.id, message: 'Submitting video to Magnific…' });
-              const vidSubmit = await magnificPost(vidModelCfg.endpoint, { prompt: videoPrompt }, vidApiKey);
-              if (vidSubmit.status >= 400) { send({ type: 'error', message: sanitizeMagnificError(vidSubmit.data?.message ?? `Magnific video error ${vidSubmit.status}`) }); send({ type: 'done' }); return res.end(); }
-              const vidTaskId: string = vidSubmit.data?.data?.task_id ?? vidSubmit.data?.task_id ?? vidSubmit.data?.data?.id ?? vidSubmit.data?.id;
-              if (!vidTaskId) { send({ type: 'error', message: 'No task_id returned from Magnific for video' }); send({ type: 'done' }); return res.end(); }
-              const vidPoll = await pollMagnificTask(vidModelCfg.pollPath(vidTaskId), vidApiKey, 300, (status) => send({ type: 'step_progress', step_id: step.id, message: `Video: ${status}…` }));
-              if (vidPoll.error || !vidPoll.url) { send({ type: 'error', message: vidPoll.error || 'Video generation failed' }); send({ type: 'done' }); return res.end(); }
+              send({ type: 'step_progress', step_id: step.id, message: `Submitting video to Magnific (${videoModel})…` });
+              const prevImg = Object.values(stepResults).reverse().find((r: any) => r?.url && !String(r.url).endsWith('.mp4'))?.url;
+              const vidRes = await magnificGenerateVideo(
+                { model: videoModel, prompt: videoPrompt, image_url: step.params?.image_url || prevImg, duration: step.params?.duration, generate_audio: step.params?.generate_audio ?? true },
+                vidApiKey,
+                (status) => send({ type: 'step_progress', step_id: step.id, message: `Video: ${status}…` })
+              );
+              if (vidRes.error || !vidRes.url) { send({ type: 'error', message: vidRes.error || 'Video generation failed' }); send({ type: 'done' }); return res.end(); }
               await chargeAICredits(auth.userId, vidCreditCost, 'video_generate', { source: 'agent_workflow' });
-              stepResults[step.id] = { url: vidPoll.url, model: videoModel, prompt: videoPrompt };
+              stepResults[step.id] = { url: vidRes.url, model: vidRes.model, prompt: videoPrompt };
               send({ type: 'step_done', step_id: step.id });
-              send({ type: 'video_ready', url: vidPoll.url, model: videoModel, prompt: videoPrompt });
+              send({ type: 'video_ready', url: vidRes.url, model: vidRes.model, prompt: videoPrompt });
             }
+
+          } else if (step.tool === 'magnific_lip_sync') {
+            const vidApiKey = await getMagnificApiKey(pool);
+            if (!vidApiKey) { send({ type: 'error', message: 'Magnific not configured in Admin.' }); send({ type: 'done' }); return res.end(); }
+            const prevImg = Object.values(stepResults).reverse().find((r: any) => r?.url && !String(r.url).endsWith('.mp3'))?.url;
+            const prevAud = Object.values(stepResults).reverse().find((r: any) => r?.audio_url || (r?.url && String(r.url).endsWith('.mp3')))?.url;
+            send({ type: 'step_progress', step_id: step.id, message: 'Animating lip-sync with OmniHuman 1.5…' });
+            const lipRes = await magnificLipSync(
+              {
+                image_url: step.params?.image_url || prevImg,
+                audio_url: step.params?.audio_url || prevAud,
+                prompt: step.params?.prompt || description,
+                resolution: step.params?.resolution || '1080p',
+              },
+              vidApiKey,
+              (status) => send({ type: 'step_progress', step_id: step.id, message: `OmniHuman 1.5: ${status}…` })
+            );
+            if (lipRes.error || !lipRes.url) { send({ type: 'error', message: lipRes.error || 'Lip sync failed' }); send({ type: 'done' }); return res.end(); }
+            await chargeAICredits(auth.userId, 30, 'lipsync_generate_omnihuman', { source: 'agent_workflow' });
+            stepResults[step.id] = { url: lipRes.url, model: 'omni-human-1-5', prompt: description };
+            send({ type: 'step_done', step_id: step.id });
+            send({ type: 'video_ready', url: lipRes.url, model: 'omni-human-1-5', prompt: description });
+
+          } else if (step.tool === 'magnific_generate_audio') {
+            const audApiKey = await getMagnificApiKey(pool);
+            if (!audApiKey) { send({ type: 'error', message: 'Magnific not configured in Admin.' }); send({ type: 'done' }); return res.end(); }
+            send({ type: 'step_progress', step_id: step.id, message: 'Generating audio with Magnific…' });
+            const audRes = await magnificGenerateAudio(
+              {
+                type: step.params?.type || 'sound-effects',
+                prompt: step.params?.prompt || description,
+                text: step.params?.text || description,
+                description: step.params?.description || description,
+                duration_seconds: step.params?.duration_seconds,
+              },
+              audApiKey,
+              (status) => send({ type: 'step_progress', step_id: step.id, message: `Audio: ${status}…` })
+            );
+            if (audRes.error || !audRes.url) { send({ type: 'error', message: audRes.error || 'Audio generation failed' }); send({ type: 'done' }); return res.end(); }
+            await chargeAICredits(auth.userId, 5, 'audio_generate_magnific', { source: 'agent_workflow' });
+            stepResults[step.id] = { url: audRes.url, audio_url: audRes.url, model: audRes.type, prompt: description };
+            send({ type: 'step_done', step_id: step.id });
+
+          } else if (step.tool === 'magnific_space_flow') {
+            const spaceApiKey = await getMagnificApiKey(pool);
+            if (!spaceApiKey) { send({ type: 'error', message: 'Magnific not configured in Admin.' }); send({ type: 'done' }); return res.end(); }
+            let spaceGoal = description || 'Editorial brand campaign';
+            let spaceAspect = step.params?.aspect_ratio || '16:9';
+            for (const k of Object.keys(stepResults)) {
+              const r = stepResults[k]?.result ?? '';
+              if (r) { const p = _extractJsonFromText(r); if (p?.prompt) { spaceGoal = p.prompt; if (p.aspect_ratio) spaceAspect = p.aspect_ratio; break; } }
+            }
+            send({ type: 'step_progress', step_id: step.id, message: 'Running Magnific Space (16-tile draft → 4K quality)…' });
+            const mcpCaller = (toolName: string, toolArgs: Record<string, unknown>) =>
+              callMagnificMcpTool(pool, toolName, toolArgs, (val: unknown) => {
+                const dec = decryptPlatformConfig(val as any);
+                return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
+              });
+            const spaceRes = await magnificExecuteSpaceOrFlow(
+              { action: step.params?.action || 'run_space', goal: spaceGoal, aspect_ratio: spaceAspect, nodes: step.params?.nodes },
+              spaceApiKey,
+              mcpCaller
+            );
+            if (!spaceRes.success || !spaceRes.final_url) { send({ type: 'error', message: spaceRes.error || 'Magnific Space failed' }); send({ type: 'done' }); return res.end(); }
+            await chargeAICredits(auth.userId, spaceRes.estimated_credits ?? 10, 'magnific_space_flow', { source: 'agent_workflow' });
+            stepResults[step.id] = { url: spaceRes.final_url, node_results: spaceRes.node_results, model: 'magnific-one', prompt: spaceGoal };
+            send({ type: 'step_done', step_id: step.id });
+            send({ type: 'image_ready', url: spaceRes.final_url, model: 'magnific-one', prompt: spaceGoal });
 
           } else if (step.tool === 'draft_content' || step.tool === 'summarize_content') {
             let prompt = step.prompt_template
@@ -2038,9 +2181,18 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
-    const { prompt = '', model = 'wan-2-7-t2v', aspect_ratio = '16:9' } = req.body as { prompt?: string; model?: string; aspect_ratio?: string };
-    if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
-    const modelConfig = MAGNIFIC_VIDEO_MODELS[model] ?? MAGNIFIC_VIDEO_MODELS['wan-2-7-t2v'];
+    const { prompt = '', model = 'kling-v2-6-pro', aspect_ratio = '16:9', image_url, duration, resolution, generate_audio } = req.body as {
+      prompt?: string;
+      model?: string;
+      aspect_ratio?: string;
+      image_url?: string;
+      duration?: number | string;
+      resolution?: string;
+      generate_audio?: boolean;
+    };
+    if (!prompt.trim() && !image_url?.trim()) return res.status(400).json({ error: 'Prompt or image_url is required' });
+    const modelKey = MAGNIFIC_VIDEO_MODELS[model] ? model : (image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
+    const modelConfig = MAGNIFIC_VIDEO_MODELS[modelKey] ?? MAGNIFIC_VIDEO_MODELS['kling-v2-6-pro'];
     const creditCost = modelConfig.credits;
     const credRow = await pool!.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id = $1', [auth.userId]).catch(() => ({ rows: [] as { credits: number }[] }));
     const currentCredits = credRow.rows[0]?.credits ?? 0;
@@ -2048,7 +2200,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     const apiKey = await getMagnificApiKey(pool);
     const genId = randomUUID();
     await pool!.query(`INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status) VALUES ($1, $2, 'video', $3, $4, $5, 'pending')`,
-      [genId, auth.userId, model, prompt.trim(), JSON.stringify({ aspect_ratio })]).catch(() => undefined);
+      [genId, auth.userId, modelKey, prompt.trim(), JSON.stringify({ aspect_ratio, duration, resolution, generate_audio })]).catch(() => undefined);
     if (!apiKey) {
       const fallbackVideoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
       await pool!.query(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [fallbackVideoUrl, genId]).catch(() => undefined);
@@ -2056,33 +2208,27 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
       const dName = `AI Video — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
       await pool!.query(
         `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, media_type, updated_at) VALUES ($1, $2, $3, 1080, 1920, $4, $5, 'video', NOW())`,
-        [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl: fallbackVideoUrl, prompt: prompt.trim(), model }), fallbackVideoUrl],
+        [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl: fallbackVideoUrl, prompt: prompt.trim(), model: modelKey }), fallbackVideoUrl],
       ).catch(() => undefined);
       return res.json({ success: true, url: fallbackVideoUrl, design_id: designId, gen_id: genId, fallback: true });
     }
     try {
-      const submitResp = await magnificPost(modelConfig.endpoint, { prompt: prompt.trim() }, apiKey);
-      if (submitResp.status >= 400) {
-        const errMsg = sanitizeMagnificError(submitResp.data?.message ?? `Magnific API error ${submitResp.status}`);
-        await pool!.query(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [errMsg, genId]).catch(() => undefined);
-        return res.status(400).json({ error: errMsg });
-      }
-      const taskId: string = submitResp.data?.data?.task_id ?? submitResp.data?.task_id ?? submitResp.data?.data?.id ?? submitResp.data?.id;
-      if (!taskId) throw new Error('No task_id returned from Magnific');
-      await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [taskId, genId]).catch(() => undefined);
-      const result = await pollMagnificTask(modelConfig.pollPath(taskId), apiKey, 300);
+      const result = await magnificGenerateVideo(
+        { model: modelKey, prompt: prompt.trim(), image_url, duration, resolution: resolution as any, aspect_ratio, generate_audio },
+        apiKey
+      );
       if (result.error || !result.url) throw new Error(result.error || 'Video generation returned no URL');
       const videoUrl = result.url;
       // Charge credits ONLY after verified completion (credit refund safety)
-      await chargeAICredits(auth.userId, creditCost, 'video_generate', { gen_id: genId });
-      await pool!.query(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [videoUrl, genId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'video_generate', { gen_id: genId, model: result.model });
+      await pool!.query(`UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`, [result.taskId, videoUrl, genId]).catch(() => undefined);
       const designId = randomUUID();
       const dName = `AI Video — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
       await pool!.query(
         `INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, media_type, updated_at) VALUES ($1, $2, $3, 1080, 1920, $4, $5, 'video', NOW())`,
-        [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl, prompt: prompt.trim(), model }), videoUrl],
+        [designId, auth.userId, dName, JSON.stringify({ type: 'ai_video', videoUrl, prompt: prompt.trim(), model: result.model }), videoUrl],
       ).catch(() => undefined);
-      return res.json({ success: true, url: videoUrl, design_id: designId, gen_id: genId });
+      return res.json({ success: true, url: videoUrl, model: result.model, design_id: designId, gen_id: genId });
     } catch (e: any) {
       await pool!.query(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
       return res.status(500).json({ error: e.message, credits_charged: 0 });
@@ -2093,10 +2239,30 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
-    const { prompt = '', model = 'flux-2-turbo', aspect_ratio = '1:1', save = true } = req.body as { prompt?: string; model?: string; aspect_ratio?: string; save?: boolean };
+    const {
+      prompt = '',
+      model = 'magnific-one',
+      aspect_ratio = '1:1',
+      save = true,
+      mode,
+      quality,
+      resolution,
+      tiles,
+      reference_images,
+    } = req.body as {
+      prompt?: string;
+      model?: string;
+      aspect_ratio?: string;
+      save?: boolean;
+      mode?: 'draft' | 'quality';
+      quality?: 'normal' | 'high';
+      resolution?: '1k' | '2k' | '4k';
+      tiles?: 8 | 16;
+      reference_images?: string[];
+    };
     if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
     const isFreepikModel = !!FREEPIK_IMAGE_MODELS[model];
-    const magnificCfg = !isFreepikModel ? (MAGNIFIC_IMAGE_MODELS[model] ?? MAGNIFIC_IMAGE_MODELS['flux-2-turbo']) : null;
+    const magnificCfg = !isFreepikModel ? (MAGNIFIC_IMAGE_MODELS[model] ?? MAGNIFIC_IMAGE_MODELS['magnific-one']) : null;
     const creditCost = isFreepikModel ? FREEPIK_IMAGE_MODELS[model].credits : magnificCfg!.credits;
     const { rows: creditRows } = await dbQuery(`SELECT credits FROM user_credits WHERE user_id = $1`, [auth.userId]).catch(() => ({ rows: [] as any[] }));
     const currentCredits = creditRows[0]?.credits ?? 50;
@@ -2104,63 +2270,78 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     const aspectStr = ASPECT_RATIO_MAP[aspect_ratio] ?? 'square_1_1';
     const genId = randomUUID();
     await dbQuery(`INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status) VALUES ($1, $2, 'image', $3, $4, $5, 'pending')`,
-      [genId, auth.userId, model, prompt.trim(), JSON.stringify({ source: 'nova_manual', aspect_ratio })]).catch(() => undefined);
+      [genId, auth.userId, model, prompt.trim(), JSON.stringify({ source: 'nova_manual', aspect_ratio, mode, resolution })]).catch(() => undefined);
     try {
       let imageUrl: string | null = null;
+      let imageUrls: string[] = [];
       let actualCreditCost = creditCost;
       let usedFallbackPoster = false;
-      const replicateKey = await getReplicateApiKey();
-      if (replicateKey) {
-        const result = await replicateGenerateImage(model, prompt.trim(), aspectStr, replicateKey);
-        if (!result.error) { imageUrl = result.url; }
-        else {
-          logger.info('[generate-image] Replicate failed:', result.error);
-          if (String(result.error).includes('Invalid Replicate')) {
-            await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [result.error, genId]).catch(() => undefined);
-            return res.status(400).json({ error: result.error });
-          }
-          logger.info('[generate-image] Replicate non-auth error, trying Magnific / Freepik fallback');
-        }
-      }
-      if (!imageUrl && !isFreepikModel) {
+
+      // 1. Primary Engine: Magnific AI (Magnific One, Mystic, Flux Kontext Pro, Seedream V4.5, etc.)
+      if (!isFreepikModel) {
         const magnificKey = await getMagnificApiKey(pool);
         if (magnificKey) {
-          const genResult = await magnificGenerateImage(model, prompt.trim(), aspectStr, magnificKey);
-          if (!genResult.error) {
+          const genResult = await magnificGenerateImage(model, prompt.trim(), aspect_ratio, magnificKey, undefined, {
+            mode,
+            quality,
+            resolution,
+            tiles,
+            reference_images,
+          });
+          if (!genResult.error && genResult.url) {
             imageUrl = genResult.url;
+            imageUrls = genResult.urls ?? [imageUrl];
             if (genResult.taskId) await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='processing' WHERE id=$2`, [genResult.taskId, genId]).catch(() => undefined);
           } else {
-            logger.info('[generate-image] Magnific fallback failed, trying Freepik');
+            logger.info('[generate-image] Magnific primary returned error, trying fallback:', genResult.error);
           }
         }
       }
+
+      // 2. Secondary Fallback: Replicate
+      if (!imageUrl && !isFreepikModel) {
+        const replicateKey = await getReplicateApiKey();
+        if (replicateKey) {
+          const result = await replicateGenerateImage(model, prompt.trim(), aspectStr, replicateKey);
+          if (!result.error && result.url) {
+            imageUrl = result.url;
+            imageUrls = [imageUrl];
+          }
+        }
+      }
+
+      // 3. Tertiary Fallback: Freepik
       if (!imageUrl) {
         const freepikKey = await getFreepikApiKey(pool);
         if (freepikKey) {
           const freepikModel = isFreepikModel ? model : 'freepik-mystic';
           actualCreditCost = FREEPIK_IMAGE_MODELS[freepikModel]?.credits ?? 5;
           const freepikResult = await freepikGenerateImage(freepikModel, prompt.trim(), aspectStr, freepikKey);
-          if (!freepikResult.error) {
+          if (!freepikResult.error && freepikResult.url) {
             imageUrl = freepikResult.url;
+            imageUrls = [imageUrl];
           }
         }
       }
+
+      // 4. Local dev / zero-provider luxury SVG poster fallback (charges 1 credit)
       if (!imageUrl) {
-        // Local dev / zero-provider luxury SVG poster fallback (charges 1 credit)
         imageUrl = generateLuxuryBrandPosterDataUrl(prompt.trim(), aspect_ratio, 'DAKYWORLD STUDIO');
+        imageUrls = [imageUrl];
         usedFallbackPoster = true;
         actualCreditCost = 1;
       }
+
       await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
       let designId: string | null = null;
       if (save && imageUrl) {
         designId = randomUUID();
         const dName = `AI Design — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
         await dbQuery(`INSERT INTO user_designs (id, user_id, name, canvas_width, canvas_height, canvas_data, thumbnail_url, updated_at) VALUES ($1, $2, $3, 1080, 1080, $4, $5, NOW())`,
-          [designId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, prompt: prompt.trim(), model }), imageUrl]).catch(() => undefined);
+          [designId, auth.userId, dName, JSON.stringify({ type: 'ai_image', imageUrl, imageUrls, prompt: prompt.trim(), model }), imageUrl]).catch(() => undefined);
       }
       await chargeAICredits(auth.userId, actualCreditCost, 'image_generate', { gen_id: genId, model, fallback: usedFallbackPoster });
-      return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId, fallback: usedFallbackPoster });
+      return res.json({ success: true, url: imageUrl, urls: imageUrls, design_id: designId, gen_id: genId, fallback: usedFallbackPoster });
     } catch (e: any) {
       await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
       return res.status(500).json({ error: e.message });

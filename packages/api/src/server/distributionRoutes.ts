@@ -2,7 +2,7 @@ import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
 import { decodeHtmlEntities } from '../link-metadata.ts';
 import { hasDatabase } from '../db.ts';
 import { encryptIntegrationSecret, upsertUserIntegration } from '../integration-helpers.ts';
-import { formatSocialAccountLabel, getVisibleUserPlatformSlugs, resolveOAuthRedirectUri } from '../platform-helpers.ts';
+import { formatSocialAccountLabel, getVisibleUserPlatformSlugs, isInstagramDirectLogin, resolveInstagramGraphBase, resolveOAuthRedirectUri } from '../platform-helpers.ts';
 import { getLinkedInScopeSet, parseLinkedInScopeList, computeIsoFromTtlSeconds } from '../social-helpers.ts';
 import { getLinkedInOAuthCredentials as credentialsImpl, postLinkedInOAuthForm, enrichLinkedInTokenData as enrichImpl } from './socialConnectRoutes.ts';
 import type { MediaModule } from './mediaRoutes.ts';
@@ -892,6 +892,32 @@ async function refreshThreadsAccessToken(accessToken: string) {
   return data;
 }
 
+async function refreshInstagramAccessToken(accessToken: string) {
+  const token = String(accessToken || '').trim();
+  if (!token) throw new Error('Instagram access token missing');
+
+  const resp = await axios.get('https://graph.instagram.com/refresh_access_token', {
+    params: {
+      grant_type: 'ig_refresh_token',
+      access_token: token,
+    },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+
+  const data: any = resp.data || {};
+  if (resp.status >= 400) {
+    const msg =
+      data?.error?.message ||
+      data?.error_description ||
+      data?.error ||
+      `Instagram token refresh failed (${resp.status})`;
+    throw new Error(msg);
+  }
+
+  return data;
+}
+
 // Fetch TikTok user profile with graceful scope fallback.
 // Fetch TikTok user profile using two independent requests so a missing
 // user.info.stats scope never blocks the basic profile from being saved.
@@ -1072,12 +1098,14 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   }
 
   const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const refreshMode: 'none' | 'refresh_token' | 'threads_access_token' =
+  const refreshMode: 'none' | 'refresh_token' | 'threads_access_token' | 'instagram_access_token' =
     platformId === 'threads'
       ? 'threads_access_token'
-      : platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken)
-        ? 'refresh_token'
-        : 'none';
+      : platformId === 'instagram' && isInstagramDirectLogin({ accessToken, tokenData })
+        ? 'instagram_access_token'
+        : platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken)
+          ? 'refresh_token'
+          : 'none';
   const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
   const shouldRefreshSoon =
     refreshMode !== 'none' && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
@@ -1137,6 +1165,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
   try {
     if (platformId === 'threads') {
       refreshed = await refreshThreadsAccessToken(accessToken);
+    } else if (platformId === 'instagram' && refreshMode === 'instagram_access_token') {
+      refreshed = await refreshInstagramAccessToken(accessToken);
     } else if (platformId === 'twitter') {
       refreshed = await refreshTwitterAccessToken(refreshToken);
     } else if (platformId === 'linkedin') {
@@ -1989,13 +2019,14 @@ async function publishToplatform(
       await acquirePlatformSlot('instagram');
       const instagramCfg = await getPlatformConfig('instagram');
       const facebookCfg = await getPlatformConfig('facebook');
+      const igGraphBase = resolveInstagramGraphBase({ accessToken: access_token, tokenData: token_data });
       const result = await instagramBusinessPlatform.post(instagramPost, {
         accessToken: access_token,
         accountId: conn.account_id,
         accountName: conn.account_name,
         tokenData: token_data,
         helpers: {
-          graphBase: META_GRAPH_BASE,
+          graphBase: igGraphBase,
           appId: String(instagramCfg.appId || facebookCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim() || undefined,
           appSecret: String(instagramCfg.appSecret || facebookCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim() || undefined,
         },

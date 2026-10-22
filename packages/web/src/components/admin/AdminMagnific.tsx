@@ -5,19 +5,31 @@ import { getApiBaseUrl } from '../../utils/apiBase';
 const tok = () => localStorage.getItem('auth_token') ?? '';
 
 const SUPPORTED_MODELS = [
-  { id: 'flux-2-turbo',     type: 'Image',  tier: 'Fast',    credits: 3,  label: 'Flux 2 Turbo' },
-  { id: 'flux-2-klein',     type: 'Image',  tier: 'Fast',    credits: 3,  label: 'Flux 2 Klein' },
-  { id: 'seedream-v5-lite', type: 'Image',  tier: 'Fast',    credits: 4,  label: 'Seedream 5 Lite', badge: 'NEW' },
-  { id: 'flux-kontext-pro', type: 'Image',  tier: 'Quality', credits: 5,  label: 'Flux Kontext Pro' },
-  { id: 'flux-2-pro',       type: 'Image',  tier: 'Quality', credits: 5,  label: 'Flux 2 Pro' },
-  { id: 'mystic',           type: 'Image',  tier: 'Premium', credits: 8,  label: 'Mystic' },
-  { id: 'happy-horse-i2v',  type: 'Video',  tier: 'Fast',    credits: 20, label: 'Happy Horse I2V' },
-  { id: 'wan-2-7-t2v',      type: 'Video',  tier: 'Quality', credits: 25, label: 'WAN 2.7 T2V' },
-  { id: 'kling-3-pro',      type: 'Video',  tier: 'Premium', credits: 35, label: 'Kling 3 Pro' },
-  { id: 'upscale',          type: 'Edit',   tier: 'Tool',    credits: 5,  label: 'Upscaler Creative' },
-  { id: 'relight',          type: 'Edit',   tier: 'Tool',    credits: 4,  label: 'Relight' },
-  { id: 'style-transfer',   type: 'Edit',   tier: 'Tool',    credits: 5,  label: 'Style Transfer' },
-  { id: 'remove-background',type: 'Edit',   tier: 'Tool',    credits: 1,  label: 'Remove Background' },
+  { id: 'magnific-one',           type: 'Image',   tier: 'Flagship', credits: 6,  label: 'Magnific One (4K & 8/16-Tile Contact Sheets)', badge: 'FLAGSHIP' },
+  { id: 'mystic',                 type: 'Image',   tier: 'Premium',  credits: 8,  label: 'Mystic (Photorealism)' },
+  { id: 'flux-kontext-pro',       type: 'Image',   tier: 'Quality',  credits: 5,  label: 'Flux Kontext Pro (Multi-Ref & Edit)' },
+  { id: 'flux-2-pro',             type: 'Image',   tier: 'Quality',  credits: 5,  label: 'Flux 2 Pro' },
+  { id: 'seedream-v5-lite',       type: 'Image',   tier: 'Fast',     credits: 4,  label: 'Seedream 5 Lite', badge: 'NEW' },
+  { id: 'seedream-v4-5',          type: 'Image',   tier: 'Quality',  credits: 4,  label: 'Seedream 4.5' },
+  { id: 'flux-2-turbo',           type: 'Image',   tier: 'Fast',     credits: 3,  label: 'Flux 2 Turbo' },
+  { id: 'flux-2-klein',           type: 'Image',   tier: 'Fast',     credits: 3,  label: 'Flux 2 Klein' },
+  { id: 'kling-v2-6-pro',         type: 'Video',   tier: 'Flagship', credits: 30, label: 'Kling 2.6 Pro (T2V/I2V + Native Audio)', badge: 'FLAGSHIP' },
+  { id: 'ltx-2-pro',              type: 'Video',   tier: '4K Pro',   credits: 28, label: 'LTX 2 Pro (Up to 4K 50fps + Audio)', badge: '4K' },
+  { id: 'wan-2-6-1080p',          type: 'Video',   tier: 'Quality',  credits: 25, label: 'WAN 2.6 (1080p Multi-Shot + Audio)' },
+  { id: 'minimax-hailuo-2-3-1080p',type: 'Video',  tier: 'Quality',  credits: 25, label: 'Minimax Hailuo 2.3 (Camera Control)' },
+  { id: 'runway-gen4-turbo',      type: 'Video',   tier: 'Quality',  credits: 25, label: 'Runway Gen-4 Turbo / Act-Two' },
+  { id: 'wan-2-7-t2v',            type: 'Video',   tier: 'Quality',  credits: 25, label: 'WAN 2.7 T2V' },
+  { id: 'omni-human-1-5',         type: 'LipSync', tier: 'Flagship', credits: 30, label: 'OmniHuman 1.5 (Portrait + Audio Lip-Sync)', badge: 'NEW' },
+  { id: 'music-generation',       type: 'Audio',   tier: 'Tool',     credits: 6,  label: 'Magnific Music Generation (10–180s)', badge: 'NEW' },
+  { id: 'sound-effects',          type: 'Audio',   tier: 'Tool',     credits: 3,  label: 'Magnific Sound Effects (Foley & Loops)', badge: 'NEW' },
+  { id: 'audio-isolation',        type: 'Audio',   tier: 'Tool',     credits: 4,  label: 'SAM Audio Isolation (Stem Separation)', badge: 'NEW' },
+  { id: 'upscale',                type: 'Edit',    tier: 'Tool',     credits: 5,  label: 'Upscaler Creative (HDR / Resemblance)' },
+  { id: 'upscale-precision',      type: 'Edit',    tier: 'Tool',     credits: 5,  label: 'Upscaler Precision V2 (Logos / UI / Faces)' },
+  { id: 'image-expand',           type: 'Edit',    tier: 'Tool',     credits: 5,  label: 'Image Expand / Outpaint (Flux Pro)' },
+  { id: 'relight',                type: 'Edit',    tier: 'Tool',     credits: 4,  label: 'Relight (Lighting & Environment Transfer)' },
+  { id: 'style-transfer',         type: 'Edit',    tier: 'Tool',     credits: 5,  label: 'Style Transfer' },
+  { id: 'remove-background',      type: 'Edit',    tier: 'Tool',     credits: 1,  label: 'Remove Background (Instant PNG)' },
+  { id: 'magnific-spaces-flows',  type: 'Space',   tier: 'MCP',      credits: 10, label: 'Magnific Spaces & Flows (https://mcp.magnific.com)', badge: 'MCP' },
 ];
 
 type Generation = {
@@ -288,12 +300,19 @@ export default function AdminMagnific() {
             <select value={genTypeFilter} onChange={e => setGenTypeFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-[#2563EB]">
               <option value="all">All types</option>
+              <option value="magnific-one">Magnific One</option>
               <option value="image">Image</option>
               <option value="video">Video</option>
-              <option value="upscale">Upscale</option>
+              <option value="lip-sync">Lip Sync (OmniHuman 1.5)</option>
+              <option value="audio">Audio (Music / SFX / SAM)</option>
+              <option value="upscale">Upscale Creative</option>
+              <option value="upscale-precision">Upscale Precision</option>
+              <option value="image-expand">Image Expand / Outpaint</option>
               <option value="relight">Relight</option>
               <option value="style-transfer">Style Transfer</option>
               <option value="remove-background">Remove BG</option>
+              <option value="space">Magnific Space</option>
+              <option value="flow">Magnific Flow</option>
             </select>
             <button type="button" onClick={fetchGenerations} disabled={loadingGens}
               className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">

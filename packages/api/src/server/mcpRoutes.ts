@@ -260,6 +260,81 @@ export async function seedDefaultMcpServers(pool: Pool | null): Promise<void> {
      WHERE slug='meigen' AND config ? 'sync_keywords'`,
     [JSON.stringify(DEFAULT_MEIGEN_CONFIG)]
   ).catch(() => undefined);
+
+  // Seed the official Magnific MCP server (https://mcp.magnific.com)
+  // Exposes 236 tools across 13 categories: Magnific One, Images, Video, Lip-Sync (video_speak),
+  // Audio (TTS, Music, SFX, Isolation), Spaces, Flows, Library, Brand Kits, 3D, Design, and Stock.
+  const magnificMcpConfig = {
+    adapter: 'magnific',
+    url: 'https://mcp.magnific.com',
+    capabilities: [
+      'magnific-one', 'images', 'video', 'lip-sync', 'audio',
+      'spaces', 'flows', 'library', 'brand-kits', '3d-models', '3d-scenes', 'design', 'stock',
+    ],
+  };
+  await pool.query(
+    `INSERT INTO mcp_servers (name, slug, transport, url, config, enabled, status, status_message)
+     VALUES ('Magnific AI MCP', 'magnific', 'http', 'https://mcp.magnific.com', $1::jsonb, true, 'ok', 'Magnific MCP (https://mcp.magnific.com) — 236 tools for Magnific One, Video, Lip-Sync, Audio, Spaces & Flows')
+     ON CONFLICT (slug) DO UPDATE SET
+       url = COALESCE(NULLIF(mcp_servers.url, ''), 'https://mcp.magnific.com'),
+       transport = 'http',
+       config = COALESCE(mcp_servers.config, $1::jsonb)`,
+    [JSON.stringify(magnificMcpConfig)]
+  ).catch(() => undefined);
+}
+
+/**
+ * Invoke a tool on the Magnific MCP server (https://mcp.magnific.com).
+ * Automatically attaches any configured headers from mcp_servers or the platform Magnific API key.
+ */
+export async function callMagnificMcpTool(
+  pool: Pool | null,
+  toolName: string,
+  toolArgs: Record<string, unknown> = {},
+  decryptSecret?: (encrypted: string) => string
+): Promise<{ ok: boolean; payload: unknown; error?: string }> {
+  try {
+    let url = 'https://mcp.magnific.com';
+    const headers: Record<string, string> = {};
+
+    if (pool) {
+      const { rows } = await pool.query(`SELECT * FROM mcp_servers WHERE slug='magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+      const row = rows[0];
+      if (row?.url) url = String(row.url).trim();
+      if (row?.headers_encrypted && decryptSecret) {
+        Object.assign(headers, decryptJson(decryptSecret, row.headers_encrypted));
+      }
+      const cfgRow = await pool.query(`SELECT config FROM platform_configs WHERE platform='magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+      const apiKey = decryptPlatformConfig(cfgRow.rows[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || '';
+      if (apiKey && !headers['x-magnific-api-key']) {
+        headers['x-magnific-api-key'] = apiKey;
+      }
+      if (apiKey && !headers['Authorization'] && !headers['authorization']) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+    } else if (process.env.MAGNIFIC_API_KEY) {
+      headers['x-magnific-api-key'] = process.env.MAGNIFIC_API_KEY;
+      headers['Authorization'] = `Bearer ${process.env.MAGNIFIC_API_KEY}`;
+    }
+
+    const conn: McpServerConn = {
+      transport: 'http',
+      url,
+      headers,
+    };
+
+    const payload = await withMcpClient(conn, async (client) => {
+      const result = await client.callTool({
+        name: toolName,
+        arguments: toolArgs,
+      });
+      return extractToolPayload(result);
+    });
+    return { ok: true, payload };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, payload: null, error: message };
+  }
 }
 
 // Map raw MCP transport failures to something an admin can act on.

@@ -64,6 +64,9 @@ async function fetchUserMemoryContext(userId: string): Promise<{ memText: string
   return { memText, hash };
 }
 
+export const MAGNIFIC_AGENT_TRAINING_SUMMARY =
+  'Magnific Academy Multimodal Engine: (1) Images: Magnific One (draft 16-tile contact sheets -> 2K/4K quality renders + 2-3 consistent style references + Brand Kit + Auto Layers), Nano Banana Pro (7-part hierarchy for tack-sharp product micro-typography, sketches-to-modular interiors @img1+@img2, surgical frame/background edits), Nano Banana 2 (4K full-body Character Profile Sheets on plain white studio backgrounds & physical surface mockups: deboss, emboss, embroidery), Mystic; (2) Video: Seedance 2.5 (up to 30s in 15s chunks, 50 refs, 480p->1080p->4K upscale funnel, "no music" prompt rule for multi-clip stories, surgical frame-extract fix or Modify), Kling 3.0 (7-part single-shot formula or action-only with Start Image; multi-shot up to 6 cuts <=512 chars/shot), Kling 3.0 Omni (multi-ref dialogue lip-sync, mid-shot object swap, product text stability in motion), Kling 2.6 Motion Control (camera-only prompt rule—never describe the physical action), LTX 2 Pro (4K 50fps), 3D Scenes motion transfer, OmniHuman 1.5 lip-sync; (3) Audio & Spaces: ElevenLabs Music, looping SFX, SAM Audio Isolation, Assistant Export-as-List batching, Variations Split-Grid + Upscaler, and pre-flight simulate_cost Spaces/Flows.';
+
 export async function compileAgentSkill(userId: string, agentKey: string): Promise<void> {
   if (!pool) return;
   const def = AGENT_DEFS[agentKey];
@@ -79,7 +82,7 @@ export async function compileAgentSkill(userId: string, agentKey: string): Promi
     const apiKey = resolveActiveKey(aiCfg);
     if (!apiKey) {
       // Zero-token deterministic fallback brief when no provider API key is set yet
-      const fallbackBrief = `${def.name} (${def.role}) context: ${memText.slice(0, 360)}`;
+      const fallbackBrief = `${def.name} (${def.role}) context: ${memText.slice(0, 300)} | ${MAGNIFIC_AGENT_TRAINING_SUMMARY}`;
       await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [fallbackBrief, userId, agentKey]);
       return;
     }
@@ -89,8 +92,8 @@ export async function compileAgentSkill(userId: string, agentKey: string): Promi
       : FAST_MODEL;
     const skill = await callAINonStreaming(
       aiCfg.provider, apiKey, compileFastModel,
-      `You are ${def.name} (${def.role}) on a marketing team.`,
-      `Below is the user's brand/business memory. Write a concise 2-3 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty.\n\nUser memory:\n${memText}\n\nSkill brief:`,
+      `You are ${def.name} (${def.role}) on a marketing team equipped with ${MAGNIFIC_AGENT_TRAINING_SUMMARY}`,
+      `Below is the user's brand/business memory. Write a concise 2-3 sentence "agent skill brief" summarizing what you know about this user that is most relevant to your specialty and how to apply Magnific One, Video, Lip Sync, Audio, or Spaces/Flows for their brand.\n\nUser memory:\n${memText}\n\nSkill brief:`,
       320,
       { userId, feature: 'agent_skill_compile' }
     );
@@ -120,7 +123,7 @@ async function executeBatchedAgentCompilation(userId: string): Promise<void> {
 
     if (!apiKey) {
       for (const [key, def] of agentEntries) {
-        const brief = `${def.name} (${def.role}): Focus on ${memText.slice(0, 280)}`;
+        const brief = `${def.name} (${def.role}): Focus on ${memText.slice(0, 220)} | ${MAGNIFIC_AGENT_TRAINING_SUMMARY}`;
         await dbQuery(`UPDATE user_agents SET compiled_skill=$1, last_compiled_at=NOW() WHERE user_id=$2 AND agent_key=$3`, [brief, userId, key]).catch(() => undefined);
       }
       userCompilationHashes.set(userId, hash);
@@ -132,7 +135,7 @@ async function executeBatchedAgentCompilation(userId: string): Promise<void> {
       : FAST_MODEL;
 
     const rolesList = agentEntries.map(([k, d]) => `- "${k}": ${d.name} (${d.role})`).join('\n');
-    const batchSystemPrompt = `You are the Chief AI Architect for Dakyworld Hub. Compile concise, high-signal 2-sentence skill briefs for each specialist agent based on the user's brand memory. Respond ONLY with a valid JSON object mapping each agent_key to its brief string.`;
+    const batchSystemPrompt = `You are the Chief AI Architect for Dakyworld Hub. Compile concise, high-signal 2-sentence skill briefs for each specialist agent based on the user's brand memory and our Magnific Multimodal Engine (${MAGNIFIC_AGENT_TRAINING_SUMMARY}). Respond ONLY with a valid JSON object mapping each agent_key to its brief string.`;
     const batchUserPrompt = `User Brand & Business Memory:\n${memText}\n\nSpecialist Agents:\n${rolesList}\n\nReturn JSON object: {"daky": "...", "nova": "...", ...}`;
 
     const raw = await callAINonStreaming(

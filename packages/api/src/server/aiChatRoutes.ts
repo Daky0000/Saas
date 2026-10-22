@@ -5,9 +5,23 @@ import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../logger.ts';
-import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings } from '../ai-helpers.ts';
+import { resolveGeminiModel, recordAIUsage, FAST_MODEL, hasAICredits, recordFastPathSavings, chargeAICredits } from '../ai-helpers.ts';
 import { buildSharedAgentContext, recordAgentInsight } from './agentSharedContext.ts';
 import { aiChatLimiter } from '../middleware/rateLimiter.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
+import { callMagnificMcpTool } from './mcpRoutes.ts';
+import {
+  getMagnificApiKey,
+  magnificOneGenerate,
+  magnificGenerateImage,
+  magnificEditImage,
+  magnificGenerateVideo,
+  magnificLipSync,
+  magnificGenerateAudio,
+  magnificExecuteSpaceOrFlow,
+  MAGNIFIC_IMAGE_MODELS,
+  MAGNIFIC_VIDEO_MODELS,
+} from './magnificRoutes.ts';
 
 const OUT_OF_CREDITS_MSG = "You need more AI credits. Buy credits without changing your plan, or wait for your monthly allowance reset.";
 
@@ -286,12 +300,56 @@ If the user's message already specifies a date and/or time (e.g. "schedule for t
 
 ---
 
-## BUTLER STANDARDS
-- Every response must feel personally crafted, not templated
-- Use the user's brand data to make topic suggestions feel inevitable, not random
-- When you sense the user is stuck or frustrated, gently guide — don't interrogate
-- Short, decisive responses win over long explanations — the user is busy
-- If something is outside platform scope, say so once, briefly, then redirect to what you CAN do here`;
+## MAGNIFIC ACADEMY MULTIMODAL ENGINE & SPACES/FLOWS TRAINING
+You are trained on the complete **Magnific Academy** methodology for all non-text generations (images, product typography, branded mockups, editing/upscaling, video, motion control, 3D cinematography, lip-sync avatars, audio/music/SFX, and multi-node Spaces, Lists & Flows):
+
+1. **Magnific One ('magnific_one_generate') & Brand Kit**:
+   - Flagship art-directed image model ('POST /v1/ai/magnific-one').
+   - **Draft → Final Funnel**:
+     - 'mode: "draft"' — Generates an 8-tile ('tiles: 8') or 16-tile ('tiles: 16') contact sheet in one pass to explore compositions cheaply. **Golden Rule**: Always use 'tiles: 16' when the aspect ratio is '16:9', '9:16', '21:9', '4:3', '2:1', or '3:1' because 16-tile (4×4) preserves exact tile proportions across all 10 ratios!
+     - 'mode: "quality"' — Recreates the winning direction at '1k', '2k', or '4k' ('quality: "high"' for standard production or '"max"' for extreme close-ups/print).
+   - **2–3 Style Reference Sweet Spot**: Supports up to 10 'reference_images', but **2 to 3 visually consistent style references** is the sweet spot. When strong style references are attached, keep the text prompt simple and subject-focused.
+   - **3-Part Brand Workflow**: Magnific One generates the image → Brand Kit guides palette/tone/safe zones → Designer with Auto Layers refines deterministic typography and logos.
+
+2. **Nano Banana Pro & Nano Banana 2 ('magnific_generate_image') — Product Text, Mockups & Character Consistency**:
+   - **Plain White Background & Character Profile Sheet Rule**: When creating a character, vehicle, or product that will be reused across scenes or videos, generate it first on a **clean plain white studio background** using 'nano-banana-2' in '4k' ('3:4' or '4:3'). Combine front, side, back, and passport face views into a single **Character Profile Sheet** to use as a master consistency anchor. Keep Character, Location, and Object nodes separate!
+   - **Nano Banana Pro ('nano-banana-pro') 7-Part Product Typography Hierarchy**: To keep small product text/logos tack-sharp without warped glyphs, structure prompts in this exact priority order:
+     1) **Composition First** (e.g. diagonal editorial still life + controlled directional lighting)
+     2) **Exact Product Identity** (lock proportions, silhouette, stitching, panel geometry to studio references)
+     3) **Dedicated Typography Block** (quote exact words, location, alignment, and state: "no misspellings, no extra letters, no warped glyphs")
+     4) **True Color Accuracy** (specific color names like "deep cobalt blue upper, neon lime laces" instead of "blue shoe")
+     5) **Lighting & Harmony**
+     6) **Optical Control** ("shallow depth of field, tack-sharp focus on the product and its typography, no oversaturation")
+     7) **Negative Constraints** ("no extra logos, no duplicated text, no invented branding, no distorted lettering").
+   - **Branded Surface Mockups ('nano-banana-2' in '4k')**: Chain unbranded base product shots via references so lighting matches the same photoshoot → connect a black logo on a white background → specify physical surface integration: **deboss effect** (glass/bottles), **emboss finish** (packaging boxes), or **embroidered thread matching fabric color** (towels/apparel), respecting edge margins, contact shadows, and surface texture.
+   - **Sketches to Modular Interiors ('nano-banana-pro')**: Turn Sketch 1 into a realistic standalone object ('@img2') and Sketch 2 into a realistic room ('@img1'), then combine '@img1' + '@img2' with a minimal prompt defining **only their spatial relationship** (do not re-describe materials or lighting).
+   - **Other Image Models**: 'mystic' (ultra-realistic editorial), 'flux-kontext-pro' (context-aware editing), 'flux-2-pro', 'seedream-v4-5', 'z-image', 'runway-t2i'.
+
+3. **Magnific Image Editing ('magnific_edit_image') & Variations**:
+   - 'upscale' (Creative Upscaler up to 16x), 'upscale-precision' (Precision Upscaler up to 16x for clean designs, logos, and split variation grids), 'relight', 'style-transfer', 'remove-background', 'image-expand' (Flux Pro outpainting), 'seedream-edit'.
+   - **Variations Grid Rule**: A 4K Variations grid ('Reframe' / 'Storyboard') applies 4K to the whole grid container; always split the grid into a List and run the selected frame through 'upscale-precision' or 'upscale'.
+
+4. **Magnific Video Generation ('magnific_generate_video') — Seedance 2.5 & Kling 3.0 Mastery**:
+   - **Start/End Images vs. Image References**: Use 'image_url' (Start Image) and 'end_image_url' (End Image) when locking exact first/last visual states (e.g. closed cabin door → reveal frame, or continuing from an extracted last frame). Use 'reference_images' (Character Profile Sheet + Location + Product refs without a rigid Start Image) in 'seedance-2-5' or 'kling-3-0-omni' for natural multi-shot movement and camera cuts.
+   - **Seedance 2.5 ('seedance-2-5')**: Up to 30s, 50 references, multi-shot cuts, and 3D Scene motion transfer ('reference_video_url'). **15-Second Chunking Rule**: Build 1-minute films in four 15s sections at '1080p' (or '480p'/'720p' for fast exploration) to prevent reference drift, then upscale the final cut to 4K. **Multi-Clip Audio Rule**: Enable 'generate_audio: true' for synchronized dialogue/foley, **but set 'exclude_music: true' (or write "no music" in the prompt)** so separate clips don't generate clashing soundtracks! **Surgical Corrections**: Fix visual errors either via Media Extractor (Manual frame selection) → 'nano-banana-pro' single-detail fix → 2–3s replacement clip, or via Seedance 2.5 Clip Editor 'Modify' mode.
+   - **Kling 3.0 ('kling-3-0' / 'kling-3-pro')**:
+     - *Single-Shot without Start Image*: Follow the **7-Part Video Prompt Formula**: (1) Environment & Lighting → (2) Shot Type/Framing → (3) Specific Character Traits → (4) Main Physical Action → (5) Cinematic Camera Move ('slow dolly-in', 'handheld tracking') → (6) Visual Detail ('sweat, turf stains, motion blur') → (7) Ambient Sound.
+     - *Single-Shot with Start Image*: Do **NOT** re-describe the visible environment or character; prompt **only the physical action and camera movement**.
+     - *Multi-Shot Mode ('shot_mode: "multi"', 'shots')*: Up to 6 distinct scene cuts inside one ≤15s generation; **each shot prompt must be ≤512 characters** (supports Start Image, no End Image).
+   - **Kling 3.0 Omni ('kling-3-0-omni')**: Best for multi-character dialogue lip-sync using 'reference_images', mid-shot object swaps (e.g. touching a hat to switch between two referenced hats), and keeping small product typography tack-sharp in motion (pass clean white studio product references).
+   - **Kling 2.6 Motion Control ('kling-motion')**: Transfers real biomechanics from 'reference_video_url' onto 'image_url' (720p–1080p max). **CRITICAL RULE**: **NEVER describe the physical action in the prompt!** (e.g. do NOT write "boxing"). Describing the action interferes with motion transfer—use the prompt **only for camera framing and camera movement**. Swap backgrounds in 'nano-banana-pro' *before* running Motion Control.
+   - **Other Video Models**: 'kling-v2-6-pro', 'ltx-2-pro' (up to 4K 50fps with audio), 'wan-2-6-1080p', 'minimax-hailuo-2-3-1080p', 'runway-gen4-turbo', 'runway-act-two', 'seedance-pro-1080p', 'pixverse-v5'.
+
+5. **Magnific Lip Sync & UGC Influencers ('magnific_lip_sync')**:
+   - **OmniHuman 1.5** ('POST /v1/ai/video/omni-human-1-5') & MCP 'video_speak': Animates any portrait or full-body image ('image_url') with voiceover audio ('audio_url') at '1080p' or '720p'. For UGC product review videos: generate character on white ('nano-banana-2') → build Profile Sheet → place in car/studio ('9:16', '4k') → add product in hands → animate with Voiceover + 'kling-3-0-omni' or 'omni-human-1-5'.
+
+6. **Magnific Audio ('magnific_generate_audio')**:
+   - **3-Layer Audio Mixing**: (1) Native video audio carries dialogue/action foley; (2) 'sound-effects' (0.5–22s, 'loop: true') adds clean ambient atmosphere; (3) 'music-generation' (ElevenLabs Music) scores the emotional arc across sections; plus 'audio-isolation' (SAM Audio stem extraction).
+
+7. **Magnific Spaces, Lists & Flows ('magnific_space_or_flow')**:
+   - Always run 'action: "simulate_cost"' first (free pre-flight credit estimation).
+   - Use Assistant 'Export as List' + 'List' nodes ('Keep items' vs. 'Replace items') to batch-localize ads into 20+ languages or batch-upscale grouped images.
+   - Package repeatable Spaces into parameterized **Flows** ('action: "create_flow"' / '"run_flow"').`;
 
 const AI_TOOLS: Anthropic.Tool[] = [
   {
@@ -387,6 +445,137 @@ const AI_TOOLS: Anthropic.Tool[] = [
       properties: {},
     },
   },
+  {
+    name: 'magnific_one_generate',
+    description: 'Generate art-directed images or multi-tile contact sheets using Magnific One (POST /v1/ai/magnific-one). Use mode="draft" with tiles=16 to explore 16 directions in one pass (exact for all 10 aspect ratios), or mode="quality" at 1k/2k/4k for final hero renders. Supports up to 10 reference_images (sweet spot: 2-3 consistent style references).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Creative-director intent prompt (subject, lighting, lens, mood). Keep concise when 2-3 style references are attached.' },
+        mode: { type: 'string', description: 'draft (8/16-tile contact sheet) | quality (single hero image, default)' },
+        quality: { type: 'string', description: 'high (default) | normal (only in quality mode)' },
+        resolution: { type: 'string', description: '1k | 2k (default) | 4k (only in quality mode)' },
+        aspect_ratio: { type: 'string', description: '1:1 | 16:9 | 9:16 | 4:3 | 3:4 | 2:3 | 3:2 | 21:9 | 2:1 | 3:1' },
+        tiles: { type: 'number', description: '8 or 16 (only in draft mode; use 16 for exact aspect ratios across all 10 ratios)' },
+        reference_images: { type: 'array', items: { type: 'string' }, description: 'Up to 10 reference image URLs or base64 strings (sweet spot: 2-3 consistent style references)' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
+    name: 'magnific_generate_image',
+    description: 'Generate an image using a specialized Magnific model: nano-banana-pro (7-part product micro-typography hierarchy, sketches-to-modular interiors, surgical frame/background edits), nano-banana-2 (4K white-background Character Profile Sheets & deboss/emboss/embroidered branded mockups), mystic, flux-kontext-pro, flux-2-pro, seedream-v4-5, z-image, runway-t2i.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string', description: 'nano-banana-pro | nano-banana-2 | nano-banana-pro-flash | magnific-one | mystic | flux-kontext-pro | flux-2-pro | seedream-v4-5 | z-image | runway-t2i' },
+        prompt: { type: 'string', description: 'Detailed visual prompt (use 7-part hierarchy for product text in nano-banana-pro; specify plain white background for reusable characters in nano-banana-2)' },
+        aspect_ratio: { type: 'string', description: '1:1 | 16:9 | 9:16 | 4:3 | 3:4 | 21:9' },
+        resolution: { type: 'string', description: '1k | 2k | 4k (use 4k for nano-banana-2 character sheets and branded mockups)' },
+        reference_images: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URLs (e.g. Character Profile Sheet, studio product angles, or black-on-white logo for mockups)' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
+    name: 'magnific_edit_image',
+    description: 'Upscale (up to 16x via Creative or Precision Upscaler), relight, transfer style, remove background, or outpaint/expand an image using Magnific AI editing tools.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'upscale | upscale-precision | relight | style-transfer | remove-background | image-expand | seedream-edit' },
+        image_url: { type: 'string', description: 'Source image URL or base64' },
+        prompt: { type: 'string', description: 'Guidance prompt for upscale, relight, style-transfer, image-expand, or seedream-edit' },
+        scale_factor: { type: 'string', description: '2x | 4x | 8x | 16x (for upscale / upscale-precision)' },
+        reference_image: { type: 'string', description: 'Reference image URL/base64 for style-transfer or relight' },
+        left: { type: 'number', description: 'Pixels to expand left (for image-expand, 0-2048)' },
+        right: { type: 'number', description: 'Pixels to expand right (for image-expand, 0-2048)' },
+        top: { type: 'number', description: 'Pixels to expand top (for image-expand, 0-2048)' },
+        bottom: { type: 'number', description: 'Pixels to expand bottom (for image-expand, 0-2048)' },
+      },
+      required: ['type', 'image_url'],
+    },
+  },
+  {
+    name: 'magnific_generate_video',
+    description: 'Generate cinematic AI video using Magnific Video models: seedance-2-5 (up to 30s in 15s chunks, 50 refs, multi-shot, 3D motion transfer), kling-3-0-omni (multi-ref dialogue lip-sync, mid-shot object swap, product text stability), kling-3-0 (7-part single-shot or 6-cut multi-shot <=512 chars/shot), kling-motion (biomechanics transfer—prompt ONLY camera movement, never action!), kling-v2-6-pro, ltx-2-pro (4K 50fps).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string', description: 'seedance-2-5 | seedance-2-0 | kling-3-0-omni | kling-3-0 | kling-motion | kling-v2-6-pro | ltx-2-pro | wan-2-6-1080p | minimax-hailuo-2-3-1080p | runway-gen4-turbo | seedance-pro-1080p | pixverse-v5' },
+        prompt: { type: 'string', description: 'Video prompt. Rules: (1) With Start Image, describe ONLY action & camera, not environment; (2) Without Start Image, use 7-part formula; (3) For kling-motion, describe ONLY camera movement, NEVER physical action!' },
+        image_url: { type: 'string', description: 'Optional Start Image URL (locks exact first frame)' },
+        end_image_url: { type: 'string', description: 'Optional End Image URL (locks final reveal frame; not supported in kling-3-0 multi-shot)' },
+        reference_images: { type: 'array', items: { type: 'string' }, description: 'Character Profile Sheet, Location, and Product reference image URLs (up to 50 for seedance-2-5, up to 10 for kling-3-0-omni)' },
+        reference_video_url: { type: 'string', description: 'Reference video URL for 3D Scene motion transfer (seedance-2-5) or live performance transfer (kling-motion / kling-3-0-omni)' },
+        shot_mode: { type: 'string', description: 'single (default) | multi (up to 6 independent shot cuts in kling-3-0)' },
+        shots: {
+          type: 'array',
+          description: 'For kling-3-0 multi-shot mode: up to 6 shots, each with { prompt (max 512 chars), duration } totaling <=15s',
+          items: { type: 'object' },
+        },
+        exclude_music: { type: 'boolean', description: 'Set true for multi-clip sequences so native dialogue/SFX are generated without clashing background music' },
+        duration: { type: 'number', description: 'Duration in seconds (15 recommended for seedance-2-5 up to 30; 5-15 for kling-3-0; 5/10 for kling-v2-6-pro; 6/8/10 for ltx-2-pro)' },
+        aspect_ratio: { type: 'string', description: '16:9 | 9:16 | 1:1' },
+        resolution: { type: 'string', description: '480p | 720p | 1080p (default balance) | 1440p | 2160p | 4k' },
+        generate_audio: { type: 'boolean', description: 'Generate synchronized native dialogue/SFX/audio' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
+    name: 'magnific_lip_sync',
+    description: 'Generate a realistic talking avatar / lip-sync video from a portrait or full-body human image and an audio URL using Magnific OmniHuman 1.5 (POST /v1/ai/video/omni-human-1-5).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        image_url: { type: 'string', description: 'Public URL of the human portrait or full-body image' },
+        audio_url: { type: 'string', description: 'Public URL of the voiceover or speech audio file (WAV/MP3/M4A, <30s)' },
+        prompt: { type: 'string', description: 'Optional scene, expression, and camera movement guidance' },
+        resolution: { type: 'string', description: '1080p (default) | 720p' },
+        turbo_mode: { type: 'boolean', description: 'Set true for faster generation' },
+      },
+      required: ['image_url', 'audio_url'],
+    },
+  },
+  {
+    name: 'magnific_generate_audio',
+    description: 'Generate Sound Effects (SFX), AI Music, or isolate specific sounds/voices from audio/video using SAM Audio via Magnific Audio APIs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'sound-effects | music-generation | audio-isolation' },
+        prompt: { type: 'string', description: 'Text description of the SFX, music style, or target sound to isolate (e.g. "human speech", "acoustic guitar")' },
+        duration_seconds: { type: 'number', description: 'Duration in seconds (0.5 to 22 for SFX; 5 to 180 for music)' },
+        loop: { type: 'boolean', description: 'Whether to create a seamless loop (for sound-effects)' },
+        audio: { type: 'string', description: 'Source audio URL/base64 (required for audio-isolation if video not provided)' },
+        video: { type: 'string', description: 'Source video URL/base64 (for audio-isolation)' },
+      },
+      required: ['type', 'prompt'],
+    },
+  },
+  {
+    name: 'magnific_space_or_flow',
+    description: 'Create, simulate cost for, or execute a multi-node Magnific Space or reusable Flow (or invoke a native Magnific MCP tool on https://mcp.magnific.com). Always use action="simulate_cost" first for large pipelines.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'simulate_cost | create_space | run_space | create_flow | run_flow | mcp_tool' },
+        name: { type: 'string', description: 'Name of the Space or Flow' },
+        goal: { type: 'string', description: 'Creative campaign goal or prompt' },
+        aspect_ratio: { type: 'string', description: 'Target aspect ratio (e.g. 16:9, 9:16, 1:1)' },
+        reference_images: { type: 'array', items: { type: 'string' }, description: 'Brand/character reference image URLs' },
+        nodes: {
+          type: 'array',
+          description: 'Optional explicit node graph (left-to-right). Each node has { id, type: "magnific-one"|"image"|"edit"|"video"|"lip-sync"|"audio", params, inputsFrom }',
+          items: { type: 'object' },
+        },
+        mcp_tool_name: { type: 'string', description: 'When action="mcp_tool", the exact Magnific MCP tool name (e.g. "magnific_one", "video_speak", "audio_tts")' },
+        mcp_tool_args: { type: 'object', description: 'Arguments for the Magnific MCP tool' },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 // ── Local helpers ─────────────────────────────────────────────────────────────
@@ -422,6 +611,13 @@ function aiToolLabel(name: string, input: any): string {
     case 'update_task_status': return `Marking task as ${input?.status ?? 'updated'}…`;
     case 'create_task': return `Creating task: "${input?.title || 'untitled'}"…`;
     case 'get_my_projects': return 'Fetching your projects…';
+    case 'magnific_one_generate': return `Generating with Magnific One (${input?.mode || 'quality'} mode)…`;
+    case 'magnific_generate_image': return `Generating image with Magnific (${input?.model || 'magnific-one'})…`;
+    case 'magnific_edit_image': return `Editing image with Magnific (${input?.type || 'upscale'})…`;
+    case 'magnific_generate_video': return `Generating video with Magnific (${input?.model || 'kling-v2-6-pro'})…`;
+    case 'magnific_lip_sync': return 'Animating lip-sync avatar with OmniHuman 1.5…';
+    case 'magnific_generate_audio': return `Generating audio with Magnific (${input?.type || 'sound-effects'})…`;
+    case 'magnific_space_or_flow': return `Running Magnific Space/Flow (${input?.action || 'run_space'})…`;
     default: return `Running ${name}…`;
   }
 }
@@ -748,6 +944,162 @@ export function registerAIChatRoutes({
           [userId]
         );
         return { projects: rows };
+      }
+      case 'magnific_one_generate': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
+        const creditCost = input?.mode === 'draft' ? 4 : (input?.resolution === '4k' ? 8 : 6);
+        const r = await magnificOneGenerate(
+          {
+            prompt: String(input?.prompt || ''),
+            mode: input?.mode === 'draft' ? 'draft' : 'quality',
+            quality: input?.quality === 'normal' ? 'normal' : 'high',
+            resolution: ['1k', '2k', '4k'].includes(input?.resolution) ? input.resolution : '2k',
+            aspect_ratio: input?.aspect_ratio || '1:1',
+            tiles: input?.tiles,
+            reference_images: Array.isArray(input?.reference_images) ? input.reference_images : undefined,
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) return { success: false, error: r.error || 'Magnific One returned no URL' };
+        const genId = randomUUID();
+        await dbQuery(
+          `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
+           VALUES ($1, $2, 'image', 'magnific-one', $3, $4, 'completed', $5, $6, NOW())`,
+          [genId, userId, String(input?.prompt || ''), JSON.stringify(input ?? {}), r.taskId, r.url]
+        ).catch(() => undefined);
+        await chargeAICredits(userId, creditCost, 'chat_magnific_one', { gen_id: genId });
+        return { success: true, model: 'magnific-one', mode: input?.mode || 'quality', url: r.url, urls: r.urls, gen_id: genId, credits_used: creditCost };
+      }
+      case 'magnific_generate_image': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
+        const modelKey = input?.model && MAGNIFIC_IMAGE_MODELS[input.model] ? input.model : 'magnific-one';
+        const creditCost = MAGNIFIC_IMAGE_MODELS[modelKey]?.credits ?? 5;
+        const r = await magnificGenerateImage(
+          modelKey,
+          String(input?.prompt || ''),
+          String(input?.aspect_ratio || '1:1'),
+          magnificKey,
+          undefined,
+          {
+            resolution: input?.resolution,
+            reference_images: Array.isArray(input?.reference_images) ? input.reference_images : undefined,
+          }
+        );
+        if (r.error || !r.url) return { success: false, error: r.error || 'Magnific image generation failed' };
+        const genId = randomUUID();
+        await dbQuery(
+          `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, result_url, completed_at)
+           VALUES ($1, $2, 'image', $3, $4, $5, 'completed', $6, NOW())`,
+          [genId, userId, modelKey, String(input?.prompt || ''), JSON.stringify(input ?? {}), r.url]
+        ).catch(() => undefined);
+        await chargeAICredits(userId, creditCost, `chat_magnific_image_${modelKey}`, { gen_id: genId });
+        return { success: true, model: modelKey, url: r.url, urls: r.urls ?? [r.url], gen_id: genId, credits_used: creditCost };
+      }
+      case 'magnific_edit_image': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
+        const editType = input?.type || 'upscale';
+        const creditCost = editType === 'remove-background' ? 1 : 5;
+        const r = await magnificEditImage({ ...input, type: editType }, magnificKey);
+        if (r.error || !r.url) return { success: false, error: r.error || 'Magnific image edit failed' };
+        const genId = randomUUID();
+        await dbQuery(
+          `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
+           VALUES ($1, $2, $3, $3, $4, $5, 'completed', $6, $7, NOW())`,
+          [genId, userId, editType, String(input?.prompt || ''), JSON.stringify(input ?? {}), r.taskId, r.url]
+        ).catch(() => undefined);
+        await chargeAICredits(userId, creditCost, `chat_magnific_edit_${editType}`, { gen_id: genId });
+        return { success: true, type: editType, url: r.url, gen_id: genId, credits_used: creditCost };
+      }
+      case 'magnific_generate_video': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
+        const modelKey = input?.model && MAGNIFIC_VIDEO_MODELS[input.model] ? input.model : (input?.image_url ? 'kling-v2-6-pro' : 'ltx-2-pro');
+        const creditCost = MAGNIFIC_VIDEO_MODELS[modelKey]?.credits ?? 25;
+        const r = await magnificGenerateVideo({ ...input, model: modelKey }, magnificKey);
+        if (r.error || !r.url) return { success: false, error: r.error || 'Magnific video generation failed' };
+        const genId = randomUUID();
+        await dbQuery(
+          `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
+           VALUES ($1, $2, 'video', $3, $4, $5, 'completed', $6, $7, NOW())`,
+          [genId, userId, r.model, String(input?.prompt || ''), JSON.stringify(input ?? {}), r.taskId, r.url]
+        ).catch(() => undefined);
+        await chargeAICredits(userId, creditCost, `chat_magnific_video_${r.model}`, { gen_id: genId });
+        return { success: true, model: r.model, url: r.url, gen_id: genId, credits_used: creditCost };
+      }
+      case 'magnific_lip_sync': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
+        const creditCost = 30;
+        const r = await magnificLipSync(
+          {
+            image_url: String(input?.image_url || ''),
+            audio_url: String(input?.audio_url || ''),
+            prompt: input?.prompt,
+            resolution: input?.resolution === '720p' ? '720p' : '1080p',
+            turbo_mode: Boolean(input?.turbo_mode),
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) return { success: false, error: r.error || 'OmniHuman 1.5 lip-sync failed' };
+        const genId = randomUUID();
+        await dbQuery(
+          `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
+           VALUES ($1, $2, 'lip-sync', 'omni-human-1-5', $3, $4, 'completed', $5, $6, NOW())`,
+          [genId, userId, String(input?.prompt || 'OmniHuman 1.5 Lip Sync'), JSON.stringify(input ?? {}), r.taskId, r.url]
+        ).catch(() => undefined);
+        await chargeAICredits(userId, creditCost, 'chat_magnific_lipsync', { gen_id: genId });
+        return { success: true, model: 'omni-human-1-5', url: r.url, gen_id: genId, credits_used: creditCost };
+      }
+      case 'magnific_generate_audio': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        if (!magnificKey) return { success: false, error: 'Magnific API key is not configured in Admin → Magnific AI.' };
+        const audioType = input?.type || 'sound-effects';
+        const creditCost = audioType === 'music-generation' ? 6 : 4;
+        const r = await magnificGenerateAudio(
+          {
+            type: audioType,
+            text: input?.prompt,
+            prompt: input?.prompt,
+            description: input?.prompt,
+            duration_seconds: input?.duration_seconds,
+            loop: input?.loop,
+            audio: input?.audio,
+            video: input?.video,
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) return { success: false, error: r.error || 'Magnific audio generation failed' };
+        const genId = randomUUID();
+        await dbQuery(
+          `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, task_id, result_url, completed_at)
+           VALUES ($1, $2, 'audio', $3, $4, $5, 'completed', $6, $7, NOW())`,
+          [genId, userId, r.type, String(input?.prompt || ''), JSON.stringify(input ?? {}), r.taskId, r.url]
+        ).catch(() => undefined);
+        await chargeAICredits(userId, creditCost, `chat_magnific_audio_${r.type}`, { gen_id: genId });
+        return { success: true, type: r.type, url: r.url, gen_id: genId, credits_used: creditCost };
+      }
+      case 'magnific_space_or_flow': {
+        const magnificKey = await getMagnificApiKey(pool as any);
+        const mcpCaller = (toolName: string, toolArgs: Record<string, unknown>) =>
+          callMagnificMcpTool(pool as any, toolName, toolArgs, (val: unknown) => {
+            const dec = decryptPlatformConfig(val as any);
+            return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
+          });
+        const action = input?.action || 'run_space';
+        const r = await magnificExecuteSpaceOrFlow({ ...input, action }, magnificKey, mcpCaller);
+        if (r.success && r.final_url && (action === 'run_space' || action === 'run_flow')) {
+          const genId = randomUUID();
+          await dbQuery(
+            `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status, result_url, completed_at)
+             VALUES ($1, $2, 'space', $3, $4, $5, 'completed', $6, NOW())`,
+            [genId, userId, action, String(input?.goal || input?.name || 'Magnific Space'), JSON.stringify(r.node_results ?? []), r.final_url]
+          ).catch(() => undefined);
+          await chargeAICredits(userId, r.estimated_credits ?? 10, `chat_magnific_${action}`, { gen_id: genId });
+        }
+        return r;
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

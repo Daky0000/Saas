@@ -1,10 +1,19 @@
 import express from 'express';
-import { FAST_MODEL, recordAIUsage, hasAICredits } from '../ai-helpers.ts';
+import { FAST_MODEL, recordAIUsage, hasAICredits, chargeAICredits } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import { randomUUID } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
+import {
+  magnificOneGenerate,
+  magnificGenerateImage,
+  magnificGenerateVideo,
+  magnificLipSync,
+  magnificGenerateAudio,
+  magnificExecuteSpaceOrFlow,
+} from './magnificRoutes.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -138,7 +147,7 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
             }
 
           } else if (node.subType === 'generate_ai_image') {
-            const postTitle = String(triggerData.title ?? '');
+            const postTitle = String(triggerData.title ?? cfg.prompt ?? '');
             const postExcerpt = String(triggerData.excerpt ?? '');
             if (postTitle && !(await hasAICredits(userId))) {
               addLog(node.id, 'generate_ai_image skipped: out of AI credits');
@@ -146,16 +155,16 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
               try {
                 const aiCfg = await getAIConfig();
                 const apiKey = resolveActiveKey(aiCfg);
+                let imagePrompt = postTitle;
                 if (apiKey) {
-                  let imagePrompt = '';
                   if (aiCfg.provider === 'google') {
                     const { GoogleGenerativeAI } = await import('@google/generative-ai') as any;
                     const genai = new GoogleGenerativeAI(apiKey);
                     const model = genai.getGenerativeModel({ model: 'gemini-2.0-flash' });
                     const resp = await model.generateContent(
-                      `Write a vivid, detailed image generation prompt for a blog post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words.`
+                      `Write a vivid, creative-director intent prompt for Magnific One for a post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words, no --ar flags.`
                     );
-                    imagePrompt = resp.response.text().trim();
+                    imagePrompt = resp.response.text().trim() || postTitle;
                     void recordAIUsage({
                       userId, feature: 'workflow_ai_image_prompt', provider: 'google', model: 'gemini-2.0-flash',
                       inputTokens: resp.response.usageMetadata?.promptTokenCount ?? 0,
@@ -168,30 +177,143 @@ export function buildWorkflowEngine(deps: WorkflowDeps): {
                       max_tokens: 150,
                       messages: [{
                         role: 'user',
-                        content: `Write a vivid, detailed image generation prompt for a blog post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words.`,
+                        content: `Write a vivid, creative-director intent prompt for Magnific One for a post titled "${postTitle}".${postExcerpt ? ` Context: ${postExcerpt.slice(0, 200)}` : ''} Keep it under 80 words, no --ar flags.`,
                       }],
                     });
-                    imagePrompt = (resp.content[0] as any)?.text?.trim() ?? '';
+                    imagePrompt = (resp.content[0] as any)?.text?.trim() || postTitle;
                     void recordAIUsage({
                       userId, feature: 'workflow_ai_image_prompt', provider: 'anthropic', model: FAST_MODEL,
                       inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens,
                     });
                   }
-                  if (imagePrompt) {
-                    await dbQuery(
-                      `INSERT INTO notifications (user_id, type, title, message) VALUES ($1, 'workflow', 'AI Image Prompt Ready', $2)`,
-                      [userId, `Image prompt for "${postTitle}": ${imagePrompt.slice(0, 300)}`]
-                    ).catch(() => undefined);
-                    addLog(node.id, `Generated image prompt (${imagePrompt.length} chars)`);
+                }
+                // Resolve Magnific API key and render via Magnific One / Magnific Image
+                const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+                const magnificKey = decryptPlatformConfig(magCfg[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY || '';
+                if (magnificKey && imagePrompt) {
+                  const magModel = String(cfg.model || 'magnific-one');
+                  const genRes = await magnificGenerateImage(magModel, imagePrompt, String(cfg.aspect_ratio || '16:9'), magnificKey, undefined, {
+                    mode: cfg.mode || 'quality',
+                    resolution: cfg.resolution || '2k',
+                    tiles: cfg.tiles,
+                    reference_images: cfg.reference_images,
+                  });
+                  if (genRes.url && !genRes.error) {
+                    triggerData.featured_image = genRes.url;
+                    triggerData.image_url = genRes.url;
+                    const postId = String(triggerData.id ?? triggerData.post_id ?? '');
+                    if (postId) {
+                      await dbQuery(`UPDATE blog_posts SET featured_image = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`, [genRes.url, postId, userId]).catch(() => undefined);
+                    }
+                    await chargeAICredits(userId, 6, 'workflow_magnific_image', { model: magModel });
+                    addLog(node.id, `Generated Magnific (${magModel}) image: ${genRes.url}`);
+                  } else {
+                    addLog(node.id, `Magnific image fallback to prompt notification (${genRes.error || 'no url'})`);
                   }
-                } else {
-                  addLog(node.id, 'generate_ai_image: no AI key configured');
+                }
+                if (imagePrompt) {
+                  await dbQuery(
+                    `INSERT INTO notifications (user_id, type, title, message) VALUES ($1, 'workflow', 'Magnific AI Image Ready', $2)`,
+                    [userId, triggerData.featured_image ? `Magnific One image generated for "${postTitle}".` : `Image prompt for "${postTitle}": ${imagePrompt.slice(0, 300)}`]
+                  ).catch(() => undefined);
                 }
               } catch (aiErr: any) {
                 addLog(node.id, `generate_ai_image error: ${aiErr.message}`);
               }
             } else {
               addLog(node.id, 'generate_ai_image skipped: no post title in trigger data');
+            }
+
+          } else if (node.subType === 'generate_ai_video') {
+            const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+            const magnificKey = decryptPlatformConfig(magCfg[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || '';
+            if (!magnificKey) {
+              addLog(node.id, 'generate_ai_video skipped: Magnific key not configured');
+            } else {
+              const vidRes = await magnificGenerateVideo(
+                {
+                  model: cfg.model || 'kling-v2-6-pro',
+                  prompt: String(cfg.prompt || triggerData.title || 'Cinematic brand video'),
+                  image_url: cfg.image_url || triggerData.featured_image || triggerData.image_url,
+                  duration: cfg.duration || 5,
+                  generate_audio: cfg.generate_audio ?? true,
+                },
+                magnificKey
+              );
+              if (vidRes.url) {
+                triggerData.video_url = vidRes.url;
+                await chargeAICredits(userId, 25, 'workflow_magnific_video', { model: vidRes.model });
+                addLog(node.id, `Generated Magnific video (${vidRes.model}): ${vidRes.url}`);
+              } else {
+                addLog(node.id, `generate_ai_video error: ${vidRes.error}`);
+              }
+            }
+
+          } else if (node.subType === 'generate_ai_lipsync') {
+            const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+            const magnificKey = decryptPlatformConfig(magCfg[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || '';
+            const imgUrl = String(cfg.image_url || triggerData.featured_image || triggerData.image_url || '');
+            const audUrl = String(cfg.audio_url || triggerData.audio_url || '');
+            if (!magnificKey || !imgUrl || !audUrl) {
+              addLog(node.id, 'generate_ai_lipsync skipped: requires Magnific key, image_url, and audio_url');
+            } else {
+              const lipRes = await magnificLipSync({ image_url: imgUrl, audio_url: audUrl, prompt: cfg.prompt, resolution: cfg.resolution || '1080p' }, magnificKey);
+              if (lipRes.url) {
+                triggerData.video_url = lipRes.url;
+                await chargeAICredits(userId, 30, 'workflow_magnific_lipsync', {});
+                addLog(node.id, `Generated OmniHuman 1.5 lip-sync video: ${lipRes.url}`);
+              } else {
+                addLog(node.id, `generate_ai_lipsync error: ${lipRes.error}`);
+              }
+            }
+
+          } else if (node.subType === 'generate_ai_audio') {
+            const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+            const magnificKey = decryptPlatformConfig(magCfg[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || '';
+            if (!magnificKey) {
+              addLog(node.id, 'generate_ai_audio skipped: Magnific key not configured');
+            } else {
+              const audRes = await magnificGenerateAudio(
+                {
+                  type: cfg.audio_type || 'sound-effects',
+                  prompt: String(cfg.prompt || triggerData.title || 'Ambient brand sound'),
+                  text: String(cfg.prompt || triggerData.title || 'Ambient brand sound'),
+                  description: String(cfg.description || cfg.prompt || 'voice'),
+                  duration_seconds: cfg.duration_seconds,
+                  audio: cfg.audio || triggerData.audio_url,
+                  video: cfg.video || triggerData.video_url,
+                },
+                magnificKey
+              );
+              if (audRes.url) {
+                triggerData.audio_url = audRes.url;
+                await chargeAICredits(userId, 5, 'workflow_magnific_audio', { type: audRes.type });
+                addLog(node.id, `Generated Magnific audio (${audRes.type}): ${audRes.url}`);
+              } else {
+                addLog(node.id, `generate_ai_audio error: ${audRes.error}`);
+              }
+            }
+
+          } else if (node.subType === 'run_magnific_flow' || node.subType === 'magnific_space') {
+            const { rows: magCfg } = await dbQuery(`SELECT config FROM platform_configs WHERE platform = 'magnific' LIMIT 1`).catch(() => ({ rows: [] as any[] }));
+            const magnificKey = decryptPlatformConfig(magCfg[0]?.config)?.apiKey || process.env.MAGNIFIC_API_KEY || '';
+            const flowRes = await magnificExecuteSpaceOrFlow(
+              {
+                action: cfg.action || 'run_flow',
+                goal: String(cfg.goal || triggerData.title || 'Brand visual campaign'),
+                aspect_ratio: cfg.aspect_ratio || '16:9',
+                nodes: cfg.nodes,
+                reference_images: cfg.reference_images,
+              },
+              magnificKey
+            );
+            if (flowRes.final_url) {
+              triggerData.featured_image = flowRes.final_url;
+              triggerData.image_url = flowRes.final_url;
+              await chargeAICredits(userId, flowRes.estimated_credits ?? 10, 'workflow_magnific_flow', {});
+              addLog(node.id, `Completed Magnific Space/Flow: ${flowRes.final_url}`);
+            } else {
+              addLog(node.id, `Magnific Space/Flow status: ${flowRes.error || flowRes.action}`);
             }
 
           } else if (node.subType === 'apply_template') {

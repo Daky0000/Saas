@@ -1,5 +1,5 @@
 // Generated from the migration source. Regenerate before build or development.
-export const SCHEMA_SOURCE_HASH = '59790da563981cf105323a23f48746d210540cb74db506eeee3231e0d8fa1e51';
+export const SCHEMA_SOURCE_HASH = 'd90c148ea2ba0433cb11ea5980bc813d04a63b5ce0eefeff0c3dd7ec30054788';
 export const REQUIRED_SCHEMA_TABLES = [
   "account_metrics",
   "admin_agent_runs",

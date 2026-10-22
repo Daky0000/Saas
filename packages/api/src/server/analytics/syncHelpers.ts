@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { Pool } from 'pg';
 import { logger } from '../../logger.ts';
 import { InstagramBusinessPlatform } from '../../../backend/platforms/instagram_business.ts';
+import { isInstagramDirectLogin, resolveInstagramGraphBase } from '../../platform-helpers.ts';
 import { META_GRAPH_BASE, INSTAGRAM_PROFILE_FIELDS } from './helpers.ts';
 
 // Instagram Graph API media fields for post-level analytics
@@ -32,6 +33,8 @@ export function createSyncHelpers(pool: Pool | null, decodeStoredIntegrationSecr
     if (!accessToken) accessToken = String(account?.access_token || '').trim();
     const instagramId = String(account?.account_id || '').trim();
     const accountTokenData = account?.token_data || {};
+    const isDirectIg = isInstagramDirectLogin({ accessToken, tokenData: accountTokenData });
+    const igGraphBase = resolveInstagramGraphBase({ accessToken, tokenData: accountTokenData });
 
     if (!accessToken) return { synced, errors: ['Instagram access token missing or expired — reconnect Instagram.'] };
     if (!instagramId) return { synced, errors: ['Instagram account ID missing from saved connection.'] };
@@ -39,11 +42,27 @@ export function createSyncHelpers(pool: Pool | null, decodeStoredIntegrationSecr
 
     let profile: any = null;
     try {
-      const profileResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(instagramId)}`, {
-        params: { fields: INSTAGRAM_PROFILE_FIELDS, access_token: accessToken },
+      const profileEndpoint = isDirectIg
+        ? `${igGraphBase}/me`
+        : `${igGraphBase}/${encodeURIComponent(instagramId)}`;
+      const profileFields = isDirectIg
+        ? 'user_id,id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count,biography,website'
+        : INSTAGRAM_PROFILE_FIELDS;
+      let profileResp = await axios.get(profileEndpoint, {
+        params: { fields: profileFields, access_token: accessToken },
         validateStatus: () => true,
         timeout: 15000,
       });
+      if (profileResp.status >= 400 && isDirectIg) {
+        profileResp = await axios.get(profileEndpoint, {
+          params: {
+            fields: 'user_id,id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count',
+            access_token: accessToken,
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+      }
       const profileData: any = profileResp.data || {};
       if (profileResp.status >= 400) {
         errors.push(profileData?.error?.message || `Instagram profile lookup failed (${profileResp.status})`);
@@ -105,7 +124,8 @@ export function createSyncHelpers(pool: Pool | null, decodeStoredIntegrationSecr
     try {
       const since = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
       const until = Math.floor(Date.now() / 1000);
-      const insightsResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(instagramId)}/insights`, {
+      const insightsTargetId = isDirectIg ? 'me' : encodeURIComponent(instagramId);
+      const insightsResp = await axios.get(`${igGraphBase}/${insightsTargetId}/insights`, {
         params: { metric: 'impressions,reach,profile_views', period: 'day', since, until, access_token: accessToken },
         validateStatus: () => true,
         timeout: 20000,
@@ -152,7 +172,8 @@ export function createSyncHelpers(pool: Pool | null, decodeStoredIntegrationSecr
     }
 
     try {
-      const mediaResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(instagramId)}/media`, {
+      const mediaTargetId = isDirectIg ? 'me' : encodeURIComponent(instagramId);
+      const mediaResp = await axios.get(`${igGraphBase}/${mediaTargetId}/media`, {
         params: { fields: INSTAGRAM_MEDIA_FIELDS, limit: 50, access_token: accessToken },
         validateStatus: () => true,
         timeout: 20000,
@@ -171,7 +192,7 @@ export function createSyncHelpers(pool: Pool | null, decodeStoredIntegrationSecr
             accountId: instagramId,
             accountName: account?.account_name || profile?.name || profile?.username || null,
             tokenData: accountTokenData,
-            helpers: { graphBase: META_GRAPH_BASE },
+            helpers: { graphBase: igGraphBase },
           });
 
           const likes = Number(analytics.likes ?? media?.like_count ?? 0);

@@ -17,6 +17,13 @@ type InstagramHelpers = {
 
 const INSTAGRAM_MAX_CAPTION = 2200;
 const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+const IG_GRAPH_BASE = 'https://graph.instagram.com/v21.0';
+
+function resolveGraphBase(accessToken: string, helpers?: InstagramHelpers): string {
+  if (helpers?.graphBase) return helpers.graphBase;
+  if (String(accessToken || '').trim().startsWith('IG')) return IG_GRAPH_BASE;
+  return GRAPH_BASE;
+}
 
 const isRetryableStatus = (status?: number) =>
   status === 429 || (typeof status === 'number' && status >= 500);
@@ -86,7 +93,7 @@ export class InstagramBusinessPlatform implements SocialPlatform {
 
       const postType = String(post?.type || 'FEED_POST').toUpperCase();
       const helpers = (ctx.helpers || {}) as InstagramHelpers;
-      const graphBase = helpers.graphBase || GRAPH_BASE;
+      const graphBase = resolveGraphBase(ctx.accessToken, helpers);
       const media = Array.isArray(post.media) ? post.media : [];
       const caption = String(post?.content?.text || '').trim();
 
@@ -171,7 +178,7 @@ export class InstagramBusinessPlatform implements SocialPlatform {
     helpers: InstagramHelpers,
   ): Promise<{ ok: boolean; error?: string }> {
     try {
-      const graphBase = helpers?.graphBase || GRAPH_BASE;
+      const graphBase = resolveGraphBase(accessToken, helpers);
       const resp = await axios.get(`${graphBase}/${encodeURIComponent(igUserId)}`, {
         params: { fields: 'account_type,username', access_token: accessToken },
         validateStatus: () => true,
@@ -341,7 +348,7 @@ export class InstagramBusinessPlatform implements SocialPlatform {
   async getPostAnalytics(postId: string, ctx: PlatformContext): Promise<AnalyticsResult> {
     try {
       const helpers = (ctx.helpers || {}) as InstagramHelpers;
-      const graphBase = helpers.graphBase || GRAPH_BASE;
+      const graphBase = resolveGraphBase(ctx.accessToken, helpers);
 
       const resp = await axios.get(`${graphBase}/${encodeURIComponent(postId)}/insights`, {
         params: {
@@ -374,14 +381,32 @@ export class InstagramBusinessPlatform implements SocialPlatform {
 
   async refreshToken(ctx: PlatformContext): Promise<TokenRefreshResult> {
     try {
-      // Instagram uses Facebook's long-lived token exchange
       const helpers = (ctx.helpers || {}) as InstagramHelpers;
+      const token = String(ctx.accessToken || '').trim();
+      const isDirectIg = token.startsWith('IG') || Boolean(helpers.graphBase && helpers.graphBase.includes('graph.instagram.com'));
+
+      if (isDirectIg) {
+        // Instagram API with Instagram Login: refresh long-lived token via graph.instagram.com/refresh_access_token
+        const resp = await axios.get('https://graph.instagram.com/refresh_access_token', {
+          params: { grant_type: 'ig_refresh_token', access_token: token },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        const data: any = resp.data || {};
+        if (resp.status >= 400 || !data.access_token) {
+          return { ok: false, error: data?.error?.message || 'Instagram token refresh failed.' };
+        }
+        const expiresAt = new Date(Date.now() + (data.expires_in || 60 * 24 * 3600) * 1000);
+        return { ok: true, accessToken: data.access_token, expiresAt };
+      }
+
+      // Instagram API with Facebook Login: refresh via fb_exchange_token
       const appId = helpers.appId || process.env.FACEBOOK_APP_ID || '';
       const appSecret = helpers.appSecret || process.env.FACEBOOK_APP_SECRET || '';
       if (!appId || !appSecret) return { ok: false, error: 'Instagram/Facebook app credentials not configured.' };
 
       const resp = await axios.get(`${GRAPH_BASE}/oauth/access_token`, {
-        params: { grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: ctx.accessToken },
+        params: { grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: token },
         validateStatus: () => true,
         timeout: 15000,
       });

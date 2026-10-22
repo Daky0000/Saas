@@ -155,6 +155,7 @@ import {
   getUserSaaSContext, getEnabledPlatformSlugs, isOAuthClientSecretRequired,
   getVisibleUserPlatformSlugs, formatSocialAccountLabel, getUserConnectedAccounts,
   OAUTH_AUTH_URLS, resolveOAuthRedirectUri, META_INSTAGRAM_SCOPES,
+  INSTAGRAM_BUSINESS_SCOPES, INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS,
 } from './platform-helpers.ts';
 import { runDueDateAlerts, publishDuePosts, runTaskReminders } from './scheduler.ts';
 
@@ -598,14 +599,32 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
     if (!meta) return res.status(400).json({ success: false, error: 'Unsupported platform' });
 
     let cfg = await getPlatformConfig(platform);
-    if (platform === 'instagram' && (!cfg.appId || !cfg.appSecret)) {
-      const fbCfg = await getPlatformConfig('facebook');
-      if (fbCfg.appId && fbCfg.appSecret) {
-        cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
+    let fbCfg: Record<string, string> = {};
+    let inheritedFromFacebook = false;
+    if (platform === 'instagram') {
+      fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      if (!cfg.appId || !cfg.appSecret) {
+        if (fbCfg.appId && fbCfg.appSecret) {
+          cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
+          inheritedFromFacebook = true;
+        }
       }
     }
 
-    const clientId = cfg[meta.idField];
+    const requestedMethod = String(req.query.method || cfg.loginType || '').toLowerCase();
+    const isFbInstagramMethod = platform === 'instagram' && (
+      requestedMethod === 'facebook' ||
+      (requestedMethod !== 'instagram' && (
+        inheritedFromFacebook ||
+        Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com')) ||
+        Boolean(cfg.configId && String(cfg.configId).trim()) ||
+        Boolean(cfg.scopes && (cfg.scopes.includes('pages_show_list') || (cfg.scopes.includes('instagram_basic') && !cfg.scopes.includes('instagram_business_basic'))))
+      ))
+    );
+
+    const clientId = isFbInstagramMethod
+      ? String(cfg.facebookAppId || fbCfg.appId || cfg.appId || '').trim()
+      : cfg[meta.idField];
     const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
 
     if (!clientId || !redirectUri) {
@@ -615,16 +634,29 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
     let authUrl = meta.authUrl;
     let scopeParam = String(cfg.scopes || meta.scopes || '').trim();
 
-    const isFbInstagramMethod = platform === 'instagram' && (
-      String(req.query.method || cfg.loginType || '').toLowerCase() === 'facebook' ||
-      Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com'))
-    );
-
     if (isFbInstagramMethod) {
       authUrl = 'https://www.facebook.com/v19.0/dialog/oauth';
-      if (!cfg.scopes) {
+      if (!cfg.scopes || cfg.scopes.includes('instagram_business_')) {
         scopeParam = META_INSTAGRAM_SCOPES.join(',');
       }
+    } else if (platform === 'instagram') {
+      if (!cfg.scopes || !cfg.scopes.includes('instagram_business_')) {
+        scopeParam = INSTAGRAM_BUSINESS_SCOPES.join(',');
+      }
+    }
+
+    const extraScopesRaw = String((req.query as any)?.extra_scopes || '').trim();
+    if (extraScopesRaw) {
+      const separator = scopeParam.includes(' ') && !scopeParam.includes(',') ? ' ' : ',';
+      const existingScopes = scopeParam
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const extraScopes = extraScopesRaw
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter((s) => /^[a-z0-9_.:-]+$/i.test(s));
+      scopeParam = Array.from(new Set([...existingScopes, ...extraScopes])).join(separator);
     }
 
     const params =
@@ -646,8 +678,27 @@ app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase,
             scope: scopeParam,
           });
 
+    if (isFbInstagramMethod) {
+      // Per Meta Business Login for Instagram (Instagram API with Facebook Login) spec:
+      // display=page and extras={"setup":{"channel":"IG_API_ONBOARDING"}} launch the embedded
+      // Instagram Professional Account + Facebook Page onboarding flow.
+      params.set('display', 'page');
+      params.set('extras', INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS);
+      const configId = String(cfg.configId || '').trim();
+      if (configId) {
+        params.set('config_id', configId);
+      }
+    }
+
+    if (platform === 'facebook' || isFbInstagramMethod || (platform !== 'instagram' && String((req.query as any)?.rerequest || '') === '1')) {
+      params.set('auth_type', 'rerequest');
+    }
+
     if (platform === 'instagram' && !isFbInstagramMethod) {
-      params.set('enable_fb_login', 'true');
+      params.set('enable_fb_login', String(cfg.enableFbLogin ?? '1'));
+      if (String((req.query as any)?.rerequest || (req.query as any)?.force_reauth || '') === '1' || cfg.forceReauth === 'true') {
+        params.set('force_reauth', 'true');
+      }
     }
 
     if (platform === 'twitter') {

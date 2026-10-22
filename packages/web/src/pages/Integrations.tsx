@@ -105,13 +105,16 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const [wpAppPassword, setWpAppPassword] = useState('');
 
   // Facebook pages
-  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>>([]);
+  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>>([]);
   const [fbGroups, setFbGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [fbLoading, setFbLoading] = useState(false);
   const [fbMissingPermissions, setFbMissingPermissions] = useState<string[]>([]);
   const [fbWarnings, setFbWarnings] = useState<string[]>([]);
   const [fbTargetType, setFbTargetType] = useState<'page' | 'group'>('page');
   const [fbSelectedTargets, setFbSelectedTargets] = useState<string[]>([]);
+  const [fbLookupQuery, setFbLookupQuery] = useState('');
+  const [fbLookupLoading, setFbLookupLoading] = useState(false);
+  const [fbLookupError, setFbLookupError] = useState<string | null>(null);
   const fbReturnHandled = useRef(false);
 
   // Instagram targets
@@ -248,15 +251,26 @@ export default function Integrations({ onNavigateSettings }: Props) {
 
   useEffect(() => {
     if (tabInitialized || loading) return;
+    const params = new URLSearchParams(window.location.search);
+    const hasSocialReturnParam = Boolean(params.get('fbType') || params.get('igConnected') || params.get('liConnected'));
+    if (hasSocialReturnParam && social.length) {
+      setActiveTab('social');
+      setTabInitialized(true);
+      return;
+    }
     const firstAvailable = cms.length ? 'cms' : social.length ? 'social' : marketing.length ? 'marketing' : messaging.length ? 'messaging' : 'cms';
     setActiveTab(firstAvailable);
     setTabInitialized(true);
   }, [cms.length, social.length, marketing.length, messaging.length, loading, tabInitialized]);
 
-  const startOAuth = async (slug: string, returnTo = '/integrations') => {
+  const startOAuth = async (
+    slug: string,
+    returnTo = '/integrations',
+    options?: { extraScopes?: string[]; rerequest?: boolean; method?: 'instagram' | 'facebook' },
+  ) => {
     setBusy(slug);
     try {
-      const res = await integrationService.startOAuth(slug, returnTo);
+      const res = await integrationService.startOAuth(slug, returnTo, options);
       if (!res.success) throw new Error(res.error || 'OAuth failed');
     } catch (e) {
       alert(e instanceof Error ? e.message : 'OAuth failed');
@@ -287,15 +301,22 @@ export default function Integrations({ onNavigateSettings }: Props) {
   const openFacebookSelect = useCallback(async (accountType: 'page' | 'group') => {
     setFbTargetType(accountType);
     setFbSelectedTargets([]);
+    setFbLookupError(null);
     setModal({ type: 'facebook-select', accountType });
     setFbLoading(true);
     try {
       const res = await integrationService.listFacebookTargets();
       if (!res.success) throw new Error(res.error || 'Failed to load Facebook targets');
-      setFbPages(res.pages || []);
+      const pages = res.pages || [];
+      setFbPages(pages);
       setFbGroups(res.groups || []);
       setFbMissingPermissions(res.missingPermissions || []);
       setFbWarnings(res.warnings || []);
+      if (accountType === 'page') {
+        const savedIds = pages.filter((p) => p.saved && p.can_publish !== false).map((p) => p.id);
+        const publishableIds = pages.filter((p) => p.can_publish !== false).map((p) => p.id);
+        setFbSelectedTargets(savedIds.length > 0 ? savedIds : publishableIds);
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to load Facebook targets');
       setFbPages([]);
@@ -307,12 +328,43 @@ export default function Integrations({ onNavigateSettings }: Props) {
     }
   }, []);
 
+  const handleLookupFacebookPage = async () => {
+    const query = fbLookupQuery.trim();
+    if (!query) return;
+    setFbLookupLoading(true);
+    setFbLookupError(null);
+    try {
+      const res = await integrationService.lookupFacebookPage(query);
+      if (!res.success) {
+        setFbLookupError(res.error || 'Could not find that Facebook Page.');
+        return;
+      }
+      const nextPages = res.pages || (res.page ? [res.page] : []);
+      setFbPages((prev) => {
+        const map = new Map(prev.map((p) => [p.id, p]));
+        for (const p of nextPages) {
+          map.set(p.id, { ...map.get(p.id), ...p });
+        }
+        return Array.from(map.values());
+      });
+      if (res.page?.id && res.page.can_publish !== false) {
+        setFbSelectedTargets((prev) => (prev.includes(res.page!.id) ? prev : [...prev, res.page!.id]));
+      }
+      setFbLookupQuery('');
+    } catch (e) {
+      setFbLookupError(e instanceof Error ? e.message : 'Failed to look up Facebook Page');
+    } finally {
+      setFbLookupLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!facebookConnected || fbReturnHandled.current) return;
     const params = new URLSearchParams(window.location.search);
     const fbType = params.get('fbType');
     if (fbType !== 'page' && fbType !== 'group') return;
     fbReturnHandled.current = true;
+    setActiveTab('social');
     void openFacebookSelect(fbType);
     params.delete('fbType');
     const nextQuery = params.toString();
@@ -406,16 +458,21 @@ export default function Integrations({ onNavigateSettings }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!facebookConnected || igReturnHandled.current) return;
+    if (loading || igReturnHandled.current) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('igConnected') !== '1') return;
+    const igMethod = params.get('igMethod');
     igReturnHandled.current = true;
-    void openInstagramTargets();
+    if (igMethod === 'facebook') {
+      setIgModalTab('pages');
+      void openInstagramTargets();
+    }
     params.delete('igConnected');
+    params.delete('igMethod');
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
     window.history.replaceState({}, '', nextUrl);
-  }, [facebookConnected, openInstagramTargets]);
+  }, [loading, openInstagramTargets]);
 
 
   const toggleFacebookSelection = (id: string, disabled?: boolean) => {
@@ -816,7 +873,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
           slug === 'facebook'
             ? 'Connect Facebook to publish to your profile or Pages. Save a Page token for automated posting.'
             : slug === 'instagram'
-              ? 'Publish images via Instagram Graph API (Business/Creator account linked to a Facebook Page).'
+              ? 'Publish images & reels via Instagram Platform (Direct Instagram Business Login or Business Login via Facebook Page).'
               : slug === 'linkedin'
                 ? 'Publish posts to your profile or LinkedIn Pages you administer.'
                   : slug === 'twitter'
@@ -844,7 +901,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             {!item.connected ? (
               <button
                 type="button"
-                onClick={() => void startOAuth('instagram', '/integrations?igConnected=1')}
+                onClick={() => void startOAuth('instagram', '/integrations?igConnected=1&igMethod=instagram', { method: 'instagram' })}
                 disabled={Boolean(instagramDisabledReason) || busy === 'instagram'}
                 className={PRIMARY_ACTION}
                 title="Connect directly with Instagram Business or Creator account (no Facebook Page required)"
@@ -881,7 +938,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
               type="button"
               onClick={() =>
                 slug === 'facebook'
-                  ? openFacebookType()
+                  ? item.connected
+                    ? void startOAuth('facebook', '/integrations?fbType=page', { rerequest: true })
+                    : openFacebookType()
                   : void startOAuth(
                       slug,
                       slug === 'linkedin'
@@ -916,9 +975,9 @@ export default function Integrations({ onNavigateSettings }: Props) {
             onClick={() => openFacebookType()}
             disabled={!item.connected}
             className={SECONDARY_ACTION}
-            title={!item.connected ? 'Connect Facebook first' : ''}
+            title={!item.connected ? 'Connect Facebook first' : 'Select or manage Facebook Pages & Groups'}
           >
-            <Settings2 size={16} /> Manage
+            <Settings2 size={16} /> Manage Pages
           </button>
         ) : null}
 
@@ -1455,17 +1514,32 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         const targets = modal.accountType === 'group' ? fbGroups : fbPages;
                         if (targets.length === 0) {
                           return (
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                              No {modal.accountType === 'group' ? 'Groups' : 'Pages'} found. Try reconnecting Facebook.
+                            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                              <div className="font-semibold text-slate-900">
+                                No {modal.accountType === 'group' ? 'Groups' : 'Facebook Pages'} were returned by Meta for this login.
+                              </div>
+                              {modal.accountType === 'page' ? (
+                                <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">
+                                  <li>
+                                    <strong>Page not checked during Facebook Login:</strong> Click <strong>Reconnect &amp; Select Pages</strong> below, then click <strong>&ldquo;Edit previous settings&rdquo;</strong> in the Facebook popup and select your Page.
+                                  </li>
+                                  <li>
+                                    <strong>Page is in a Meta Business Portfolio / Business Suite:</strong> If your Page is linked to Instagram, WhatsApp, or Meta Business Suite, Meta hides it unless Business Portfolio access is granted. Click <strong>Reconnect with Business Portfolio Access</strong> below.
+                                  </li>
+                                </ul>
+                              ) : (
+                                <div className="text-xs text-slate-600">Try reconnecting Facebook and granting Group permissions.</div>
+                              )}
                             </div>
                           );
                         }
                         return (
-                          <div className="grid gap-2">
+                          <div className="grid max-h-64 gap-2 overflow-y-auto pr-1">
                             {targets.map((target) => {
+                              const pageTarget = target as { id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean };
                               const disabled =
                                 modal.accountType === 'page' &&
-                                (target as { can_publish?: boolean }).can_publish === false;
+                                pageTarget.can_publish === false;
                               const selected = fbSelectedTargets.includes(target.id);
                               return (
                                 <button
@@ -1479,13 +1553,28 @@ export default function Integrations({ onNavigateSettings }: Props) {
                                   }`}
                                 >
                                   <div className="flex items-center gap-3">
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-600">
-                                      {target.name?.[0]?.toUpperCase() || 'F'}
-                                    </div>
+                                    {pageTarget.picture ? (
+                                      <img
+                                        src={pageTarget.picture}
+                                        alt={target.name}
+                                        className="h-10 w-10 rounded-full object-cover border border-slate-200"
+                                      />
+                                    ) : (
+                                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-600">
+                                        {target.name?.[0]?.toUpperCase() || 'F'}
+                                      </div>
+                                    )}
                                     <div>
-                                      <div className="text-sm font-semibold text-slate-900">{target.name}</div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-semibold text-slate-900">{target.name}</span>
+                                        {pageTarget.saved ? (
+                                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                            Connected
+                                          </span>
+                                        ) : null}
+                                      </div>
                                       <div className="text-xs text-slate-500">
-                                        {modal.accountType === 'group' ? 'Group' : 'Page'}
+                                        {modal.accountType === 'group' ? 'Group' : `Page · ID: ${target.id}`}
                                       </div>
                                       {disabled ? (
                                         <div className="mt-1 text-xs text-amber-700">No publish access. Ask for Editor/Admin role.</div>
@@ -1499,6 +1588,71 @@ export default function Integrations({ onNavigateSettings }: Props) {
                           </div>
                         );
                       })()}
+
+                      {modal.accountType === 'page' ? (
+                        <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5">
+                          <div className="text-xs font-semibold text-slate-700">
+                            Don&apos;t see your Facebook Page?
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void startOAuth('facebook', '/integrations?fbType=page', { rerequest: true })}
+                              disabled={busy === 'facebook'}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+                            >
+                              <RefreshCw size={13} />
+                              Reconnect &amp; Select Pages
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void startOAuth('facebook', '/integrations?fbType=page', {
+                                  extraScopes: ['business_management'],
+                                  rerequest: true,
+                                })
+                              }
+                              disabled={busy === 'facebook'}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                            >
+                              <RefreshCw size={13} />
+                              Reconnect with Business Portfolio Access
+                            </button>
+                          </div>
+                          <div className="pt-1">
+                            <label className="block text-[11px] font-medium text-slate-500">
+                              Or find an authorized Page by Facebook Page URL, @username, or Page ID:
+                            </label>
+                            <div className="mt-1.5 flex gap-2">
+                              <input
+                                type="text"
+                                value={fbLookupQuery}
+                                onChange={(e) => setFbLookupQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    void handleLookupFacebookPage();
+                                  }
+                                }}
+                                placeholder="https://facebook.com/yourpage or Page ID"
+                                className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleLookupFacebookPage()}
+                                disabled={fbLookupLoading || !fbLookupQuery.trim()}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+                              >
+                                {fbLookupLoading ? <Loader2 size={13} className="animate-spin" /> : null}
+                                Find Page
+                              </button>
+                            </div>
+                            {fbLookupError ? (
+                              <div className="mt-1.5 text-xs text-red-600">{fbLookupError}</div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
 
                       <div className="flex justify-end gap-2">
                         <button
@@ -1587,7 +1741,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         <div className="mt-4 flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => void startOAuth('instagram', '/integrations?igConnected=1')}
+                            onClick={() => void startOAuth('instagram', '/integrations?igConnected=1&igMethod=instagram', { method: 'instagram' })}
                             disabled={busy === 'instagram'}
                             className="inline-flex items-center gap-2 rounded-xl bg-navy px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800 disabled:opacity-50"
                           >
@@ -1607,20 +1761,31 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         <div className="rounded-2xl border border-amber/30 bg-amber/10 p-4 text-xs text-amber-800 space-y-3">
                           <div className="flex items-center gap-2 font-semibold">
                             <AlertCircle size={16} />
-                            Facebook is not connected
+                            Connect via Facebook Business Login for Instagram
                           </div>
                           <p>
-                            To discover Instagram accounts linked to Facebook Pages, connect your Facebook account with Page management permissions first.
+                            Launch Meta&apos;s Business Login for Instagram (with embedded Page &amp; Professional Account onboarding) or connect your Facebook account with Page permissions.
                           </p>
-                          <button
-                            type="button"
-                            onClick={() => void startOAuth('facebook', '/integrations?igConnected=1')}
-                            disabled={busy === 'facebook'}
-                            className="inline-flex items-center gap-2 rounded-xl bg-navy px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 shadow-xs"
-                          >
-                            {busy === 'facebook' ? <Loader2 size={14} className="animate-spin" /> : <Settings2 size={14} />}
-                            Connect Facebook Access
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void startOAuth('instagram', '/integrations?igConnected=1&igMethod=facebook', { method: 'facebook', rerequest: true })}
+                              disabled={busy === 'instagram' || busy === 'facebook'}
+                              className="inline-flex items-center gap-2 rounded-xl bg-navy px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 shadow-xs"
+                            >
+                              {busy === 'instagram' ? <Loader2 size={14} className="animate-spin" /> : <Instagram size={14} />}
+                              Business Login for Instagram (via Facebook)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void startOAuth('facebook', '/integrations?igConnected=1&igMethod=facebook', { rerequest: true })}
+                              disabled={busy === 'facebook' || busy === 'instagram'}
+                              className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-50 shadow-xs"
+                            >
+                              {busy === 'facebook' ? <Loader2 size={14} className="animate-spin" /> : <Settings2 size={14} />}
+                              Connect Facebook Access
+                            </button>
+                          </div>
                         </div>
                       ) : igTargets.filter((t) => t.instagramId).length === 0 ? (
                         <div className="space-y-3">
@@ -1641,7 +1806,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                               No Linked Instagram Professional Accounts Found
                             </div>
                             <p className="mt-2 text-xs text-muted leading-relaxed">
-                              Your Facebook Pages were scanned, but none have an Instagram Business or Creator account connected. Follow these steps to link your account:
+                              Your Facebook Pages were scanned, but none have an Instagram Business or Creator account connected. You can launch Meta&apos;s embedded onboarding flow or link your account manually:
                             </p>
                             <ol className="mt-3 list-decimal list-inside space-y-1.5 text-xs text-muted">
                               <li>Open the Instagram app on your phone and go to your profile.</li>
@@ -1659,10 +1824,10 @@ export default function Integrations({ onNavigateSettings }: Props) {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void startOAuth('facebook', '/integrations?igConnected=1')}
+                                onClick={() => void startOAuth('instagram', '/integrations?igConnected=1&igMethod=facebook', { method: 'facebook', rerequest: true })}
                                 className="inline-flex items-center gap-1.5 rounded-xl bg-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 shadow-xs"
                               >
-                                Reconnect Meta with Instagram Scopes
+                                Launch Instagram Business Onboarding (via Facebook)
                               </button>
                             </div>
                           </div>

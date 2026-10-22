@@ -9,6 +9,7 @@ import { decryptPlatformConfig } from '../integration-helpers.ts';
 import { dbQuery } from '../db.ts';
 import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
+import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-content plans.
@@ -17,7 +18,7 @@ import { buildSharedAgentContext } from './agentSharedContext.ts';
 // the cadence + topic + end date; the scheduler claims due plans, and each
 // run: builds a brief from the brand profile + shared agent context + the
 // user's liked-image style profile, writes the copy (Promo agent prompt),
-// generates a featured image (Gemini image → OpenAI fallback), saves a draft
+// generates a featured image (Magnific One → Gemini → OpenAI fallback), saves a draft
 // blog post, records the run, and notifies the user. Everything happens in
 // the background.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,12 +60,13 @@ export function estimatePlanCredits(perDay: number, durationDays: number, imageM
   return planCreditFloor(pieces, images);
 }
 
-// ── Featured image generation (Gemini first, OpenAI fallback) ────────────────
+// ── Featured image generation (Magnific One first, Gemini & OpenAI fallback) ──
 
 async function getPlatformKey(platform: string, field = 'api_key'): Promise<string | null> {
   try {
     const r = await dbQuery<{ config: Record<string, string> }>(`SELECT config FROM platform_configs WHERE platform=$1`, [platform]);
-    return decryptPlatformConfig(r.rows[0]?.config)?.[field] ?? null;
+    const cfg = decryptPlatformConfig(r.rows[0]?.config);
+    return cfg?.[field] ?? cfg?.apiKey ?? null;
   } catch { return null; }
 }
 
@@ -84,7 +86,19 @@ async function storeGeneratedImage(base64Data: string, mimeType: string): Promis
 }
 
 export async function generateFeaturedImage(prompt: string): Promise<string | null> {
-  // Gemini image (fast, cheap)
+  // 1. Primary: Magnific One / Magnific Mystic
+  const magnificKey = (await getPlatformKey('magnific', 'apiKey')) || (await getPlatformKey('freepik', 'apiKey')) || process.env.MAGNIFIC_API_KEY || process.env.FREEPIK_API_KEY;
+  if (magnificKey) {
+    try {
+      const magOne = await magnificOneGenerate({ prompt, mode: 'quality', quality: 'high', resolution: '2k', aspect_ratio: '1:1' }, magnificKey);
+      if (magOne.url && !magOne.error) return magOne.url;
+      const magMystic = await magnificGenerateImage('mystic', prompt, '1:1', magnificKey);
+      if (magMystic.url && !magMystic.error) return magMystic.url;
+    } catch (e) {
+      logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_magnific_image_failed');
+    }
+  }
+  // 2. Secondary: Gemini image
   // Admin-configured key wins; env is fallback only
   const googleKey = (await getPlatformKey('google')) || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   if (googleKey) {
@@ -99,7 +113,7 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
       if (imgPart) return storeGeneratedImage(imgPart.inlineData.data, imgPart.inlineData.mimeType);
     } catch (e) { logger.warn({ e: e instanceof Error ? e.message : e }, 'content_plan_gemini_image_failed'); }
   }
-  // OpenAI fallback
+  // 3. Tertiary: OpenAI fallback
   const openaiKey = (await getPlatformKey('openai')) || process.env.OPENAI_API_KEY;
   if (openaiKey) {
     try {

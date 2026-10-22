@@ -9,6 +9,7 @@ import { logger } from '../logger.ts';
 import { safeAxios } from '../ssrf-guard.ts';
 import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
 import { recordAuditLog } from '../link-metadata.ts';
+import { META_INSTAGRAM_SCOPES, INSTAGRAM_BUSINESS_SCOPES, INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS } from '../platform-helpers.ts';
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
 
@@ -234,7 +235,13 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       if (platform === 'stripe') return res.status(410).json({ success: false, error: 'Use Paystack in Payments.' });
       const meta = oauthAuthUrls[platform];
       if (!meta) return res.json({ success: true, configured: false });
-      const cfg = await getPlatformConfig(platform);
+      let cfg = await getPlatformConfig(platform);
+      if (platform === 'instagram' && (!cfg.appId || !cfg.appSecret)) {
+        const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+        if (fbCfg.appId && fbCfg.appSecret) {
+          cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
+        }
+      }
       const clientId = cfg[meta.idField];
       const secretRequired = isOAuthClientSecretRequired(platform);
       const secretValue = platform === 'instagram' || platform === 'facebook' || platform === 'threads' ? cfg.appSecret : cfg.clientSecret;
@@ -535,11 +542,28 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       }
 
       const hasPlatformProfile = (slug: string) =>
-        (socialRows.rows as any[]).some((r) => normalizePlatformId(r.platform) === slug && (r.account_type === 'profile' || !r.account_type));
+        (socialRows.rows as any[]).some(
+          (r) =>
+            normalizePlatformId(r.platform) === slug &&
+            (r.account_type === 'profile' || r.account_type === 'page' || !r.account_type),
+        );
 
       const getPrimaryAccount = (slug: string) => {
-        const match = (socialRows.rows as any[]).find((r) => normalizePlatformId(r.platform) === slug);
-        if (!match) return null;
+        const matches = (socialRows.rows as any[]).filter((r) => normalizePlatformId(r.platform) === slug);
+        if (matches.length === 0) return null;
+        const pageRows = matches.filter((r) => String(r.account_type || '').toLowerCase() === 'page');
+        if (slug === 'facebook' && pageRows.length > 0) {
+          const primaryPage = pageRows[0];
+          const pageNames = pageRows.map((p) => String(p.account_name || '').trim()).filter(Boolean);
+          return {
+            accountType: 'page',
+            accountId: primaryPage.account_id || null,
+            accountName: pageNames.length > 1 ? `${pageNames[0]} (+${pageNames.length - 1} more)` : (primaryPage.account_name || null),
+            username: primaryPage.handle || null,
+            connectedAt: primaryPage.created_at || null,
+          };
+        }
+        const match = matches.find((r) => r.account_type === 'profile' || !r.account_type) || matches[0];
         return { accountType: match.account_type || 'profile', accountId: match.account_id || null, accountName: match.account_name || null, username: match.handle || null, connectedAt: match.created_at || null };
       };
 
@@ -751,8 +775,32 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const meta = oauthAuthUrls[slug];
       if (!meta) return res.status(404).json({ success: false, error: `Platform "${slug}" does not support OAuth` });
 
-      const cfg = await getPlatformConfig(slug).catch(() => ({} as Record<string, string>));
-      const clientId = String((cfg as any)[meta.idField] || '').trim();
+      let cfg = await getPlatformConfig(slug).catch(() => ({} as Record<string, string>));
+      let fbCfg: Record<string, string> = {};
+      let inheritedFromFacebook = false;
+      if (slug === 'instagram') {
+        fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+        if (!cfg.appId || !cfg.appSecret) {
+          if (fbCfg.appId && fbCfg.appSecret) {
+            cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
+            inheritedFromFacebook = true;
+          }
+        }
+      }
+
+      const requestedMethod = String(req.query.method || cfg.loginType || '').toLowerCase();
+      const isFbInstagramMethod = slug === 'instagram' && (
+        requestedMethod === 'facebook' ||
+        (requestedMethod !== 'instagram' && (
+          inheritedFromFacebook ||
+          Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com')) ||
+          Boolean(cfg.configId && String(cfg.configId).trim())
+        ))
+      );
+
+      const clientId = isFbInstagramMethod
+        ? String(cfg.facebookAppId || fbCfg.appId || cfg.appId || '').trim()
+        : String((cfg as any)[meta.idField] || '').trim();
       if (!clientId) return res.status(400).json({ success: false, error: `${PLATFORM_NAMES[slug] || slug} is not configured by admin` });
 
       const redirectUri = resolveOAuthRedirectUri(slug, String((cfg as any).redirectUri || ''), req);
@@ -767,15 +815,36 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         ).catch(() => undefined);
       }
 
-      const scopeParam = String((cfg as any).scopes || meta.scopes || '').trim();
+      let authUrl = meta.authUrl;
+      let scopeParam = String((cfg as any).scopes || meta.scopes || '').trim();
+      if (isFbInstagramMethod) {
+        authUrl = 'https://www.facebook.com/v19.0/dialog/oauth';
+        if (!cfg.scopes || cfg.scopes.includes('instagram_business_')) {
+          scopeParam = META_INSTAGRAM_SCOPES.join(',');
+        }
+      } else if (slug === 'instagram') {
+        if (!cfg.scopes || !cfg.scopes.includes('instagram_business_')) {
+          scopeParam = INSTAGRAM_BUSINESS_SCOPES.join(',');
+        }
+      }
+
       const params = new URLSearchParams({ redirect_uri: redirectUri, scope: scopeParam, state, response_type: 'code' });
       if (slug === 'tiktok') {
         params.set('client_key', clientId);
       } else {
         params.set('client_id', clientId);
       }
+      if (isFbInstagramMethod) {
+        params.set('display', 'page');
+        params.set('extras', INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS);
+        params.set('auth_type', 'rerequest');
+        const configId = String(cfg.configId || '').trim();
+        if (configId) params.set('config_id', configId);
+      } else if (slug === 'instagram') {
+        params.set('enable_fb_login', String(cfg.enableFbLogin ?? '1'));
+      }
 
-      return res.json({ authUrl: `${meta.authUrl}?${params.toString()}`, state });
+      return res.json({ authUrl: `${authUrl}?${params.toString()}`, state });
     } catch (error) {
       logger.error('Get integration auth URL error:', error);
       return res.status(500).json({ success: false, error: 'Failed to generate auth URL' });

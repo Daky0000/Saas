@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { encryptIntegrationSecret, decryptIntegrationSecret, logIntegrationEvent } from '../integration-helpers.ts';
 import { inMemoryPlatformConfigs } from '../user-auth.ts';
 import { OAUTH_AUTH_URLS, resolveOAuthRedirectUri, formatSocialAccountLabel, getMetaOAuthScopeString } from '../platform-helpers.ts';
-import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, type SocialConnectDeps } from './socialConnectRoutes.ts';
+import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, fetchAccessibleFacebookPages, syncFacebookPagesForUser, type SocialConnectDeps } from './socialConnectRoutes.ts';
 import axios from 'axios';
 import type { Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -73,7 +73,7 @@ export function registerSocialRoutes(deps: SocialDeps): Router {
   const router = Router();
   const connection = deps.socialConnectDeps;
   const getOAuthStateRow = (state: string) => stateImpl(dbQuery,state);
-  const exchangeFacebookCode = (code: string,uri?: string) => facebookImpl(getPlatformConfig,resolveOAuthRedirectUri,code,uri);
+  const exchangeFacebookCode = (code: string,uri?: string,req?: Request) => facebookImpl(getPlatformConfig,resolveOAuthRedirectUri,code,uri,req);
   const exchangeOAuthCode = (platform: string,code: string,verifier?: string,req?: Request) => exchangeImpl(getPlatformConfig,resolveOAuthRedirectUri,connection.parseLinkedInScopeList,connection.computeIsoFromTtlSeconds,platform,code,verifier,req);
   const storeUserConnection = (userId: string,platform: string,data: unknown) => storeImpl(connection,userId,platform,data);
   const getUserSettingValue = async (userId: string,key: string) => (await dbQuery('SELECT value FROM user_settings WHERE user_id=$1 AND key=$2',[userId,key])).rows[0]?.value || null;
@@ -103,7 +103,12 @@ router.get('/v1/social/facebook/connect', async (req: Request, res: Response) =>
     );
 
     const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
-    const scope = getMetaOAuthScopeString();
+    const baseScope = getMetaOAuthScopeString();
+    const extraScopes = String((req.query as any)?.extra_scopes || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^[a-z0-9_]+$/i.test(s));
+    const scope = Array.from(new Set([...baseScope.split(','), ...extraScopes].filter(Boolean))).join(',');
 
     const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
     oauthUrl.searchParams.set('client_id', clientId);
@@ -111,6 +116,7 @@ router.get('/v1/social/facebook/connect', async (req: Request, res: Response) =>
     oauthUrl.searchParams.set('state', state);
     oauthUrl.searchParams.set('response_type', 'code');
     oauthUrl.searchParams.set('scope', scope);
+    oauthUrl.searchParams.set('auth_type', 'rerequest');
 
     return res.redirect(oauthUrl.toString());
   } catch (err) {
@@ -142,15 +148,11 @@ router.get('/v1/social/facebook/authorize-url', async (req: Request, res: Respon
     );
 
     const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
-    const scope = [
-      'public_profile',
-      'email',
-      'pages_show_list',
-      'pages_read_engagement',
-      'pages_manage_posts',
-      'pages_manage_metadata',
-      'read_insights',
-    ].join(',');
+    const extraScopes = String((req.query as any)?.extra_scopes || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^[a-z0-9_]+$/i.test(s));
+    const scope = getMetaOAuthScopeString(extraScopes);
 
     const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
     oauthUrl.searchParams.set('client_id', clientId);
@@ -158,6 +160,7 @@ router.get('/v1/social/facebook/authorize-url', async (req: Request, res: Respon
     oauthUrl.searchParams.set('state', state);
     oauthUrl.searchParams.set('response_type', 'code');
     oauthUrl.searchParams.set('scope', scope);
+    oauthUrl.searchParams.set('auth_type', 'rerequest');
 
     return res.json({ success: true, url: oauthUrl.toString() });
   } catch (err) {
@@ -187,7 +190,7 @@ router.get('/v1/social/facebook/callback', async (req: Request, res: Response) =
     if (String(stateRow.platform || '').trim().toLowerCase() !== 'facebook') return res.redirect(fallbackErr('State/platform mismatch'));
 
     const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
-    const tokenData = await exchangeFacebookCode(code, redirectUri);
+    const tokenData = await exchangeFacebookCode(code, redirectUri, req);
 
     // Exchange short-lived user token for a long-lived one (~60 days)
     const shortToken = String(tokenData?.access_token || '').trim();
@@ -231,7 +234,83 @@ router.get('/v1/social/facebook/callback', async (req: Request, res: Response) =
   }
 });
 
-// GET /api/v1/social/facebook/pages — list managed pages (Graph API /me/accounts)
+async function loadAndEnrichFacebookPagesForUser(userId: string, accessToken: string) {
+  const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+  const appId = String(fbCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+  const appSecret = String(fbCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+  const discovered = await fetchAccessibleFacebookPages(accessToken, { appId, appSecret });
+
+  let savedPageRows: Array<{ account_id: string; account_name: string; profile_image: string | null }> = [];
+  if (pool) {
+    const savedRes = await pool
+      .query<{ account_id: string; account_name: string; profile_image: string | null }>(
+        `SELECT account_id, account_name, profile_image
+         FROM social_accounts
+         WHERE user_id = $1 AND platform = 'facebook' AND account_type = 'page' AND connected = true`,
+        [userId],
+      )
+      .catch(() => ({ rows: [] as Array<{ account_id: string; account_name: string; profile_image: string | null }> }));
+    savedPageRows = savedRes.rows || [];
+
+    if (savedPageRows.length === 0 && discovered.pages.some((p) => p.can_publish && p.access_token)) {
+      await syncFacebookPagesForUser(
+        { pool, dbQuery, getPlatformConfig, encryptIntegrationSecret },
+        userId,
+        accessToken,
+      );
+      const refreshed = await pool
+        .query<{ account_id: string; account_name: string; profile_image: string | null }>(
+          `SELECT account_id, account_name, profile_image
+           FROM social_accounts
+           WHERE user_id = $1 AND platform = 'facebook' AND account_type = 'page' AND connected = true`,
+          [userId],
+        )
+        .catch(() => ({ rows: [] as Array<{ account_id: string; account_name: string; profile_image: string | null }> }));
+      savedPageRows = refreshed.rows || [];
+    }
+  }
+
+  const savedIds = new Set(savedPageRows.map((r) => String(r.account_id || '').trim()).filter(Boolean));
+  const byId = new Map<
+    string,
+    { id: string; name: string; picture: string | null; tasks: string[]; can_publish: boolean; saved: boolean }
+  >();
+
+  for (const p of discovered.pages) {
+    byId.set(p.id, {
+      id: p.id,
+      name: p.name,
+      picture: p.picture,
+      tasks: p.tasks,
+      can_publish: p.can_publish,
+      saved: savedIds.has(p.id),
+    });
+  }
+
+  for (const row of savedPageRows) {
+    const id = String(row.account_id || '').trim();
+    const name = String(row.account_name || '').trim();
+    if (id && name && !byId.has(id)) {
+      byId.set(id, {
+        id,
+        name,
+        picture: row.profile_image || null,
+        tasks: ['MANAGE', 'CREATE_CONTENT'],
+        can_publish: true,
+        saved: true,
+      });
+    }
+  }
+
+  return {
+    pages: Array.from(byId.values()),
+    missingPermissions: discovered.missingPermissions,
+    warnings: discovered.warnings,
+  };
+}
+
+// GET /api/v1/social/facebook/pages — list managed pages (Graph API /me/accounts + granular + business portfolios)
 router.get('/v1/social/facebook/pages', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -242,55 +321,8 @@ router.get('/v1/social/facebook/pages', async (req: Request, res: Response) => {
     const accessToken = String(conn?.access_token || '').trim();
     if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
 
-    const graphBase = 'https://graph.facebook.com/v19.0';
-    const requiredPermissions = ['pages_show_list', 'pages_manage_posts'];
-    let missingPermissions: string[] = [];
-    try {
-      const permsResp = await axios.get(
-        `${graphBase}/me/permissions?access_token=${encodeURIComponent(accessToken)}`,
-        { validateStatus: () => true, timeout: 15000 }
-      );
-      if (permsResp.status < 400) {
-        const perms = Array.isArray((permsResp.data as any)?.data) ? (permsResp.data as any).data : [];
-        const granted = new Set(
-          perms
-            .filter((p: any) => String(p?.status || '').toLowerCase() === 'granted')
-            .map((p: any) => String(p?.permission || '').toLowerCase())
-            .filter(Boolean)
-        );
-        missingPermissions = requiredPermissions.filter((perm) => !granted.has(perm));
-      }
-    } catch (e) {
-      logger.warn({ e }, 'facebook_permissions_check_failed');
-      missingPermissions = [];
-    }
-
-    const pagesResp = await axios.get(
-      `${graphBase}/me/accounts?fields=id,name,tasks,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(accessToken)}`,
-      { validateStatus: () => true, timeout: 15000 }
-    );
-    const pagesData: any = pagesResp.data || {};
-    if (pagesResp.status >= 400) {
-      const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
-      return res.status(400).json({ success: false, error: msg });
-    }
-    const pages = Array.isArray(pagesData?.data)
-      ? pagesData.data
-          .map((p: any) => {
-            const tasks = Array.isArray(p?.tasks) ? p.tasks.map((t: any) => String(t)) : [];
-            const canPublish = tasks.includes('CREATE_CONTENT') || tasks.includes('MANAGE');
-            return {
-              id: String(p?.id || '').trim(),
-              name: String(p?.name || '').trim(),
-              picture: p?.picture?.data?.url ? String(p.picture.data.url) : null,
-              tasks,
-              can_publish: canPublish,
-            };
-          })
-          .filter((p: any) => p.id)
-      : [];
-
-    return res.json({ success: true, pages, missingPermissions });
+    const result = await loadAndEnrichFacebookPagesForUser(auth.userId, accessToken);
+    return res.json({ success: true, pages: result.pages, missingPermissions: result.missingPermissions, warnings: result.warnings });
   } catch (err) {
     logger.error('v1 facebook pages error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook pages' });
@@ -308,56 +340,12 @@ router.get('/v1/social/facebook/targets', async (req: Request, res: Response) =>
     const accessToken = String(conn?.access_token || '').trim();
     if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
 
+    const pageResult = await loadAndEnrichFacebookPagesForUser(auth.userId, accessToken);
+    const pages = pageResult.pages;
+    const missingPermissions = pageResult.missingPermissions;
+    const warnings = [...pageResult.warnings];
+
     const graphBase = 'https://graph.facebook.com/v19.0';
-    const requiredPermissions = ['pages_show_list', 'pages_manage_posts'];
-    let missingPermissions: string[] = [];
-    const warnings: string[] = [];
-
-    try {
-      const permsResp = await axios.get(
-        `${graphBase}/me/permissions?access_token=${encodeURIComponent(accessToken)}`,
-        { validateStatus: () => true, timeout: 15000 }
-      );
-      if (permsResp.status < 400) {
-        const perms = Array.isArray((permsResp.data as any)?.data) ? (permsResp.data as any).data : [];
-        const granted = new Set(
-          perms
-            .filter((p: any) => String(p?.status || '').toLowerCase() === 'granted')
-            .map((p: any) => String(p?.permission || '').toLowerCase())
-            .filter(Boolean)
-        );
-        missingPermissions = requiredPermissions.filter((perm) => !granted.has(perm));
-      }
-    } catch (err) {
-    logger.error('Unhandled error:', err);
-      missingPermissions = [];
-    }
-
-    const pagesResp = await axios.get(
-      `${graphBase}/me/accounts?fields=id,name,tasks,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(accessToken)}`,
-      { validateStatus: () => true, timeout: 15000 }
-    );
-    const pagesData: any = pagesResp.data || {};
-    if (pagesResp.status >= 400) {
-      const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
-      return res.status(400).json({ success: false, error: msg });
-    }
-    const pages = Array.isArray(pagesData?.data)
-      ? pagesData.data
-          .map((p: any) => {
-            const tasks = Array.isArray(p?.tasks) ? p.tasks.map((t: any) => String(t)) : [];
-            const canPublish = tasks.includes('CREATE_CONTENT') || tasks.includes('MANAGE');
-            return {
-              id: String(p?.id || '').trim(),
-              name: String(p?.name || '').trim(),
-              picture: p?.picture?.data?.url ? String(p.picture.data.url) : null,
-              tasks,
-              can_publish: canPublish,
-            };
-          })
-          .filter((p: any) => p.id)
-      : [];
-
     let groups: Array<{ id: string; name: string }> = [];
     try {
       const groupsResp = await axios.get(
@@ -376,7 +364,7 @@ router.get('/v1/social/facebook/targets', async (req: Request, res: Response) =>
           : [];
       }
     } catch (err) {
-    logger.error('Unhandled error:', err);
+      logger.error('Unhandled error:', err);
       warnings.push('Facebook groups lookup failed');
     }
 
@@ -384,6 +372,80 @@ router.get('/v1/social/facebook/targets', async (req: Request, res: Response) =>
   } catch (err) {
     logger.error('v1 facebook targets error:', err);
     return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
+  }
+});
+
+// POST /api/v1/social/facebook/lookup-page — directly look up a Facebook Page by URL, username, or Page ID
+router.post('/v1/social/facebook/lookup-page', async (req: Request, res: Response) => {
+  try {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
+
+    const query = String((req.body as any)?.query || '').trim();
+    if (!query) return res.status(400).json({ success: false, error: 'Enter a Facebook Page URL, @username, or Page ID' });
+
+    const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
+    const accessToken = String(conn?.access_token || '').trim();
+    if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
+
+    const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+    const appId = String(fbCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+    const appSecret = String(fbCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+    const discovered = await fetchAccessibleFacebookPages(accessToken, { appId, appSecret, lookupPageId: query });
+    if (discovered.pages.length === 0) {
+      const detail = discovered.warnings[0]
+        ? ` (${discovered.warnings[0]})`
+        : '';
+      return res.status(404).json({
+        success: false,
+        error: `Could not access that Facebook Page with your current token${detail}. Click "Reconnect with Business Portfolio Access" or make sure the Page was checked during the Facebook login dialog.`,
+      });
+    }
+
+    const platRow = await dbQuery<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', ['facebook']).catch(() => ({ rows: [] } as any));
+    const platformDbId = platRow?.rows?.[0]?.id ?? null;
+
+    for (const p of discovered.pages) {
+      if (!p.id || !p.name) continue;
+      const effectiveToken = p.access_token || accessToken;
+      const encryptedToken = effectiveToken ? encryptIntegrationSecret(effectiveToken) : null;
+      const upd = await dbQuery(
+        `UPDATE social_accounts
+         SET account_name = $4,
+             platform_id = $2,
+             profile_image = COALESCE($6, profile_image),
+             access_token = NULL,
+             access_token_encrypted = COALESCE($7, access_token_encrypted),
+             connected = true,
+             connected_at = NOW(),
+             needs_reapproval = false
+         WHERE user_id = $1 AND platform = 'facebook' AND account_type = $3 AND account_id = $5`,
+        [auth.userId, platformDbId, 'page', p.name, p.id, p.picture, encryptedToken],
+      );
+      if ((upd.rowCount ?? 0) === 0) {
+        await dbQuery(
+          `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, access_token, access_token_encrypted, connected, connected_at, created_at, needs_reapproval)
+           VALUES ($1, $2, 'facebook', $3, 'page', $4, $5, $6, NULL, $7, true, NOW(), NOW(), false)`,
+          [randomUUID(), auth.userId, platformDbId, p.id, p.name, p.picture, encryptedToken],
+        ).catch(() => undefined);
+      }
+    }
+
+    const pages = discovered.pages.map((p) => ({
+      id: p.id,
+      name: p.name,
+      picture: p.picture,
+      tasks: p.tasks,
+      can_publish: p.can_publish,
+      saved: true,
+    }));
+
+    return res.json({ success: true, page: pages[pages.length - 1], pages });
+  } catch (err) {
+    logger.error('v1 facebook lookup-page error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to look up Facebook Page' });
   }
 });
 
@@ -660,35 +722,36 @@ router.post('/v1/social/accounts', async (req: Request, res: Response) => {
     let tokenExpiresAtToStore: string | null = null;
     let accessTokenEncryptedToStore: string | null = null;
 
-    // Facebook: when saving a Page target, fetch the Page access_token from /me/accounts using the user's profile token.
+    // Facebook: when saving a Page target, fetch the Page access_token using multi-strategy page discovery.
     if (platformSlug === 'facebook' && accountType === 'page') {
       const conn = await getPublishableSocialConnection(auth.userId, 'facebook');
       const profileToken = String(conn?.access_token || '').trim();
       if (!profileToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
 
-      const graphBase = 'https://graph.facebook.com/v19.0';
-      const pagesResp = await axios.get(
-        `${graphBase}/me/accounts?fields=id,name,access_token,tasks,picture.width(128).height(128)&limit=200&access_token=${encodeURIComponent(profileToken)}`,
-        { validateStatus: () => true, timeout: 15000 }
-      );
-      const pagesData: any = pagesResp.data || {};
-      if (pagesResp.status >= 400) {
-        const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
-        return res.status(400).json({ success: false, error: msg });
+      const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      const appId = String(fbCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+      const appSecret = String(fbCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+      const discovered = await fetchAccessibleFacebookPages(profileToken, {
+        appId,
+        appSecret,
+        lookupPageId: accountId,
+      });
+      const match = discovered.pages.find((p) => String(p.id || '').trim() === accountId);
+      if (!match) {
+        return res.status(400).json({
+          success: false,
+          error: 'Selected Facebook Page not found or access not available. Reconnect Facebook and ensure the Page is checked.',
+        });
       }
-      const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
-      const match = pages.find((p: any) => String(p?.id || '').trim() === accountId);
-      if (!match) return res.status(400).json({ success: false, error: 'Selected Facebook Page not found or access not available' });
-      const tasks = Array.isArray(match?.tasks) ? match.tasks.map((t: any) => String(t)) : [];
-      const canPublish = tasks.includes('CREATE_CONTENT') || tasks.includes('MANAGE');
-      if (!canPublish) {
+      if (!match.can_publish) {
         return res.status(400).json({
           success: false,
           error: 'You do not have permission to publish to this Facebook Page. Ask for Editor/Admin access.',
         });
       }
-      accessTokenToStore = String(match?.access_token || '').trim() || null;
-      profileImage = match?.picture?.data?.url ? String(match.picture.data.url) : null;
+      accessTokenToStore = String(match.access_token || profileToken || '').trim() || null;
+      profileImage = match.picture || null;
       tokenExpiresAtToStore = null;
       if (!accessTokenToStore) return res.status(400).json({ success: false, error: 'Facebook Page access token not available' });
       accessTokenEncryptedToStore = encryptIntegrationSecret(accessTokenToStore);

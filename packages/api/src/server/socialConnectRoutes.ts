@@ -115,11 +115,424 @@ async function fetchMetaPermissionSet(accessToken: string): Promise<Set<string>>
   }
 }
 
-function hasInstagramPagePublishAccess(tasks: unknown): boolean {
+function hasInstagramPagePublishAccess(tasks: unknown, hasPageToken = false): boolean {
   const values = Array.isArray(tasks)
     ? tasks.map((task) => String(task || '').trim().toUpperCase()).filter(Boolean)
     : [];
-  return values.some((task) => META_PAGE_PUBLISH_TASKS.has(task));
+  if (values.length === 0 && hasPageToken) return true;
+  return values.some((task) => META_PAGE_PUBLISH_TASKS.has(task) || task === 'MODERATE');
+}
+
+export interface DiscoveredFacebookPage {
+  id: string;
+  name: string;
+  category?: string | null;
+  picture: string | null;
+  access_token: string | null;
+  tasks: string[];
+  can_publish: boolean;
+  instagram_business_account?: any | null;
+  saved?: boolean;
+}
+
+function parseFacebookPageLookupIdentifier(rawInput: string): string {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed) return '';
+  try {
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.includes('facebook.com/')) {
+      const normalizedUrl = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+      const parsed = new URL(normalizedUrl);
+      const profileId = parsed.searchParams.get('id') || parsed.searchParams.get('page_id');
+      if (profileId) return profileId.trim();
+      const segments = parsed.pathname
+        .split('/')
+        .map((s) => s.trim())
+        .filter((s) => Boolean(s) && !['pages', 'pg', 'p', 'people', 'profile.php'].includes(s.toLowerCase()));
+      if (segments.length > 0) {
+        const last = segments[segments.length - 1];
+        const dashMatch = last.match(/-(\d{8,})$/);
+        return dashMatch ? dashMatch[1] : last;
+      }
+    }
+  } catch (_err) {
+    // Fallback to string cleanup below
+  }
+  return trimmed.replace(/^@/, '').replace(/\/+$/, '').trim();
+}
+
+export async function fetchAccessibleFacebookPages(
+  userAccessToken: string,
+  options?: { appId?: string; appSecret?: string; lookupPageId?: string },
+): Promise<{
+  pages: DiscoveredFacebookPage[];
+  missingPermissions: string[];
+  warnings: string[];
+}> {
+  const token = String(userAccessToken || '').trim();
+  if (!token) {
+    return { pages: [], missingPermissions: ['pages_show_list', 'pages_manage_posts'], warnings: [] };
+  }
+
+  const requiredPermissions = ['pages_show_list', 'pages_manage_posts'];
+  const grantedPermissions = await fetchMetaPermissionSet(token);
+  const missingPermissions = missingMetaPermissions(grantedPermissions, requiredPermissions);
+  const warnings: string[] = [];
+
+  const hasIgPermission =
+    grantedPermissions.has('instagram_basic') || grantedPermissions.has('instagram_business_basic');
+  const igSubfields = hasIgPermission
+    ? ',instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}'
+    : ',instagram_business_account{id,username,name}';
+
+  // Fields valid on `/me/accounts`, `/{user_id}/accounts`, and `/{biz_id}/owned_pages` edges (includes `tasks`)
+  const accountsEdgeFieldsWithIg = `id,name,category,category_list,access_token,tasks,picture.width(128).height(128)${igSubfields}`;
+  const accountsEdgeFieldsBasic = 'id,name,category,category_list,access_token,tasks,picture.width(128).height(128)';
+
+  // Fields valid on a `/{page_id}` Page node directly (`tasks` is NOT a valid field on Page node in Graph API!)
+  const pageNodeFieldsWithToken = `id,name,category,category_list,access_token,picture.width(128).height(128)${igSubfields}`;
+  const pageNodeFieldsBasicToken = 'id,name,category,category_list,access_token,picture.width(128).height(128)';
+  const pageNodeFieldsPublic = 'id,name,category,category_list,picture.width(128).height(128),fan_count,followers_count';
+
+  const byId = new Map<string, DiscoveredFacebookPage>();
+
+  const ingestRawPage = (raw: any, allowWithoutPageIndicators = false, fallbackTasks: string[] = []) => {
+    const id = String(raw?.id || '').trim();
+    const name = String(raw?.name || '').trim();
+    if (!id || !name) return;
+
+    const rawTasks = Array.isArray(raw?.tasks)
+      ? raw.tasks.map((t: any) => String(t || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+    const tasks = rawTasks.length > 0 ? rawTasks : fallbackTasks;
+    const accessToken = String(raw?.access_token || '').trim() || null;
+    const categoryFromList =
+      Array.isArray(raw?.category_list) && raw.category_list[0]?.name
+        ? String(raw.category_list[0].name).trim()
+        : null;
+    const category = raw?.category ? String(raw.category).trim() : categoryFromList;
+    const hasPageIndicator = Boolean(
+      accessToken ||
+        tasks.length > 0 ||
+        category ||
+        (Array.isArray(raw?.category_list) && raw.category_list.length > 0) ||
+        raw?.instagram_business_account,
+    );
+    if (!allowWithoutPageIndicators && !hasPageIndicator) return;
+
+    const picture = raw?.picture?.data?.url ? String(raw.picture.data.url) : null;
+    const canPublish =
+      tasks.includes('CREATE_CONTENT') ||
+      tasks.includes('MANAGE') ||
+      tasks.includes('MODERATE') ||
+      tasks.includes('ADVERTISE') ||
+      Boolean(accessToken) ||
+      allowWithoutPageIndicators;
+
+    const existing = byId.get(id);
+    byId.set(id, {
+      id,
+      name: name || existing?.name || id,
+      category: category || existing?.category || null,
+      picture: picture || existing?.picture || null,
+      access_token: accessToken || existing?.access_token || null,
+      tasks: tasks.length > 0 ? tasks : existing?.tasks || [],
+      can_publish: canPublish || Boolean(existing?.can_publish),
+      instagram_business_account: raw?.instagram_business_account || existing?.instagram_business_account || null,
+    });
+  };
+
+  // Helper to fetch a single Page node by ID or username/handle (never passes `tasks` which fails on Page nodes)
+  const fetchPageNodeByIdOrHandle = async (
+    identifier: string,
+    allowWithoutPageIndicators: boolean,
+    fallbackTasks: string[] = [],
+  ): Promise<{ ok: boolean; errorMessage?: string }> => {
+    const encoded = encodeURIComponent(identifier);
+    const fieldCandidates = [pageNodeFieldsWithToken, pageNodeFieldsBasicToken, pageNodeFieldsPublic];
+    let lastError: string | undefined;
+
+    for (const fields of fieldCandidates) {
+      try {
+        const resp = await axios.get(`${META_GRAPH_BASE_LOCAL}/${encoded}`, {
+          params: { fields, access_token: token },
+          validateStatus: () => true,
+          timeout: 12000,
+        });
+        if (resp.status < 400 && resp.data?.id) {
+          ingestRawPage(resp.data, allowWithoutPageIndicators, fallbackTasks);
+          return { ok: true };
+        }
+        if (resp.status >= 400 && resp.data?.error?.message) {
+          lastError = String(resp.data.error.message);
+        }
+      } catch (_err) {
+        // try next field set
+      }
+    }
+    return { ok: false, errorMessage: lastError };
+  };
+
+  // Strategy 1: Standard /me/accounts (with progressive field fallbacks per Meta Pages API docs)
+  try {
+    let accountsLoaded = false;
+    for (const fieldsParam of [accountsEdgeFieldsWithIg, accountsEdgeFieldsBasic, undefined]) {
+      const params: Record<string, any> = { limit: 200, access_token: token };
+      if (fieldsParam) params.fields = fieldsParam;
+
+      const pagesResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/accounts`, {
+        params,
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      if (pagesResp.status < 400 && Array.isArray(pagesResp.data?.data)) {
+        accountsLoaded = true;
+        for (const p of pagesResp.data.data) {
+          ingestRawPage(p, true);
+        }
+        if (byId.size > 0) break;
+      } else if (pagesResp.status >= 400 && !fieldsParam) {
+        const errMsg = pagesResp.data?.error?.message;
+        if (errMsg) warnings.push(String(errMsg));
+      }
+    }
+
+    // Strategy 1b: /me/assigned_pages (Business Manager assigned pages)
+    if (byId.size === 0 || !accountsLoaded) {
+      const assignedResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/assigned_pages`, {
+        params: {
+          fields: 'id,name,tasks,access_token,category,picture.width(128).height(128)',
+          limit: 200,
+          access_token: token,
+        },
+        validateStatus: () => true,
+        timeout: 12000,
+      });
+      if (assignedResp.status < 400 && Array.isArray(assignedResp.data?.data)) {
+        for (const p of assignedResp.data.data) {
+          ingestRawPage(p, true);
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'facebook_me_accounts_lookup_failed');
+  }
+
+  // Strategy 2: Inspect granular_scopes target_ids from /debug_token
+  try {
+    const appId = String(options?.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+    const appSecret = String(options?.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+    const debugAccessToken = appId && appSecret ? `${appId}|${appSecret}` : token;
+
+    const debugResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/debug_token`, {
+      params: {
+        input_token: token,
+        access_token: debugAccessToken,
+      },
+      validateStatus: () => true,
+      timeout: 12000,
+    });
+    if (debugResp.status < 400) {
+      const granularScopes: any[] = Array.isArray(debugResp.data?.data?.granular_scopes)
+        ? debugResp.data.data.granular_scopes
+        : [];
+      const pageTargetIds = new Set<string>();
+      const businessTargetIds = new Set<string>();
+      let hasManagePostsScope = false;
+
+      for (const gs of granularScopes) {
+        const scopeName = String(gs?.scope || '').toLowerCase();
+        if (scopeName === 'pages_manage_posts') hasManagePostsScope = true;
+        const ids = Array.isArray(gs?.target_ids) ? gs.target_ids : [];
+        if (scopeName.startsWith('pages_') || scopeName === 'read_insights') {
+          for (const rawId of ids) {
+            const cleanId = String(rawId || '').trim();
+            if (cleanId && !byId.has(cleanId)) pageTargetIds.add(cleanId);
+          }
+        } else if (scopeName.startsWith('business_')) {
+          for (const rawId of ids) {
+            const cleanId = String(rawId || '').trim();
+            if (cleanId && !byId.has(cleanId) && !pageTargetIds.has(cleanId)) {
+              businessTargetIds.add(cleanId);
+            }
+          }
+        }
+      }
+
+      const inferredTasks = hasManagePostsScope ? ['CREATE_CONTENT', 'MANAGE'] : ['ANALYZE'];
+
+      if (pageTargetIds.size > 0) {
+        await Promise.all(
+          Array.from(pageTargetIds).slice(0, 50).map(async (targetId) => {
+            await fetchPageNodeByIdOrHandle(targetId, true, inferredTasks);
+          }),
+        );
+      }
+
+      if (businessTargetIds.size > 0) {
+        await Promise.all(
+          Array.from(businessTargetIds).slice(0, 25).map(async (targetId) => {
+            await fetchPageNodeByIdOrHandle(targetId, false, inferredTasks);
+          }),
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'facebook_debug_token_granular_lookup_failed');
+  }
+
+  // Strategy 3: Check Meta Business Portfolios (/me/businesses -> owned_pages & client_pages)
+  try {
+    const bizResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/businesses`, {
+      params: {
+        fields: 'id,name',
+        limit: 25,
+        access_token: token,
+      },
+      validateStatus: () => true,
+      timeout: 12000,
+    });
+    if (bizResp.status < 400 && Array.isArray(bizResp.data?.data)) {
+      const businesses: any[] = bizResp.data.data;
+      await Promise.all(
+        businesses.slice(0, 10).map(async (biz) => {
+          const bizId = String(biz?.id || '').trim();
+          if (!bizId) return;
+          for (const edge of ['owned_pages', 'client_pages']) {
+            try {
+              const edgeResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/${encodeURIComponent(bizId)}/${edge}`, {
+                params: {
+                  fields: accountsEdgeFieldsBasic,
+                  limit: 100,
+                  access_token: token,
+                },
+                validateStatus: () => true,
+                timeout: 12000,
+              });
+              if (edgeResp.status < 400 && Array.isArray(edgeResp.data?.data)) {
+                for (const p of edgeResp.data.data) {
+                  ingestRawPage(p, true, ['CREATE_CONTENT', 'MANAGE']);
+                }
+              }
+            } catch (_e) {
+              // ignore edge error
+            }
+          }
+        }),
+      );
+    }
+  } catch (_err) {
+    // ignore business lookup error if business_management scope is not granted
+  }
+
+  // Strategy 4: Explicit Page ID / URL / Handle lookup if requested
+  const lookupIdentifier = parseFacebookPageLookupIdentifier(options?.lookupPageId || '');
+  if (lookupIdentifier && !byId.has(lookupIdentifier)) {
+    const lookupRes = await fetchPageNodeByIdOrHandle(lookupIdentifier, false, ['CREATE_CONTENT']);
+    if (!lookupRes.ok && lookupRes.errorMessage) {
+      warnings.push(lookupRes.errorMessage);
+    }
+  }
+
+  return {
+    pages: Array.from(byId.values()),
+    missingPermissions,
+    warnings,
+  };
+}
+
+export async function syncFacebookPagesForUser(
+  deps: Pick<SocialConnectDeps, 'pool' | 'dbQuery' | 'getPlatformConfig' | 'encryptIntegrationSecret'>,
+  userId: string,
+  userAccessToken: string,
+): Promise<DiscoveredFacebookPage[]> {
+  if (!deps.pool || !userAccessToken) return [];
+  try {
+    const cfg = await deps.getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+    const appId = String(cfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+    const appSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+    const { pages } = await fetchAccessibleFacebookPages(userAccessToken, { appId, appSecret });
+    if (pages.length === 0) return [];
+
+    const platRow = await deps.dbQuery<{ id: number }>('SELECT id FROM social_platforms WHERE slug=$1', ['facebook']).catch(() => ({ rows: [] } as any));
+    const platformDbId = platRow?.rows?.[0]?.id ?? null;
+
+    let savedAny = false;
+    for (const page of pages) {
+      if (!page.id || !page.name) continue;
+      const effectiveToken = page.access_token || userAccessToken;
+      const encryptedPageToken = effectiveToken ? deps.encryptIntegrationSecret(effectiveToken) : null;
+
+      const updateRes = await deps.dbQuery(
+        `UPDATE social_accounts
+         SET account_name = $5,
+             platform_id = $3,
+             profile_image = COALESCE($7, profile_image),
+             access_token = NULL,
+             access_token_encrypted = COALESCE($8, access_token_encrypted),
+             connected = true,
+             connected_at = NOW(),
+             needs_reapproval = false
+         WHERE user_id = $1 AND platform = $2 AND account_type = $4 AND account_id = $6`,
+        [userId, 'facebook', platformDbId, 'page', page.name, page.id, page.picture, encryptedPageToken],
+      );
+
+      let socialAccountId: string | null = null;
+      if ((updateRes.rowCount ?? 0) === 0) {
+        socialAccountId = randomUUID();
+        await deps.dbQuery(
+          `INSERT INTO social_accounts (id, user_id, platform, platform_id, account_type, account_id, account_name, profile_image, access_token, access_token_encrypted, connected, connected_at, created_at, needs_reapproval)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, true, NOW(), NOW(), false)`,
+          [socialAccountId, userId, 'facebook', platformDbId, 'page', page.id, page.name, page.picture, encryptedPageToken],
+        );
+      } else {
+        const existingRow = await deps.dbQuery<{ id: string }>(
+          `SELECT id FROM social_accounts WHERE user_id = $1 AND platform = 'facebook' AND account_type = 'page' AND account_id = $2 LIMIT 1`,
+          [userId, page.id],
+        );
+        socialAccountId = existingRow.rows?.[0]?.id ?? null;
+      }
+
+      if (socialAccountId) {
+        const connUpdate = await deps.dbQuery(
+          `UPDATE social_connections SET active = true WHERE user_id = $1 AND social_account_id = $2`,
+          [userId, socialAccountId],
+        );
+        if ((connUpdate.rowCount ?? 0) === 0) {
+          await deps.dbQuery(
+            `INSERT INTO social_connections (id, user_id, social_account_id, active, created_at)
+             VALUES ($1, $2, $3, true, NOW())`,
+            [randomUUID(), userId, socialAccountId],
+          ).catch(() => undefined);
+        }
+      }
+      savedAny = true;
+    }
+
+    if (savedAny) {
+      const existingSettings = await deps.dbQuery<{ value: any }>(
+        `SELECT value FROM user_settings WHERE user_id = $1 AND key = 'posts-automation-settings'`,
+        [userId],
+      ).catch(() => ({ rows: [] } as any));
+      const prevVal = existingSettings?.rows?.[0]?.value && typeof existingSettings.rows[0].value === 'object'
+        ? existingSettings.rows[0].value
+        : {};
+      if (!prevVal.facebookTarget) {
+        const nextVal = { ...prevVal, facebookTarget: 'page' };
+        await deps.dbQuery(
+          `INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
+           VALUES ($1, 'posts-automation-settings', $2::jsonb, NOW(), NOW())
+           ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [userId, JSON.stringify(nextVal)],
+        ).catch(() => undefined);
+      }
+    }
+
+    return pages;
+  } catch (err) {
+    logger.warn({ err }, 'syncFacebookPagesForUser_failed');
+    return [];
+  }
 }
 
 async function fetchInstagramBusinessProfile(igUserId: string, accessToken: string): Promise<{ profile: any | null; error?: string }> {
@@ -142,7 +555,10 @@ async function fetchInstagramBusinessProfile(igUserId: string, accessToken: stri
   }
 }
 
-async function listInstagramPageTargets(userAccessToken: string): Promise<{
+async function listInstagramPageTargets(
+  userAccessToken: string,
+  options?: { appId?: string; appSecret?: string },
+): Promise<{
   targets: any[];
   missingPermissions: string[];
   warnings: string[];
@@ -163,36 +579,27 @@ async function listInstagramPageTargets(userAccessToken: string): Promise<{
     return { targets: [], missingPermissions, warnings };
   }
 
-  const pagesResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/accounts`, {
-    params: {
-      fields: 'id,name,access_token,tasks,picture.width(128).height(128),instagram_business_account{id,username}',
-      limit: 200,
-      access_token: userAccessToken,
-    },
-    validateStatus: () => true,
-    timeout: 15000,
-  });
-  const pagesData: any = pagesResp.data || {};
-  if (pagesResp.status >= 400) {
-    throw new Error(pagesData?.error?.message || `Meta API error ${pagesResp.status}`);
+  const discovered = await fetchAccessibleFacebookPages(userAccessToken, options);
+  for (const w of discovered.warnings) {
+    if (!warnings.includes(w)) warnings.push(w);
   }
 
-  const pages: any[] = Array.isArray(pagesData?.data) ? pagesData.data : [];
+  const pages = discovered.pages;
   const targets = await Promise.all(
-    pages.map(async (page: any) => {
+    pages.map(async (page: DiscoveredFacebookPage) => {
       const pageId = String(page?.id || '').trim();
       const pageName = String(page?.name || '').trim();
       const pageAccessToken = String(page?.access_token || '').trim();
       const pageTasks = Array.isArray(page?.tasks)
         ? page.tasks.map((task: any) => String(task || '').trim()).filter(Boolean)
         : [];
-      const pagePicture = page?.picture?.data?.url ? String(page.picture.data.url) : null;
+      const pagePicture = page?.picture ? String(page.picture) : null;
       const ig = page?.instagram_business_account || null;
       const instagramId = String(ig?.id || '').trim() || null;
       let profile: any = null;
 
-      if (instagramId && pageAccessToken) {
-        const profileResult = await fetchInstagramBusinessProfile(instagramId, pageAccessToken);
+      if (instagramId && (pageAccessToken || userAccessToken)) {
+        const profileResult = await fetchInstagramBusinessProfile(instagramId, pageAccessToken || userAccessToken);
         profile = profileResult.profile;
       }
 
@@ -204,7 +611,7 @@ async function listInstagramPageTargets(userAccessToken: string): Promise<{
         pageAccessToken,
         instagramId,
         instagramUsername: String(profile?.username || ig?.username || '').trim() || null,
-        instagramName: String(profile?.name || '').trim() || null,
+        instagramName: String(profile?.name || ig?.name || '').trim() || null,
         instagramAccountType: String(profile?.account_type || '').trim() || null,
         instagramFollowers: profile?.followers_count !== undefined ? Number(profile.followers_count) : null,
         instagramFollowing: profile?.follows_count !== undefined ? Number(profile.follows_count) : null,
@@ -215,7 +622,7 @@ async function listInstagramPageTargets(userAccessToken: string): Promise<{
         instagramVerified: profile?.is_verified === true,
         canPublish:
           Boolean(pageAccessToken) &&
-          hasInstagramPagePublishAccess(pageTasks) &&
+          hasInstagramPagePublishAccess(pageTasks, Boolean(pageAccessToken)) &&
           missingMetaPermissions(grantedPermissions, ['instagram_content_publish']).length === 0,
         canInsights:
           Boolean(pageAccessToken) &&
@@ -553,35 +960,43 @@ async function exchangeInstagramCode(
   const cleanCode = String(code || '').replace(/#_.*$/, '').trim();
   const cfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
   const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
-  const clientId = String(cfg.appId || fbCfg.appId || process.env.VITE_INSTAGRAM_APP_ID || process.env.VITE_FACEBOOK_APP_ID || '').trim();
-  const clientSecret = String(cfg.appSecret || fbCfg.appSecret || process.env.INSTAGRAM_APP_SECRET || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+  const igClientId = String(cfg.appId || fbCfg.appId || process.env.VITE_INSTAGRAM_APP_ID || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+  const igClientSecret = String(cfg.appSecret || fbCfg.appSecret || process.env.INSTAGRAM_APP_SECRET || process.env.FACEBOOK_APP_SECRET || '').trim();
+  const fbClientId = String(cfg.facebookAppId || fbCfg.appId || cfg.appId || process.env.VITE_FACEBOOK_APP_ID || process.env.VITE_INSTAGRAM_APP_ID || '').trim();
+  const fbClientSecret = String(cfg.facebookAppSecret || fbCfg.appSecret || cfg.appSecret || process.env.FACEBOOK_APP_SECRET || process.env.INSTAGRAM_APP_SECRET || '').trim();
   const redirectUri = resolveOAuthRedirectUri('instagram', cfg.redirectUri || fbCfg.redirectUri, req);
 
-  if (!clientId || !clientSecret) {
+  if ((!igClientId || !igClientSecret) && (!fbClientId || !fbClientSecret)) {
     throw new Error('Instagram app credentials not configured. Please add App ID and Secret under Admin → Integrations → Instagram.');
   }
 
-  // 1. First attempt: Direct Instagram OAuth token endpoint (Business Login for Instagram)
-  const instagramData = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: 'authorization_code',
-    redirect_uri: redirectUri,
-    code: cleanCode,
-  });
+  let loginMethod: 'instagram' | 'facebook' = 'instagram';
+  let response: any = { status: 500, data: {} };
 
-  let response = await axios.post('https://api.instagram.com/oauth/access_token', instagramData.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    validateStatus: () => true,
-    timeout: 15000,
-  });
+  // 1. First attempt: Direct Instagram OAuth token endpoint (Instagram API with Instagram Login)
+  if (igClientId && igClientSecret) {
+    const instagramData = new URLSearchParams({
+      client_id: igClientId,
+      client_secret: igClientSecret,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+      code: cleanCode,
+    });
 
-  // 2. Fallback: If user authenticated via Facebook dialog, exchange code via Facebook Graph API
-  if (response.status >= 400) {
+    response = await axios.post('https://api.instagram.com/oauth/access_token', instagramData.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      validateStatus: () => true,
+      timeout: 15000,
+    });
+  }
+
+  // 2. Fallback: Business Login for Instagram (Instagram API with Facebook Login via graph.facebook.com)
+  if (response.status >= 400 && fbClientId && fbClientSecret) {
     const fbFallback = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
       params: {
-        client_id: clientId,
-        client_secret: clientSecret,
+        client_id: fbClientId,
+        client_secret: fbClientSecret,
         redirect_uri: redirectUri,
         code: cleanCode,
       },
@@ -590,6 +1005,7 @@ async function exchangeInstagramCode(
     });
     if (fbFallback.status < 400) {
       response = fbFallback;
+      loginMethod = 'facebook';
     }
   }
 
@@ -600,39 +1016,99 @@ async function exchangeInstagramCode(
     throw new Error(`Instagram token exchange failed: ${detail}`);
   }
 
-  const tokenData: any = response.data || {};
+  const rawBody: any = response.data || {};
+  const firstEntry: any = Array.isArray(rawBody?.data) && rawBody.data[0] ? rawBody.data[0] : rawBody;
+  const tokenData: any = {
+    ...rawBody,
+    ...(firstEntry && typeof firstEntry === 'object' ? firstEntry : {}),
+    login_method: loginMethod,
+    graph_host: loginMethod === 'instagram' ? 'graph.instagram.com' : 'graph.facebook.com',
+  };
   const shortLivedToken = String(tokenData?.access_token || '').trim();
 
   if (shortLivedToken) {
-    // 3. Exchange short-lived token for long-lived 60-day token
-    try {
-      const longRes = await axios.get('https://graph.instagram.com/access_token', {
-        params: {
-          grant_type: 'ig_exchange_token',
-          client_secret: clientSecret,
-          access_token: shortLivedToken,
-        },
-        validateStatus: () => true,
-        timeout: 15000,
-      });
-      if (longRes.status < 400 && (longRes.data as any)?.access_token) {
-        tokenData.short_lived_access_token = shortLivedToken;
-        tokenData.access_token = String((longRes.data as any).access_token || '').trim();
-        if ((longRes.data as any)?.expires_in) {
-          tokenData.expires_in = (longRes.data as any).expires_in;
+    if (loginMethod === 'instagram') {
+      // 3a. Direct Instagram Login: Exchange short-lived token for 60-day long-lived Instagram User token
+      try {
+        const longRes = await axios.get('https://graph.instagram.com/access_token', {
+          params: {
+            grant_type: 'ig_exchange_token',
+            client_secret: igClientSecret,
+            access_token: shortLivedToken,
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (longRes.status < 400 && (longRes.data as any)?.access_token) {
+          tokenData.short_lived_access_token = shortLivedToken;
+          tokenData.access_token = String((longRes.data as any).access_token || '').trim();
+          if ((longRes.data as any)?.expires_in) {
+            tokenData.expires_in = (longRes.data as any).expires_in;
+          }
         }
+      } catch (err) {
+        logger.warn('Instagram long-lived token exchange warning:', err);
       }
-    } catch (err) {
-      logger.warn('Instagram long-lived token exchange warning:', err);
-    }
 
-    if (!tokenData.short_lived_access_token) {
+      const currentToken = String(tokenData.access_token || shortLivedToken).trim();
+
+      // 4a. Resolve Instagram professional profile via graph.instagram.com
+      try {
+        const meResp = await axios.get('https://graph.instagram.com/v21.0/me', {
+          params: {
+            fields: 'user_id,id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count,biography,website',
+            access_token: currentToken,
+          },
+          validateStatus: () => true,
+          timeout: 15000,
+        });
+        if (meResp.status < 400 && meResp.data) {
+          const me: any = meResp.data;
+          const uid = String(me.user_id || me.id || tokenData.user_id || '').trim();
+          if (uid) {
+            tokenData.user_id = uid;
+            tokenData.id = uid;
+            tokenData.sub = uid;
+          }
+          if (me.username) {
+            tokenData.username = String(me.username).trim();
+            tokenData.instagramUsername = tokenData.username;
+          }
+          if (me.name) {
+            tokenData.name = String(me.name).trim();
+            tokenData.instagramName = tokenData.name;
+          } else if (me.username) {
+            tokenData.name = String(me.username).trim();
+          }
+          if (me.profile_picture_url) {
+            tokenData.avatar_url = String(me.profile_picture_url);
+            tokenData.profilePictureUrl = String(me.profile_picture_url);
+          }
+          if (me.followers_count !== undefined) tokenData.followers_count = Number(me.followers_count);
+          if (me.media_count !== undefined) {
+            tokenData.media_count = Number(me.media_count);
+            tokenData.mediaCount = Number(me.media_count);
+          }
+          if (me.account_type) {
+            tokenData.account_type = String(me.account_type);
+            tokenData.accountType = String(me.account_type);
+          }
+          if (me.biography) tokenData.biography = String(me.biography);
+          if (me.website) tokenData.website = String(me.website);
+          tokenData.canPublish = true;
+          tokenData.canInsights = true;
+        }
+      } catch (err) {
+        logger.warn('Instagram /me profile fetch error:', err);
+      }
+    } else {
+      // 3b. Business Login for Instagram (with Facebook Login): Exchange for 60-day long-lived Facebook User token
       try {
         const fbLongRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
           params: {
             grant_type: 'fb_exchange_token',
-            client_id: clientId,
-            client_secret: clientSecret,
+            client_id: fbClientId,
+            client_secret: fbClientSecret,
             fb_exchange_token: shortLivedToken,
           },
           validateStatus: () => true,
@@ -646,73 +1122,55 @@ async function exchangeInstagramCode(
           }
         }
       } catch (_e) { /* ignore */ }
-    }
 
-    const currentToken = String(tokenData.access_token || shortLivedToken).trim();
+      const userAccessToken = String(tokenData.access_token || shortLivedToken).trim();
+      tokenData.user_access_token = userAccessToken;
 
-    // 4. Resolve Instagram user profile via Instagram Graph API
-    try {
-      const meResp = await axios.get('https://graph.instagram.com/v21.0/me', {
-        params: {
-          fields: 'user_id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count',
-          access_token: currentToken,
-        },
-        validateStatus: () => true,
-        timeout: 15000,
-      });
-      if (meResp.status < 400 && meResp.data) {
-        const me: any = meResp.data;
-        const uid = String(me.user_id || me.id || '').trim();
-        if (uid) {
-          tokenData.user_id = uid;
-          tokenData.id = uid;
-          tokenData.sub = uid;
-        }
-        if (me.username) tokenData.username = String(me.username).trim();
-        if (me.name) tokenData.name = String(me.name).trim();
-        else if (me.username) tokenData.name = String(me.username).trim();
-        if (me.profile_picture_url) tokenData.avatar_url = String(me.profile_picture_url);
-        if (me.followers_count !== undefined) tokenData.followers_count = Number(me.followers_count);
-        if (me.media_count !== undefined) tokenData.media_count = Number(me.media_count);
-        if (me.account_type) tokenData.account_type = String(me.account_type);
-      }
-    } catch (err) {
-      logger.warn('Instagram /me profile fetch error:', err);
-    }
-
-    // 5. If profile not resolved via graph.instagram.com, check Facebook Pages for linked Instagram Business Account
-    if (!tokenData.user_id || !tokenData.username) {
+      // 4b. Discover Facebook Pages & linked Instagram Professional Accounts (supports /me/accounts, debug_token granular scopes, and Business Portfolios)
       try {
-        const fbAccounts = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
-          params: {
-            fields: 'id,name,access_token,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}',
-            access_token: currentToken,
-          },
-          validateStatus: () => true,
-          timeout: 15000,
+        const targetResult = await listInstagramPageTargets(userAccessToken, {
+          appId: fbClientId,
+          appSecret: fbClientSecret,
         });
-        if (fbAccounts.status < 400 && Array.isArray(fbAccounts.data?.data)) {
-          for (const page of fbAccounts.data.data) {
-            const ig = page.instagram_business_account;
-            if (ig && ig.id) {
-              tokenData.user_id = String(ig.id).trim();
-              tokenData.id = String(ig.id).trim();
-              tokenData.username = String(ig.username || '').trim();
-              tokenData.name = String(ig.name || ig.username || page.name || '').trim();
-              if (ig.profile_picture_url) tokenData.avatar_url = String(ig.profile_picture_url);
-              if (ig.followers_count !== undefined) tokenData.followers_count = Number(ig.followers_count);
-              if (ig.media_count !== undefined) tokenData.media_count = Number(ig.media_count);
-              if (page.access_token) {
-                tokenData.pageAccessToken = page.access_token;
-                tokenData.pageId = page.id;
-                tokenData.pageName = page.name;
-              }
-              break;
-            }
+        const matchedTarget = (targetResult.targets || []).find((t) => Boolean(t.instagramId));
+        if (matchedTarget && matchedTarget.instagramId) {
+          tokenData.user_id = matchedTarget.instagramId;
+          tokenData.id = matchedTarget.instagramId;
+          tokenData.sub = matchedTarget.instagramId;
+          tokenData.username = matchedTarget.instagramUsername || matchedTarget.pageName || '';
+          tokenData.instagramUsername = matchedTarget.instagramUsername || null;
+          tokenData.name = matchedTarget.instagramName || matchedTarget.instagramUsername || matchedTarget.pageName || '';
+          tokenData.instagramName = matchedTarget.instagramName || matchedTarget.instagramUsername || null;
+          if (matchedTarget.instagramProfilePicture || matchedTarget.pagePicture) {
+            tokenData.avatar_url = matchedTarget.instagramProfilePicture || matchedTarget.pagePicture;
+            tokenData.profilePictureUrl = matchedTarget.instagramProfilePicture || matchedTarget.pagePicture;
+          }
+          if (matchedTarget.instagramFollowers != null) {
+            tokenData.followers_count = Number(matchedTarget.instagramFollowers);
+          }
+          if (matchedTarget.instagramMediaCount != null) {
+            tokenData.media_count = Number(matchedTarget.instagramMediaCount);
+            tokenData.mediaCount = Number(matchedTarget.instagramMediaCount);
+          }
+          if (matchedTarget.instagramAccountType) {
+            tokenData.account_type = matchedTarget.instagramAccountType;
+            tokenData.accountType = matchedTarget.instagramAccountType;
+          }
+          if (matchedTarget.instagramBio) tokenData.biography = matchedTarget.instagramBio;
+          if (matchedTarget.instagramWebsite) tokenData.website = matchedTarget.instagramWebsite;
+          tokenData.pageId = matchedTarget.pageId;
+          tokenData.pageName = matchedTarget.pageName;
+          tokenData.pagePicture = matchedTarget.pagePicture || null;
+          tokenData.pageTasks = matchedTarget.pageTasks || [];
+          tokenData.canPublish = Boolean(matchedTarget.canPublish);
+          tokenData.canInsights = Boolean(matchedTarget.canInsights);
+          if (matchedTarget.pageAccessToken) {
+            tokenData.pageAccessToken = matchedTarget.pageAccessToken;
+            tokenData.access_token = matchedTarget.pageAccessToken;
           }
         }
       } catch (err) {
-        logger.warn('Facebook accounts Instagram lookup error:', err);
+        logger.warn('Facebook Business Login for Instagram target discovery error:', err);
       }
     }
   }
@@ -808,18 +1266,49 @@ export async function exchangeFacebookCode(
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   code: string,
   redirectUriOverride?: string,
+  req?: Request,
 ) {
   const cfg = await getPlatformConfig('facebook');
-  const redirectUri = resolveOAuthRedirectUri('facebook', redirectUriOverride || cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI);
-  const response = await axios.get('https://graph.facebook.com/v18.0/oauth/access_token', {
+  const appId = String(cfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+  const appSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+  const redirectUri = resolveOAuthRedirectUri(
+    'facebook',
+    redirectUriOverride || cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI,
+    req,
+  );
+  const response = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
     params: {
-      client_id: cfg.appId || process.env.VITE_FACEBOOK_APP_ID,
-      client_secret: cfg.appSecret || process.env.FACEBOOK_APP_SECRET,
+      client_id: appId,
+      client_secret: appSecret,
       redirect_uri: redirectUri,
       code,
     },
   });
   const tokenData: any = response.data || {};
+
+  const shortToken = String(tokenData?.access_token || '').trim();
+  if (shortToken && appId && appSecret) {
+    try {
+      const llResp = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+        params: {
+          grant_type: 'fb_exchange_token',
+          client_id: appId,
+          client_secret: appSecret,
+          fb_exchange_token: shortToken,
+        },
+        validateStatus: () => true,
+        timeout: 15000,
+      });
+      const llData: any = llResp.data || {};
+      if (llResp.status < 400 && llData.access_token) {
+        tokenData.short_lived_access_token = shortToken;
+        tokenData.access_token = String(llData.access_token).trim();
+        tokenData.expires_in = llData.expires_in || 60 * 24 * 3600;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'facebook_long_lived_token_exchange_failed');
+    }
+  }
 
   const accessToken = String(tokenData?.access_token || '').trim();
   if (accessToken) {
@@ -1121,7 +1610,7 @@ export async function exchangeOAuthCode(
     case 'linkedin':
       return exchangeLinkedInCode(getPlatformConfig, resolveOAuthRedirectUri, parseLinkedInScopeList, computeIsoFromTtlSeconds, code, req);
     case 'facebook':
-      return exchangeFacebookCode(getPlatformConfig, resolveOAuthRedirectUri, code);
+      return exchangeFacebookCode(getPlatformConfig, resolveOAuthRedirectUri, code, undefined, req);
     case 'pinterest':
       return exchangePinterestCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
     case 'threads':
@@ -1287,8 +1776,28 @@ export async function storeUserConnection(deps: SocialConnectDeps, userId: strin
     [randomUUID(), userId, platformId, platformDbId, accountId, accountName, profileImage, String(handle), followers, expiresAt, tokenExpiresAt, null, null, accessTokenEncrypted, refreshTokenEncrypted, normalizedTokenData || {}]
   );
 
-  await upsertUserIntegration({ userId, integrationSlug: platformId, accessTokenEncrypted, refreshTokenEncrypted, tokenExpiry: expiresAt, accountId, accountName, status: 'connected' });
-  await logIntegrationEvent({ userId, integrationSlug: platformId, eventType: 'connection_attempt', status: 'success', response: { platform: platformId, accountId, accountName } });
+  let integrationAccountId = accountId;
+  let integrationAccountName = accountName;
+  if (platformId === 'facebook' && accessTokenRaw) {
+    const syncedPages = await syncFacebookPagesForUser(
+      { pool, dbQuery, getPlatformConfig: deps.getPlatformConfig, encryptIntegrationSecret },
+      userId,
+      accessTokenRaw,
+    );
+    if (syncedPages.length > 0 && syncedPages[0]?.id && syncedPages[0]?.name) {
+      integrationAccountId = syncedPages[0].id;
+      integrationAccountName = syncedPages[0].name;
+    }
+  } else if (platformId === 'instagram' && normalizedTokenData?.login_method === 'facebook' && normalizedTokenData?.user_access_token) {
+    await syncFacebookPagesForUser(
+      { pool, dbQuery, getPlatformConfig: deps.getPlatformConfig, encryptIntegrationSecret },
+      userId,
+      String(normalizedTokenData.user_access_token),
+    ).catch(() => undefined);
+  }
+
+  await upsertUserIntegration({ userId, integrationSlug: platformId, accessTokenEncrypted, refreshTokenEncrypted, tokenExpiry: expiresAt, accountId: integrationAccountId, accountName: integrationAccountName, status: 'connected' });
+  await logIntegrationEvent({ userId, integrationSlug: platformId, eventType: 'connection_attempt', status: 'success', response: { platform: platformId, accountId: integrationAccountId, accountName: integrationAccountName } });
 
   const platformLabel = platformId.charAt(0).toUpperCase() + platformId.slice(1);
   if (isFirstConnect) {
@@ -1445,22 +1954,62 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const accessToken = String(conn?.access_token || '').trim();
       if (!accessToken) return res.status(400).json({ success: false, error: 'Facebook access token missing or expired — please reconnect' });
 
-      const graphBase = 'https://graph.facebook.com/v19.0';
-      const warnings: string[] = [];
+      const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      const appId = String(fbCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+      const appSecret = String(fbCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
 
-      const pagesResp = await axios.get(
-        `${graphBase}/me/accounts?fields=id,name&limit=200&access_token=${encodeURIComponent(accessToken)}`,
-        { validateStatus: () => true, timeout: 15000 }
-      );
-      const pagesData: any = pagesResp.data || {};
-      if (pagesResp.status >= 400) {
-        const msg = pagesData?.error?.message || `Facebook API error ${pagesResp.status}`;
-        return res.status(400).json({ success: false, error: msg });
+      const discovered = await fetchAccessibleFacebookPages(accessToken, { appId, appSecret });
+      if (discovered.pages.length > 0) {
+        await syncFacebookPagesForUser(
+          { pool, dbQuery, getPlatformConfig, encryptIntegrationSecret },
+          auth.userId,
+          accessToken,
+        );
       }
-      const pages = Array.isArray(pagesData?.data)
-        ? pagesData.data.map((p: any) => ({ id: String(p?.id || '').trim(), name: String(p?.name || '').trim() })).filter((p: any) => p.id)
-        : [];
 
+      const byId = new Map<string, { id: string; name: string; picture: string | null; tasks: string[]; can_publish: boolean; saved?: boolean }>();
+      for (const p of discovered.pages) {
+        byId.set(p.id, {
+          id: p.id,
+          name: p.name,
+          picture: p.picture,
+          tasks: p.tasks,
+          can_publish: p.can_publish,
+          saved: true,
+        });
+      }
+
+      try {
+        const storedRows = await dbQuery<{ account_id: string; account_name: string; profile_image: string | null }>(
+          `SELECT account_id, account_name, profile_image
+           FROM social_accounts
+           WHERE user_id = $1 AND platform = 'facebook' AND account_type = 'page' AND connected = true
+           ORDER BY connected_at DESC NULLS LAST, created_at DESC`,
+          [auth.userId],
+        );
+        for (const row of storedRows.rows) {
+          const id = String(row.account_id || '').trim();
+          const name = String(row.account_name || '').trim();
+          if (!id || !name) continue;
+          if (!byId.has(id)) {
+            byId.set(id, {
+              id,
+              name,
+              picture: row.profile_image || null,
+              tasks: ['CREATE_CONTENT', 'MANAGE'],
+              can_publish: true,
+              saved: true,
+            });
+          }
+        }
+      } catch (_e) {
+        // ignore stored rows lookup error
+      }
+
+      const pages = Array.from(byId.values());
+      const warnings = [...discovered.warnings];
+
+      const graphBase = 'https://graph.facebook.com/v19.0';
       let groups: Array<{ id: string; name: string }> = [];
       try {
         const groupsResp = await axios.get(
@@ -1480,7 +2029,7 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
         warnings.push('Facebook groups lookup failed');
       }
 
-      return res.json({ success: true, pages, groups, warnings });
+      return res.json({ success: true, pages, groups, missingPermissions: discovered.missingPermissions, warnings });
     } catch (error) {
       logger.error('Facebook targets error:', error);
       return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
@@ -1495,18 +2044,68 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
       const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
-      const accessToken = String(fbConn?.access_token || '').trim();
+      const igConn = await getPublishableSocialConnection(auth.userId, 'instagram');
+      const igTokenData = igConn?.token_data && typeof igConn.token_data === 'object' ? igConn.token_data : {};
+      const igRawToken = String(igConn?.access_token || '').trim();
+      const igIsDirect =
+        igTokenData.graph_host === 'graph.instagram.com' ||
+        igTokenData.login_method === 'instagram' ||
+        (!igTokenData.pageId && igRawToken.startsWith('IG'));
+
+      const accessToken = String(
+        fbConn?.access_token ||
+        igTokenData.user_access_token ||
+        (!igIsDirect ? igRawToken : '') ||
+        ''
+      ).trim();
+
       if (!accessToken) {
+        if (igConn && igIsDirect && igConn.account_id) {
+          return res.json({
+            success: true,
+            facebookConnected: false,
+            directInstagramConnected: true,
+            targets: [
+              {
+                pageId: 'direct',
+                pageName: 'Instagram Direct Login',
+                pagePicture: igConn.profile_image || igTokenData.avatar_url || null,
+                pageTasks: ['MANAGE', 'CREATE_CONTENT'],
+                instagramId: String(igConn.account_id),
+                instagramUsername: String(igConn.handle || igTokenData.username || igTokenData.instagramUsername || '').trim() || null,
+                instagramName: String(igConn.account_name || igTokenData.name || igTokenData.instagramName || '').trim() || null,
+                instagramAccountType: String(igTokenData.account_type || igTokenData.accountType || 'BUSINESS').trim(),
+                instagramFollowers: Number(igConn.followers ?? igTokenData.followers_count ?? 0),
+                instagramFollowing: null,
+                instagramMediaCount: Number(igTokenData.media_count ?? igTokenData.mediaCount ?? 0),
+                instagramBio: igTokenData.biography || null,
+                instagramProfilePicture: igConn.profile_image || igTokenData.avatar_url || null,
+                instagramWebsite: igTokenData.website || null,
+                instagramVerified: false,
+                canPublish: true,
+                canInsights: true,
+              },
+            ],
+            missingPermissions: [],
+            warnings: [],
+          });
+        }
+
         return res.json({
           success: true,
           facebookConnected: false,
           targets: [],
           missingPermissions: ['facebook_not_connected'],
-          warnings: ['Facebook is not connected yet. Connect your Facebook account with Page permissions to discover linked Instagram professional accounts.'],
+          warnings: ['Facebook is not connected yet. Connect via Facebook (Business Login for Instagram) or connect your Facebook account with Page permissions to discover linked Instagram professional accounts.'],
         });
       }
 
-      const result = await listInstagramPageTargets(accessToken);
+      const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      const igCfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
+      const appId = String(igCfg.facebookAppId || fbCfg.appId || igCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+      const appSecret = String(igCfg.facebookAppSecret || fbCfg.appSecret || igCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+      const result = await listInstagramPageTargets(accessToken, { appId, appSecret });
       return res.json({
         success: true,
         facebookConnected: true,
@@ -1532,11 +2131,33 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const igId = String(instagramId || '').trim();
       if (!pid || !igId) return res.status(400).json({ success: false, error: 'pageId and instagramId are required' });
 
-      const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
-      const accessToken = String(fbConn?.access_token || '').trim();
-      if (!accessToken) return res.status(400).json({ success: false, error: 'Meta access token missing or expired — reconnect Facebook before linking Instagram' });
+      if (pid === 'direct') {
+        return res.json({ success: true });
+      }
 
-      const targetResult = await listInstagramPageTargets(accessToken);
+      const fbConn = await getPublishableSocialConnection(auth.userId, 'facebook');
+      const igConn = await getPublishableSocialConnection(auth.userId, 'instagram');
+      const igTokenData = igConn?.token_data && typeof igConn.token_data === 'object' ? igConn.token_data : {};
+      const igRawToken = String(igConn?.access_token || '').trim();
+      const igIsDirect =
+        igTokenData.graph_host === 'graph.instagram.com' ||
+        igTokenData.login_method === 'instagram' ||
+        (!igTokenData.pageId && igRawToken.startsWith('IG'));
+
+      const accessToken = String(
+        fbConn?.access_token ||
+        igTokenData.user_access_token ||
+        (!igIsDirect ? igRawToken : '') ||
+        ''
+      ).trim();
+      if (!accessToken) return res.status(400).json({ success: false, error: 'Meta access token missing or expired — reconnect via Facebook before linking Instagram' });
+
+      const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      const igCfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
+      const appId = String(igCfg.facebookAppId || fbCfg.appId || igCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+      const appSecret = String(igCfg.facebookAppSecret || fbCfg.appSecret || igCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+
+      const targetResult = await listInstagramPageTargets(accessToken, { appId, appSecret });
       const match = (targetResult.targets || []).find((target: any) => target.pageId === pid);
       if (!match) return res.status(400).json({ success: false, error: 'Selected Facebook Page was not found in your Meta account list' });
       if (!match.instagramId || match.instagramId !== igId) return res.status(400).json({ success: false, error: 'Selected page is not linked to the requested Instagram professional account' });
@@ -1550,7 +2171,7 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const handle = String(profile?.username || instagramUsername || '').trim() || null;
       const followers = Number(profile?.followers_count ?? 0);
       const profileImage = typeof profile?.profile_picture_url === 'string' ? profile.profile_picture_url : null;
-      const pageTokenExpiry = fbConn?.token_expires_at || null;
+      const pageTokenExpiry = fbConn?.token_expires_at || igConn?.token_expires_at || null;
 
       const pageTokenEncrypted = encryptIntegrationSecret(pageToken);
 
@@ -1567,7 +2188,24 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
                access_token=EXCLUDED.access_token, access_token_encrypted=EXCLUDED.access_token_encrypted,
                token_data=EXCLUDED.token_data, needs_reapproval=false`,
         [randomUUID(), auth.userId, igId, displayName, handle, profileImage, followers, pageTokenExpiry, null, pageTokenEncrypted,
-          JSON.stringify({ pageId: pid, pageName: (match as any).pageName || null, pagePicture: (match as any).pagePicture || null, pageTasks: (match as any).pageTasks || [], instagramUsername: handle, instagramName: displayName, accountType: profile?.account_type || (match as any).instagramAccountType || null, mediaCount: Number(profile?.media_count ?? (match as any).instagramMediaCount ?? 0), website: profile?.website || (match as any).instagramWebsite || null, biography: profile?.biography || (match as any).instagramBio || null, profilePictureUrl: profileImage || (match as any).instagramProfilePicture || null, canPublish: Boolean((match as any).canPublish), canInsights: Boolean((match as any).canInsights) })]
+          JSON.stringify({
+            login_method: 'facebook',
+            graph_host: 'graph.facebook.com',
+            user_access_token: accessToken,
+            pageId: pid,
+            pageName: (match as any).pageName || null,
+            pagePicture: (match as any).pagePicture || null,
+            pageTasks: (match as any).pageTasks || [],
+            instagramUsername: handle,
+            instagramName: displayName,
+            accountType: profile?.account_type || (match as any).instagramAccountType || null,
+            mediaCount: Number(profile?.media_count ?? (match as any).instagramMediaCount ?? 0),
+            website: profile?.website || (match as any).instagramWebsite || null,
+            biography: profile?.biography || (match as any).instagramBio || null,
+            profilePictureUrl: profileImage || (match as any).instagramProfilePicture || null,
+            canPublish: Boolean((match as any).canPublish),
+            canInsights: Boolean((match as any).canInsights),
+          })]
       );
 
       await upsertUserIntegration({ userId: auth.userId, integrationSlug: 'instagram', accessTokenEncrypted: pageTokenEncrypted, refreshTokenEncrypted: null, tokenExpiry: pageTokenExpiry, accountId: igId, accountName: displayName, status: 'connected' });

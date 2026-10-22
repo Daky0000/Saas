@@ -21,6 +21,20 @@ import { buildSharedAgentContext, recordAgentInsight, invalidateSharedContext } 
 import { getUserPlanName } from '../user-auth.ts';
 import { dbQuery } from '../db.ts';
 import { logger } from '../logger.ts';
+import { decryptPlatformConfig } from '../integration-helpers.ts';
+import { callMagnificMcpTool } from './mcpRoutes.ts';
+import {
+  getMagnificApiKey,
+  magnificOneGenerate,
+  magnificGenerateImage,
+  magnificEditImage,
+  magnificGenerateVideo,
+  magnificLipSync,
+  magnificGenerateAudio,
+  magnificExecuteSpaceOrFlow,
+  MAGNIFIC_IMAGE_MODELS,
+  MAGNIFIC_VIDEO_MODELS,
+} from './magnificRoutes.ts';
 
 export interface DakyworldOsDeps {
   pool: Pool;
@@ -309,9 +323,19 @@ export function registerDakyworldOsRoutes({
       .map((k) => `${AGENT_DEFS[k].name} (${AGENT_DEFS[k].role})`)
       .join(', ');
 
+    const magnificDoctrine = `Magnific Academy Multimodal Engine Doctrine:
+- Always specify exact model, aspect ratio, resolution, and background rules explicitly.
+- For reusable characters/products: generate on a plain white studio background first ('nano-banana-2' in 4K) and build a single multi-view Character Profile Sheet (front, side, back, passport faces) to anchor consistency; keep Character, Location, and Object nodes separate.
+- For art-directed images & campaigns: use Magnific One (draft mode with tiles: 16 for exact aspect ratios across all 10 ratios -> quality mode at 2k/4k with 2-3 consistent style references + Brand Kit + Designer Auto Layers).
+- For product micro-typography ('nano-banana-pro'): use the 7-Part Hierarchy (Composition First -> Exact Product Identity -> Dedicated Typography Block -> Specific Color Names -> Lighting Harmony -> Optical Clarity -> Negative Constraints).
+- For branded packaging/merchandise mockups ('nano-banana-2' in 4K): chain base shots via references -> attach black-on-white logo -> specify physical finish (deboss on glass/bottles, emboss on boxes, embroidered thread on fabric/towels).
+- For video: Seedance 2.5 (15s chunks at 1080p -> 4K Video Upscaler, up to 50 refs, 3D Scenes motion transfer, "no music" rule in multi-clip prompts, surgical frame-extract + Nano Banana Pro fix or Clip Modify), Kling 3.0 (7-part T2V formula or action-only with Start Image; Multi-Shot up to 6 cuts <=512 chars/shot), Kling 3.0 Omni (multi-ref dialogue lip-sync, mid-shot object swap, product text stability in motion), Kling 2.6 Motion Control (camera-only prompt rule—NEVER describe physical action), LTX 2 Pro (up to 4K 50fps).
+- For talking avatars & lip-sync: OmniHuman 1.5 (image_url + audio_url) & Voiceover + Kling 3.0 Omni UGC pipelines.
+- For audio & Spaces/Flows: 3-layer audio mixing (native dialogue/foley + looping SFX + ElevenLabs Music), Assistant 'Export as List' batching, Variations Split-Grid + Upscaler, and pre-flight simulate_cost Spaces/Flows.`;
+
     const systemPrompt = targetAgents.length === 1
-      ? `You are ${AGENT_DEFS[targetAgents[0]].name}, ${AGENT_DEFS[targetAgents[0]].role} on the Dakyworld OS marketing intelligence team.\n\nWorkspace Context:\n${sharedCtx}\n\nRespond concisely with high-signal, immediately actionable output.`
-      : `You are the Dakyworld OS Multi-Agent Council (${agentPersonas}).\n\nWorkspace Context:\n${sharedCtx}\n\nProvide each specialist's concise recommendation followed by a unified executive action plan.`;
+      ? `You are ${AGENT_DEFS[targetAgents[0]].name}, ${AGENT_DEFS[targetAgents[0]].role} on the Dakyworld OS marketing intelligence team.\n\n${magnificDoctrine}\n\nWorkspace Context:\n${sharedCtx}\n\nRespond concisely with high-signal, immediately actionable output.`
+      : `You are the Dakyworld OS Multi-Agent Council (${agentPersonas}).\n\n${magnificDoctrine}\n\nWorkspace Context:\n${sharedCtx}\n\nProvide each specialist's concise recommendation followed by a unified executive action plan.`;
 
     if (!apiKey) {
       // Resilient local fallback when no external LLM API key is configured
@@ -433,23 +457,219 @@ export function registerDakyworldOsRoutes({
     });
   });
 
-  // ── POST /api/v1/os/generate — Resilient AI Visual Generation via OS Bridge ──
+  // ── POST /api/v1/os/generate — Magnific Multimodal Generation via OS Bridge ──
+  // Supports: type = 'magnific-one' | 'image' | 'edit' | 'video' | 'lip-sync' | 'audio' | 'space' | 'flow'
   router.post('/generate', async (req: Request, res: Response) => {
     const auth = await authorizeOsRequest(req, res);
     if (!auth) return;
 
-    const { prompt, aspect_ratio = '1:1', model = 'flux-2-turbo' } = req.body as {
-      prompt?: string;
-      aspect_ratio?: string;
-      model?: string;
-    };
+    const body = req.body as Record<string, any>;
+    const genType: string = String(body.type || (body.model === 'magnific-one' || !body.model ? 'magnific-one' : 'image')).toLowerCase();
+    const prompt: string = String(body.prompt || body.text || body.description || body.goal || '').trim();
+    const aspectRatio: string = String(body.aspect_ratio || '1:1');
+    const model: string = String(body.model || (genType === 'video' ? 'kling-v2-6-pro' : 'magnific-one'));
 
-    if (!prompt || !String(prompt).trim()) {
-      return res.status(400).json({ success: false, error: 'prompt is required' });
+    const magnificKey = await getMagnificApiKey(pool);
+    if (!magnificKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Magnific API key is not configured. Configure it in Admin → Magnific AI.',
+      });
     }
 
-    return res.status(501).json({ success: false, error: 'Provider image generation is not connected to the OS bridge. Use AI Studio.' });
+    // Free pre-flight cost simulation for spaces/flows
+    if ((genType === 'space' || genType === 'flow') && body.action === 'simulate_cost') {
+      const sim = await magnificExecuteSpaceOrFlow({ ...body, action: 'simulate_cost' }, magnificKey);
+      return res.json(sim);
+    }
 
+    // Determine credit cost
+    let creditCost = 6;
+    if (genType === 'magnific-one') {
+      creditCost = body.mode === 'draft' ? 4 : (body.resolution === '4k' ? 8 : 6);
+    } else if (genType === 'image') {
+      creditCost = MAGNIFIC_IMAGE_MODELS[model]?.credits ?? 6;
+    } else if (genType === 'edit') {
+      creditCost = body.edit_type === 'remove-background' ? 1 : 5;
+    } else if (genType === 'video') {
+      creditCost = MAGNIFIC_VIDEO_MODELS[model]?.credits ?? 25;
+    } else if (genType === 'lip-sync' || genType === 'lipsync') {
+      creditCost = 30;
+    } else if (genType === 'audio') {
+      creditCost = body.audio_type === 'music-generation' ? 6 : 4;
+    } else if (genType === 'space' || genType === 'flow') {
+      const sim = await magnificExecuteSpaceOrFlow({ ...body, action: 'simulate_cost' }, magnificKey);
+      creditCost = sim.estimated_credits ?? 10;
+    }
+
+    const acct = await ensureCreditAccount(auth.userId);
+    if (acct.credits < creditCost) {
+      return res.status(402).json({
+        success: false,
+        error: 'Insufficient credits for Magnific generation',
+        credits: acct.credits,
+        required: creditCost,
+      });
+    }
+
+    const genId = randomUUID();
+    await dbQuery(
+      `INSERT INTO magnific_generations (id, user_id, type, model, prompt, params, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+      [genId, auth.userId, genType, model, prompt, JSON.stringify({ aspect_ratio: aspectRatio, mode: body.mode, resolution: body.resolution })]
+    ).catch(() => undefined);
+
+    try {
+      if (genType === 'magnific-one') {
+        if (!prompt) return res.status(400).json({ success: false, error: 'prompt is required for Magnific One' });
+        const r = await magnificOneGenerate(
+          {
+            prompt,
+            mode: body.mode || 'quality',
+            quality: body.quality || 'high',
+            resolution: body.resolution || '2k',
+            aspect_ratio: aspectRatio,
+            tiles: body.tiles,
+            reference_images: body.reference_images,
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'No URL', genId]).catch(() => undefined);
+          return res.status(400).json({ success: false, error: r.error || 'Magnific One failed' });
+        }
+        await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`, [r.taskId, r.url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, 'os_magnific_one', { gen_id: genId });
+        return res.json({ success: true, type: 'magnific-one', model: 'magnific-one', url: r.url, urls: r.urls, gen_id: genId, credits_used: creditCost });
+      }
+
+      if (genType === 'image') {
+        if (!prompt) return res.status(400).json({ success: false, error: 'prompt is required' });
+        const modelKey = MAGNIFIC_IMAGE_MODELS[model] ? model : 'magnific-one';
+        const r = await magnificGenerateImage(modelKey, prompt, aspectRatio, magnificKey, undefined, {
+          mode: body.mode,
+          quality: body.quality,
+          resolution: body.resolution,
+          tiles: body.tiles,
+          reference_images: body.reference_images,
+        });
+        if (r.error || !r.url) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'No URL', genId]).catch(() => undefined);
+          return res.status(400).json({ success: false, error: r.error || 'Magnific image generation failed' });
+        }
+        await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [r.url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, `os_magnific_image_${modelKey}`, { gen_id: genId });
+        return res.json({ success: true, type: 'image', model: modelKey, url: r.url, urls: r.urls ?? [r.url], gen_id: genId, credits_used: creditCost });
+      }
+
+      if (genType === 'edit') {
+        const r = await magnificEditImage({ ...body, type: body.edit_type || body.sub_type || 'upscale' }, magnificKey);
+        if (r.error || !r.url) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'No URL', genId]).catch(() => undefined);
+          return res.status(400).json({ success: false, error: r.error || 'Magnific image edit failed' });
+        }
+        await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`, [r.taskId, r.url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, `os_magnific_edit`, { gen_id: genId });
+        return res.json({ success: true, type: 'edit', url: r.url, gen_id: genId, credits_used: creditCost });
+      }
+
+      if (genType === 'video') {
+        const r = await magnificGenerateVideo(
+          {
+            model,
+            prompt,
+            image_url: body.image_url || body.image,
+            duration: body.duration,
+            resolution: body.resolution,
+            aspect_ratio: aspectRatio,
+            generate_audio: body.generate_audio,
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'No URL', genId]).catch(() => undefined);
+          return res.status(400).json({ success: false, error: r.error || 'Magnific video generation failed' });
+        }
+        await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`, [r.taskId, r.url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, `os_magnific_video_${r.model}`, { gen_id: genId });
+        return res.json({ success: true, type: 'video', model: r.model, url: r.url, gen_id: genId, credits_used: creditCost });
+      }
+
+      if (genType === 'lip-sync' || genType === 'lipsync') {
+        const r = await magnificLipSync(
+          {
+            image_url: body.image_url || body.image,
+            audio_url: body.audio_url || body.audio,
+            prompt,
+            resolution: body.resolution || '1080p',
+            turbo_mode: body.turbo_mode,
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'No URL', genId]).catch(() => undefined);
+          return res.status(400).json({ success: false, error: r.error || 'OmniHuman 1.5 lip-sync failed' });
+        }
+        await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`, [r.taskId, r.url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, 'os_magnific_lipsync', { gen_id: genId });
+        return res.json({ success: true, type: 'lip-sync', model: 'omni-human-1-5', url: r.url, gen_id: genId, credits_used: creditCost });
+      }
+
+      if (genType === 'audio') {
+        const r = await magnificGenerateAudio(
+          {
+            type: body.audio_type || 'sound-effects',
+            text: prompt,
+            prompt,
+            description: body.description || prompt,
+            duration_seconds: body.duration_seconds,
+            loop: body.loop,
+            audio: body.audio,
+            video: body.video,
+          },
+          magnificKey
+        );
+        if (r.error || !r.url) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'No URL', genId]).catch(() => undefined);
+          return res.status(400).json({ success: false, error: r.error || 'Magnific audio generation failed' });
+        }
+        await dbQuery(`UPDATE magnific_generations SET task_id=$1, status='completed', result_url=$2, completed_at=NOW() WHERE id=$3`, [r.taskId, r.url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, `os_magnific_audio_${r.type}`, { gen_id: genId });
+        return res.json({ success: true, type: 'audio', audio_type: r.type, url: r.url, gen_id: genId, credits_used: creditCost });
+      }
+
+      if (genType === 'space' || genType === 'flow') {
+        const mcpCaller = (toolName: string, toolArgs: Record<string, unknown>) =>
+          callMagnificMcpTool(pool, toolName, toolArgs, (val: unknown) => {
+            const dec = decryptPlatformConfig(val as any);
+            return typeof dec === 'string' ? dec : (dec as any)?.value ?? '';
+          });
+        const r = await magnificExecuteSpaceOrFlow(
+          {
+            action: body.action || (genType === 'flow' ? 'run_flow' : 'run_space'),
+            name: body.name,
+            goal: prompt || body.goal,
+            nodes: body.nodes,
+            reference_images: body.reference_images,
+            aspect_ratio: aspectRatio,
+          },
+          magnificKey,
+          mcpCaller
+        );
+        if (!r.success) {
+          await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [r.error || 'Failed', genId]).catch(() => undefined);
+          return res.status(400).json(r);
+        }
+        await dbQuery(`UPDATE magnific_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [r.final_url, genId]).catch(() => undefined);
+        await chargeAICredits(auth.userId, creditCost, `os_magnific_${genType}`, { gen_id: genId });
+        return res.json({ ...r, gen_id: genId, credits_used: creditCost });
+      }
+
+      return res.status(400).json({ success: false, error: `Unsupported generation type: ${genType}` });
+    } catch (e: any) {
+      await dbQuery(`UPDATE magnific_generations SET status='failed', error=$1 WHERE id=$2`, [e.message, genId]).catch(() => undefined);
+      return res.status(500).json({ success: false, error: e.message });
+    }
   });
 
   // ── GET /api/v1/os/analytics — Unified KPI summary for Dakyworld OS widgets ──

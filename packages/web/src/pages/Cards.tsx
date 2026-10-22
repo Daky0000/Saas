@@ -81,10 +81,13 @@ function CreditBadge({ refreshKey = 0 }: { refreshKey?: number }) {
 
 type GenMode = 'image' | 'video' | 'audio';
 
-const TTS_MODELS = [
-  { id: 'tts-1',           label: 'TTS-1',           creditCost: 2, maxChars: 4096, desc: 'Fast, low-latency'      },
-  { id: 'gpt-4o-mini-tts', label: 'GPT-4o Mini TTS', creditCost: 3, maxChars: 4096, desc: 'Natural, expressive'    },
-  { id: 'tts-1-hd',        label: 'TTS-1 HD',        creditCost: 4, maxChars: 4096, desc: 'High-definition audio'  },
+const TTS_MODELS: { id: string; label: string; creditCost: number; maxChars: number; desc: string; isMagnific?: boolean; audioType?: 'music' | 'sfx' | 'tts' }[] = [
+  { id: 'magnific-music',  label: 'Magnific Music',     creditCost: 6, maxChars: 1000, desc: 'Royalty-free music & instrumentals', isMagnific: true, audioType: 'music' },
+  { id: 'magnific-sfx',    label: 'Magnific Sound FX',  creditCost: 3, maxChars: 1000, desc: 'Cinematic SFX, foley & ambient loops', isMagnific: true, audioType: 'sfx' },
+  { id: 'magnific-tts',    label: 'Magnific Voiceover', creditCost: 3, maxChars: 4096, desc: 'Speech synthesis (chains w/ Lip Sync)', isMagnific: true, audioType: 'tts' },
+  { id: 'tts-1',           label: 'TTS-1',              creditCost: 2, maxChars: 4096, desc: 'Fast, low-latency'      },
+  { id: 'gpt-4o-mini-tts', label: 'GPT-4o Mini TTS',    creditCost: 3, maxChars: 4096, desc: 'Natural, expressive'    },
+  { id: 'tts-1-hd',        label: 'TTS-1 HD',           creditCost: 4, maxChars: 4096, desc: 'High-definition audio'  },
 ];
 const TTS_VOICES = ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'] as const;
 
@@ -101,19 +104,22 @@ type ImageProvider = 'magnific' | 'freepik' | 'kling' | 'google' | 'openai';
 
 const IMAGE_MODELS_BY_PROVIDER: Record<ImageProvider, AIModel[]> = {
   magnific: [
-    { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',      desc: 'Fastest — great for drafts',        creditCost: 3, maxChars: 1000 },
-    { id: 'flux-2-klein',          label: 'Flux 2 Klein',      desc: 'Fast with multi-ref support',        creditCost: 3, maxChars: 1000 },
-    { id: 'hyperflux',             label: 'Hyperflux',         desc: 'Ultra-fast Flux variant',            creditCost: 3, maxChars: 1000 },
-    { id: 'flux-dev',              label: 'Flux Dev',          desc: 'Quality Flux development model',     creditCost: 4, maxChars: 1500 },
-    { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',     desc: 'Proven pro — sharp + accurate',      creditCost: 5, maxChars: 1500 },
-    { id: 'flux-2-pro',            label: 'Flux 2 Pro',        desc: 'High quality text-to-image',         creditCost: 5, maxChars: 1500 },
-    { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',  desc: 'Context-aware — best for edits',     creditCost: 5, maxChars: 2000, badge: 'Popular' },
-    { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',   desc: 'New — high coherence & detail',      creditCost: 4, maxChars: 500,  badge: 'NEW' },
-    { id: 'seedream-v4-5',         label: 'Seedream 4.5',      desc: 'Stable Seedream with editing',       creditCost: 4, maxChars: 500  },
-    { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',  desc: 'Google Gemini — vivid & fast',       creditCost: 6, maxChars: 2000, badge: 'NEW' },
-    { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash', desc: 'Google Nano — ultra-fast',           creditCost: 3, maxChars: 1000 },
-    { id: 'z-image',               label: 'Z-Image Turbo',     desc: 'Budget-friendly fast generation',    creditCost: 2, maxChars: 500  },
-    { id: 'mystic',                label: 'Mystic',            desc: "Magnific's flagship creative model", creditCost: 8, maxChars: 1000 },
+    { id: 'magnific-one',          label: 'Magnific One',      desc: 'Art-directed 4K & 16-tile contact sheets', creditCost: 6, maxChars: 4000, badge: 'FLAGSHIP' },
+    { id: 'nano-banana-pro',       label: 'Nano Banana Pro',   desc: 'Product text, sketches & surgical edits',  creditCost: 4, maxChars: 2500, badge: 'PRO TEXT' },
+    { id: 'nano-banana-2',         label: 'Nano Banana 2',     desc: '4K Character Sheets & surface mockups',    creditCost: 4, maxChars: 2500, badge: '4K MOCKUP' },
+    { id: 'mystic',                label: 'Mystic',            desc: "Magnific's ultra-photorealistic model",   creditCost: 8, maxChars: 1000, badge: 'Popular' },
+    { id: 'flux-kontext-pro',      label: 'Flux Kontext Pro',  desc: 'Context-aware — best for edits & refs',   creditCost: 5, maxChars: 2000, badge: 'Popular' },
+    { id: 'flux-2-pro',            label: 'Flux 2 Pro',        desc: 'High quality text-to-image',              creditCost: 5, maxChars: 1500 },
+    { id: 'seedream-v5-lite',      label: 'Seedream 5 Lite',   desc: 'New — high coherence & detail',           creditCost: 4, maxChars: 500,  badge: 'NEW' },
+    { id: 'seedream-v4-5',         label: 'Seedream 4.5',      desc: 'Stable Seedream with editing',            creditCost: 4, maxChars: 500  },
+    { id: 'flux-pro-v1-1',         label: 'Flux Pro v1.1',     desc: 'Proven pro — sharp + accurate',           creditCost: 5, maxChars: 1500 },
+    { id: 'flux-dev',              label: 'Flux Dev',          desc: 'Quality Flux development model',          creditCost: 4, maxChars: 1500 },
+    { id: 'flux-2-turbo',          label: 'Flux 2 Turbo',      desc: 'Fastest — great for drafts',             creditCost: 3, maxChars: 1000 },
+    { id: 'flux-2-klein',          label: 'Flux 2 Klein',      desc: 'Fast with multi-ref support',             creditCost: 3, maxChars: 1000 },
+    { id: 'hyperflux',             label: 'Hyperflux',         desc: 'Ultra-fast Flux variant',                 creditCost: 3, maxChars: 1000 },
+    { id: 'gemini-flash',          label: 'Gemini 2.5 Flash',  desc: 'Google Gemini — vivid & fast',            creditCost: 6, maxChars: 2000, badge: 'NEW' },
+    { id: 'nano-banana-pro-flash', label: 'Nano Banana Flash', desc: 'Google Nano — ultra-fast',                creditCost: 3, maxChars: 1000 },
+    { id: 'z-image',               label: 'Z-Image Turbo',     desc: 'Budget-friendly fast generation',         creditCost: 2, maxChars: 500  },
   ],
   freepik: [
     { id: 'freepik-mystic', label: 'Freepik Mystic', desc: 'High-quality creative image generation', creditCost: 5, maxChars: 1000 },
@@ -141,18 +147,30 @@ const KLING_IMAGE_MODEL_IDS  = new Set(IMAGE_MODELS_BY_PROVIDER.kling.map((m) =>
 const GOOGLE_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.google.map((m) => m.id));
 const OPENAI_IMAGE_MODEL_IDS = new Set(IMAGE_MODELS_BY_PROVIDER.openai.map((m) => m.id));
 
-// Image generation is limited to GPT (OpenAI) and Gemini (Google) models.
-// Add magnific / freepik / kling entries back here to re-enable those providers.
+// Magnific is the primary image engine alongside GPT and Gemini.
 const ENABLED_IMAGE_PROVIDERS: { id: ImageProvider; label: string }[] = [
-  { id: 'openai', label: 'GPT' },
-  { id: 'google', label: 'Gemini' },
+  { id: 'magnific', label: 'Magnific' },
+  { id: 'openai',   label: 'GPT' },
+  { id: 'google',   label: 'Gemini' },
+  { id: 'kling',    label: 'Kling' },
 ];
 
 type VideoProvider = 'magnific' | 'kling' | 'google';
 
 const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
   magnific: [
-    { id: 'wan-2-7-t2v',     label: 'WAN 2.7',         desc: 'Text-to-video, cinematic quality', creditCost: 25, maxChars: 1000 },
+    { id: 'seedance-2-5',             label: 'Seedance 2.5',      desc: 'Up to 30s, 50 refs, multi-shot & 3D motion', creditCost: 32, maxChars: 2500, badge: 'FLAGSHIP' },
+    { id: 'kling-3-0-omni',           label: 'Kling 3.0 Omni',    desc: 'Multi-ref dialogue lip-sync & product text', creditCost: 35, maxChars: 2500, badge: 'OMNI' },
+    { id: 'kling-3-0',                label: 'Kling 3.0',         desc: 'Single-shot & 6-cut Multi-Shot (≤15s)',      creditCost: 35, maxChars: 2500, badge: 'MULTI-SHOT' },
+    { id: 'kling-motion',             label: 'Kling Motion 2.6',  desc: 'Biomechanics transfer (camera-only prompt)', creditCost: 28, maxChars: 1500, badge: 'MOTION' },
+    { id: 'kling-v2-6-pro',           label: 'Kling 2.6 Pro',     desc: 'Cinematic T2V/I2V with native audio',        creditCost: 30, maxChars: 2500 },
+    { id: 'ltx-2-pro',                label: 'LTX 2 Pro (4K)',    desc: 'Up to 4K 50fps with synchronized audio',     creditCost: 28, maxChars: 2000, badge: '4K' },
+    { id: 'omni-human-1-5',           label: 'OmniHuman 1.5',     desc: 'Lip-sync talking avatar from portrait',      creditCost: 30, maxChars: 2000, badge: 'LIP SYNC' },
+    { id: 'wan-2-6-1080p',            label: 'WAN 2.6 (1080p)',   desc: 'Multi-shot narrative continuity + audio',    creditCost: 25, maxChars: 1500 },
+    { id: 'minimax-hailuo-2-3-1080p', label: 'Hailuo 2.3 (1080p)',desc: 'Camera commands [Pan left], [Zoom in]',      creditCost: 25, maxChars: 2000 },
+    { id: 'runway-gen4-turbo',        label: 'Runway Gen-4 Turbo',desc: 'Expressive character & scene motion',        creditCost: 25, maxChars: 1500 },
+    { id: 'seedance-pro-1080p',       label: 'Seedance Pro 1080p',desc: 'Fluid dance & dynamic motion',               creditCost: 25, maxChars: 1500 },
+    { id: 'wan-2-7-t2v',              label: 'WAN 2.7',           desc: 'Text-to-video, cinematic quality',           creditCost: 25, maxChars: 1000 },
   ],
   kling: [
     { id: 'kling-v2.5-turbo', label: 'Kling v2.5 Turbo', desc: 'Fast, high-quality video',  creditCost: 20, maxChars: 2500 },
@@ -168,17 +186,17 @@ const VIDEO_MODELS_BY_PROVIDER: Record<VideoProvider, AIModel[]> = {
 const KLING_MODEL_IDS  = new Set(VIDEO_MODELS_BY_PROVIDER.kling.map((m) => m.id));
 const GOOGLE_VIDEO_MODEL_IDS = new Set(VIDEO_MODELS_BY_PROVIDER.google.map((m) => m.id));
 
-// Which Kling video models support last-frame (tail) attachment
-const KLING_LAST_FRAME_MODELS = new Set(['kling-v2.6-pro', 'kling-v1.6-pro']);
+// Which video models support last-frame (tail) attachment
+const KLING_LAST_FRAME_MODELS = new Set(['seedance-2-5', 'kling-3-0', 'kling-3-pro', 'kling-v2.6-pro', 'kling-v1.6-pro', 'kling-v2-6-pro']);
 
 // ── AI Studio tab ─────────────────────────────────────────────────────────────
 
 function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesign) => void; onCreditUsed?: () => void }) {
   const [genMode, setGenMode]                   = useState<GenMode>('image');
-  const [imageProvider, setImageProvider] = useState<ImageProvider>('openai');
-  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS_BY_PROVIDER.openai.find((m) => m.id === 'gpt-image-1') ?? IMAGE_MODELS_BY_PROVIDER.openai[0]);
-  const [videoProvider, setVideoProvider] = useState<VideoProvider>('kling');
-  const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS_BY_PROVIDER.kling[0]);
+  const [imageProvider, setImageProvider] = useState<ImageProvider>('magnific');
+  const [selectedImageModel, setSelectedImageModel] = useState<AIModel>(() => IMAGE_MODELS_BY_PROVIDER.magnific[0]);
+  const [videoProvider, setVideoProvider] = useState<VideoProvider>('magnific');
+  const [selectedVideoModel, setSelectedVideoModel] = useState<AIModel>(VIDEO_MODELS_BY_PROVIDER.magnific[0]);
 
   // Image generation state
   const [prompt, setPrompt]         = useState('');
@@ -193,15 +211,15 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [videoError, setVideoError]         = useState<string | null>(null);
 
-  // Video frame attachments (Kling only)
+  // Video frame attachments
   const [firstFrame, setFirstFrame]   = useState<string | null>(null);
   const [lastFrame, setLastFrame]     = useState<string | null>(null);
   const firstFrameRef = useRef<HTMLInputElement>(null);
   const lastFrameRef  = useRef<HTMLInputElement>(null);
 
-  const supportsLastFrame = videoProvider === 'kling' && KLING_LAST_FRAME_MODELS.has(selectedVideoModel.id);
+  const supportsLastFrame = (videoProvider === 'kling' || videoProvider === 'magnific') && KLING_LAST_FRAME_MODELS.has(selectedVideoModel.id);
 
-  // Audio (TTS) state
+  // Audio (Magnific Music / SFX / Voiceover + OpenAI TTS) state
   const [selectedTTSModel, setSelectedTTSModel] = useState(TTS_MODELS[0]);
   const [ttsVoice, setTtsVoice]   = useState<typeof TTS_VOICES[number]>('nova');
   const [ttsPrompt, setTtsPrompt] = useState('');
@@ -223,17 +241,22 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     setTtsAudioUrl(null);
     setTtsError(null);
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/openai/tts`, {
+      const isMagAudio = Boolean(selectedTTSModel.isMagnific);
+      const endpoint = isMagAudio ? '/api/magnific/audio' : '/api/openai/tts';
+      const payload = isMagAudio
+        ? { type: selectedTTSModel.audioType ?? 'music', prompt: ttsPrompt.trim(), text: ttsPrompt.trim(), voice: ttsVoice }
+        : { text: ttsPrompt.trim(), model: selectedTTSModel.id, voice: ttsVoice };
+      const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
-        body: JSON.stringify({ text: ttsPrompt.trim(), model: selectedTTSModel.id, voice: ttsVoice }),
+        body: JSON.stringify(payload),
       });
       const d = await res.json();
-      if (!d.success) throw new Error(d.error ?? 'TTS generation failed');
-      setTtsAudioUrl(d.audio_url ?? null);
+      if (!d.success) throw new Error(d.error ?? 'Audio generation failed');
+      setTtsAudioUrl(d.audio_url ?? d.url ?? null);
       onCreditUsed?.();
     } catch (e: any) {
-      setTtsError(e.message ?? 'TTS generation failed');
+      setTtsError(e.message ?? 'Audio generation failed');
     } finally {
       setGeneratingTTS(false);
     }
@@ -282,13 +305,16 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
     try {
       const isKling  = KLING_MODEL_IDS.has(selectedVideoModel.id);
       const isGoogle = GOOGLE_VIDEO_MODEL_IDS.has(selectedVideoModel.id);
-      const endpoint = isKling  ? '/api/kling/generate-video'
-                     : isGoogle ? '/api/google/generate-video'
+      const isLipSync = selectedVideoModel.id === 'omni-human-1-5';
+      const endpoint = isLipSync ? '/api/magnific/lip-sync'
+                     : isKling   ? '/api/kling/generate-video'
+                     : isGoogle  ? '/api/google/generate-video'
                      : '/api/nova/generate-video';
-      const body: Record<string, any> = { prompt: videoPrompt.trim(), model: selectedVideoModel.id };
-      if (isKling && firstFrame) body.image_url = firstFrame;
-      if (isKling && lastFrame && supportsLastFrame) body.tail_image_url = lastFrame;
-      if (isGoogle && firstFrame) body.image_url = firstFrame;
+      const body: Record<string, any> = isLipSync
+        ? { image_url: firstFrame, text: videoPrompt.trim(), prompt: videoPrompt.trim(), resolution: '1080p' }
+        : { prompt: videoPrompt.trim(), model: selectedVideoModel.id };
+      if (!isLipSync && firstFrame) body.image_url = firstFrame;
+      if (!isLipSync && lastFrame && supportsLastFrame) body.tail_image_url = lastFrame;
       const res = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok()}` },
@@ -373,15 +399,15 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Provider</label>
               <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit mb-4">
                 {([
+                  { id: 'magnific' as VideoProvider, label: 'Magnific'  },
                   { id: 'kling'    as VideoProvider, label: 'Kling AI'  },
                   { id: 'google'   as VideoProvider, label: 'Google AI' },
-                  { id: 'magnific' as VideoProvider, label: 'Magnific'  },
                 ] as const).map((p) => (
                   <button key={p.id} type="button"
                     onClick={() => {
                       setVideoProvider(p.id);
                       setSelectedVideoModel(VIDEO_MODELS_BY_PROVIDER[p.id][0]);
-                      if (p.id !== 'kling') { setFirstFrame(null); setLastFrame(null); }
+                      setLastFrame(null);
                     }}
                     className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${videoProvider === p.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                     {p.label}
@@ -399,6 +425,7 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
                     className={`relative flex flex-col rounded-xl border px-3 py-2 text-left transition min-w-[130px] ${
                       selectedVideoModel.id === m.id ? 'border-[#2563EB] bg-indigo-50 text-[#2563EB]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                     }`}>
+                    {m.badge && <span className="absolute -top-2 -right-2 rounded-full bg-[#2563EB] px-1.5 py-0.5 text-[9px] font-bold text-white">{m.badge}</span>}
                     <span className="text-xs font-bold">{m.label}</span>
                     <span className="text-[10px] text-slate-400 mt-0.5">{m.desc}</span>
                     <span className="mt-1 text-[10px] font-bold text-[#2563EB]">✦{m.creditCost} credits</span>
@@ -466,13 +493,16 @@ function AIStudio({ onDesignSaved, onCreditUsed }: { onDesignSaved: (d: UserDesi
         ) : genMode === 'video' ? (
           /* Video form */
           <div className="space-y-3">
-            {/* Frame attachments — Kling and Google Veo */}
-            {(videoProvider === 'kling' || videoProvider === 'google') && (
+            {/* Frame attachments — Magnific, Kling, and Google Veo */}
+            {(videoProvider === 'magnific' || videoProvider === 'kling' || videoProvider === 'google') && (
               <div className="grid gap-2 sm:grid-cols-2">
                 {/* First frame */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-                    First Frame <span className="normal-case font-normal text-slate-400">(optional)</span>
+                    {selectedVideoModel.id === 'omni-human-1-5' ? 'Portrait Image ' : 'First Frame '}
+                    <span className="normal-case font-normal text-slate-400">
+                      {selectedVideoModel.id === 'omni-human-1-5' ? '(required for lip-sync)' : '(optional)'}
+                    </span>
                   </label>
                   <button type="button" onClick={() => firstFrameRef.current?.click()}
                     className="group relative flex w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-left hover:border-[#2563EB] hover:bg-indigo-50 transition">

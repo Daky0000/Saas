@@ -3,8 +3,61 @@ import type { Router, Response } from 'express';
 import type { Request } from '../../types/http.ts';
 import { logger } from '../../logger.ts';
 import type { AnalyticsDeps } from './helpers.ts';
+import { encryptIntegrationSecret } from '../../integration-helpers.ts';
+import { getPlatformConfig } from '../../user-auth.ts';
+import { syncFacebookPagesForUser } from '../socialConnectRoutes.ts';
 
 const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+
+async function ensureFacebookPagesSyncedForAnalytics(
+  pool: AnalyticsDeps['pool'],
+  decryptIntegrationSecret: AnalyticsDeps['decryptIntegrationSecret'],
+  userId: string,
+): Promise<void> {
+  if (!pool) return;
+  try {
+    const existingPages = await pool.query(
+      `SELECT id FROM social_accounts WHERE user_id = $1 AND platform = 'facebook' AND account_type = 'page' AND connected = true LIMIT 1`,
+      [userId],
+    );
+    if ((existingPages.rowCount ?? 0) > 0) return;
+
+    const profileRes = await pool.query(
+      `SELECT access_token, access_token_encrypted
+       FROM social_accounts
+       WHERE user_id = $1 AND platform = 'facebook' AND connected = true
+       ORDER BY CASE WHEN account_type = 'profile' THEN 0 ELSE 1 END, connected_at DESC NULLS LAST
+       LIMIT 1`,
+      [userId],
+    );
+    const row: any = profileRes.rows?.[0];
+    if (!row) return;
+    let userToken = '';
+    if (row.access_token_encrypted) {
+      try {
+        userToken = decryptIntegrationSecret(String(row.access_token_encrypted));
+      } catch (_e) {
+        // ignore
+      }
+    }
+    if (!userToken) userToken = String(row.access_token || '').trim();
+    if (!userToken) return;
+
+    await syncFacebookPagesForUser(
+      {
+        pool,
+        dbQuery: <T = any>(sql: string, params?: any[]) =>
+          pool.query(sql, params) as unknown as Promise<{ rows: T[]; rowCount?: number | null }>,
+        getPlatformConfig,
+        encryptIntegrationSecret,
+      },
+      userId,
+      userToken,
+    );
+  } catch (err) {
+    logger.warn({ err }, 'ensureFacebookPagesSyncedForAnalytics_failed');
+  }
+}
 
 // Per-user sync, shared by the POST /social/facebook/sync route and the
 // periodic analytics auto-sync in analyticsRoutes.ts.
@@ -14,8 +67,10 @@ export async function syncFacebookAnalyticsForUser(
 ): Promise<{ found: number; synced: number; errors: string[] }> {
   if (!pool) return { found: 0, synced: 0, errors: ['DB not ready'] };
 
+  await ensureFacebookPagesSyncedForAnalytics(pool, decryptIntegrationSecret, userId);
+
   const accountRes = await pool.query(
-    `SELECT id, account_id, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
+    `SELECT id, account_id, account_type, access_token, access_token_encrypted, refresh_token, refresh_token_encrypted, token_data
      FROM social_accounts WHERE user_id=$1 AND platform='facebook' AND connected=true`,
     [userId]
   );
@@ -23,7 +78,10 @@ export async function syncFacebookAnalyticsForUser(
   let synced = 0;
   const errors: string[] = [];
 
-  for (const acct of accountRes.rows as any[]) {
+  const pageRows = (accountRes.rows as any[]).filter((r) => r.account_type === 'page');
+  const rowsToSync = pageRows.length > 0 ? pageRows : (accountRes.rows as any[]);
+
+  for (const acct of rowsToSync) {
     let token = '';
     if (acct.access_token_encrypted) { try { token = decryptIntegrationSecret(String(acct.access_token_encrypted)); } catch (_err) { /* */ } }
     if (!token) token = String(acct.access_token || '').trim();
@@ -210,6 +268,8 @@ export function registerFacebookRoutes(router: Router, { requireAuth, pool, decr
       const auth = requireAuth(req, res);
       if (!auth) return;
       if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+
+      await ensureFacebookPagesSyncedForAnalytics(pool, decryptIntegrationSecret, auth.userId);
 
       const { rows: accounts } = await pool.query(
         `SELECT sa.id, sa.account_id, sa.account_name, sa.account_type, sa.followers, sa.profile_image, sa.handle, fps.followers as page_followers, fps.page_likes

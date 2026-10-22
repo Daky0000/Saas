@@ -138,7 +138,11 @@ function randomString(length = 48) {
 // Shared by startOAuth (top-level redirect) and getOAuthPopupUrl (caller opens
 // the popup and assigns this URL to it) so both paths register the same state
 // row and CSRF/PKCE handling.
-async function buildAuthorizeUrl(platform: string, returnTo: string): Promise<{ success: boolean; url?: string; error?: string }> {
+async function buildAuthorizeUrl(
+  platform: string,
+  returnTo: string,
+  options?: { extraScopes?: string[]; rerequest?: boolean; method?: 'instagram' | 'facebook' },
+): Promise<{ success: boolean; url?: string; error?: string }> {
   const normalized = String(platform || '').trim().toLowerCase();
   const state = randomString(32);
 
@@ -166,6 +170,15 @@ async function buildAuthorizeUrl(platform: string, returnTo: string): Promise<{ 
   if (normalized === 'twitter' && codeChallenge) {
     params.set('code_challenge', codeChallenge);
     params.set('code_challenge_method', 'S256');
+  }
+  if (options?.extraScopes && options.extraScopes.length > 0) {
+    params.set('extra_scopes', options.extraScopes.join(','));
+  }
+  if (options?.rerequest) {
+    params.set('rerequest', '1');
+  }
+  if (options?.method) {
+    params.set('method', options.method);
   }
 
   const authResponse = await fetchApiJson<{ url?: string; error?: string }>(
@@ -210,8 +223,12 @@ export const integrationService = {
     return { success: true };
   },
 
-  async startOAuth(platform: string, returnTo = '/integrations'): Promise<{ success: boolean; error?: string }> {
-    const result = await buildAuthorizeUrl(platform, returnTo);
+  async startOAuth(
+    platform: string,
+    returnTo = '/integrations',
+    options?: { extraScopes?: string[]; rerequest?: boolean; method?: 'instagram' | 'facebook' },
+  ): Promise<{ success: boolean; error?: string }> {
+    const result = await buildAuthorizeUrl(platform, returnTo, options);
     if (!result.success || !result.url) return { success: false, error: result.error };
     window.location.href = result.url;
     return { success: true };
@@ -219,23 +236,27 @@ export const integrationService = {
 
   // Same OAuth handshake as startOAuth, but returns the URL instead of navigating —
   // for callers that open it in a popup (e.g. onboarding) so the host page never unmounts.
-  async getOAuthPopupUrl(platform: string, returnTo = '/dashboard'): Promise<{ success: boolean; url?: string; error?: string }> {
-    return buildAuthorizeUrl(platform, returnTo);
+  async getOAuthPopupUrl(
+    platform: string,
+    returnTo = '/dashboard',
+    options?: { extraScopes?: string[]; rerequest?: boolean; method?: 'instagram' | 'facebook' },
+  ): Promise<{ success: boolean; url?: string; error?: string }> {
+    return buildAuthorizeUrl(platform, returnTo, options);
   },
 
   async listFacebookPages(): Promise<{
     success: boolean;
-    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>;
     missingPermissions?: string[];
     error?: string;
   }> {
-    const response = await fetchApiJson<{ pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>; missingPermissions?: string[] }>(
+    const response = await fetchApiJson<{ pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>; missingPermissions?: string[] }>(
       '/api/v1/social/facebook/pages',
       { headers: authHeaders() },
       'Failed to load Facebook pages'
     );
     if (response.status === 404) {
-      const legacyResponse = await fetchApiJson<{ pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>; missingPermissions?: string[] }>(
+      const legacyResponse = await fetchApiJson<{ pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>; missingPermissions?: string[] }>(
         '/api/facebook/targets',
         { headers: authHeaders() },
         'Failed to load Facebook pages'
@@ -251,14 +272,14 @@ export const integrationService = {
 
   async listFacebookTargets(): Promise<{
     success: boolean;
-    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>;
     groups?: Array<{ id: string; name: string }>;
     missingPermissions?: string[];
     warnings?: string[];
     error?: string;
   }> {
     const response = await fetchApiJson<{
-      pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+      pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>;
       groups?: Array<{ id: string; name: string }>;
       missingPermissions?: string[];
       warnings?: string[];
@@ -266,7 +287,7 @@ export const integrationService = {
     }>('/api/v1/social/facebook/targets', { headers: authHeaders() }, 'Failed to load Facebook targets');
     if (response.status === 404) {
       const legacyResponse = await fetchApiJson<{
-        pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean }>;
+        pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>;
         groups?: Array<{ id: string; name: string }>;
         warnings?: string[] | string;
         warning?: string;
@@ -289,6 +310,31 @@ export const integrationService = {
       missingPermissions: response.payload?.missingPermissions || [],
       warnings: response.payload?.warnings || [],
     };
+  },
+
+  async lookupFacebookPage(query: string): Promise<{
+    success: boolean;
+    page?: { id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean };
+    pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>;
+    error?: string;
+  }> {
+    const response = await fetchApiJson<{
+      page?: { id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean };
+      pages?: Array<{ id: string; name: string; picture?: string | null; can_publish?: boolean; saved?: boolean }>;
+      error?: string;
+    }>(
+      '/api/v1/social/facebook/lookup-page',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ query }),
+      },
+      'Failed to look up Facebook Page',
+    );
+    if (!response.ok) {
+      return { success: false, error: extractApiErrorMessage(response.payload, response.text, 'Failed to look up Facebook Page') };
+    }
+    return { success: true, page: response.payload?.page, pages: response.payload?.pages || [] };
   },
 
   async listInstagramTargets(): Promise<{

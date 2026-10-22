@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "magnific": {
+      "type": "http",
+      "url": "https://mcp.magnific.com"
+    },
     "higgsfield": {
       "type": "http",
       "url": "https://mcp.higgsfield.ai/mcp"

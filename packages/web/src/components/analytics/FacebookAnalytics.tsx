@@ -48,8 +48,12 @@ export default function FacebookAnalytics({ days }: Props) {
         setAccounts(result);
         const toSelect = subTab === 'pages' ? result.pages[0] : result.groups[0];
         setSelectedAccount(toSelect || null);
+        if (!toSelect) {
+          setLoading(false);
+        }
       } catch (err) {
         console.error('Failed to load accounts:', err);
+        setLoading(false);
       }
     };
     loadAccounts();
