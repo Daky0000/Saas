@@ -5087,4 +5087,77 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
   // 8. The Page / Instagram account a Social Inbox conversation arrived on,
   // so replies go out from the same account.
   await pool.query(`ALTER TABLE social_inbox_threads ADD COLUMN IF NOT EXISTS external_account_id TEXT;`).catch(() => undefined);
+
+  // 9. Agent team coordination: messages between a user's agents, strategies
+  // with their rationale and reviews, and niche research the agents share.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      from_agent TEXT NOT NULL,
+      to_agent TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'request',
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      priority INT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open',
+      consumed_by TEXT[] NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '14 days')
+    );
+    CREATE INDEX IF NOT EXISTS agent_messages_inbox_idx ON agent_messages(user_id, to_agent, status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS agent_strategies (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      playbook TEXT NOT NULL DEFAULT 'director_plan',
+      title TEXT NOT NULL,
+      hypothesis TEXT NOT NULL DEFAULT '',
+      rationale TEXT NOT NULL,
+      evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+      focus JSONB NOT NULL DEFAULT '{}'::jsonb,
+      kpi TEXT NOT NULL,
+      baseline NUMERIC,
+      target NUMERIC NOT NULL,
+      eval_window_days INT NOT NULL DEFAULT 14,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_by TEXT NOT NULL DEFAULT 'director',
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_evaluated_at TIMESTAMPTZ,
+      last_value NUMERIC,
+      last_verdict TEXT,
+      consecutive_misses INT NOT NULL DEFAULT 0,
+      ended_at TIMESTAMPTZ,
+      ended_reason TEXT,
+      superseded_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_strategies_one_active_idx ON agent_strategies(user_id) WHERE status = 'active';
+    CREATE INDEX IF NOT EXISTS agent_strategies_user_idx ON agent_strategies(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS agent_strategy_reviews (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      strategy_id UUID NOT NULL REFERENCES agent_strategies(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kpi TEXT NOT NULL,
+      value NUMERIC,
+      sample INT NOT NULL DEFAULT 0,
+      verdict TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS agent_strategy_reviews_idx ON agent_strategy_reviews(strategy_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS niche_research (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      niche TEXT NOT NULL DEFAULT '',
+      findings JSONB NOT NULL DEFAULT '{}'::jsonb,
+      sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+      method TEXT NOT NULL DEFAULT 'web_search',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS niche_research_user_idx ON niche_research(user_id, created_at DESC);
+  `).catch(() => undefined);
 }

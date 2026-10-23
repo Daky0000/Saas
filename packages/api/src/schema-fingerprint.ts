@@ -1,5 +1,5 @@
 // Generated from the migration source. Regenerate before build or development.
-export const SCHEMA_SOURCE_HASH = '5341fab419179317b1d73cad80d91eefc50390e3009f6f7e995446f6c8f2650a';
+export const SCHEMA_SOURCE_HASH = 'e4f751246a68030fdf4e458e29c2e188e45493484e10f04bc0bee525f57fdac5';
 export const REQUIRED_SCHEMA_TABLES = [
   "account_metrics",
   "admin_agent_runs",
@@ -8,8 +8,11 @@ export const REQUIRED_SCHEMA_TABLES = [
   "admin_notifications",
   "agent_activity",
   "agent_drafts",
+  "agent_messages",
   "agent_schedule_runs",
   "agent_schedules",
+  "agent_strategies",
+  "agent_strategy_reviews",
   "agent_templates",
   "agent_tools",
   "agent_workflows",
@@ -99,6 +102,7 @@ export const REQUIRED_SCHEMA_TABLES = [
   "mcp_servers",
   "media_image_links",
   "media_images",
+  "niche_research",
   "notifications",
   "oauth_states",
   "openai_generations",

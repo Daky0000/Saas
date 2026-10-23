@@ -26,6 +26,7 @@ export const FAST_MODEL = 'claude-haiku-4-5';
 export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
 export const ANTHROPIC_TO_GEMINI: Record<string, string> = {
+  'claude-opus-5-5': 'gemini-2.5-pro',
   'claude-opus-4-8': 'gemini-2.5-pro',
   'claude-sonnet-5': 'gemini-2.5-pro',
   'claude-sonnet-4-6': 'gemini-2.5-flash',
@@ -70,6 +71,7 @@ export const CREDIT_USD = 0.01;          // retail value of one credit
 export const AI_PROFIT_MULTIPLIER = 3;   // retail = 3× raw provider cost
 
 export const MODEL_COSTS: Record<string, { in: number; out: number; cacheRead?: number }> = {
+  'claude-opus-5-5':           { in: 4,    out: 20,   cacheRead: 0.2 },
   'claude-opus-4-8':           { in: 5,    out: 25,   cacheRead: 0.5 },
   'claude-opus-4-7':           { in: 5,    out: 25,   cacheRead: 0.5 },
   'claude-sonnet-5':           { in: 3,    out: 15,   cacheRead: 0.3 },

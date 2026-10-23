@@ -39,6 +39,8 @@ import { generationLimiter } from '../middleware/rateLimiter.ts';
 import { triggerAgentCompilation } from '../agent-helpers.ts';
 import { generateLuxuryBrandPosterDataUrl } from './dakyworldOsRoutes.ts';
 import { invalidateSharedContext } from './agentSharedContext.ts';
+import { buildAgentBriefing, handOffApprovedWork, markInboxConsumed, postAgentMessage, renderBriefing } from './agentTeam/coordination.ts';
+import { sanitizeAgentMessages, type OutgoingAgentMessage } from './agentTeam/policy.ts';
 
 
 
@@ -445,7 +447,15 @@ const WORKFLOW_DEFAULTS: Record<string, WfSeed[]> = {
   ],
 };
 
-export function buildNovaModule(deps: NovaDeps): { router: Router; runScheduledAgents: () => Promise<void> } {
+// One agent run: what it proposed, what it asked teammates, and which inbox
+// messages it was shown.
+type AgentTurn = { proposals: any[]; messages: OutgoingAgentMessage[]; inboxIds: string[] };
+
+export function buildNovaModule(deps: NovaDeps): {
+  router: Router;
+  runScheduledAgents: () => Promise<void>;
+  runAgentForUser: (userId: string, agentKey: string, reason: string) => Promise<number>;
+} {
   const { requireAuth, requireAdmin, hasDatabase, dbQuery, pool, getAIConfig, resolveActiveKey, decryptAIKey, AGENT_DEFS } = deps;
 
   const AGENT_NAMES: Record<string, string> = Object.fromEntries(Object.entries(AGENT_DEFS).map(([k, v]) => [k, v.name]));
@@ -670,6 +680,17 @@ export function buildNovaModule(deps: NovaDeps): { router: Router; runScheduledA
     return ctx;
   }
 
+  // The team's strategy, research, inbox and teammates' work for this agent.
+  async function gatherTeamBriefing(userId: string, agentKey: string): Promise<{ briefing: Record<string, any>; inboxIds: string[] }> {
+    if (!pool) return { briefing: {}, inboxIds: [] };
+    try {
+      return await buildAgentBriefing(userId, agentKey);
+    } catch (err) {
+      logger.warn({ err, userId, agentKey }, 'agent_briefing_failed');
+      return { briefing: {}, inboxIds: [] };
+    }
+  }
+
   function buildUserAgentOutputSpec(extraInstruction?: string): string {
     return `Respond ONLY with valid JSON — no markdown, no extra text:
 {
@@ -678,12 +699,21 @@ export function buildNovaModule(deps: NovaDeps): { router: Router; runScheduledA
       "task_type": "content_post|strategy_proposal|analysis_report|visual_concept|workflow_setup",
       "title": "Short action title (max 80 characters)",
       "body": "What this is and why you recommend it (max 350 characters)",
-      "payload": { "key_detail": "value" }
+      "payload": { "key_detail": "value", "strategy_link": "how this serves the team strategy", "evidence": "the research finding or result it rests on" }
     }
+  ],
+  "messages": [
+    { "to": "teammate agent key", "kind": "request|handoff|insight|alert", "subject": "short subject", "body": "what you need or found" }
   ]
 }
 
 Generate 2-3 highly specific, immediately actionable proposals.${extraInstruction ? '\n' + extraInstruction : ''}
+team_briefing in the context is your team's shared state:
+- team_strategy is the strategy the whole team follows and why; every proposal should serve it, and your_focus is your part. Say how in payload.strategy_link.
+- niche_research is current research on the user's niche. Ground proposals in it and name the finding in payload.evidence; do not invent statistics.
+- inbox holds messages from teammates and the director. Act on requests and directives addressed to you.
+- your_track_record shows what the user rejected recently; do not repeat those ideas.
+Use "messages" only when a teammate must act or know something to do their part (to: an agent key such as daky, nova, sage, trend_research, audience_research, seo_research, hook_writing, ad_copy, or "director" to flag that the strategy is not working). Leave it empty otherwise.
 If the user has no brand profile, return 1 proposal suggesting they complete their brand setup.`;
   }
 
@@ -890,16 +920,18 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
     passedApiKey?: string,
     extraContext?: Record<string, any>,
     extraInstruction?: string,
-  ): Promise<any[]> {
-    const ctx = await gatherUserContext(userId, agentKey);
+  ): Promise<AgentTurn> {
+    const [ctx, team] = await Promise.all([gatherUserContext(userId, agentKey), gatherTeamBriefing(userId, agentKey)]);
+    if (Object.keys(team.briefing).length) ctx.team_briefing = team.briefing;
     const merged = extraContext ? { ...ctx, ...extraContext } : ctx;
+    const fallback = (): AgentTurn => ({ proposals: generateSmartFallbackProposals(agentKey, merged, extraInstruction), messages: [], inboxIds: [] });
 
     const { provider, apiKey, model } = await resolveAgentAiKey();
     const effectiveKey = passedApiKey || apiKey;
 
     if (!effectiveKey) {
       // Zero-config intelligent generator — works immediately out of the box!
-      return generateSmartFallbackProposals(agentKey, merged, extraInstruction);
+      return fallback();
     }
 
     const { rows: tmplRows } = await dbQuery(
@@ -936,11 +968,26 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
             },
           },
         },
+        messages: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['to', 'kind', 'subject', 'body'],
+            properties: {
+              to: { type: 'string' },
+              kind: { type: 'string', enum: ['request', 'handoff', 'insight', 'alert'] },
+              subject: { type: 'string' },
+              body: { type: 'string' },
+            },
+          },
+        },
       },
     };
 
     let rawText = '';
     let proposals: any[] = [];
+    let rawMessages: unknown = [];
     try {
       if (provider === 'google') {
         const geminiModel = resolveGeminiModel(effectiveModel);
@@ -995,15 +1042,40 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
             return p;
           });
         }
+        rawMessages = j.messages;
       }
     } catch (_err) {
-      return generateSmartFallbackProposals(agentKey, merged, extraInstruction);
+      return fallback();
     }
 
     if (proposals.length === 0) {
-      return generateSmartFallbackProposals(agentKey, merged, extraInstruction);
+      return fallback();
     }
-    return proposals;
+    return { proposals, messages: sanitizeAgentMessages(agentKey, rawMessages, Object.keys(AGENT_DEFS)), inboxIds: team.inboxIds };
+  }
+
+  // Saves a run's proposals, delivers its messages to teammates, and marks
+  // the inbox messages it was shown as read.
+  async function completeAgentTurn(userId: string, agentKey: string, turn: AgentTurn): Promise<number> {
+    const created = await insertProposals(userId, agentKey, turn.proposals);
+    await notifyProposals(userId, agentKey, created);
+    for (const m of turn.messages) {
+      await postAgentMessage(userId, { from: agentKey, to: m.to, kind: m.kind, subject: m.subject, body: m.body, priority: m.kind === 'alert' ? 2 : 0 });
+    }
+    await markInboxConsumed(userId, agentKey, turn.inboxIds);
+    return created;
+  }
+
+  async function runAgentForUser(userId: string, agentKey: string, _reason: string): Promise<number> {
+    if (!AGENT_DEFS[agentKey] || !USER_AGENT_PROMPTS[agentKey]) return 0;
+    const turn = await callAgentAndParse(userId, agentKey);
+    const created = await completeAgentTurn(userId, agentKey, turn);
+    await dbQuery(
+      `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value) VALUES ($1,$2,'meta','meta:last_run_at',$3)
+       ON CONFLICT (user_id, agent_key, key) DO UPDATE SET value = EXCLUDED.value`,
+      [userId, agentKey, new Date().toISOString()],
+    ).catch(() => {});
+    return created;
   }
 
   async function insertProposals(userId: string, agentKey: string, proposals: any[]): Promise<number> {
@@ -1065,8 +1137,8 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
          )`,
         [currentHour, currentDay],
       );
-      const { encryptedKey } = await getAIConfig().catch(() => ({ encryptedKey: null as string | null }));
-      const apiKey = (encryptedKey ? decryptAIKey(encryptedKey) : null) || process.env.ANTHROPIC_API_KEY || '';
+      // Same provider resolution as manual runs, so Gemini-only setups run too.
+      const { apiKey } = await resolveAgentAiKey();
       if (!apiKey) return;
       for (const sched of rows as any[]) {
         try {
@@ -1076,9 +1148,8 @@ If the user has no brand profile, return 1 proposal suggesting they complete the
             await dbQuery(`UPDATE user_agent_schedules SET last_scheduled_run_at = NOW(), updated_at = NOW() WHERE id = $1`, [sched.id]);
             continue;
           }
-          const proposals = await callAgentAndParse(sched.user_id, sched.agent_key, apiKey);
-          const created   = await insertProposals(sched.user_id, sched.agent_key, proposals);
-          await notifyProposals(sched.user_id, sched.agent_key, created);
+          const turn = await callAgentAndParse(sched.user_id, sched.agent_key);
+          await completeAgentTurn(sched.user_id, sched.agent_key, turn);
           await dbQuery(`UPDATE user_agent_schedules SET last_scheduled_run_at = NOW(), updated_at = NOW() WHERE id = $1`, [sched.id]);
         } catch (_err) { /* skip failing agent */ }
       }
@@ -1484,6 +1555,8 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
             execution = { type: 'agent_draft', draft_id: dr[0]?.id };
           }
         } catch (_err) { /* non-fatal */ }
+        // Teammates downstream build on approved work.
+        await handOffApprovedWork(auth.userId, task).catch(() => 0);
       }
       return res.json({ success: true, task, execution });
     } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
@@ -1524,6 +1597,11 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
               ).catch(() => {});
             }
           } catch (_err) { /* non-fatal */ }
+          // Hand off the first few only, so approving a backlog does not flood
+          // every teammate's inbox.
+          if (updated.filter((u) => u.status === 'approved').length < 5) {
+            await handOffApprovedWork(auth.userId, t).catch(() => 0);
+          }
         }
         updated.push(t);
       }
@@ -1583,9 +1661,8 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
     try {
       const extraInstr = instruction || brief;
       const extraCtx = brief ? { campaign_brief: brief } : undefined;
-      const proposals = await callAgentAndParse(auth.userId, key, undefined, extraCtx, extraInstr);
-      const created = await insertProposals(auth.userId, key, proposals);
-      await notifyProposals(auth.userId, key, created);
+      const turn = await callAgentAndParse(auth.userId, key, undefined, extraCtx, extraInstr);
+      const created = await completeAgentTurn(auth.userId, key, turn);
       await dbQuery(
         `INSERT INTO user_agent_memory (user_id, agent_key, mem_type, key, value) VALUES ($1,$2,'meta','meta:last_run_at',$3)
          ON CONFLICT (user_id, agent_key, key) DO UPDATE SET value = EXCLUDED.value`,
@@ -1617,15 +1694,15 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
       const createdByAgent: Record<string, number> = {};
 
       // 1. Sage (Strategy)
-      const sageProposals = await callAgentAndParse(
+      const sageTurn = await callAgentAndParse(
         auth.userId,
         'sage',
         undefined,
         brief ? { campaign_brief: brief } : {},
         `This is an orchestrated campaign run. Generate a clear strategy framework that other agents (content writer, creative director, growth) can execute on. Be explicit about themes, messaging angles, and audience priorities. ${briefInstruction}`,
       );
-      createdByAgent['sage'] = await insertProposals(auth.userId, 'sage', sageProposals);
-      await notifyProposals(auth.userId, 'sage', createdByAgent['sage']);
+      createdByAgent['sage'] = await completeAgentTurn(auth.userId, 'sage', sageTurn);
+      const sageProposals = sageTurn.proposals;
 
       const strategyContext = {
         campaign_brief: brief || undefined,
@@ -1633,33 +1710,32 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
       };
 
       // 2. Daky (Content)
-      const dakyProposals = await callAgentAndParse(
+      const dakyTurn = await callAgentAndParse(
         auth.userId,
         'daky',
         undefined,
         strategyContext,
         `An orchestrated strategy from Sage is included in your context under "sage_strategy". Create content proposals that directly execute on those strategic themes. ${briefInstruction}`,
       );
-      createdByAgent['daky'] = await insertProposals(auth.userId, 'daky', dakyProposals);
-      await notifyProposals(auth.userId, 'daky', createdByAgent['daky']);
+      createdByAgent['daky'] = await completeAgentTurn(auth.userId, 'daky', dakyTurn);
+      const dakyProposals = dakyTurn.proposals;
 
       // 3. Nova (Creative / Visuals)
       const contentContext = {
         ...strategyContext,
         daky_content: dakyProposals.slice(0, 3).map((p: any) => ({ type: p.task_type, title: p.title, theme: p.body })),
       };
-      const novaProposals = await callAgentAndParse(
+      const novaTurn = await callAgentAndParse(
         auth.userId,
         'nova',
         undefined,
         contentContext,
         `Sage's strategy and Daky's content proposals are in your context. Create visual concepts that visually represent those content pieces. ${briefInstruction}`,
       );
-      createdByAgent['nova'] = await insertProposals(auth.userId, 'nova', novaProposals);
-      await notifyProposals(auth.userId, 'nova', createdByAgent['nova']);
+      createdByAgent['nova'] = await completeAgentTurn(auth.userId, 'nova', novaTurn);
 
       // 4. Parallel execution for Aria (Analytics) & Flux (Automation)
-      const [ariaProposals, fluxProposals] = await Promise.all([
+      const [ariaTurn, fluxTurn] = await Promise.all([
         callAgentAndParse(
           auth.userId,
           'aria',
@@ -1675,22 +1751,19 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
           `This is part of an orchestrated campaign run. Design automation workflows to efficiently distribute the content being created. ${briefInstruction}`,
         ),
       ]);
-      createdByAgent['aria'] = await insertProposals(auth.userId, 'aria', ariaProposals);
-      createdByAgent['flux'] = await insertProposals(auth.userId, 'flux', fluxProposals);
-      await notifyProposals(auth.userId, 'aria', createdByAgent['aria']);
-      await notifyProposals(auth.userId, 'flux', createdByAgent['flux']);
+      createdByAgent['aria'] = await completeAgentTurn(auth.userId, 'aria', ariaTurn);
+      createdByAgent['flux'] = await completeAgentTurn(auth.userId, 'flux', fluxTurn);
 
       // 5. If a brief was provided, also create an overarching Campaign Brief proposal
       if (brief) {
-        const briefProposals = await callAgentAndParse(
+        const briefTurn = await callAgentAndParse(
           auth.userId,
           'campaign_brief',
           undefined,
           contentContext,
           `Synthesize the strategy and deliverables into an executive multi-channel rollout roadmap. ${briefInstruction}`,
         );
-        createdByAgent['campaign_brief'] = await insertProposals(auth.userId, 'campaign_brief', briefProposals);
-        await notifyProposals(auth.userId, 'campaign_brief', createdByAgent['campaign_brief']);
+        createdByAgent['campaign_brief'] = await completeAgentTurn(auth.userId, 'campaign_brief', briefTurn);
       }
 
       const now = new Date().toISOString();
@@ -1721,7 +1794,8 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
     if (!Array.isArray(messages) || messages.length === 0) return res.status(400).json({ success: false, error: 'messages required' });
     try {
       const { provider, apiKey, model } = await resolveAgentAiKey();
-      const ctx = await gatherUserContext(auth.userId, key);
+      const [ctx, team] = await Promise.all([gatherUserContext(auth.userId, key), gatherTeamBriefing(auth.userId, key)]);
+      const teamState = renderBriefing(team.briefing);
       const agentName = AGENT_NAMES[key] ?? key;
       const agentRole = AGENT_DEFS[key]?.role ?? 'Specialist';
       const brandName = ctx.brand?.brand_name || 'your brand';
@@ -1729,7 +1803,10 @@ Only take actions when data clearly justifies them. If the platform is healthy, 
       const systemPrompt = `${USER_AGENT_CHAT_PROMPTS[key] ?? `You are ${agentName}, an AI ${agentRole} for ${brandName}. Provide sharp, highly practical guidance.`}
 
 Current user brand context:
-${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche || 'N/A'}, Tone: ${ctx.brand.tone || 'N/A'}, Audience: ${ctx.brand.audience || 'N/A'}, Pillars: ${(ctx.brand.pillars || []).join(', ')}` : 'No brand profile set up yet.'}`;
+${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche || 'N/A'}, Tone: ${ctx.brand.tone || 'N/A'}, Audience: ${ctx.brand.audience || 'N/A'}, Pillars: ${(ctx.brand.pillars || []).join(', ')}` : 'No brand profile set up yet.'}${teamState ? `
+
+Your team's current state (use it; explain recommendations in terms of the team strategy and research):
+${teamState}` : ''}`;
 
       const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content || '';
 
@@ -2544,7 +2621,7 @@ ${ctx.brand ? `Brand: ${ctx.brand.brand_name || 'N/A'}, Niche: ${ctx.brand.niche
     } catch (e: any) { return res.status(500).json({ success: false, error: e.message }); }
   });
 
-  return { router, runScheduledAgents };
+  return { router, runScheduledAgents, runAgentForUser };
 }
 
 

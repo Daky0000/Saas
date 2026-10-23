@@ -66,6 +66,8 @@ import { registerApiKeyRoutes, registerPublicTriggerRoutes } from './server/publ
 import { registerFormsRoutes, registerPublicFormRoutes } from './server/formsRoutes.ts';
 import { registerSiteTrackingRoutes } from './server/trackingRoutes.ts';
 import { processStaleAgentCompilations } from './server/agentSharedContext.ts';
+import { registerAgentTeamRoutes } from './server/agentTeamRoutes.ts';
+import { runDirectorCycle } from './server/agentTeam/coordination.ts';
 import { registerMcpAdminRoutes, registerMcpMediaRoutes, seedDefaultMcpServers, processMcpMediaSync } from './server/mcpRoutes.ts';
 import { buildMailer } from './server/mailer.ts';
 import { buildContentPlanEngine, registerContentPlanRoutes } from './server/contentPlanRoutes.ts';
@@ -925,8 +927,9 @@ app.use('/api/admin/higgsfield', registerHiggsfieldRoutes({ requireAdmin, hasDat
 app.use('/api', registerMagnificRoutes({ requireAuth, requireAdmin, hasDatabase, pool }));
 
 // ── Nova Design Agent Routes ───────────────────────────────────────────────────
-const { router: novaRouter, runScheduledAgents } = buildNovaModule({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool, getAIConfig, resolveActiveKey, decryptAIKey, AGENT_DEFS });
+const { router: novaRouter, runScheduledAgents, runAgentForUser } = buildNovaModule({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool, getAIConfig, resolveActiveKey, decryptAIKey, AGENT_DEFS });
 app.use('/api', novaRouter);
+app.use('/api', registerAgentTeamRoutes({ requireAuth, hasDatabase, runAgent: runAgentForUser }));
 
 
 // ─── Kling AI Routes ───────────────────────────────────────────────────────────
@@ -1018,6 +1021,10 @@ if (config.nodeEnv !== 'test') {
     // Run scheduled agent auto-runs every hour
     void runScheduledAgents();
     setInterval(() => void runScheduledAgents(), 60 * 60 * 1000);
+    // The performance director reviews each active team's strategy once a day
+    // (checked hourly), five minutes after boot so startup stays light.
+    setTimeout(() => void runDirectorCycle(runAgentForUser), 5 * 60 * 1000);
+    setInterval(() => void runDirectorCycle(runAgentForUser), 60 * 60 * 1000);
     // Run autonomous multi-agent schedules & handoffs every 10 minutes
     void runDueAgentSchedules(pool);
     setInterval(() => void runDueAgentSchedules(pool), 10 * 60 * 1000);

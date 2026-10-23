@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AgentSchedulesPanel from '../components/AgentSchedulesPanel';
+import TeamDirectorPanel from '../components/TeamDirectorPanel';
 import {
   CheckCircle, ChevronRight, Loader2, RefreshCw, Sparkles,
   Target, Users, Globe, MessageSquare, BarChart2, Zap,
@@ -2030,6 +2031,9 @@ export default function AITeam() {
         </div>
       )}
 
+      {/* Performance director: strategy, research and the team channel */}
+      {profileReady && <TeamDirectorPanel agents={AGENT_DEFS.map((a) => ({ key: a.key, name: a.name }))} />}
+
       {/* Agent grid — grouped by category */}
       <div className="space-y-8">
         {AGENT_GROUPS.map((group) => {
@@ -2087,7 +2091,9 @@ export default function AITeam() {
           <li>• <strong>Begin individual agents</strong> — Each generates 2-3 proposals tailored to your brand in seconds.</li>
           <li>• <strong>Launch Campaign</strong> — Runs your team with your custom campaign brief to produce coordinated deliverables across channels.</li>
           <li>• <strong>Orchestrate</strong> — Structured pipeline: Sage sets strategy → Daky writes content → Nova designs visuals → Aria tracks performance → Flux automates distribution.</li>
-          <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on your feedback.</li>
+          <li>• <strong>Approve or reject</strong> — Your decisions are remembered. Agents adapt their future proposals based on your feedback, and approved work is handed to the teammates who build on it.</li>
+          <li>• <strong>Team strategy</strong> — Helm, the performance director, keeps everyone on one strategy, explains why it was chosen, measures it, and replaces it when it keeps missing its target.</li>
+          <li>• <strong>Niche research</strong> — The team researches your niche on the web weekly; each agent works from the findings that matter to its role.</li>
           <li>• <strong>Executed Drafts</strong> — Approving a <em>content post</em> auto-creates a blog draft you can edit and publish.</li>
           <li>• <strong>Chat</strong> — Click Chat on any agent card to have a direct conversation about strategy, content, or ideas.</li>
           <li>• <strong>Brand Voice</strong> — Click "Extract Voice" on your brand card to paste sample content and have Sage identify your voice automatically.</li>
