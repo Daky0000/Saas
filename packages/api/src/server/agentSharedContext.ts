@@ -106,6 +106,30 @@ export async function buildSharedAgentContext(userId: string): Promise<string> {
     }
   });
 
+  // The strategy the director has the whole team on, and why — so chat,
+  // content plans and sales briefs pull in the same direction as the agents.
+  await safe(async () => {
+    const { rows } = await dbQuery(
+      `SELECT title, rationale, kpi, target, last_verdict FROM agent_strategies WHERE user_id=$1 AND status='active' LIMIT 1`,
+      [userId]
+    );
+    const s = rows[0];
+    if (s) parts.push(`Team strategy: ${s.title} (${String(s.last_verdict || 'warming_up').replace(/_/g, ' ')}; judged on ${String(s.kpi).replace(/_/g, ' ')}). Why: ${String(s.rationale).slice(0, 400)}`);
+  });
+
+  await safe(async () => {
+    const { rows } = await dbQuery(
+      `SELECT findings, method, created_at FROM niche_research WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    const f = rows[0]?.findings;
+    if (f && f.summary) {
+      const trends = Array.isArray(f.trends) ? f.trends.slice(0, 3).map((t: any) => t.name).filter(Boolean) : [];
+      const pains = Array.isArray(f.audience?.pains) ? f.audience.pains.slice(0, 3) : [];
+      parts.push(`Niche research (${rows[0].method === 'web_search' ? 'web' : 'general knowledge'}, ${new Date(rows[0].created_at).toISOString().slice(0, 10)}): ${String(f.summary).slice(0, 500)}${trends.length ? `\nRising: ${trends.join('; ')}` : ''}${pains.length ? `\nAudience pains: ${pains.join('; ')}` : ''}`);
+    }
+  });
+
   await safe(async () => {
     const { rows } = await dbQuery(
       `SELECT value FROM user_agent_memory WHERE user_id=$1 AND agent_key='global' AND mem_type='insight' ORDER BY created_at DESC LIMIT 5`,
