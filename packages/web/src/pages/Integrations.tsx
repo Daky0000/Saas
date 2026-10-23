@@ -1530,9 +1530,23 @@ export default function Integrations({ onNavigateSettings }: Props) {
                                 No {modal.accountType === 'group' ? 'Groups' : 'Facebook Pages'} were returned by Meta for this login.
                               </div>
                               {modal.accountType === 'page' ? (
-                                <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">
+                                <ul className="list-disc space-y-1.5 pl-5 text-xs text-slate-600">
+                                  <li>
+                                    <strong>Personal Profile vs Page:</strong> Meta only supports connecting <strong>Facebook Pages</strong>, not personal accounts. If your URL has <code>/people/</code> or <code>profile.php</code>, create a Page at{' '}
+                                    <a
+                                      href="https://facebook.com/pages/create"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="font-medium text-blue-600 underline hover:text-blue-700"
+                                    >
+                                      facebook.com/pages/create
+                                    </a>.
+                                  </li>
                                   <li>
                                     <strong>Page not checked during Facebook Login:</strong> Click <strong>Reconnect &amp; Select Pages</strong> below, then click <strong>&ldquo;Edit previous settings&rdquo;</strong> in the Facebook popup and select your Page.
+                                  </li>
+                                  <li>
+                                    <strong>Meta App in Development Mode:</strong> If your Meta App in <span className="font-semibold">developers.facebook.com</span> is not set to &ldquo;Live&rdquo;, your Facebook account must be added under <strong>App roles &rarr; Roles &rarr; Testers</strong>.
                                   </li>
                                   <li>
                                     <strong>Page is in a Meta Business Portfolio / Business Suite:</strong> If your Page is linked to Instagram, WhatsApp, or Meta Business Suite, Meta hides it unless Business Portfolio access is granted. Click <strong>Reconnect with Business Portfolio Access</strong> below.

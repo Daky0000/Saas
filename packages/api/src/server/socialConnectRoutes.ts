@@ -132,7 +132,13 @@ export interface DiscoveredFacebookPage {
   saved?: boolean;
 }
 
-function parseFacebookPageLookupIdentifier(rawInput: string): string {
+export function isFacebookPersonalProfileUrl(rawInput: string): boolean {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed) return false;
+  return /facebook\.com\/people\//i.test(trimmed) || /profile\.php\?id=\d+/i.test(trimmed);
+}
+
+export function parseFacebookPageLookupIdentifier(rawInput: string): string {
   const trimmed = String(rawInput || '').trim();
   if (!trimmed) return '';
   try {

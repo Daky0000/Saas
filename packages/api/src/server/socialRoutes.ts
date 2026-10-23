@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { encryptIntegrationSecret, decryptIntegrationSecret, logIntegrationEvent } from '../integration-helpers.ts';
 import { inMemoryPlatformConfigs } from '../user-auth.ts';
 import { OAUTH_AUTH_URLS, resolveOAuthRedirectUri, formatSocialAccountLabel, getMetaOAuthScopeString, resolveInstagramAppConfig } from '../platform-helpers.ts';
-import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, fetchAccessibleFacebookPages, syncFacebookPagesForUser, sanitizeOAuthReturnTo, type SocialConnectDeps } from './socialConnectRoutes.ts';
+import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, fetchAccessibleFacebookPages, isFacebookPersonalProfileUrl, syncFacebookPagesForUser, sanitizeOAuthReturnTo, type SocialConnectDeps } from './socialConnectRoutes.ts';
 import { META_GRAPH_BASE, META_OAUTH_DIALOG_URL } from '../meta-graph.ts';
 import { normalizeWordPressSiteUrl, resolveMailchimpServerPrefix } from '../integration-helpers.ts';
 import { safeAxios } from '../ssrf-guard.ts';
@@ -374,12 +374,23 @@ router.post('/v1/social/facebook/lookup-page', async (req: Request, res: Respons
 
     const discovered = await fetchAccessibleFacebookPages(accessToken, { appId, appSecret, lookupPageId: query });
     if (discovered.pages.length === 0) {
-      const detail = discovered.warnings[0]
-        ? ` (${discovered.warnings[0]})`
-        : '';
+      const rawWarning = String(discovered.warnings[0] || '').trim();
+      const isProfileUrl = isFacebookPersonalProfileUrl(query);
+      const isUnsupportedObject = /Unsupported get request\. Object with ID/i.test(rawWarning);
+
+      let error = 'Could not access that Facebook Page with your current token.';
+      if (isProfileUrl) {
+        error = 'The URL you entered appears to be a Facebook Personal Profile, not a Facebook Page. Meta\'s Graph API does not permit third-party tools to connect or post to personal user accounts. Please create a Facebook Page at https://facebook.com/pages/create and connect that instead.';
+      } else if (isUnsupportedObject) {
+        error = `Meta could not find or access Facebook Page '${query}'. Most common causes: 1) It is a personal Facebook account instead of a Facebook Page; 2) The Page was not checked in Facebook's login popup (click "Reconnect & Select Pages" -> "Edit previous settings"); 3) Your Meta Developer App is in Development Mode (your account must be added as a Tester/Admin in developers.facebook.com); or 4) The Page is in a Meta Business Portfolio (click "Reconnect with Business Portfolio Access").`;
+      } else if (rawWarning) {
+        error = `Could not access that Facebook Page: ${rawWarning}. Click "Reconnect with Business Portfolio Access" or make sure the Page was checked during the Facebook login dialog.`;
+      } else {
+        error = 'Could not access that Facebook Page with your current token. Click "Reconnect with Business Portfolio Access" or make sure the Page was checked during the Facebook login dialog.';
+      }
       return res.status(404).json({
         success: false,
-        error: `Could not access that Facebook Page with your current token${detail}. Click "Reconnect with Business Portfolio Access" or make sure the Page was checked during the Facebook login dialog.`,
+        error,
       });
     }
 
