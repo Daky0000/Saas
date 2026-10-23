@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { META_GRAPH_BASE } from '../../src/meta-graph.ts';
+import { fetchMediaBytes } from '../../src/ssrf-guard.ts';
 import type {
   AnalyticsResult,
   PlatformContext,
@@ -24,13 +26,19 @@ type FacebookHelpers = {
 
 const FACEBOOK_MAX_TEXT = 63206;
 const FACEBOOK_SUPPORTED_MEDIA = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4']);
-const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+const GRAPH_BASE = META_GRAPH_BASE;
 
 // Facebook long-lived user tokens last ~60 days; refresh at 50-day safety margin
 const FB_TOKEN_REFRESH_MARGIN_DAYS = 10;
 
-const isRetryableStatus = (status?: number) =>
-  status === 429 || (typeof status === 'number' && status >= 500);
+// Meta reports throttling as HTTP 400 with these error codes (app, user, page
+// and account-level rate limits), so the status alone undercounts retries.
+const META_RETRYABLE_ERROR_CODES = new Set([1, 2, 4, 17, 32, 341, 613]);
+
+const isRetryableStatus = (status?: number, data?: any) =>
+  status === 429 ||
+  (typeof status === 'number' && status >= 500) ||
+  META_RETRYABLE_ERROR_CODES.has(Number(data?.error?.code));
 
 export class FacebookPagesPlatform implements SocialPlatform {
   id = 'facebook';
@@ -130,7 +138,7 @@ export class FacebookPagesPlatform implements SocialPlatform {
                 status: 'failed',
                 error: binaryData?.error?.message || `Facebook API error ${binaryResp.status}`,
                 code: binaryData?.error?.code ? String(binaryData.error.code) : undefined,
-                retryable: isRetryableStatus(binaryResp.status),
+                retryable: isRetryableStatus(binaryResp.status, binaryData),
                 raw: binaryData,
               };
             }
@@ -155,7 +163,7 @@ export class FacebookPagesPlatform implements SocialPlatform {
               status: 'failed',
               error: data?.error?.message || `Facebook API error ${resp.status}`,
               code: data?.error?.code ? String(data.error.code) : undefined,
-              retryable: isRetryableStatus(resp.status),
+              retryable: isRetryableStatus(resp.status, data),
               raw: data,
             };
           }
@@ -180,7 +188,7 @@ export class FacebookPagesPlatform implements SocialPlatform {
           status: 'failed',
           error: data?.error?.message || `Facebook API error ${resp.status}`,
           code: data?.error?.code ? String(data.error.code) : undefined,
-          retryable: isRetryableStatus(resp.status),
+          retryable: isRetryableStatus(resp.status, data),
           raw: data,
         };
       }
@@ -200,9 +208,8 @@ export class FacebookPagesPlatform implements SocialPlatform {
     description: string,
   ): Promise<PlatformPostResult> {
     try {
-      // Step 1: Fetch video to buffer (supports large files)
-      const videoResp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const videoBuffer = Buffer.from(videoResp.data);
+      // Step 1: Fetch video to buffer (user-supplied URL: SSRF-guarded, size-capped)
+      const { buffer: videoBuffer } = await fetchMediaBytes(videoUrl, { maxBytes: 1024 * 1024 * 1024, timeoutMs: 120_000 });
       const fileSize = videoBuffer.length;
 
       // Step 2: Initialize resumable upload session
@@ -217,7 +224,7 @@ export class FacebookPagesPlatform implements SocialPlatform {
       );
       const initData: any = initResp.data || {};
       if (initResp.status >= 400 || !initData.upload_session_id) {
-        return { status: 'failed', error: initData?.error?.message || 'Facebook video init failed.', retryable: isRetryableStatus(initResp.status) };
+        return { status: 'failed', error: initData?.error?.message || 'Facebook video init failed.', retryable: isRetryableStatus(initResp.status, initData) };
       }
 
       const sessionId = initData.upload_session_id;
@@ -239,7 +246,7 @@ export class FacebookPagesPlatform implements SocialPlatform {
       );
       const uploadData: any = uploadResp.data || {};
       if (uploadResp.status >= 400) {
-        return { status: 'failed', error: uploadData?.error?.message || 'Facebook video upload failed.', retryable: isRetryableStatus(uploadResp.status) };
+        return { status: 'failed', error: uploadData?.error?.message || 'Facebook video upload failed.', retryable: isRetryableStatus(uploadResp.status, uploadData) };
       }
 
       // Step 4: Finish / publish
@@ -256,7 +263,7 @@ export class FacebookPagesPlatform implements SocialPlatform {
       );
       const finishData: any = finishResp.data || {};
       if (finishResp.status >= 400) {
-        return { status: 'failed', error: finishData?.error?.message || 'Facebook video publish failed.', retryable: isRetryableStatus(finishResp.status) };
+        return { status: 'failed', error: finishData?.error?.message || 'Facebook video publish failed.', retryable: isRetryableStatus(finishResp.status, finishData) };
       }
       return { status: 'published', platformPostId: String(videoId || finishData?.id || ''), raw: finishData };
     } catch (err) {

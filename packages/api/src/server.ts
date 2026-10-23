@@ -28,7 +28,6 @@ import { FacebookPagesPlatform } from '../backend/platforms/facebook_pages.ts';
 import { InstagramBusinessPlatform } from '../backend/platforms/instagram_business.ts';
 import { LinkedInPlatform } from '../backend/platforms/linkedin.ts';
 import { TwitterXPlatform } from '../backend/platforms/twitter_x.ts';
-import { TikTokAdapter } from '../backend/src/services/platform-adapters/tiktok.adapter.ts';
 import type { PostObject } from '../backend/platforms/types.ts';
 // import { SAMPLE_TEMPLATES } from './src/data/sampleFabricTemplates.ts';
 import path from 'path';
@@ -99,6 +98,7 @@ import { registerDakyxRoutes, reconcileDakyxGrants, runDakyxMigrations } from '.
 import { registerUserRoutes } from './server/userRoutes.ts';
 import { registerAIConfigRoutes } from './server/aiConfigRoutes.ts';
 import { registerPlatformConfigRoutes } from './server/platformConfigRoutes.ts';
+import { registerComplianceRoutes } from './server/complianceRoutes.ts';
 import { registerWebhookRoutes } from './server/webhookRoutes.ts';
 import { registerLinkedInRoutes } from './server/linkedinRoutes.ts';
 import { registerSocialConnectRoutes, type SocialConnectDeps } from './server/socialConnectRoutes.ts';
@@ -109,6 +109,7 @@ import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
 import { runPaymentMigrations } from './payment-migrations.ts';
 import { runDatabaseMigrations } from './db-migrations.ts';
+import { migrateLegacyTokenData } from './token-data.ts';
 import { pool, dbReady, setDbReady, setDbInitError, dbInitError, hasDatabase, dbQuery, normalizeEmail, normalizeUsername } from './db.ts';
 import type {
   DbUserRow, AdminDbRole, AdminDbStatus, DbPricingPlan, DbCardTemplate, PlatformConfigRow,
@@ -154,8 +155,7 @@ import {
 import {
   getUserSaaSContext, getEnabledPlatformSlugs, isOAuthClientSecretRequired,
   getVisibleUserPlatformSlugs, formatSocialAccountLabel, getUserConnectedAccounts,
-  OAUTH_AUTH_URLS, resolveOAuthRedirectUri, META_INSTAGRAM_SCOPES,
-  INSTAGRAM_BUSINESS_SCOPES, INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS,
+  OAUTH_AUTH_URLS, resolveOAuthRedirectUri, buildOAuthAuthorizeUrl, resolveInstagramAppConfig,
 } from './platform-helpers.ts';
 import { runDueDateAlerts, publishDuePosts, runTaskReminders } from './scheduler.ts';
 
@@ -470,6 +470,11 @@ async function ensureDatabase() {
   await runDatabaseMigrations(pool);
   await runPaymentMigrations(pool);
   await runDakyxMigrations(pool);
+  // Credentials copied into the plaintext token_data column by older code
+  // move to their encrypted home.
+  await migrateLegacyTokenData((sql, params) => pool!.query(sql, params as any[]), encryptIntegrationSecret)
+    .then((count) => { if (count) logger.info({ count }, 'token_data_secrets_migrated'); })
+    .catch((err) => logger.warn({ err }, 'token_data_secret_migration_failed'));
   setDbReady(true);
 
 }
@@ -549,9 +554,11 @@ const socialConnectDeps: SocialConnectDeps = {
   parseLinkedInScopeList,
   computeIsoFromTtlSeconds,
   encryptIntegrationSecret,
+  decryptIntegrationSecret,
   upsertUserIntegration,
   logIntegrationEvent,
   getUserConnectedAccounts,
+  markSocialAccountNeedsReapproval: (...a) => markSocialAccountNeedsReapproval(...a),
   createNotification,
   checkTaskActions,
   getAIConfig, resolveActiveKey, GEMINI_MODELS, callAINonStreaming,
@@ -586,156 +593,61 @@ app.use('/api', registerHubtelRoutes({ requireAuth, requireAdmin, hasDatabase, d
 // ─── Paystack Payment Routes ───────────────────────────────────────────────────
 app.use('/api', registerPaystackRoutes({ requireAuth, requireAdmin, hasDatabase, pool, getPlatformConfig }));
 // GET /api/oauth/:platform/authorize-url — build OAuth URL from DB-configured credentials
-  app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
+app.get('/api/oauth/:platform/authorize-url', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
     if (!auth) return;
 
     const platform = req.params.platform.toLowerCase();
-    const { state } = req.query as { state?: string };
+    const query = req.query as Record<string, string | undefined>;
+    const state = String(query.state || '').trim();
     if (!state) return res.status(400).json({ success: false, error: 'Missing state' });
+    if (!OAUTH_AUTH_URLS[platform]) return res.status(400).json({ success: false, error: 'Unsupported platform' });
 
-    let meta = OAUTH_AUTH_URLS[platform];
-    if (!meta) return res.status(400).json({ success: false, error: 'Unsupported platform' });
+    // The state must be one this user registered for this platform via
+    // POST /api/oauth/state, so an authorize URL can't be minted for a state
+    // the callback would never accept.
+    if (hasDatabase()) {
+      const { rows } = await dbQuery(
+        'SELECT 1 FROM oauth_states WHERE state = $1 AND user_id = $2 AND platform = $3 AND expires_at > NOW() LIMIT 1',
+        [state, auth.userId, platform],
+      );
+      if (!rows.length) return res.status(400).json({ success: false, error: 'Unknown or expired OAuth state — start the connection again' });
+    }
 
     let cfg = await getPlatformConfig(platform);
-    let fbCfg: Record<string, string> = {};
+    let facebookCfg: Record<string, string> = {};
     let inheritedFromFacebook = false;
     if (platform === 'instagram') {
-      fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
-      if (!cfg.appId || !cfg.appSecret) {
-        if (fbCfg.appId && fbCfg.appSecret) {
-          cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
-          inheritedFromFacebook = true;
-        }
-      }
+      facebookCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      ({ cfg, inheritedFromFacebook } = resolveInstagramAppConfig(cfg, facebookCfg));
     }
 
-    const requestedMethod = String(req.query.method || cfg.loginType || '').toLowerCase();
-    const isFbInstagramMethod = platform === 'instagram' && (
-      requestedMethod === 'facebook' ||
-      (requestedMethod !== 'instagram' && (
-        inheritedFromFacebook ||
-        Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com')) ||
-        Boolean(cfg.configId && String(cfg.configId).trim()) ||
-        Boolean(cfg.scopes && (cfg.scopes.includes('pages_show_list') || (cfg.scopes.includes('instagram_basic') && !cfg.scopes.includes('instagram_business_basic'))))
-      ))
-    );
-
-    const clientId = isFbInstagramMethod
-      ? String(cfg.facebookAppId || fbCfg.appId || cfg.appId || '').trim()
-      : cfg[meta.idField];
-    const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
-
-    if (!clientId || !redirectUri) {
-      return res.status(400).json({ success: false, error: 'Platform credentials not configured by admin' });
-    }
-
-    let authUrl = meta.authUrl;
-    let scopeParam = String(cfg.scopes || meta.scopes || '').trim();
-
-    if (isFbInstagramMethod) {
-      authUrl = 'https://www.facebook.com/v19.0/dialog/oauth';
-      if (!cfg.scopes || cfg.scopes.includes('instagram_business_')) {
-        scopeParam = META_INSTAGRAM_SCOPES.join(',');
-      }
-    } else if (platform === 'instagram') {
-      if (!cfg.scopes || !cfg.scopes.includes('instagram_business_')) {
-        scopeParam = INSTAGRAM_BUSINESS_SCOPES.join(',');
-      }
-    }
-
-    const extraScopesRaw = String((req.query as any)?.extra_scopes || '').trim();
-    if (extraScopesRaw) {
-      const separator = scopeParam.includes(' ') && !scopeParam.includes(',') ? ' ' : ',';
-      const existingScopes = scopeParam
-        .split(/[\s,]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const extraScopes = extraScopesRaw
-        .split(/[\s,]+/)
-        .map((s) => s.trim())
-        .filter((s) => /^[a-z0-9_.:-]+$/i.test(s));
-      scopeParam = Array.from(new Set([...existingScopes, ...extraScopes])).join(separator);
-    }
-
-    const params =
-      platform === 'tiktok'
-        ? new URLSearchParams({
-            // TikTok uses `client_key` (not `client_id`)
-            client_key: clientId,
-            redirect_uri: redirectUri,
-            response_type: 'code',
-            state,
-            // TikTok expects comma-separated scopes
-            scope: scopeParam,
-          })
-        : new URLSearchParams({
-            client_id: clientId,
-            redirect_uri: redirectUri,
-            response_type: 'code',
-            state,
-            scope: scopeParam,
-          });
-
-    if (isFbInstagramMethod) {
-      // Per Meta Business Login for Instagram (Instagram API with Facebook Login) spec:
-      // display=page and extras={"setup":{"channel":"IG_API_ONBOARDING"}} launch the embedded
-      // Instagram Professional Account + Facebook Page onboarding flow.
-      params.set('display', 'page');
-      params.set('extras', INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS);
-      const configId = String(cfg.configId || '').trim();
-      if (configId) {
-        params.set('config_id', configId);
-      }
-    }
-
-    if (platform === 'facebook' || isFbInstagramMethod || (platform !== 'instagram' && String((req.query as any)?.rerequest || '') === '1')) {
-      params.set('auth_type', 'rerequest');
-    }
-
-    if (platform === 'instagram' && !isFbInstagramMethod) {
-      params.set('enable_fb_login', String(cfg.enableFbLogin ?? '1'));
-      if (String((req.query as any)?.rerequest || (req.query as any)?.force_reauth || '') === '1' || cfg.forceReauth === 'true') {
-        params.set('force_reauth', 'true');
-      }
-    }
-
-    if (platform === 'twitter') {
-      const { code_challenge, code_challenge_method } = req.query as { code_challenge?: string; code_challenge_method?: string };
-      const challenge = String(code_challenge || '').trim();
-      const method = String(code_challenge_method || 'S256').trim();
-      if (!challenge) {
-        return res.status(400).json({ success: false, error: 'Missing code_challenge (PKCE) for Twitter' });
-      }
-      params.set('code_challenge', challenge);
-      params.set('code_challenge_method', method || 'S256');
-    }
-
-    if (platform === 'linkedin' && shouldEnableLinkedInExtendedLogin()) {
-      params.set('enable_extended_login', 'true');
-    }
-
-    if (platform === 'gmail') {
-      params.set('access_type', 'offline');
-      params.set('prompt', 'consent');
-    }
-
-    if (platform === 'tiktok') {
-      const { code_challenge, code_challenge_method } = req.query as { code_challenge?: string; code_challenge_method?: string };
-      const challenge = String(code_challenge || '').trim();
-      if (challenge) {
-        params.set('code_challenge', challenge);
-        params.set('code_challenge_method', String(code_challenge_method || 'S256').trim() || 'S256');
-      }
-    }
-
-    return res.json({ success: true, url: `${authUrl}?${params.toString()}` });
+    const result = buildOAuthAuthorizeUrl({
+      platform,
+      cfg,
+      facebookCfg,
+      inheritedFromFacebook,
+      redirectUri: resolveOAuthRedirectUri(platform, cfg.redirectUri, req),
+      state,
+      method: query.method,
+      extraScopes: query.extra_scopes,
+      rerequest: String(query.rerequest || '') === '1',
+      forceReauth: String(query.force_reauth || '') === '1',
+      codeChallenge: query.code_challenge,
+      codeChallengeMethod: query.code_challenge_method,
+      enableLinkedInExtendedLogin: shouldEnableLinkedInExtendedLogin(),
+    });
+    if (!result.ok) return res.status(result.status).json({ success: false, error: result.error });
+    return res.json({ success: true, url: result.url });
   } catch (err) {
     logger.error('Authorize URL error:', err);
     return res.status(500).json({ success: false, error: 'Failed to build authorization URL' });
   }
 });
+
+// Provider deauthorize / data-deletion callbacks (signature-verified).
+app.use('/api', registerComplianceRoutes({ hasDatabase, dbQuery, getPlatformConfig }));
 
 app.use('/api', registerPlatformConfigRoutes({
   requireAuth, requireAdmin, hasDatabase, dbQuery, pool,

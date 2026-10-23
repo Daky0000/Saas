@@ -7,6 +7,7 @@ import axios from 'axios';
 import type { Pool } from 'pg';
 import { config } from '../config.ts';
 import { logger } from '../logger.ts';
+import { META_GRAPH_BASE } from '../meta-graph.ts';
 
 export interface WebhookDeps {
   hasDatabase: () => boolean;
@@ -49,16 +50,19 @@ function verifySvixSignature(req: Request, secret: string): boolean {
   });
 }
 
-function verifyMetaWebhookSignature(req: Request, appSecret: string): boolean {
-  if (!appSecret) return config.nodeEnv !== 'production';
-  const signature = String(req.headers['x-hub-signature-256'] || req.headers['x-hub-signature'] || '').trim();
-  if (!signature) return false;
+// X-Hub-Signature-256 is HMAC-SHA256 of the raw body with the app secret of
+// whichever Meta app (Facebook, Instagram, Threads) the subscription belongs to.
+function verifyMetaWebhookSignature(req: Request, appSecrets: string[]): boolean {
+  if (appSecrets.length === 0) return config.nodeEnv !== 'production';
+  const signature = String(req.headers['x-hub-signature-256'] || '').trim();
+  if (!signature.startsWith('sha256=')) return false;
   const raw = (req as any).rawBody as Buffer | undefined;
   if (!raw) return false;
-  const provided = signature.includes('=') ? signature.split('=')[1] : signature;
-  const expected = createHmac('sha256', appSecret).update(raw).digest('hex');
-  if (provided.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  const provided = signature.slice('sha256='.length);
+  return appSecrets.some((secret) => {
+    const expected = createHmac('sha256', secret).update(raw).digest('hex');
+    return provided.length === expected.length && timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  });
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -70,6 +74,74 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
   } = deps;
 
   const router = Router();
+
+  const metaConfigs = () => Promise.all(['facebook', 'instagram', 'threads'].map((p) => deps.getPlatformConfig(p).catch(() => ({} as Record<string, string>))));
+
+  // Env secrets plus the ones saved in Admin → Integrations.
+  const loadMetaAppSecrets = async (): Promise<string[]> => {
+    const [facebook, instagram, threads] = await metaConfigs();
+    return Array.from(new Set(
+      [config.facebookAppSecret, process.env.INSTAGRAM_APP_SECRET, process.env.THREADS_APP_SECRET,
+        facebook.appSecret, instagram.appSecret, instagram.facebookAppSecret, threads.appSecret]
+        .map((secret) => String(secret || '').trim())
+        .filter(Boolean),
+    ));
+  };
+
+  // One thread per conversation: a new message joins the latest thread for
+  // the same sender (DM) or comment chain instead of opening another.
+  const recordInboxMessage = async (params: {
+    platform: string;
+    accountId: string;
+    externalThreadId: string;
+    channelType: 'comment' | 'dm' | 'mention';
+    senderName: string;
+    senderHandle: string;
+    subject: string;
+    sentiment: string;
+    body: string;
+  }) => {
+    if (!pool || !params.accountId || !params.externalThreadId) return;
+    const { rows: owners } = await pool.query<{ user_id: string }>(
+      `SELECT DISTINCT user_id FROM social_accounts WHERE account_id = $1 AND connected = true`,
+      [params.accountId],
+    ).catch(() => ({ rows: [] as Array<{ user_id: string }> }));
+    const preview = params.body.slice(0, 160);
+    for (const { user_id: ownerUserId } of owners) {
+      const updated = await pool.query<{ id: string }>(
+        `UPDATE social_inbox_threads
+            SET unread_count = unread_count + 1,
+                last_message_preview = $5,
+                last_message_at = NOW(),
+                updated_at = NOW(),
+                status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END
+          WHERE id = (
+            SELECT id FROM social_inbox_threads
+             WHERE user_id = $1 AND platform = $2 AND external_thread_id = $3 AND channel_type = $4
+             ORDER BY last_message_at DESC LIMIT 1
+          )
+          RETURNING id`,
+        [ownerUserId, params.platform, params.externalThreadId, params.channelType, preview],
+      ).catch(() => ({ rows: [] as Array<{ id: string }> }));
+      let threadId = updated.rows[0]?.id;
+      if (!threadId) {
+        threadId = randomUUID();
+        await pool.query(
+          `INSERT INTO social_inbox_threads (
+            id, user_id, platform, external_thread_id, sender_name, sender_handle,
+            subject_or_post_preview, channel_type, sentiment, status, unread_count, last_message_preview
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',1,$10)`,
+          [threadId, ownerUserId, params.platform, params.externalThreadId, params.senderName, params.senderHandle,
+            params.subject, params.channelType, params.sentiment, preview],
+        ).catch(() => undefined);
+      }
+      await pool.query(
+        `INSERT INTO social_inbox_messages (id, thread_id, user_id, direction, sender_name, body)
+         VALUES ($1,$2,$3,'inbound',$4,$5)`,
+        [randomUUID(), threadId, ownerUserId, params.senderName, params.body],
+      ).catch(() => undefined);
+    }
+  };
 
   // POST /webhooks/resend — email engagement events (opens, clicks, bounces).
   // Correlated back to user/campaign/contact via the resend_id stored in
@@ -164,12 +236,13 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
   });
 
   // GET /webhooks/meta + GET /api/v1/webhooks/facebook — Meta webhook verification
-  const metaVerify = (req: Request, res: Response) => {
+  const metaVerify = async (req: Request, res: Response) => {
     const mode = String(req.query['hub.mode'] || '').trim();
     const token = String(req.query['hub.verify_token'] || '').trim();
     const challenge = String(req.query['hub.challenge'] || '').trim();
-    const verifyToken = config.metaWebhookVerifyToken;
-    if (mode === 'subscribe' && verifyToken && token === verifyToken) return res.status(200).send(challenge);
+    const [facebook] = await metaConfigs();
+    const verifyToken = String(config.metaWebhookVerifyToken || facebook.webhookVerifyToken || '').trim();
+    if (mode === 'subscribe' && verifyToken && token === verifyToken) return res.status(200).type('text/plain').send(challenge);
     return res.status(403).send('Forbidden');
   };
   router.get('/webhooks/meta', metaVerify);
@@ -213,8 +286,7 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
   router.post('/webhooks/meta', async (req: Request, res: Response) => {
     res.status(200).json({ ok: true });
     try {
-      const appSecret = config.facebookAppSecret;
-      if (!verifyMetaWebhookSignature(req, appSecret)) {
+      if (!verifyMetaWebhookSignature(req, await loadMetaAppSecrets())) {
         logger.warn('Meta webhook: invalid or missing signature — discarding');
         return;
       }
@@ -254,57 +326,39 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
               if (postId) {
                 await logIntegrationEvent({ userId: null, integrationSlug: 'facebook', eventType: `page_feed_${itemType}_${verb}`, status: 'success', response: { pageId: entryId, postId, commentId: commentId || null, raw: value } }).catch(() => undefined);
               }
-              if (itemType === 'comment' && verb === 'add' && value?.message) {
-                const { rows: acctRows } = await pool.query(
-                  `SELECT user_id FROM social_accounts WHERE account_id = $1 LIMIT 1`,
-                  [entryId]
-                ).catch(() => ({ rows: [] as Array<{ user_id: string }> }));
-                const ownerUserId = acctRows[0]?.user_id;
-                if (ownerUserId) {
-                  const senderName = String(value?.from?.name || 'Social User');
-                  const senderHandle = `@${String(value?.from?.id || 'user')}`;
-                  const bodyText = String(value.message);
-                  const threadId = randomUUID();
-                  await pool.query(
-                    `INSERT INTO social_inbox_threads (
-                      id, user_id, platform, external_thread_id, sender_name, sender_handle,
-                      subject_or_post_preview, channel_type, sentiment, status, unread_count, last_message_preview
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'comment','positive','open',1,$8)`,
-                    [threadId, ownerUserId, eventPlatform, commentId || postId, senderName, senderHandle, `Post ${postId}`, bodyText.slice(0, 160)]
-                  ).catch(() => undefined);
-                  await pool.query(
-                    `INSERT INTO social_inbox_messages (id, thread_id, user_id, direction, sender_name, body)
-                     VALUES ($1,$2,$3,'inbound',$4,$5)`,
-                    [randomUUID(), threadId, ownerUserId, senderName, bodyText]
-                  ).catch(() => undefined);
-                }
+              // The Page's own comments come back through the same feed.
+              const fromPage = String(value?.from?.id || '') === entryId;
+              if (itemType === 'comment' && verb === 'add' && value?.message && !fromPage) {
+                const parentId = String(value?.parent_id || '').trim();
+                await recordInboxMessage({
+                  platform: eventPlatform,
+                  accountId: entryId,
+                  // A reply joins the thread of the comment it answers.
+                  externalThreadId: parentId && parentId !== postId ? parentId : commentId || postId,
+                  channelType: 'comment',
+                  senderName: String(value?.from?.name || 'Social User'),
+                  senderHandle: `@${String(value?.from?.id || 'user')}`,
+                  subject: `Post ${postId}`,
+                  sentiment: 'positive',
+                  body: String(value.message),
+                });
               }
             }
             if ((field === 'mention' || field === 'comments') && pool) {
               await logIntegrationEvent({ userId: null, integrationSlug: eventPlatform, eventType: 'page_mention', status: 'success', response: { pageId: entryId, raw: value } }).catch(() => undefined);
               if (value?.text || value?.message) {
-                const { rows: acctRows } = await pool.query(
-                  `SELECT user_id FROM social_accounts WHERE account_id = $1 LIMIT 1`,
-                  [entryId]
-                ).catch(() => ({ rows: [] as Array<{ user_id: string }> }));
-                const ownerUserId = acctRows[0]?.user_id;
-                if (ownerUserId) {
-                  const senderName = String(value?.from?.username || value?.from?.name || 'Social Mention');
-                  const bodyText = String(value?.text || value?.message || '');
-                  const threadId = randomUUID();
-                  await pool.query(
-                    `INSERT INTO social_inbox_threads (
-                      id, user_id, platform, external_thread_id, sender_name, sender_handle,
-                      subject_or_post_preview, channel_type, sentiment, status, unread_count, last_message_preview
-                    ) VALUES ($1,$2,$3,$4,$5,$6,'Social Mention','mention','positive','open',1,$7)`,
-                    [threadId, ownerUserId, eventPlatform, String(value?.id || ''), senderName, `@${senderName}`, bodyText.slice(0, 160)]
-                  ).catch(() => undefined);
-                  await pool.query(
-                    `INSERT INTO social_inbox_messages (id, thread_id, user_id, direction, sender_name, body)
-                     VALUES ($1,$2,$3,'inbound',$4,$5)`,
-                    [randomUUID(), threadId, ownerUserId, senderName, bodyText]
-                  ).catch(() => undefined);
-                }
+                const senderName = String(value?.from?.username || value?.from?.name || 'Social Mention');
+                await recordInboxMessage({
+                  platform: eventPlatform,
+                  accountId: entryId,
+                  externalThreadId: String(value?.id || value?.comment_id || value?.media_id || ''),
+                  channelType: 'mention',
+                  senderName,
+                  senderHandle: `@${senderName}`,
+                  subject: 'Social Mention',
+                  sentiment: 'positive',
+                  body: String(value?.text || value?.message || ''),
+                });
               }
             }
             if (field === 'ratings' && pool) {
@@ -313,31 +367,23 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
           }
 
           for (const msg of messaging) {
-            if (msg?.message && pool) {
+            // Echoes are the Page's own outbound messages.
+            if (msg?.message && !msg.message.is_echo && pool) {
               const senderId = String(msg?.sender?.id || '');
-              await logIntegrationEvent({ userId: null, integrationSlug: 'facebook', eventType: 'page_message', status: 'success', response: { pageId: entryId, senderId, raw: msg } }).catch(() => undefined);
-              if (msg.message.text) {
-                const { rows: acctRows } = await pool.query(
-                  `SELECT user_id FROM social_accounts WHERE account_id = $1 LIMIT 1`,
-                  [entryId]
-                ).catch(() => ({ rows: [] as Array<{ user_id: string }> }));
-                const ownerUserId = acctRows[0]?.user_id;
-                if (ownerUserId) {
-                  const bodyText = String(msg.message.text);
-                  const threadId = randomUUID();
-                  await pool.query(
-                    `INSERT INTO social_inbox_threads (
-                      id, user_id, platform, external_thread_id, sender_name, sender_handle,
-                      subject_or_post_preview, channel_type, sentiment, status, unread_count, last_message_preview
-                    ) VALUES ($1,$2,$3,$4,$5,$6,'Direct Message','dm','question','open',1,$7)`,
-                    [threadId, ownerUserId, eventPlatform, senderId, `Messenger User ${senderId.slice(-4)}`, `@${senderId}`, bodyText.slice(0, 160)]
-                  ).catch(() => undefined);
-                  await pool.query(
-                    `INSERT INTO social_inbox_messages (id, thread_id, user_id, direction, sender_name, body)
-                     VALUES ($1,$2,$3,'inbound',$4,$5)`,
-                    [randomUUID(), threadId, ownerUserId, `Messenger User ${senderId.slice(-4)}`, bodyText]
-                  ).catch(() => undefined);
-                }
+              await logIntegrationEvent({ userId: null, integrationSlug: eventPlatform, eventType: 'page_message', status: 'success', response: { pageId: entryId, senderId, raw: msg } }).catch(() => undefined);
+              if (msg.message.text && senderId) {
+                const senderName = `${eventPlatform === 'instagram' ? 'Instagram' : 'Messenger'} User ${senderId.slice(-4)}`;
+                await recordInboxMessage({
+                  platform: eventPlatform,
+                  accountId: entryId,
+                  externalThreadId: senderId,
+                  channelType: 'dm',
+                  senderName,
+                  senderHandle: `@${senderId}`,
+                  subject: 'Direct Message',
+                  sentiment: 'question',
+                  body: String(msg.message.text),
+                });
               }
             }
           }
@@ -352,8 +398,7 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
   router.post('/api/v1/webhooks/facebook', async (req: Request, res: Response) => {
     res.status(200).json({ ok: true });
     try {
-      const appSecret = config.facebookAppSecret;
-      if (!verifyMetaWebhookSignature(req, appSecret)) {
+      if (!verifyMetaWebhookSignature(req, await loadMetaAppSecrets())) {
         logger.warn('Facebook v1 webhook: invalid or missing signature — discarding');
         return;
       }
@@ -403,7 +448,7 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
       if (!pageToken) return res.status(400).json({ success: false, error: 'Page token not available — save the page first' });
 
       const subscribeResp = await axios.post(
-        `https://graph.facebook.com/v19.0/${encodeURIComponent(pageId)}/subscribed_apps`,
+        `${META_GRAPH_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`,
         new URLSearchParams({ subscribed_fields: 'feed,mention,ratings,messages', access_token: pageToken }).toString(),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true, timeout: 15000 }
       );

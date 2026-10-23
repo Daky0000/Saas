@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
-import axios from 'axios';
 import type { Request } from './types/http.ts';
+import { safeAxios } from './ssrf-guard.ts';
 import { logger } from './logger.ts';
 import { pool, hasDatabase } from './db.ts';
 
@@ -8,6 +8,8 @@ const CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000;
 const calendarCache = new Map<string, { expiresAt: number; value: any }>();
 const LINK_METADATA_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const LINK_METADATA_TIMEOUT_MS = 5_000;
+// Enough for any page head; the endpoint is public, so downloads are capped.
+const LINK_METADATA_MAX_BYTES = 2 * 1024 * 1024;
 const LINK_METADATA_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 100 };
 
 type LinkMetadataRecord = {
@@ -159,9 +161,15 @@ export async function fetchLinkMetadata(url: string): Promise<LinkMetadataRecord
   }
 
   try {
-    const response = await axios.get(url, {
+    // Anyone can call /api/link-metadata: never let it reach private hosts.
+    const response = await safeAxios({
+      method: 'GET',
+      url,
       timeout: LINK_METADATA_TIMEOUT_MS,
-      headers: { 'User-Agent': 'ContentflowBot/1.0' },
+      maxContentLength: LINK_METADATA_MAX_BYTES,
+      maxRedirects: 3,
+      responseType: 'text',
+      headers: { 'User-Agent': 'ContentflowBot/1.0', Accept: 'text/html,application/xhtml+xml' },
     });
     if (typeof response.data !== 'string') return null;
     const html = response.data as string;

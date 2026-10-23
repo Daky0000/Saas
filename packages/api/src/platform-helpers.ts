@@ -1,8 +1,10 @@
+import { createHash, randomBytes } from 'crypto';
 import type { Request } from './types/http.ts';
 import { logger } from './logger.ts';
 import { pool, dbQuery } from './db.ts';
 import { getPlatformConfig } from './user-auth.ts';
 import { getLinkedInOAuthScopeString } from './social-helpers.ts';
+import { INSTAGRAM_GRAPH_BASE, META_GRAPH_BASE, META_OAUTH_DIALOG_URL } from './meta-graph.ts';
 
 // normalizePlatformId is defined locally in platformConfigRoutes.ts.
 // resolveBackendRedirectUri is defined here to avoid the broken declare pattern.
@@ -79,24 +81,25 @@ export function isOAuthClientSecretRequired(platform: string): boolean {
   return slug === 'instagram' || slug === 'facebook' || slug === 'threads' || slug === 'linkedin' || slug === 'tiktok' || slug === 'pinterest' || slug === 'gmail' || slug === 'slack' || slug === 'zoom';
 }
 
+// A platform is offered to users only when an admin has both configured it and
+// left it enabled — the admin "Disable for users" toggle must actually hide it.
 export async function getVisibleUserPlatformSlugs(): Promise<string[]> {
   if (!pool) return ['wordpress', 'mailchimp'];
   const result = await dbQuery(`SELECT platform, config, enabled FROM platform_configs`);
   const visible = new Set<string>(['wordpress', 'mailchimp']);
   for (const row of result.rows as any[]) {
     const slug = String(row.platform || '').toLowerCase();
-    if (!slug) continue;
+    if (!slug || !row.enabled) continue;
     const cfg = row.config || {};
     const meta = OAUTH_AUTH_URLS[slug];
     if (!meta) {
-      if (Boolean(row.enabled) || Object.keys(cfg).length > 0) visible.add(slug);
+      visible.add(slug);
       continue;
     }
     const clientId = String(cfg?.[meta.idField] || '').trim();
     const secretRequired = isOAuthClientSecretRequired(slug);
     const secretValue = String(cfg?.clientSecret || cfg?.appSecret || '').trim();
-    const configured = Boolean(clientId && (!secretRequired || secretValue));
-    if ((Boolean(row.enabled) || configured) && configured) visible.add(slug);
+    if (clientId && (!secretRequired || secretValue)) visible.add(slug);
   }
   return Array.from(visible);
 }
@@ -133,10 +136,13 @@ export function formatSocialAccountLabel(
 export async function getUserConnectedAccounts(userId: string): Promise<any[]> {
   if (!pool) return [];
   const visiblePlatforms = await getVisibleUserPlatformSlugs();
+  // token_data is deliberately not selected: this feeds API responses and AI
+  // context, and it is not a place for anything a client should see.
   let query = `
     SELECT id, user_id AS "userId", platform, handle, account_name AS "accountName",
-           followers::text AS followers, connected, connected_at AS "connectedAt",
-           expires_at AS "expiresAt", token_data AS "token_data"
+           account_type AS "accountType", followers::text AS followers, connected, connected_at AS "connectedAt",
+           COALESCE(token_expires_at, expires_at) AS "expiresAt",
+           COALESCE(needs_reapproval, false) AS "needsReapproval"
     FROM social_accounts WHERE user_id = $1`;
   const params: any[] = [userId];
   if (visiblePlatforms.length > 0) {
@@ -185,9 +191,7 @@ export function isInstagramDirectLogin(input?: { accessToken?: string | null; to
 }
 
 export function resolveInstagramGraphBase(input?: { accessToken?: string | null; tokenData?: any } | null): string {
-  return isInstagramDirectLogin(input)
-    ? 'https://graph.instagram.com/v21.0'
-    : 'https://graph.facebook.com/v19.0';
+  return isInstagramDirectLogin(input) ? INSTAGRAM_GRAPH_BASE : META_GRAPH_BASE;
 }
 
 export function getMetaOAuthScopeString(extraScopes: string[] = []): string {
@@ -196,14 +200,15 @@ export function getMetaOAuthScopeString(extraScopes: string[] = []): string {
 
 export const OAUTH_AUTH_URLS: Record<string, { authUrl: string; scopes: string; idField: 'appId' | 'clientId' | 'clientKey' }> = {
   instagram: { authUrl: 'https://www.instagram.com/oauth/authorize', scopes: INSTAGRAM_BUSINESS_SCOPES.join(','), idField: 'appId' },
-  facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: META_BASE_SCOPES.join(','), idField: 'appId' },
+  facebook:  { authUrl: META_OAUTH_DIALOG_URL, scopes: META_BASE_SCOPES.join(','), idField: 'appId' },
   linkedin:  {
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
     scopes: getLinkedInOAuthScopeString(),
     idField: 'clientId',
   },
-  // tweet.write is sufficient for posting tweets; media.write is not a standard OAuth 2.0 scope.
-  twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read offline.access', idField: 'clientId' },
+  // media.write is required by the v2 media upload endpoints; without it image
+  // and video attachments are rejected and posts go out text-only.
+  twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: 'tweet.read tweet.write users.read media.write offline.access', idField: 'clientId' },
   pinterest: { authUrl: 'https://www.pinterest.com/oauth/', scopes: 'boards:read,boards:write,pins:read,pins:write,user_accounts:read', idField: 'clientId' },
   tiktok:    { authUrl: 'https://www.tiktok.com/v2/auth/authorize/', scopes: 'user.info.basic,user.info.profile,user.info.stats,video.list,video.upload,video.publish', idField: 'clientKey' },
   threads:   { authUrl: 'https://www.threads.net/oauth/authorize', scopes: 'threads_basic,threads_content_publish,threads_manage_insights,threads_read_replies,threads_manage_replies,threads_location_tagging', idField: 'appId' },
@@ -234,4 +239,141 @@ export function resolveOAuthRedirectUri(platform: string, redirectUri?: string, 
   if (!OAUTH_AUTH_URLS[platform]) return '';
   const raw = String(redirectUri || '').trim() || getDefaultOAuthRedirectPath(platform);
   return resolveBackendRedirectUri(raw, req);
+}
+
+// ── OAuth authorize URL ──────────────────────────────────────────────────────
+
+const base64Url = (buf: Buffer) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+
+// RFC 7636 S256 pair, for flows where the server holds the verifier.
+export function generatePkcePair(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = base64Url(randomBytes(48));
+  const codeChallenge = base64Url(createHash('sha256').update(codeVerifier).digest());
+  return { codeVerifier, codeChallenge };
+}
+
+// Instagram can ride on the Facebook app's credentials when it has none of its own.
+export function resolveInstagramAppConfig(
+  cfg: Record<string, string>,
+  facebookCfg: Record<string, string>,
+): { cfg: Record<string, string>; inheritedFromFacebook: boolean } {
+  if ((!cfg.appId || !cfg.appSecret) && facebookCfg.appId && facebookCfg.appSecret) {
+    return {
+      cfg: { ...facebookCfg, ...cfg, appId: cfg.appId || facebookCfg.appId, appSecret: cfg.appSecret || facebookCfg.appSecret },
+      inheritedFromFacebook: true,
+    };
+  }
+  return { cfg, inheritedFromFacebook: false };
+}
+
+// X needs offline.access to keep a refresh token and media.write to attach
+// images; admin-customised scope lists that publish get both.
+function ensureTwitterScopes(scopes: string): string {
+  const list = scopes.split(/\s+/).filter(Boolean);
+  if (!list.includes('tweet.write')) return scopes;
+  for (const required of ['media.write', 'offline.access']) if (!list.includes(required)) list.push(required);
+  return list.join(' ');
+}
+
+export type BuildAuthorizeUrlInput = {
+  platform: string;
+  cfg: Record<string, string>;
+  facebookCfg?: Record<string, string>;
+  inheritedFromFacebook?: boolean;
+  redirectUri: string;
+  state: string;
+  method?: string;
+  extraScopes?: string;
+  rerequest?: boolean;
+  forceReauth?: boolean;
+  codeChallenge?: string;
+  codeChallengeMethod?: string;
+  enableLinkedInExtendedLogin?: boolean;
+};
+
+export type BuildAuthorizeUrlResult = { ok: true; url: string } | { ok: false; status: number; error: string };
+
+export function buildOAuthAuthorizeUrl(input: BuildAuthorizeUrlInput): BuildAuthorizeUrlResult {
+  const platform = String(input.platform || '').trim().toLowerCase();
+  const meta = OAUTH_AUTH_URLS[platform];
+  if (!meta) return { ok: false, status: 400, error: 'Unsupported platform' };
+  const state = String(input.state || '').trim();
+  if (!state) return { ok: false, status: 400, error: 'Missing state' };
+
+  const cfg = input.cfg || {};
+  const fbCfg = input.facebookCfg || {};
+  const requestedMethod = String(input.method || cfg.loginType || '').toLowerCase();
+  const isFbInstagramMethod = platform === 'instagram' && (
+    requestedMethod === 'facebook' ||
+    (requestedMethod !== 'instagram' && (
+      Boolean(input.inheritedFromFacebook) ||
+      Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com')) ||
+      Boolean(cfg.configId && String(cfg.configId).trim()) ||
+      Boolean(cfg.scopes && (cfg.scopes.includes('pages_show_list') || (cfg.scopes.includes('instagram_basic') && !cfg.scopes.includes('instagram_business_basic'))))
+    ))
+  );
+
+  const clientId = String(
+    isFbInstagramMethod ? (cfg.facebookAppId || fbCfg.appId || cfg.appId || '') : (cfg[meta.idField] || ''),
+  ).trim();
+  const redirectUri = String(input.redirectUri || '').trim();
+  if (!clientId || !redirectUri) return { ok: false, status: 400, error: 'Platform credentials not configured by admin' };
+
+  let authUrl = meta.authUrl;
+  let scopeParam = String(cfg.scopes || meta.scopes || '').trim();
+  if (isFbInstagramMethod) {
+    authUrl = META_OAUTH_DIALOG_URL;
+    if (!cfg.scopes || cfg.scopes.includes('instagram_business_')) scopeParam = META_INSTAGRAM_SCOPES.join(',');
+  } else if (platform === 'instagram') {
+    if (!cfg.scopes || !cfg.scopes.includes('instagram_business_')) scopeParam = INSTAGRAM_BUSINESS_SCOPES.join(',');
+  } else if (platform === 'twitter') {
+    scopeParam = ensureTwitterScopes(scopeParam);
+  }
+
+  const extraScopesRaw = String(input.extraScopes || '').trim();
+  if (extraScopesRaw) {
+    const separator = scopeParam.includes(' ') && !scopeParam.includes(',') ? ' ' : ',';
+    const existing = scopeParam.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    const extra = extraScopesRaw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^[a-z0-9_.:-]+$/i.test(s));
+    scopeParam = Array.from(new Set([...existing, ...extra])).join(separator);
+  }
+
+  const params = new URLSearchParams({
+    // TikTok names the client parameter client_key.
+    [platform === 'tiktok' ? 'client_key' : 'client_id']: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    state,
+    scope: scopeParam,
+  });
+
+  if (isFbInstagramMethod) {
+    // Business Login for Instagram: display=page plus the IG_API_ONBOARDING
+    // extras launch the professional-account + Page onboarding flow.
+    params.set('display', 'page');
+    params.set('extras', INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS);
+    const configId = String(cfg.configId || '').trim();
+    if (configId) params.set('config_id', configId);
+  }
+  if (platform === 'facebook' || isFbInstagramMethod || (platform !== 'instagram' && input.rerequest)) {
+    params.set('auth_type', 'rerequest');
+  }
+  if (platform === 'instagram' && !isFbInstagramMethod) {
+    params.set('enable_fb_login', String(cfg.enableFbLogin ?? '1'));
+    if (input.rerequest || input.forceReauth || cfg.forceReauth === 'true') params.set('force_reauth', 'true');
+  }
+
+  const challenge = String(input.codeChallenge || '').trim();
+  if (platform === 'twitter' && !challenge) return { ok: false, status: 400, error: 'Missing code_challenge (PKCE) for Twitter' };
+  if ((platform === 'twitter' || platform === 'tiktok') && challenge) {
+    params.set('code_challenge', challenge);
+    params.set('code_challenge_method', String(input.codeChallengeMethod || 'S256').trim() || 'S256');
+  }
+  if (platform === 'linkedin' && input.enableLinkedInExtendedLogin) params.set('enable_extended_login', 'true');
+  if (platform === 'gmail') {
+    params.set('access_type', 'offline');
+    params.set('prompt', 'consent');
+  }
+
+  return { ok: true, url: `${authUrl}?${params.toString()}` };
 }

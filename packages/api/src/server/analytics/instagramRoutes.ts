@@ -4,7 +4,7 @@ import { logger } from '../../logger.ts';
 import type { AnalyticsDeps } from './helpers.ts';
 import type { SyncHelpers } from './syncHelpers.ts';
 
-export function registerInstagramRoutes(router: Router, { requireAuth, pool }: AnalyticsDeps, syncHelpers: SyncHelpers): void {
+export function registerInstagramRoutes(router: Router, { requireAuth, pool, getPublishableSocialConnection }: AnalyticsDeps, syncHelpers: SyncHelpers): void {
   // POST /social/instagram/sync
   router.post('/social/instagram/sync', async (req: Request, res: Response) => {
     try {
@@ -19,10 +19,19 @@ export function registerInstagramRoutes(router: Router, { requireAuth, pool }: A
       );
       if (accountRes.rows.length === 0) return res.status(404).json({ success: false, error: 'No connected Instagram account found' });
 
+      // Renews a direct Instagram Login token before it lapses.
+      const conn = await getPublishableSocialConnection(auth.userId, 'instagram').catch(() => null);
+      if (!conn || conn.needs_reapproval || !conn.access_token) {
+        return res.status(409).json({ success: false, error: 'Instagram access expired or was revoked — reconnect Instagram to sync analytics.' });
+      }
       let synced = 0;
       const errors: string[] = [];
       for (const acct of accountRes.rows as any[]) {
-        const result = await syncHelpers.syncInstagramAnalyticsAccount({ userId: auth.userId, account: acct, days: 30 });
+        const result = await syncHelpers.syncInstagramAnalyticsAccount({
+          userId: auth.userId,
+          account: { ...acct, access_token: conn.access_token, access_token_encrypted: null },
+          days: 30,
+        });
         synced += result.synced;
         errors.push(...result.errors);
       }

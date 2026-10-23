@@ -5044,4 +5044,31 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
     );
     CREATE INDEX IF NOT EXISTS agent_schedule_runs_sched_idx ON agent_schedule_runs(schedule_id, started_at DESC);
   `).catch(() => undefined);
+
+  // 5. Integrations registry rows for every connectable provider; without
+  // them user_integrations and integration_logs never record these.
+  await pool.query(`
+    INSERT INTO integrations (provider, name, slug, type, enabled)
+    VALUES
+      ('tiktok','TikTok','tiktok','social', true),
+      ('threads','Threads','threads','social', true),
+      ('google_calendar','Google Calendar','google_calendar','messaging', true)
+    ON CONFLICT (slug) DO NOTHING;
+  `).catch(() => undefined);
+
+  // 6. Instagram accounts linked through Facebook Login publish with a Page
+  // token, which does not expire when minted from a long-lived user token.
+  // Older code stamped the user token's 60-day expiry on them, so healthy
+  // connections were flagged (and blocked) as expired.
+  await pool.query(`
+    UPDATE social_accounts
+       SET token_expires_at = NULL,
+           expires_at = NULL,
+           needs_reapproval = CASE WHEN token_data->>'reason' IN ('token_expiring','token_expired') THEN false ELSE needs_reapproval END,
+           token_data = CASE WHEN token_data->>'reason' IN ('token_expiring','token_expired')
+                             THEN token_data - 'reason' - 'needs_reapproval_at' ELSE token_data END
+     WHERE LOWER(platform) = 'instagram'
+       AND token_data->>'login_method' = 'facebook'
+       AND COALESCE(token_expires_at, expires_at) > COALESCE(connected_at, created_at) + INTERVAL '1 day';
+  `).catch(() => undefined);
 }

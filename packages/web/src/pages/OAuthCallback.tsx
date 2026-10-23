@@ -16,6 +16,17 @@ const SUPPORTED_PLATFORMS = new Set([
 
 type Status = 'connecting' | 'success' | 'error';
 
+// The server accepts each OAuth state once; a re-run of the effect (React
+// StrictMode in development) must not submit the code a second time.
+const submittedStates = new Set<string>();
+
+// Only same-app paths: "//host" and "/\host" would leave the site.
+const safeReturnPath = (value: unknown): string => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/integrations';
+  return raw;
+};
+
 const parsePlatformFromPath = (pathname: string) => {
   const match = pathname.match(/^\/auth\/([^/]+)\/callback/i);
   return match ? match[1].toLowerCase() : '';
@@ -68,6 +79,8 @@ export default function OAuthCallback() {
       return;
     }
 
+    if (submittedStates.has(state)) return;
+
     const token = localStorage.getItem('auth_token');
     if (!token) {
       const msg = 'Your session expired. Please log in and try again.';
@@ -77,6 +90,7 @@ export default function OAuthCallback() {
       return;
     }
 
+    submittedStates.add(state);
     fetch(`${API_BASE_URL}/api/oauth/callback`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -93,10 +107,9 @@ export default function OAuthCallback() {
           finishPopup(true);
           return;
         }
-        const returnTo = typeof data?.returnTo === 'string' ? data.returnTo : '/integrations';
         setStatus('success');
         setMessage('Connected! Redirecting…');
-        window.location.replace(returnTo.startsWith('/') ? returnTo : '/integrations');
+        window.location.replace(safeReturnPath(data?.returnTo));
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : 'Connection failed';

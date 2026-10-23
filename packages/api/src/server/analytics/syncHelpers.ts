@@ -122,11 +122,13 @@ export function createSyncHelpers(pool: Pool | null, decodeStoredIntegrationSecr
     }
 
     try {
-      const since = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
+      // impressions was retired in April 2025 and profile_views dropped; reach
+      // is the only account metric left with a daily series (max 30 days).
+      const since = Math.floor((Date.now() - Math.min(days, 30) * 24 * 60 * 60 * 1000) / 1000);
       const until = Math.floor(Date.now() / 1000);
       const insightsTargetId = isDirectIg ? 'me' : encodeURIComponent(instagramId);
       const insightsResp = await axios.get(`${igGraphBase}/${insightsTargetId}/insights`, {
-        params: { metric: 'impressions,reach,profile_views', period: 'day', since, until, access_token: accessToken },
+        params: { metric: 'reach', period: 'day', metric_type: 'time_series', since, until, access_token: accessToken },
         validateStatus: () => true,
         timeout: 20000,
       });

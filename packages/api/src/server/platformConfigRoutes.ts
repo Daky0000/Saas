@@ -7,9 +7,13 @@ import { randomBytes } from 'crypto';
 import { Resend } from 'resend';
 import { logger } from '../logger.ts';
 import { safeAxios } from '../ssrf-guard.ts';
-import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
+import {
+  encryptPlatformConfig, decryptPlatformConfig, isMaskedSecretValue, maskPlatformConfigSecrets, mergeMaskedSecrets,
+  normalizeWordPressSiteUrl, resolveMailchimpServerPrefix,
+} from '../integration-helpers.ts';
 import { recordAuditLog } from '../link-metadata.ts';
-import { META_INSTAGRAM_SCOPES, INSTAGRAM_BUSINESS_SCOPES, INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS } from '../platform-helpers.ts';
+import { buildOAuthAuthorizeUrl, generatePkcePair, isInstagramDirectLogin, resolveInstagramAppConfig } from '../platform-helpers.ts';
+import { computeConnectionHealth, getRefreshMode, PUBLISHING_TOKEN_PLATFORMS as PUBLISHING_TOKEN_SLUGS, type ConnectionHealth } from '../social-token-policy.ts';
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
 
@@ -58,21 +62,16 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const admin = await requireAdmin(req, res);
       if (!admin) return;
 
-      const mask = (v: string | undefined) => (v && v.length > 4 ? '••••' + v.slice(-4) : v ? '••••' : '');
-      const SECRET_FIELDS = ['appSecret', 'clientSecret', 'apiKey', 'accessToken', 'signingSecret', 'applicationPassword'];
-      const maskConfig = (cfg: Record<string, string>) => {
-        const out: Record<string, string> = {};
-        for (const [k, v] of Object.entries(cfg)) out[k] = SECRET_FIELDS.includes(k) ? mask(v) : v;
-        return out;
-      };
+      // Secrets go out masked; a mask sent back on save means "unchanged".
+      const maskConfig = (cfg: Record<string, any>) => maskPlatformConfigSecrets(decryptPlatformConfig(cfg));
 
       if (hasDatabase()) {
         const result = await dbQuery('SELECT platform, config, enabled, updated_at FROM platform_configs ORDER BY platform');
-        return res.json({ success: true, configs: result.rows.map((r: any) => ({ ...r, config: maskConfig(decryptPlatformConfig(r.config)) })) });
+        return res.json({ success: true, configs: result.rows.map((r: any) => ({ ...r, config: maskConfig(r.config) })) });
       }
       return res.json({
         success: true,
-        configs: Array.from(inMemoryPlatformConfigs.values()).map((r) => ({ ...r, config: maskConfig(decryptPlatformConfig(r.config)) })),
+        configs: Array.from(inMemoryPlatformConfigs.values()).map((r) => ({ ...r, config: maskConfig(r.config) })),
       });
     } catch (error) {
       logger.error('Get platform configs error:', error);
@@ -89,10 +88,10 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         const result = await dbQuery('SELECT platform, config, enabled, updated_at FROM platform_configs WHERE platform = $1', [platform]);
         if (result.rows.length === 0) return res.json({ success: true, config: null });
         const row: any = result.rows[0];
-        return res.json({ success: true, config: { ...row, config: decryptPlatformConfig(row.config) } });
+        return res.json({ success: true, config: { ...row, config: maskPlatformConfigSecrets(decryptPlatformConfig(row.config)) } });
       }
       const memRow = inMemoryPlatformConfigs.get(platform);
-      return res.json({ success: true, config: memRow ? { ...memRow, config: decryptPlatformConfig(memRow.config) } : null });
+      return res.json({ success: true, config: memRow ? { ...memRow, config: maskPlatformConfigSecrets(decryptPlatformConfig(memRow.config)) } : null });
     } catch (error) {
       logger.error('Get platform config error:', error);
       return res.status(500).json({ success: false, error: 'Failed to fetch platform config' });
@@ -112,7 +111,12 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
 
 
       const now = new Date().toISOString();
-      const normalizedConfig: Record<string, string> = { ...(config as any) };
+      const existingRow = hasDatabase()
+        ? ((await dbQuery('SELECT config, enabled FROM platform_configs WHERE platform = $1', [platform])).rows[0] as { config: Record<string, any>; enabled: boolean } | undefined)
+        : inMemoryPlatformConfigs.get(platform);
+      const existingConfig = existingRow ? decryptPlatformConfig(existingRow.config) : {};
+      // The admin UI is sent masked secrets; a mask coming back keeps the stored value.
+      const normalizedConfig: Record<string, string> = mergeMaskedSecrets(existingConfig, { ...(config as any) });
       if (platform === 'stripe') return res.status(410).json({ success: false, error: 'Use Paystack in Payments.' });
       if (platform === 'paystack') {
         const { resolvePaystackConfig } = await import('./paystackService.ts');
@@ -121,7 +125,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       }
       if (platform === 'paystack' && hasDatabase()) {
         const old=await getPlatformConfig('paystack');
-        if(old.currency!==config.currency || old.fxRate!==config.fxRate) await dbQuery("UPDATE credit_recharge_agreements SET enabled=false,pause_reason='Currency or conversion changed. Renew consent.',updated_at=NOW()");
+        if(old.currency!==normalizedConfig.currency || old.fxRate!==normalizedConfig.fxRate) await dbQuery("UPDATE credit_recharge_agreements SET enabled=false,pause_reason='Currency or conversion changed. Renew consent.',updated_at=NOW()");
       }
       const meta = oauthAuthUrls[platform];
       if (meta) {
@@ -129,13 +133,16 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         normalizedConfig.redirectUri = resolveOAuthRedirectUri(platform, incomingRedirect, req);
       }
 
-      let finalEnabled = Boolean(enabled);
+      // The admin's toggle wins, except that the save which first completes an
+      // OAuth app's credentials switches it on.
+      let finalEnabled = typeof enabled === 'boolean' ? enabled : Boolean(existingRow?.enabled);
       if (meta) {
-        const clientId = String((normalizedConfig as any)[meta.idField] || '').trim();
-        const redirectUri = String((normalizedConfig as any).redirectUri || '').trim();
-        const secretRequired = isOAuthClientSecretRequired(platform);
-        const secretValue = String((normalizedConfig as any).clientSecret || (normalizedConfig as any).appSecret || '').trim();
-        if (Boolean(clientId && redirectUri && (!secretRequired || secretValue))) finalEnabled = true;
+        const isComplete = (cfg: Record<string, any>) => {
+          const clientId = String(cfg[meta.idField] || '').trim();
+          const secretValue = String(cfg.clientSecret || cfg.appSecret || '').trim();
+          return Boolean(clientId && (!isOAuthClientSecretRequired(platform) || secretValue));
+        };
+        if (isComplete(normalizedConfig) && !isComplete(existingConfig)) finalEnabled = true;
       }
 
       // Secret fields are encrypted at rest; reads decrypt transparently
@@ -173,7 +180,8 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const admin = await requireAdmin(req, res);
       if (!admin) return;
       const saved = await getResendConfig();
-      const resendKey = String(req.body.apiKey || saved.apiKey || '').trim();
+      const incomingKey = isMaskedSecretValue(req.body.apiKey) ? '' : req.body.apiKey;
+      const resendKey = String(incomingKey || saved.apiKey || '').trim();
       const fromEmail = String(req.body.fromEmail || saved.fromEmail || '').trim();
       const fromName = String(req.body.fromName || saved.fromName || '').trim();
       if (!resendKey) return res.status(400).json({ success: false, error: 'No Resend API key configured — save your key first' });
@@ -253,88 +261,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
     }
   });
 
-  // Universal OAuth Deauthorize Callback URL (/api/oauth/:platform/deauthorize)
-  router.get('/oauth/:platform/deauthorize', (req: Request, res: Response) => {
-    const platform = normalizePlatformId(req.params.platform);
-    return res.status(200).json({
-      ok: true,
-      endpoint: 'oauth_deauthorize_callback',
-      platform,
-      message: `Send POST requests to deauthorize ${platform} accounts.`,
-    });
-  });
-
-  router.post('/oauth/:platform/deauthorize', async (req: Request, res: Response) => {
-    try {
-      const platform = normalizePlatformId(req.params.platform);
-      const body = (req.body || {}) as Record<string, any>;
-      const externalId = String(
-        body.user_id || body.account_id || body.sub || body.payload?.user_id || body.event?.user || ''
-      ).trim();
-
-      if (hasDatabase() && externalId) {
-        await dbQuery(
-          `UPDATE social_accounts
-              SET connected = FALSE, access_token = NULL, refresh_token = NULL, token_expires_at = NULL
-            WHERE LOWER(platform) = $1 AND account_id = $2`,
-          [platform, externalId]
-        ).catch(() => undefined);
-      }
-
-      logger.info({ platform, externalId: externalId || 'unspecified' }, 'oauth_deauthorize_callback_received');
-      return res.status(200).json({
-        success: true,
-        platform,
-        status: 'deauthorized',
-      });
-    } catch (e) {
-      logger.error({ e }, 'oauth_deauthorize_callback_error');
-      return res.status(500).json({ success: false, error: 'Failed to process deauthorization callback' });
-    }
-  });
-
-  // Universal OAuth Data Deletion Request Callback URL (/api/oauth/:platform/data-deletion)
-  router.get('/oauth/:platform/data-deletion', (req: Request, res: Response) => {
-    const platform = normalizePlatformId(req.params.platform);
-    const frontendBase = (process.env.FRONTEND_URL || 'https://marketing.dakyx.com').replace(/\/$/, '');
-    return res.status(200).json({
-      ok: true,
-      endpoint: 'oauth_data_deletion_callback',
-      platform,
-      instructions_url: `${frontendBase}/data-deletion`,
-    });
-  });
-
-  router.post('/oauth/:platform/data-deletion', async (req: Request, res: Response) => {
-    try {
-      const platform = normalizePlatformId(req.params.platform);
-      const body = (req.body || {}) as Record<string, any>;
-      const externalId = String(
-        body.user_id || body.account_id || body.sub || body.payload?.user_id || ''
-      ).trim();
-
-      if (hasDatabase() && externalId) {
-        await dbQuery(
-          `DELETE FROM social_accounts WHERE LOWER(platform) = $1 AND account_id = $2`,
-          [platform, externalId]
-        ).catch(() => undefined);
-      }
-
-      const confirmationCode = `del_${platform}_${Date.now()}_${randomBytes(3).toString('hex')}`;
-      const frontendBase = (process.env.FRONTEND_URL || 'https://marketing.dakyx.com').replace(/\/$/, '');
-      const statusUrl = `${frontendBase}/data-deletion?code=${encodeURIComponent(confirmationCode)}&platform=${encodeURIComponent(platform)}`;
-
-      logger.info({ platform, externalId: externalId || 'unspecified', confirmationCode }, 'oauth_data_deletion_callback_received');
-      return res.status(200).json({
-        url: statusUrl,
-        confirmation_code: confirmationCode,
-        status: 'completed',
-      });
-    } catch (e) {
-      logger.error({ e }, 'oauth_data_deletion_callback_error');
-      return res.status(500).json({ success: false, error: 'Failed to process data deletion request' });
-    }
-  });
+  // Deauthorize / data-deletion callbacks live in complianceRoutes.ts.
 
   // Redirect URI Validator endpoint for Admin Integrations & Auth Providers
   router.post('/admin/platform-configs/:platform/validate-redirect-uri', async (req: Request, res: Response) => {
@@ -378,21 +305,27 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
-      const { platform, credentials } = req.body as { platform: string; credentials: Record<string, string> };
+      const { platform, credentials: rawCredentials } = req.body as { platform: string; credentials: Record<string, string> };
+      const credentials: Record<string, string> = rawCredentials && typeof rawCredentials === 'object' ? rawCredentials : {};
       switch (platform) {
         case 'wordpress': {
           const { siteUrl, username, applicationPassword } = credentials;
-          const base = siteUrl.replace(/\/$/, '');
-          const resp = await axios.get(`${base}/wp-json/wp/v2/users/me`, {
-            auth: { username, password: applicationPassword }, validateStatus: () => true, timeout: 8000,
+          if (!siteUrl || !username || !applicationPassword) throw new Error('Site URL, username and application password are required');
+          // User-supplied host: fetched through the SSRF guard.
+          const resp = await safeAxios({
+            method: 'GET',
+            url: `${normalizeWordPressSiteUrl(siteUrl)}/wp-json/wp/v2/users/me`,
+            auth: { username, password: applicationPassword }, validateStatus: () => true, timeout: 8000, maxContentLength: 2 * 1024 * 1024,
           });
-          if (resp.status === 200) return res.json({ success: true, handle: resp.data?.name || username });
+          if (resp.status === 200) return res.json({ success: true, handle: (resp.data as any)?.name || username });
           if (resp.status === 401) throw new Error('Invalid WordPress credentials');
           throw new Error(`WordPress site returned ${resp.status}`);
         }
         case 'mailchimp': {
           const { apiKey, serverPrefix } = credentials;
-          const resp = await axios.get(`https://${serverPrefix}.api.mailchimp.com/3.0/`, {
+          const prefix = resolveMailchimpServerPrefix(apiKey, serverPrefix);
+          if (!apiKey || !prefix) throw new Error('Enter a Mailchimp API key ending in its data center (e.g. "-us6")');
+          const resp = await axios.get(`https://${prefix}.api.mailchimp.com/3.0/`, {
             auth: { username: 'anystring', password: apiKey }, validateStatus: () => true, timeout: 8000,
           });
           if (resp.status === 200) return res.json({ success: true });
@@ -452,7 +385,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
           throw new Error(`Apify returned ${resp.status}`);
         }
         default:
-          return res.json({ success: true });
+          return res.status(400).json({ success: false, error: `Credential validation is not available for "${String(platform || '')}"` });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Validation failed';
@@ -495,6 +428,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const integrations: Array<{
         slug: string; name: string; type: 'cms' | 'social' | 'marketing' | 'messaging' | 'other';
         adminEnabled: boolean; configured: boolean; connected: boolean; connection: Record<string, any> | null;
+        health?: ConnectionHealth | null;
       }> = [];
 
       if (!pool) {
@@ -524,7 +458,15 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const wpConn = wpConnRows.rows[0] || null;
 
       const socialRows = await pool.query(
-        `SELECT platform, account_type, account_id, account_name, handle, connected, created_at
+        `SELECT platform, account_type, account_id, account_name, handle, connected, created_at,
+                COALESCE(needs_reapproval, false) AS needs_reapproval,
+                COALESCE(token_expires_at, expires_at) AS expires_at,
+                token_data->>'reason' AS reason,
+                token_data->>'login_method' AS login_method,
+                token_data->>'graph_host' AS graph_host,
+                token_data->>'pageId' AS page_id,
+                (refresh_token_encrypted IS NOT NULL OR refresh_token IS NOT NULL) AS has_refresh,
+                (access_token_encrypted IS NOT NULL OR access_token IS NOT NULL) AS has_access
          FROM social_accounts WHERE user_id=$1 AND connected=true`,
         [auth.userId]
       ).catch(() => ({ rows: [] as any[] }));
@@ -565,6 +507,40 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
         }
         const match = matches.find((r) => r.account_type === 'profile' || !r.account_type) || matches[0];
         return { accountType: match.account_type || 'profile', accountId: match.account_id || null, accountName: match.account_name || null, username: match.handle || null, connectedAt: match.created_at || null };
+      };
+
+      // Connection state the user can act on. Only publishing tokens are
+      // lifecycle-managed here; other providers report an explicit flag only.
+      const getHealth = (slug: string): ConnectionHealth | null => {
+        const rows = (socialRows.rows as any[]).filter((r) => normalizePlatformId(r.platform) === slug);
+        const profile = rows.find((r) => r.account_type === 'profile' || !r.account_type);
+        if (!profile) return null;
+        const publishing = PUBLISHING_TOKEN_SLUGS.has(slug);
+        const refreshable = getRefreshMode(slug, {
+          hasRefreshToken: Boolean(profile.has_refresh),
+          isInstagramDirect: slug === 'instagram' && isInstagramDirectLogin({ tokenData: { login_method: profile.login_method, graph_host: profile.graph_host, pageId: profile.page_id } }),
+        }) !== 'none';
+        const health = computeConnectionHealth({
+          needsReapproval: Boolean(profile.needs_reapproval),
+          reason: profile.reason,
+          expiresAt: publishing ? profile.expires_at : null,
+          refreshable: publishing ? refreshable : true,
+        });
+        // Page tokens outlive the Facebook user token, so a lapsed login only
+        // stops Page discovery, not publishing.
+        if (
+          slug === 'facebook' && health.status === 'reconnect_required' &&
+          ['token_expired', 'token_refresh_failed'].includes(String(health.reason)) &&
+          rows.some((r) => r.account_type === 'page' && r.has_access)
+        ) {
+          return {
+            status: 'expiring',
+            reason: 'user_token_expired',
+            message: 'Publishing to your saved Pages continues. Reconnect Facebook to refresh Page access and your Page list.',
+            expiresAt: health.expiresAt,
+          };
+        }
+        return health;
       };
 
       for (const slug of SUPPORTED_SLUGS) {
@@ -621,7 +597,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
             : getPrimaryAccount(slug);
 
         if (adminEnabled && configured) {
-          integrations.push({ slug, name, type, adminEnabled, configured, connected, connection });
+          integrations.push({ slug, name, type, adminEnabled, configured, connected, connection, health: connected ? getHealth(slug) : null });
         }
       }
 
@@ -735,7 +711,7 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const { integrationId } = req.params;
 
       const logsRes = await pool.query(
-        `SELECT il.id, il.event_type, il.status, il.created_at, il.response, il.error_message
+        `SELECT il.id, il.event_type, il.status, il.created_at, il.response, il.response->>'error' AS error_message
          FROM integration_logs il
          JOIN integrations i ON i.id = il.integration_id
          WHERE il.user_id=$1 AND (i.slug=$2 OR il.integration_id::text=$2)
@@ -775,76 +751,39 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
       const meta = oauthAuthUrls[slug];
       if (!meta) return res.status(404).json({ success: false, error: `Platform "${slug}" does not support OAuth` });
 
-      let cfg = await getPlatformConfig(slug).catch(() => ({} as Record<string, string>));
-      let fbCfg: Record<string, string> = {};
-      let inheritedFromFacebook = false;
-      if (slug === 'instagram') {
-        fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
-        if (!cfg.appId || !cfg.appSecret) {
-          if (fbCfg.appId && fbCfg.appSecret) {
-            cfg = { ...fbCfg, ...cfg, appId: cfg.appId || fbCfg.appId, appSecret: cfg.appSecret || fbCfg.appSecret };
-            inheritedFromFacebook = true;
-          }
-        }
-      }
-
-      const requestedMethod = String(req.query.method || cfg.loginType || '').toLowerCase();
-      const isFbInstagramMethod = slug === 'instagram' && (
-        requestedMethod === 'facebook' ||
-        (requestedMethod !== 'instagram' && (
-          inheritedFromFacebook ||
-          Boolean(cfg.authUrl && cfg.authUrl.includes('facebook.com')) ||
-          Boolean(cfg.configId && String(cfg.configId).trim())
-        ))
-      );
-
-      const clientId = isFbInstagramMethod
-        ? String(cfg.facebookAppId || fbCfg.appId || cfg.appId || '').trim()
-        : String((cfg as any)[meta.idField] || '').trim();
-      if (!clientId) return res.status(400).json({ success: false, error: `${PLATFORM_NAMES[slug] || slug} is not configured by admin` });
+      const ownCfg = await getPlatformConfig(slug).catch(() => ({} as Record<string, string>));
+      const fbCfg = slug === 'instagram' ? await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>)) : {};
+      const { cfg, inheritedFromFacebook } = slug === 'instagram' ? resolveInstagramAppConfig(ownCfg, fbCfg) : { cfg: ownCfg, inheritedFromFacebook: false };
+      if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
       const redirectUri = resolveOAuthRedirectUri(slug, String((cfg as any).redirectUri || ''), req);
       const state = randomBytes(16).toString('hex');
-
-      if (pool) {
-        await pool.query(
-          `INSERT INTO oauth_states (state, user_id, platform, return_to, expires_at)
-           VALUES ($1, $2, $3, '/integrations', NOW() + INTERVAL '15 minutes')
-           ON CONFLICT (state) DO NOTHING`,
-          [state, auth.userId, slug]
-        ).catch(() => undefined);
+      // X requires PKCE and TikTok accepts it; this flow keeps the verifier
+      // server-side with the state.
+      const pkce = slug === 'twitter' || slug === 'tiktok' ? generatePkcePair() : null;
+      const built = buildOAuthAuthorizeUrl({
+        platform: slug,
+        cfg,
+        facebookCfg: fbCfg,
+        inheritedFromFacebook,
+        redirectUri,
+        state,
+        method: typeof req.query.method === 'string' ? req.query.method : undefined,
+        codeChallenge: pkce?.codeChallenge,
+        codeChallengeMethod: pkce ? 'S256' : undefined,
+      });
+      if (!built.ok) {
+        const error = built.status === 400 && /not configured/i.test(built.error) ? `${PLATFORM_NAMES[slug] || slug} is not configured by admin` : built.error;
+        return res.status(built.status).json({ success: false, error });
       }
 
-      let authUrl = meta.authUrl;
-      let scopeParam = String((cfg as any).scopes || meta.scopes || '').trim();
-      if (isFbInstagramMethod) {
-        authUrl = 'https://www.facebook.com/v19.0/dialog/oauth';
-        if (!cfg.scopes || cfg.scopes.includes('instagram_business_')) {
-          scopeParam = META_INSTAGRAM_SCOPES.join(',');
-        }
-      } else if (slug === 'instagram') {
-        if (!cfg.scopes || !cfg.scopes.includes('instagram_business_')) {
-          scopeParam = INSTAGRAM_BUSINESS_SCOPES.join(',');
-        }
-      }
+      await pool.query(
+        `INSERT INTO oauth_states (state, user_id, platform, return_to, code_verifier, expires_at)
+         VALUES ($1, $2, $3, '/integrations', $4, NOW() + INTERVAL '15 minutes')`,
+        [state, auth.userId, slug, pkce?.codeVerifier ?? null]
+      );
 
-      const params = new URLSearchParams({ redirect_uri: redirectUri, scope: scopeParam, state, response_type: 'code' });
-      if (slug === 'tiktok') {
-        params.set('client_key', clientId);
-      } else {
-        params.set('client_id', clientId);
-      }
-      if (isFbInstagramMethod) {
-        params.set('display', 'page');
-        params.set('extras', INSTAGRAM_BUSINESS_ONBOARDING_EXTRAS);
-        params.set('auth_type', 'rerequest');
-        const configId = String(cfg.configId || '').trim();
-        if (configId) params.set('config_id', configId);
-      } else if (slug === 'instagram') {
-        params.set('enable_fb_login', String(cfg.enableFbLogin ?? '1'));
-      }
-
-      return res.json({ authUrl: `${authUrl}?${params.toString()}`, state });
+      return res.json({ authUrl: built.url, state });
     } catch (error) {
       logger.error('Get integration auth URL error:', error);
       return res.status(500).json({ success: false, error: 'Failed to generate auth URL' });
@@ -867,11 +806,22 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
 
       if (accountRes.rows.length > 0) {
         const row = accountRes.rows[0] as any;
-        await pool.query(`DELETE FROM social_accounts WHERE user_id=$1 AND id=$2`, [auth.userId, row.id]);
-        await dbQuery(
-          `UPDATE user_integrations SET status='disconnected' WHERE user_id=$1 AND integration_id IN (SELECT id FROM integrations WHERE slug=$2)`,
-          [auth.userId, row.platform]
-        ).catch(() => undefined);
+        // A platform name removes every row of that platform (a Facebook
+        // profile and its Pages); a row id removes just that account.
+        const byPlatform = String(row.platform || '').toLowerCase() === String(integrationId || '').toLowerCase();
+        if (byPlatform) {
+          await pool.query(`DELETE FROM social_accounts WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`, [auth.userId, row.platform]);
+        } else {
+          await pool.query(`DELETE FROM social_accounts WHERE user_id=$1 AND id=$2`, [auth.userId, row.id]);
+        }
+        const remaining = await pool.query(`SELECT 1 FROM social_accounts WHERE user_id=$1 AND LOWER(platform)=LOWER($2) LIMIT 1`, [auth.userId, row.platform]);
+        if (remaining.rows.length === 0) {
+          await dbQuery(
+            `UPDATE user_integrations SET status='disconnected', access_token=NULL, refresh_token=NULL, token_expiry=NULL
+             WHERE user_id=$1 AND integration_id IN (SELECT id FROM integrations WHERE slug=LOWER($2))`,
+            [auth.userId, row.platform]
+          ).catch(() => undefined);
+        }
         return res.json({ success: true });
       }
 

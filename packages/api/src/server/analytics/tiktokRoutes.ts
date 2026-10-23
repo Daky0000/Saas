@@ -145,13 +145,15 @@ export async function syncTikTokAnalyticsForUser(
   return { found: accountRes.rows.length, synced, errors };
 }
 
-export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret }: AnalyticsDeps): void {
+export function registerTikTokRoutes(router: Router, { requireAuth, pool, decryptIntegrationSecret, getPublishableSocialConnection }: AnalyticsDeps): void {
   // POST /social/tiktok/sync
   router.post('/social/tiktok/sync', async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
       if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+      // TikTok access tokens last 24 hours: renew the stored one first.
+      await getPublishableSocialConnection(auth.userId, 'tiktok').catch(() => null);
       const result = await syncTikTokAnalyticsForUser({ pool, decryptIntegrationSecret }, auth.userId);
       if (result.found === 0) return res.status(404).json({ success: false, error: 'No connected TikTok account found' });
       return res.json({ success: true, synced: result.synced, errors: result.errors.length > 0 ? result.errors : undefined });

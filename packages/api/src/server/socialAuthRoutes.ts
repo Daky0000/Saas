@@ -5,7 +5,7 @@ import axios from 'axios';
 import { randomBytes, randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { signToken, getUserById, userToAuthPayload } from '../user-auth.ts';
-import { encryptPlatformConfig, decryptPlatformConfig } from '../integration-helpers.ts';
+import { encryptPlatformConfig, decryptPlatformConfig, maskPlatformConfigSecrets, mergeMaskedSecrets } from '../integration-helpers.ts';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
 
@@ -234,7 +234,8 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
       if (!admin) return;
       if (hasDatabase()) {
         const result = await dbQuery('SELECT provider, config, enabled, updated_at FROM auth_providers ORDER BY provider');
-        return res.json({ success: true, providers: result.rows.map(row => ({ ...row, config: decryptPlatformConfig(row.config) })) });
+        // Secrets go out masked; a mask sent back on save keeps the stored value.
+        return res.json({ success: true, providers: result.rows.map(row => ({ ...row, config: maskPlatformConfigSecrets(decryptPlatformConfig(row.config)) })) });
       }
       return res.json({ success: true, providers: [] });
     } catch (error) {
@@ -252,12 +253,14 @@ export function registerSocialAuthRoutes({ requireAuth, requireAdmin, hasDatabas
       const { config, enabled } = req.body as { config: Record<string, string>; enabled: boolean };
       if (!provider) return res.status(400).json({ success: false, error: 'Provider required' });
       if (hasDatabase()) {
+        const existing = await dbQuery('SELECT config FROM auth_providers WHERE provider = $1', [provider]).catch(() => ({ rows: [] as any[] }));
+        const merged = mergeMaskedSecrets(existing.rows[0] ? decryptPlatformConfig((existing.rows[0] as any).config) : {}, config ?? {});
         await dbQuery(
           `INSERT INTO auth_providers (provider, config, enabled, updated_at)
            VALUES ($1, $2, $3, NOW())
            ON CONFLICT (provider) DO UPDATE
              SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = NOW()`,
-          [provider, JSON.stringify(encryptPlatformConfig(config ?? {})), Boolean(enabled)],
+          [provider, JSON.stringify(encryptPlatformConfig(merged)), Boolean(enabled)],
         );
         return res.json({ success: true });
       }

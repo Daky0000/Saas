@@ -8,6 +8,14 @@ const authHeaders = (): Record<string, string> => {
 
 export type IntegrationType = 'cms' | 'social' | 'marketing' | 'messaging' | 'other';
 
+// Server-computed state of a connected account's credentials.
+export type ConnectionHealth = {
+  status: 'healthy' | 'expiring' | 'reconnect_required';
+  reason: string | null;
+  message: string | null;
+  expiresAt: string | null;
+};
+
 export type IntegrationCatalogItem = {
   slug: string;
   name: string;
@@ -16,6 +24,7 @@ export type IntegrationCatalogItem = {
   configured: boolean;
   connected: boolean;
   connection: Record<string, any> | null;
+  health?: ConnectionHealth | null;
 };
 
 const isVisibleIntegration = (item: IntegrationCatalogItem) =>
@@ -97,6 +106,7 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
             : connectedSet.has(item.slug);
       
       let connection: Record<string, any> | null = null;
+      let health: ConnectionHealth | null = null;
       if (item.slug === 'wordpress' && wpConnected) {
         connection = { siteUrl: wpData?.siteUrl || null, connectedAt: null };
       } else if (accountsByPlatform.has(item.slug) && connected) {
@@ -107,9 +117,12 @@ const fallbackCatalog = async (): Promise<{ success: boolean; integrations?: Int
           username: acc.handle || null,
           connectedAt: acc.connectedAt || null,
         };
+        if (acc.needsReapproval) {
+          health = { status: 'reconnect_required', reason: null, message: 'This connection needs to be reconnected.', expiresAt: acc.expiresAt || null };
+        }
       }
-      
-      return { ...item, adminEnabled, configured, connected, connection };
+
+      return { ...item, adminEnabled, configured, connected, connection, health };
     }).filter(isVisibleIntegration);
 
     return { success: true, integrations };

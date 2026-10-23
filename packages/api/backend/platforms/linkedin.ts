@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { fetchMediaBytes } from '../../src/ssrf-guard.ts';
 import type {
   AnalyticsResult,
   PlatformContext,
@@ -81,16 +82,20 @@ function extractResponseEntityId(response: any): string {
   return String(response?.data?.id || '').trim();
 }
 
-async function fetchMediaBuffer(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  if (url.startsWith('data:')) {
-    const match = url.match(/^data:([^;]+);base64,(.+)$/s);
-    if (!match) throw new Error('Invalid LinkedIn media data URL');
-    return { buffer: Buffer.from(match[2], 'base64'), mimeType: match[1] };
-  }
+// LinkedIn accepts videos up to several GB, but media is buffered in memory here.
+const LINKEDIN_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
 
-  const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 120000 });
-  const mimeType = String(resp.headers['content-type'] || '').split(';')[0].trim() || 'application/octet-stream';
-  return { buffer: Buffer.from(resp.data), mimeType };
+async function fetchMediaBuffer(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  return fetchMediaBytes(url, { maxBytes: LINKEDIN_MEDIA_MAX_BYTES });
+}
+
+// A Page destination posts as the organization; anything else posts as the member.
+export function resolveLinkedInDestinationUrn(destination?: { type?: string; id?: string } | null): string | null {
+  const type = String(destination?.type || '').trim().toLowerCase();
+  if (type !== 'page' && type !== 'organization') return null;
+  const raw = String(destination?.id || '').trim();
+  const orgId = raw.match(/organization:(\d+)/i)?.[1] || (/^\d+$/.test(raw) ? raw : '');
+  return orgId ? `urn:li:organization:${orgId}` : null;
 }
 
 export class LinkedInPlatform implements SocialPlatform {
@@ -134,7 +139,7 @@ export class LinkedInPlatform implements SocialPlatform {
 
   async post(post: PostObject, ctx: PlatformContext): Promise<PlatformPostResult> {
     try {
-      const authorUrn = await this._resolveAuthorUrn(ctx);
+      const authorUrn = await this._resolveAuthorUrn(ctx, post);
       if (!authorUrn) return { status: 'failed', error: 'LinkedIn author URN could not be resolved.' };
 
       const commentary = String(post?.content?.text || '').trim();
@@ -161,7 +166,15 @@ export class LinkedInPlatform implements SocialPlatform {
     }
   }
 
-  private async _resolveAuthorUrn(ctx: PlatformContext): Promise<string | null> {
+  private async _resolveAuthorUrn(ctx: PlatformContext, post?: PostObject): Promise<string | null> {
+    // The destination decides the author. The cached member id used to win
+    // unconditionally, so posts meant for a company Page went to the
+    // publisher's personal profile.
+    const destinationType = String(post?.destination?.type || '').trim().toLowerCase();
+    if (destinationType === 'page' || destinationType === 'organization') {
+      return resolveLinkedInDestinationUrn(post?.destination);
+    }
+
     const cachedId = String(ctx.tokenData?.sub || ctx.tokenData?.user_id || ctx.tokenData?.id || '').trim();
     if (cachedId) return `urn:li:person:${cachedId}`;
 

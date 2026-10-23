@@ -117,6 +117,7 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'appSecret', label: 'App Secret', placeholder: 'Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange and signed_request verification.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/facebook/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI in Meta Facebook Login → Settings.' },
       { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'public_profile,pages_show_list,pages_read_engagement,pages_manage_posts', type: 'text', helpText: 'Leave empty for default Facebook page publishing scopes. Any scope requested must be added in Meta for Developers → App Review → Permissions and Features.' },
+      { id: 'webhookVerifyToken', label: 'Webhook Verify Token (Optional)', placeholder: 'Any random string', type: 'password', helpText: 'The Verify Token you enter in Meta → Webhooks for `/webhooks/meta`. Overridden by the META_WEBHOOK_VERIFY_TOKEN environment variable when set.' },
     ],
     docsUrl: 'https://developers.facebook.com/',
     redirectHint: 'Use `/auth/facebook/callback` in Facebook Login → Settings → Valid OAuth Redirect URIs.',
@@ -138,7 +139,7 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'appId', label: 'Instagram / Meta App ID', placeholder: 'Instagram App ID or Meta App ID', type: 'text', helpText: 'From Meta for Developers → Products → Instagram → API setup with Instagram login (or App Settings → Basic if using Facebook Login).' },
       { id: 'appSecret', label: 'Instagram / Meta App Secret', placeholder: 'Instagram App Secret or Meta App Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/instagram/callback', type: 'text', helpText: 'Must match the Valid OAuth Redirect URI registered in your Meta app settings.' },
-      { id: 'loginType', label: 'Default Login Flow (Optional)', placeholder: 'instagram (default) or facebook', type: 'text', required: false, helpText: 'Set to "instagram" for Instagram API with Instagram Login (www.instagram.com/oauth/authorize) or "facebook" for Business Login for Instagram via Facebook Login (www.facebook.com/v19.0/dialog/oauth with IG_API_ONBOARDING).' },
+      { id: 'loginType', label: 'Default Login Flow (Optional)', placeholder: 'instagram (default) or facebook', type: 'text', required: false, helpText: 'Set to "instagram" for Instagram API with Instagram Login (www.instagram.com/oauth/authorize) or "facebook" for Business Login for Instagram via Facebook Login (the www.facebook.com Login dialog with IG_API_ONBOARDING).' },
       { id: 'configId', label: 'Facebook Login for Business Config ID (Optional)', placeholder: 'e.g. 123456789012345', type: 'text', required: false, helpText: 'Optional config_id from Facebook Login for Business → Configurations when using Business Login for Instagram via Facebook.' },
       { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments', type: 'text', required: false, helpText: 'Leave empty for recommended defaults. Direct Instagram Login: instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments. Facebook Login: public_profile,pages_show_list,pages_read_engagement,business_management,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,instagram_manage_messages.' },
     ],
@@ -310,6 +311,7 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'clientId', label: 'Client ID', placeholder: 'Slack App Client ID', type: 'text', helpText: 'From api.slack.com → Your Apps → Basic Information.' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'Slack App Client Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/slack/callback', type: 'text', helpText: 'Must match the Redirect URL in your Slack app OAuth & Permissions settings.' },
+      { id: 'signingSecret', label: 'Signing Secret', placeholder: 'Slack App Signing Secret', type: 'password', helpText: 'From Basic Information → App Credentials. Verifies the app_uninstalled / tokens_revoked events Slack sends to the Deauthorize Callback URL.' },
     ],
     docsUrl: 'https://api.slack.com/authentication/oauth-v2',
     redirectHint: 'Use `/auth/slack/callback` on the backend. Required scopes: chat:write, channels:read.',
@@ -319,6 +321,7 @@ const PLATFORMS: PlatformDef[] = [
       'Open Slack API (api.slack.com/apps) → Select your app → Basic Information and copy Client ID & Client Secret.',
       'Go to OAuth & Permissions → Redirect URLs, add the Valid OAuth Redirect URI below, and click Save URLs.',
       'Add Bot Token Scopes `chat:write` and `channels:read`, then validate the Redirect URI below.',
+      'Optional: under Event Subscriptions, set the Request URL to the Deauthorize Callback URL below and subscribe to `app_uninstalled` and `tokens_revoked` so uninstalling the app disconnects the workspace.',
     ],
   },
   {
@@ -342,6 +345,7 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'clientId', label: 'Client ID', placeholder: 'Zoom App Client ID', type: 'text', helpText: 'From marketplace.zoom.us → Build App → App Credentials.' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'Zoom App Client Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/zoom/callback', type: 'text', helpText: 'Must match the Redirect URL for OAuth in your Zoom Marketplace app.' },
+      { id: 'webhookSecret', label: 'Secret Token', placeholder: 'Zoom app Secret Token', type: 'password', helpText: 'From Features → Access → Secret Token. Verifies deauthorization notifications and answers Zoom’s endpoint URL validation.' },
     ],
     docsUrl: 'https://marketplace.zoom.us/develop/create',
     redirectHint: 'Use `/auth/zoom/callback` for Redirect URL and `/api/oauth/zoom/deauthorize` for Zoom Deauthorization Notification Endpoint URL.',
@@ -544,7 +548,7 @@ export default function AdminIntegrations() {
   const [testing, setTesting] = useState<string | null>(null);
 
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [testMessage, setTestMessage] = useState<string | null>(null);
+  const [testMessage, setTestMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const [resendTestTo, setResendTestTo] = useState('');
   const [resendTesting, setResendTesting] = useState(false);
@@ -710,9 +714,9 @@ export default function AdminIntegrations() {
       const res = await fetch(`${API_BASE_URL}/api/admin/platform-configs/${encodeURIComponent(id)}/test`, { headers: authHeaders() });
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok || data.success === false) throw new Error(data.error || 'Test failed');
-      setTestMessage(data.message || 'Credentials look valid.');
+      setTestMessage({ ok: true, text: data.message || 'Credentials look valid.' });
     } catch (e) {
-      setTestMessage(e instanceof Error ? e.message : 'Test failed');
+      setTestMessage({ ok: false, text: e instanceof Error ? e.message : 'Test failed' });
     } finally {
       setTesting(null);
     }
@@ -769,7 +773,14 @@ export default function AdminIntegrations() {
       </div>
 
       {testMessage ? (
-        <div className="rounded-xl border border-emerald/30 bg-emerald/5 px-5 py-4 text-sm font-medium text-emerald">{testMessage}</div>
+        <div
+          role="status"
+          className={`rounded-xl border px-5 py-4 text-sm font-medium ${
+            testMessage.ok ? 'border-emerald/30 bg-emerald/5 text-emerald' : 'border-danger-line bg-danger-surface text-danger-text'
+          }`}
+        >
+          {testMessage.text}
+        </div>
       ) : null}
 
       {loading ? (

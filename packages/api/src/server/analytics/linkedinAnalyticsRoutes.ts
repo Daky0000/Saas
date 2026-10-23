@@ -108,6 +108,8 @@ export function registerLinkedInAnalyticsRoutes(router: Router, { requireAuth, p
       const auth = requireAuth(req, res);
       if (!auth) return;
       if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
+      // Renews the stored token first when LinkedIn issued a refresh token.
+      await getPublishableSocialConnection(auth.userId, 'linkedin').catch(() => null);
       const result = await syncLinkedInAnalyticsForUser({ pool, decryptIntegrationSecret }, auth.userId);
       if (result.found === 0) return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
       return res.json({ success: true, synced: result.synced, errors: result.errors.length > 0 ? result.errors : undefined });
