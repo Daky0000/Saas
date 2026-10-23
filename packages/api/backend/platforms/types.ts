@@ -34,6 +34,8 @@ export type PlatformPostResult = {
   error?: string;
   code?: string;
   retryable?: boolean;
+  // Published, but something the user asked for did not make it (e.g. media).
+  warning?: string;
   raw?: any;
 };
 

@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { getAIConfig, resolveActiveKey, callAINonStreaming } from '../ai-helpers.ts';
 import { dispatchOutboundWebhooks } from '../middleware/planQuotaMiddleware.ts';
 import { logger } from '../logger.ts';
+import { checkInboxReplyable, deliverInboxReply, resolveReplyCredentials } from './socialInboxDelivery.ts';
 
 type AuthResult = { userId: string } | null;
 
@@ -13,7 +14,11 @@ interface SocialInboxDeps {
   requireAuth: (req: Request, res: Response) => AuthResult;
   pool: Pool;
   fireAutomationTrigger?: (userId: string, triggerType: string, contact: { id?: string | null; email?: string; first_name?: string }) => Promise<void>;
+  getPublishableSocialConnection?: (userId: string, platformId: string) => Promise<any>;
+  decryptIntegrationSecret?: (encrypted: string) => string;
 }
+
+const MAX_REPLY_LENGTH = 2000;
 
 const SAMPLE_SEED_THREADS = [
   {
@@ -133,6 +138,8 @@ export function registerSocialInboxRoutes({
   requireAuth,
   pool,
   fireAutomationTrigger,
+  getPublishableSocialConnection,
+  decryptIntegrationSecret,
 }: SocialInboxDeps): Router {
   const router = express.Router();
 
@@ -211,7 +218,54 @@ export function registerSocialInboxRoutes({
       const auth = requireAuth(req, res);
       if (!auth) return;
 
-      return res.status(501).json({ success: false, error: 'Provider delivery is not connected. No message was sent.' });
+      const text = String(req.body?.body || '').trim();
+      if (!text) return res.status(400).json({ success: false, error: 'Reply text is required' });
+      if (text.length > MAX_REPLY_LENGTH) return res.status(400).json({ success: false, error: `Replies are limited to ${MAX_REPLY_LENGTH} characters` });
+
+      const threadId = String(req.params.id);
+      const { rows: threadRows } = await pool.query(
+        `SELECT * FROM social_inbox_threads WHERE id = $1 AND user_id = $2`,
+        [threadId, auth.userId]
+      );
+      const thread = threadRows[0];
+      if (!thread) return res.status(404).json({ success: false, error: 'Thread not found' });
+      const blocked = checkInboxReplyable(thread);
+      if (blocked) return res.status(blocked.status).json({ success: false, error: blocked.error });
+      if (!getPublishableSocialConnection || !decryptIntegrationSecret) {
+        return res.status(501).json({ success: false, error: 'Provider delivery is not configured. No message was sent.' });
+      }
+
+      const creds = await resolveReplyCredentials(thread, {
+        query: (sql, params) => pool.query(sql, params as any[]),
+        decrypt: decryptIntegrationSecret,
+        getPublishableSocialConnection,
+      });
+      if (!('accessToken' in creds)) {
+        return res.status(creds.status).json({ success: false, error: creds.error, reconnect: creds.reconnect });
+      }
+
+      // Nothing is recorded unless the platform accepted the reply.
+      const delivery = await deliverInboxReply(thread, creds, text);
+      if (!delivery.ok) {
+        logger.warn({ threadId, platform: thread.platform, status: delivery.status }, 'social_inbox_reply_rejected');
+        return res.status(delivery.status).json({ success: false, error: delivery.error, reconnect: delivery.reconnect });
+      }
+
+      const { rows: messageRows } = await pool.query(
+        `INSERT INTO social_inbox_messages (id, thread_id, user_id, direction, sender_name, body, ai_generated)
+         VALUES ($1,$2,$3,'outbound','You',$4,$5)
+         RETURNING *`,
+        [randomUUID(), threadId, auth.userId, text, Boolean(req.body?.aiGenerated)]
+      );
+      await pool.query(
+        `UPDATE social_inbox_threads
+            SET last_message_preview = $3, last_message_at = NOW(), updated_at = NOW(), unread_count = 0,
+                status = CASE WHEN $4 THEN 'resolved' ELSE status END
+          WHERE id = $1 AND user_id = $2`,
+        [threadId, auth.userId, text.slice(0, 160), Boolean(req.body?.markResolved)]
+      );
+
+      return res.json({ success: true, message: messageRows[0], externalMessageId: delivery.externalMessageId });
     } catch (err: any) {
       logger.error({ err }, 'social_inbox_reply_failed');
       return res.status(500).json({ success: false, error: 'Failed to send reply' });

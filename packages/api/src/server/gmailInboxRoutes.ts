@@ -3,6 +3,7 @@ import type { Request } from '../types/http.ts';
 import axios from 'axios';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { isDeadGrantFlag, markGoogleGrantRevoked, refreshGoogleAccessToken } from '../google-oauth.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,15 @@ function domainToCompany(domain: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+// Content-Disposition for any filename: an ASCII fallback plus the exact
+// UTF-8 name (RFC 6266/5987). Raw non-Latin names in a header make Node throw.
+export function attachmentDisposition(filename: string): string {
+  const name = String(filename || 'attachment').replace(/[\r\n]/g, ' ').trim() || 'attachment';
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
 function base64urlDecode(str: string): string {
   try {
     return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
@@ -92,7 +102,8 @@ function extractBodyText(payload: any, depth = 0): string {
   return '';
 }
 
-// Refresh Gmail access token if within 5 minutes of expiry
+// Refresh Gmail access token if within 5 minutes of expiry. Returns null when
+// Gmail is not connected or Google has revoked the grant (reconnect needed).
 async function getValidGmailToken(
   pool: Pool,
   userId: string,
@@ -103,7 +114,7 @@ async function getValidGmailToken(
   const res = await pool.query(
     `SELECT access_token, refresh_token,
             access_token_encrypted, refresh_token_encrypted,
-            token_expires_at
+            token_expires_at, needs_reapproval, token_data->>'reason' AS reason
      FROM social_accounts
      WHERE user_id=$1 AND LOWER(platform)='gmail' AND connected=true
      LIMIT 1`,
@@ -112,6 +123,7 @@ async function getValidGmailToken(
   if (!res.rows.length) return null;
 
   const row = res.rows[0] as any;
+  if (isDeadGrantFlag(row.needs_reapproval, row.reason)) return null;
 
   // Tokens are stored encrypted; fall back to plain column for legacy rows
   const decrypt = (enc: string | null, plain: string | null): string => {
@@ -127,37 +139,24 @@ async function getValidGmailToken(
   if (!needsRefresh || !refreshToken) return accessToken || null;
 
   const cfg = await getPlatformConfig('gmail');
-  const clientId = String(cfg.clientId || '').trim();
-  const clientSecret = String(cfg.clientSecret || '').trim();
-  if (!clientId || !clientSecret) return accessToken || null;
+  const refreshed = await refreshGoogleAccessToken(refreshToken, String(cfg.clientId || '').trim(), String(cfg.clientSecret || '').trim());
+  if (!refreshed.ok) {
+    if (refreshed.revoked) {
+      await markGoogleGrantRevoked((sql, params) => pool.query(sql, params as any[]), userId, 'gmail');
+      return null;
+    }
+    logger.warn({ userId, error: refreshed.error }, 'gmail_token_refresh_failed');
+    return accessToken || null;
+  }
 
-  const params = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
-  });
-
-  const resp = await axios.post('https://oauth2.googleapis.com/token', params.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    validateStatus: () => true,
-    timeout: 10000,
-  });
-
-  if (resp.status >= 400) return accessToken || null;
-
-  const newToken = String((resp.data as any)?.access_token || '').trim();
-  if (!newToken) return accessToken || null;
-
-  const ttl = Number((resp.data as any)?.expires_in || 3600);
-  const newEncrypted = encryptIntegrationSecret(newToken);
   await pool.query(
     `UPDATE social_accounts
-     SET access_token_encrypted=$1, token_expires_at=$2
+     SET access_token_encrypted=$1, access_token=NULL, token_expires_at=$2, needs_reapproval=false,
+         token_data = COALESCE(token_data, '{}'::jsonb) - 'reason' - 'needs_reapproval_at'
      WHERE user_id=$3 AND LOWER(platform)='gmail'`,
-    [newEncrypted, new Date(Date.now() + ttl * 1000).toISOString(), userId]
+    [encryptIntegrationSecret(refreshed.accessToken), refreshed.expiresAt, userId]
   );
-  return newToken;
+  return refreshed.accessToken;
 }
 
 // ── CRM population ────────────────────────────────────────────────────────────
@@ -328,6 +327,32 @@ async function syncToCRM(pool: Pool, userId: string): Promise<CRMSyncResult> {
 
 // ── Background sync ───────────────────────────────────────────────────────────
 
+// Gmail's own 4xx (not found, forbidden) passes through; its 5xx and a 401,
+// which the app would read as an expired login, do not.
+function upstreamFailureStatus(status: number): number {
+  return status >= 400 && status < 500 && status !== 401 ? status : 502;
+}
+
+// A run that has not reported progress for this long was cut short (deploy,
+// crash) and must not block new syncs forever.
+const GMAIL_SYNC_STALE_MINUTES = 30;
+
+// Marks a run as started unless one is genuinely in progress; a 'running'
+// row that stopped reporting progress was interrupted and is taken over.
+async function claimGmailSync(pool: Pool, userId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `INSERT INTO gmail_sync_state(user_id, status, total_fetched, updated_at)
+     VALUES($1,'running',0,NOW())
+     ON CONFLICT(user_id) DO UPDATE SET status='running', total_fetched=0, error_message=NULL, updated_at=NOW()
+       WHERE gmail_sync_state.status <> 'running'
+          OR gmail_sync_state.updated_at < NOW() - ($2::int * INTERVAL '1 minute')
+     RETURNING user_id`,
+    [userId, GMAIL_SYNC_STALE_MINUTES]
+  );
+  return rows.length > 0;
+}
+
+// Runs a sync the caller has claimed with claimGmailSync.
 async function runGmailSync(
   pool: Pool,
   userId: string,
@@ -340,13 +365,6 @@ async function runGmailSync(
   const BATCH_CONCURRENCY = 10;
 
   try {
-    await pool.query(
-      `INSERT INTO gmail_sync_state(user_id, status, total_fetched, updated_at)
-       VALUES($1,'running',0,NOW())
-       ON CONFLICT(user_id) DO UPDATE SET status='running', total_fetched=0, error_message=NULL, updated_at=NOW()`,
-      [userId]
-    );
-
     const token = await getValidGmailToken(pool, userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
     if (!token) throw new Error('Gmail not connected or token expired. Please reconnect Gmail.');
 
@@ -514,6 +532,7 @@ export function buildGmailAutoSync(deps: Pick<GmailInboxDeps, 'pool' | 'getPlatf
          ORDER BY last_synced_at LIMIT 10`
       );
       for (const row of rows) {
+        if (!(await claimGmailSync(pool, row.user_id).catch(() => false))) continue;
         await runGmailSync(pool, row.user_id, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret)
           .catch((err) => logger.warn({ err, userId: row.user_id }, 'gmail_auto_sync_user_failed'));
       }
@@ -524,6 +543,14 @@ export function buildGmailAutoSync(deps: Pick<GmailInboxDeps, 'pool' | 'getPlatf
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────────
+
+// 409, not 401: the app treats any 401 as an expired login and signs the user
+// out, but here only the Gmail connection needs attention.
+const GMAIL_RECONNECT_RESPONSE = {
+  success: false,
+  error: 'Gmail is not connected or its access has expired. Reconnect Gmail in Integrations.',
+  reconnect: 'gmail',
+};
 
 export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
   const { requireAuth, pool, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret } = deps;
@@ -536,12 +563,7 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     if (!auth) return;
     if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
 
-    const stateRes = await pool.query(
-      `SELECT status FROM gmail_sync_state WHERE user_id=$1`,
-      [auth.userId]
-    ).catch(() => ({ rows: [] as any[] }));
-
-    if (stateRes.rows[0]?.status === 'running') {
+    if (!(await claimGmailSync(pool, auth.userId))) {
       return res.json({ success: true, message: 'Sync already in progress' });
     }
 
@@ -724,7 +746,7 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     }
 
     const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
-    if (!token) return res.status(401).json({ success: false, error: 'Gmail not connected' });
+    if (!token) return res.status(409).json(GMAIL_RECONNECT_RESPONSE);
 
     const resp = await axios.get(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}`,
@@ -737,7 +759,8 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     );
 
     if (resp.status >= 400) {
-      return res.status(resp.status < 500 ? resp.status : 502).json({ success: false, error: 'Failed to fetch message from Gmail' });
+      if (resp.status === 401) return res.status(409).json(GMAIL_RECONNECT_RESPONSE);
+      return res.status(upstreamFailureStatus(resp.status)).json({ success: false, error: 'Failed to fetch message from Gmail' });
     }
 
     const bodyText = extractBodyText((resp.data as any)?.payload);
@@ -898,14 +921,15 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
 
     const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
-    if (!token) return res.status(401).json({ success: false, error: 'Gmail not connected' });
+    if (!token) return res.status(409).json(GMAIL_RECONNECT_RESPONSE);
 
     const resp = await axios.get(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(req.params.id)}`,
       { headers: { Authorization: `Bearer ${token}` }, params: { format: 'full' }, validateStatus: () => true, timeout: 15000 }
     );
 
-    if (resp.status >= 400) return res.status(resp.status < 500 ? resp.status : 502).json({ success: false, error: 'Failed to fetch message' });
+    if (resp.status === 401) return res.status(409).json(GMAIL_RECONNECT_RESPONSE);
+    if (resp.status >= 400) return res.status(upstreamFailureStatus(resp.status)).json({ success: false, error: 'Failed to fetch message' });
 
     const attachments: Array<{ id: string; filename: string; mimeType: string; size: number }> = [];
     function traverseParts(part: any): void {
@@ -927,23 +951,25 @@ export function registerGmailInboxRoutes(deps: GmailInboxDeps): Router {
     if (!pool) return res.status(503).json({ success: false, error: 'DB not ready' });
 
     const token = await getValidGmailToken(pool, auth.userId, getPlatformConfig, encryptIntegrationSecret, decryptIntegrationSecret);
-    if (!token) return res.status(401).json({ success: false, error: 'Gmail not connected' });
+    if (!token) return res.status(409).json(GMAIL_RECONNECT_RESPONSE);
 
     const resp = await axios.get(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(req.params.id)}/attachments/${encodeURIComponent(req.params.attId)}`,
       { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true, timeout: 30000 }
     );
 
-    if (resp.status >= 400) return res.status(resp.status < 500 ? resp.status : 502).json({ success: false, error: 'Failed to fetch attachment' });
+    if (resp.status === 401) return res.status(409).json(GMAIL_RECONNECT_RESPONSE);
+    if (resp.status >= 400) return res.status(upstreamFailureStatus(resp.status)).json({ success: false, error: 'Failed to fetch attachment' });
 
     const data = String((resp.data as any)?.data || '').replace(/-/g, '+').replace(/_/g, '/');
     const buf = Buffer.from(data, 'base64');
-    const mimeType = String(req.query.mimeType || 'application/octet-stream');
-    const filename = String(req.query.filename || 'attachment');
+    const requestedType = String(req.query.mimeType || '').trim().toLowerCase();
+    const mimeType = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(requestedType) ? requestedType : 'application/octet-stream';
 
     res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+    res.setHeader('Content-Disposition', attachmentDisposition(String(req.query.filename || 'attachment')));
     res.setHeader('Content-Length', buf.length);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     return res.send(buf);
   });
 

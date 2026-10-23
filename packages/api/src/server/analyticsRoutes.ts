@@ -15,6 +15,18 @@ import { registerAdapterRoutes } from './analytics/adapterRoutes.ts';
 
 export type { AnalyticsDeps };
 
+// The account's current token, renewed first where the platform allows; null
+// when the connection needs the user to reconnect.
+export async function getUsableAccessToken(
+  deps: Pick<AnalyticsDeps, 'getPublishableSocialConnection'>,
+  userId: string,
+  platform: string,
+): Promise<string | null> {
+  const conn = await deps.getPublishableSocialConnection(userId, platform).catch(() => null);
+  const token = String(conn?.access_token || '').trim();
+  return conn && !conn.needs_reapproval && token ? token : null;
+}
+
 export function registerAnalyticsRoutes(deps: AnalyticsDeps): Router {
   const router = Router();
 
@@ -55,31 +67,29 @@ export function buildAnalyticsAutoSync(deps: AnalyticsDeps): () => Promise<void>
     const pool = deps.pool;
     if (!pool) return;
 
-    // Per-account platforms (Instagram/Threads/Pinterest use account rows directly)
+    // Per-account platforms (Instagram/Threads/Pinterest). Each token goes
+    // through getPublishableSocialConnection first so expiring tokens are
+    // renewed; connections waiting on the user are skipped.
     try {
       const { rows: accounts } = await pool.query(
         `SELECT user_id, id, account_id, account_name, handle, followers, profile_image,
                 access_token, access_token_encrypted, token_data, platform, account_type
          FROM social_accounts
          WHERE connected=true AND platform IN ('instagram','threads','pinterest')
+           AND (account_type = 'profile' OR account_type IS NULL)
          ORDER BY user_id`
       );
       for (const acct of accounts as any[]) {
         try {
+          const accessToken = await getUsableAccessToken(deps, acct.user_id, acct.platform);
+          if (!accessToken) continue;
+          const account = { ...acct, access_token: accessToken, access_token_encrypted: null };
           if (acct.platform === 'instagram') {
-            await syncHelpers.syncInstagramAnalyticsAccount({ userId: acct.user_id, account: acct, days: 30 });
+            await syncHelpers.syncInstagramAnalyticsAccount({ userId: acct.user_id, account, days: 30 });
           } else if (acct.platform === 'threads') {
-            if (acct.account_type && acct.account_type !== 'profile') continue;
-            const tokenConn = await deps.getPublishableSocialConnection(acct.user_id, 'threads');
-            if (!tokenConn || tokenConn.needs_reapproval || !tokenConn.access_token) continue;
-            await syncHelpers.syncThreadsAnalyticsAccount({
-              userId: acct.user_id,
-              account: { ...acct, access_token: tokenConn.access_token, access_token_encrypted: null },
-              days: 30,
-              maxPosts: 120,
-            });
+            await syncHelpers.syncThreadsAnalyticsAccount({ userId: acct.user_id, account, days: 30, maxPosts: 120 });
           } else {
-            await syncHelpers.syncPinterestAnalyticsAccount({ userId: acct.user_id, account: acct, days: 30, maxPins: 250 });
+            await syncHelpers.syncPinterestAnalyticsAccount({ userId: acct.user_id, account, days: 30, maxPins: 250 });
           }
         } catch (err) {
           logger.warn({ err, platform: acct.platform, userId: acct.user_id }, 'analytics_auto_sync_account_failed');
@@ -99,6 +109,8 @@ export function buildAnalyticsAutoSync(deps: AnalyticsDeps): () => Promise<void>
       for (const row of userRows as any[]) {
         try {
           if (row.platform === 'facebook') await syncFacebookAnalyticsForUser(deps, row.user_id);
+          // TikTok tokens last a day: renew before the sync reads the stored one.
+          else if (!(await getUsableAccessToken(deps, row.user_id, row.platform))) continue;
           else if (row.platform === 'tiktok') await syncTikTokAnalyticsForUser(deps, row.user_id);
           else await syncLinkedInAnalyticsForUser(deps, row.user_id);
         } catch (err) {

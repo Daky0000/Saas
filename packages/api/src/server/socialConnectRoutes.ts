@@ -5,6 +5,11 @@ import axios from 'axios';
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { INSTAGRAM_GRAPH_BASE, META_GRAPH_BASE } from '../meta-graph.ts';
+import { readUserAccessToken, sanitizeTokenData, toPublicConnectionSummary } from '../token-data.ts';
+import { resolveMailchimpServerPrefix } from '../integration-helpers.ts';
+import { revokeProviderAccess } from '../oauth-provider-checks.ts';
+import { OAUTH_AUTH_URLS, isInstagramDirectLogin } from '../platform-helpers.ts';
 
 // ── Local constants ────────────────────────────────────────────────────────────
 
@@ -12,7 +17,6 @@ const X_API_BASE = 'https://api.x.com';
 const X_OAUTH_TOKEN_URL = `${X_API_BASE}/2/oauth2/token`;
 const X_USERS_ME_API = `${X_API_BASE}/2/users/me`;
 
-const META_GRAPH_BASE_LOCAL = 'https://graph.facebook.com/v19.0';
 const INSTAGRAM_TARGET_REQUIRED_PERMISSIONS = ['pages_show_list', 'instagram_basic'];
 const INSTAGRAM_RECOMMENDED_PERMISSIONS = ['instagram_content_publish', 'instagram_manage_insights'];
 const INSTAGRAM_PROFILE_FIELDS = 'id,username,name,account_type,biography,followers_count,follows_count,media_count,profile_picture_url,website,is_verified';
@@ -27,15 +31,6 @@ const META_PERMISSION_ALIASES: Record<string, string[]> = {
   pages_manage_metadata: ['pages_manage_metadata'],
   read_insights: ['read_insights'],
 };
-const LINKEDIN_DEFAULT_OAUTH_SCOPES_LOCAL = [
-  'r_liteprofile',
-  'r_emailaddress',
-  'w_member_social',
-  'r_organization_admin',
-  'rw_organization_admin',
-  'r_organization_social',
-  'w_organization_social',
-];
 
 // ── Deps interface ─────────────────────────────────────────────────────────────
 
@@ -53,6 +48,7 @@ export interface SocialConnectDeps {
   parseLinkedInScopeList: (value: unknown) => string[];
   computeIsoFromTtlSeconds: (seconds: unknown) => string | null;
   encryptIntegrationSecret: (plain: string) => string;
+  decryptIntegrationSecret?: (encrypted: string) => string;
   upsertUserIntegration: (params: {
     userId: string;
     integrationSlug: string;
@@ -71,6 +67,7 @@ export interface SocialConnectDeps {
     response?: any;
   }) => Promise<void>;
   getUserConnectedAccounts: (userId: string) => Promise<any[]>;
+  markSocialAccountNeedsReapproval?: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
   createNotification: (userId: string, type: string, title: string, message: string, data?: Record<string, any>, pinned?: boolean) => Promise<void>;
   checkTaskActions: (userId: string, actionType: string) => Promise<any[]>;
   getAIConfig: () => Promise<any>;
@@ -102,7 +99,7 @@ function missingMetaPermissions(granted: Set<string>, required: string[]): strin
 async function fetchMetaPermissionSet(accessToken: string): Promise<Set<string>> {
   if (!accessToken) return new Set();
   try {
-    const permsResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/permissions`, {
+    const permsResp = await axios.get(`${META_GRAPH_BASE}/me/permissions`, {
       params: { access_token: accessToken },
       validateStatus: () => true,
       timeout: 15000,
@@ -253,7 +250,7 @@ export async function fetchAccessibleFacebookPages(
 
     for (const fields of fieldCandidates) {
       try {
-        const resp = await axios.get(`${META_GRAPH_BASE_LOCAL}/${encoded}`, {
+        const resp = await axios.get(`${META_GRAPH_BASE}/${encoded}`, {
           params: { fields, access_token: token },
           validateStatus: () => true,
           timeout: 12000,
@@ -279,7 +276,7 @@ export async function fetchAccessibleFacebookPages(
       const params: Record<string, any> = { limit: 200, access_token: token };
       if (fieldsParam) params.fields = fieldsParam;
 
-      const pagesResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/accounts`, {
+      const pagesResp = await axios.get(`${META_GRAPH_BASE}/me/accounts`, {
         params,
         validateStatus: () => true,
         timeout: 15000,
@@ -298,7 +295,7 @@ export async function fetchAccessibleFacebookPages(
 
     // Strategy 1b: /me/assigned_pages (Business Manager assigned pages)
     if (byId.size === 0 || !accountsLoaded) {
-      const assignedResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/assigned_pages`, {
+      const assignedResp = await axios.get(`${META_GRAPH_BASE}/me/assigned_pages`, {
         params: {
           fields: 'id,name,tasks,access_token,category,picture.width(128).height(128)',
           limit: 200,
@@ -323,7 +320,7 @@ export async function fetchAccessibleFacebookPages(
     const appSecret = String(options?.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
     const debugAccessToken = appId && appSecret ? `${appId}|${appSecret}` : token;
 
-    const debugResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/debug_token`, {
+    const debugResp = await axios.get(`${META_GRAPH_BASE}/debug_token`, {
       params: {
         input_token: token,
         access_token: debugAccessToken,
@@ -382,7 +379,7 @@ export async function fetchAccessibleFacebookPages(
 
   // Strategy 3: Check Meta Business Portfolios (/me/businesses -> owned_pages & client_pages)
   try {
-    const bizResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/me/businesses`, {
+    const bizResp = await axios.get(`${META_GRAPH_BASE}/me/businesses`, {
       params: {
         fields: 'id,name',
         limit: 25,
@@ -399,7 +396,7 @@ export async function fetchAccessibleFacebookPages(
           if (!bizId) return;
           for (const edge of ['owned_pages', 'client_pages']) {
             try {
-              const edgeResp = await axios.get(`${META_GRAPH_BASE_LOCAL}/${encodeURIComponent(bizId)}/${edge}`, {
+              const edgeResp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(bizId)}/${edge}`, {
                 params: {
                   fields: accountsEdgeFieldsBasic,
                   limit: 100,
@@ -460,8 +457,10 @@ export async function syncFacebookPagesForUser(
     let savedAny = false;
     for (const page of pages) {
       if (!page.id || !page.name) continue;
-      const effectiveToken = page.access_token || userAccessToken;
-      const encryptedPageToken = effectiveToken ? deps.encryptIntegrationSecret(effectiveToken) : null;
+      // Only a Page token can publish as the Page. Storing the user token in
+      // its place made every later post fail with a permissions error; with no
+      // token stored, publishing resolves the Page token at send time instead.
+      const encryptedPageToken = page.access_token ? deps.encryptIntegrationSecret(page.access_token) : null;
 
       const updateRes = await deps.dbQuery(
         `UPDATE social_accounts
@@ -537,7 +536,7 @@ export async function syncFacebookPagesForUser(
 
 async function fetchInstagramBusinessProfile(igUserId: string, accessToken: string): Promise<{ profile: any | null; error?: string }> {
   try {
-    const resp = await axios.get(`${META_GRAPH_BASE_LOCAL}/${encodeURIComponent(igUserId)}`, {
+    const resp = await axios.get(`${META_GRAPH_BASE}/${encodeURIComponent(igUserId)}`, {
       params: {
         fields: INSTAGRAM_PROFILE_FIELDS,
         access_token: accessToken,
@@ -646,6 +645,63 @@ export function platformDisplayName(platformId: string) {
     case 'tiktok': return 'TikTok';
     case 'threads': return 'Threads';
     default: return platformId;
+  }
+}
+
+// Calls the provider's "who am I" endpoint with a stored token. 401/403 (or a
+// Graph OAuthException 190) means the token itself is no longer accepted.
+export async function probeConnectionIdentity(
+  platformId: string,
+  conn: { access_token: string; account_id?: string | null; token_data?: any },
+): Promise<{ status: 'ok' | 'unauthorized' | 'error'; message: string }> {
+  const token = String(conn.access_token || '').trim();
+  const bearer = { Authorization: `Bearer ${token}` };
+  let request: { url: string; params?: Record<string, string>; headers?: Record<string, string> } | null = null;
+  switch (platformId) {
+    case 'facebook':
+      request = { url: `${META_GRAPH_BASE}/me`, params: { fields: 'id,name', access_token: token } };
+      break;
+    case 'instagram':
+      request = isInstagramDirectLogin({ accessToken: token, tokenData: conn.token_data })
+        ? { url: `${INSTAGRAM_GRAPH_BASE}/me`, params: { fields: 'user_id,username', access_token: token } }
+        : { url: `${META_GRAPH_BASE}/${encodeURIComponent(String(conn.account_id || 'me'))}`, params: { fields: 'id,username', access_token: token } };
+      break;
+    case 'threads':
+      request = { url: 'https://graph.threads.net/v1.0/me', params: { fields: 'id,username', access_token: token } };
+      break;
+    case 'linkedin':
+      request = { url: 'https://api.linkedin.com/v2/userinfo', headers: bearer };
+      break;
+    case 'twitter':
+      request = { url: X_USERS_ME_API, headers: bearer };
+      break;
+    case 'pinterest':
+      request = { url: 'https://api.pinterest.com/v5/user_account', headers: bearer };
+      break;
+    case 'tiktok':
+      request = { url: 'https://open.tiktokapis.com/v2/user/info/', params: { fields: 'open_id,display_name' }, headers: bearer };
+      break;
+    default:
+      return { status: 'error', message: `Live checks are not available for ${platformDisplayName(platformId)}.` };
+  }
+  try {
+    let resp = await axios.get(request.url, { params: request.params, headers: request.headers, validateStatus: () => true, timeout: 12000 });
+    // LinkedIn apps on the legacy profile product have no /userinfo.
+    if (platformId === 'linkedin' && resp.status === 403) {
+      resp = await axios.get('https://api.linkedin.com/v2/me', { headers: bearer, validateStatus: () => true, timeout: 12000 });
+    }
+    const data: any = resp.data || {};
+    const tiktokError = platformId === 'tiktok' && data?.error?.code && data.error.code !== 'ok' ? String(data.error.code) : '';
+    if (resp.status === 401 || resp.status === 403 || data?.error?.code === 190 || tiktokError === 'access_token_invalid') {
+      return { status: 'unauthorized', message: 'The platform no longer accepts this connection. Reconnect to continue.' };
+    }
+    if (resp.status >= 400 || tiktokError) {
+      const detail = data?.error?.message || data?.message || data?.detail || tiktokError || `HTTP ${resp.status}`;
+      return { status: 'error', message: `The platform returned an error: ${String(detail).slice(0, 200)}` };
+    }
+    return { status: 'ok', message: `${platformDisplayName(platformId)} connection is working.` };
+  } catch (err) {
+    return { status: 'error', message: `Could not reach ${platformDisplayName(platformId)}: ${err instanceof Error ? err.message : 'network error'}` };
   }
 }
 
@@ -902,10 +958,13 @@ async function exchangePinterestCode(
   const redirectUri = resolveOAuthRedirectUri('pinterest', cfg.redirectUri, req);
   if (!clientId || !clientSecret) throw new Error('Pinterest client credentials not configured');
 
+  // continuous_refresh opts apps created before Sept 2025 into the rotating
+  // 60-day refresh token; legacy 365-day refresh tokens are no longer issued.
   const data = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     redirect_uri: redirectUri,
+    continuous_refresh: 'true',
   });
 
   const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
@@ -993,7 +1052,7 @@ async function exchangeInstagramCode(
 
   // 2. Fallback: Business Login for Instagram (Instagram API with Facebook Login via graph.facebook.com)
   if (response.status >= 400 && fbClientId && fbClientSecret) {
-    const fbFallback = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+    const fbFallback = await axios.get(`${META_GRAPH_BASE}/oauth/access_token`, {
       params: {
         client_id: fbClientId,
         client_secret: fbClientSecret,
@@ -1054,7 +1113,7 @@ async function exchangeInstagramCode(
 
       // 4a. Resolve Instagram professional profile via graph.instagram.com
       try {
-        const meResp = await axios.get('https://graph.instagram.com/v21.0/me', {
+        const meResp = await axios.get(`${INSTAGRAM_GRAPH_BASE}/me`, {
           params: {
             fields: 'user_id,id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count,biography,website',
             access_token: currentToken,
@@ -1064,6 +1123,10 @@ async function exchangeInstagramCode(
         });
         if (meResp.status < 400 && meResp.data) {
           const me: any = meResp.data;
+          // The token exchange returns the app-scoped id, which is what Meta's
+          // deauthorize/data-deletion callbacks carry; keep it before the
+          // professional account id replaces user_id.
+          if (tokenData.user_id && !tokenData.app_scoped_user_id) tokenData.app_scoped_user_id = String(tokenData.user_id);
           const uid = String(me.user_id || me.id || tokenData.user_id || '').trim();
           if (uid) {
             tokenData.user_id = uid;
@@ -1104,7 +1167,7 @@ async function exchangeInstagramCode(
     } else {
       // 3b. Business Login for Instagram (with Facebook Login): Exchange for 60-day long-lived Facebook User token
       try {
-        const fbLongRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+        const fbLongRes = await axios.get(`${META_GRAPH_BASE}/oauth/access_token`, {
           params: {
             grant_type: 'fb_exchange_token',
             client_id: fbClientId,
@@ -1117,14 +1180,24 @@ async function exchangeInstagramCode(
         if (fbLongRes.status < 400 && (fbLongRes.data as any)?.access_token) {
           tokenData.short_lived_access_token = shortLivedToken;
           tokenData.access_token = String((fbLongRes.data as any).access_token || '').trim();
-          if ((fbLongRes.data as any)?.expires_in) {
-            tokenData.expires_in = (fbLongRes.data as any).expires_in;
-          }
+          // Long-lived user tokens last ~60 days; Meta sometimes omits expires_in.
+          tokenData.expires_in = (fbLongRes.data as any)?.expires_in || 60 * 24 * 3600;
         }
       } catch (_e) { /* ignore */ }
+      const hasLongLivedUserToken = Boolean(tokenData.short_lived_access_token);
 
       const userAccessToken = String(tokenData.access_token || shortLivedToken).trim();
       tokenData.user_access_token = userAccessToken;
+      // The Facebook user behind the grant: Meta's deauthorize callback names
+      // this id, not the Instagram account's.
+      try {
+        const fbMe = await axios.get(`${META_GRAPH_BASE}/me`, {
+          params: { fields: 'id', access_token: userAccessToken },
+          validateStatus: () => true,
+          timeout: 10000,
+        });
+        if (fbMe.status < 400 && (fbMe.data as any)?.id) tokenData.facebook_user_id = String((fbMe.data as any).id);
+      } catch (_e) { /* best effort */ }
 
       // 4b. Discover Facebook Pages & linked Instagram Professional Accounts (supports /me/accounts, debug_token granular scopes, and Business Portfolios)
       try {
@@ -1167,6 +1240,9 @@ async function exchangeInstagramCode(
           if (matchedTarget.pageAccessToken) {
             tokenData.pageAccessToken = matchedTarget.pageAccessToken;
             tokenData.access_token = matchedTarget.pageAccessToken;
+            // A Page token minted from a long-lived user token never expires;
+            // the user token's 60-day expiry must not be stamped on it.
+            if (hasLongLivedUserToken) delete tokenData.expires_in;
           }
         }
       } catch (err) {
@@ -1192,12 +1268,14 @@ async function exchangeTwitterCode(
 
   if (!clientId) throw new Error('Twitter Client ID is not configured. Set it in Admin → Integrations → X.');
   if (!clientSecret) throw new Error('Twitter Client Secret is not configured. Set it in Admin → Integrations → X.');
+  const verifier = String(codeVerifier || '').trim();
+  if (!verifier) throw new Error('The X sign-in session is missing its PKCE verifier. Start the connection again.');
 
   const body = new URLSearchParams({
     code,
     grant_type: 'authorization_code',
     redirect_uri: redirectUri,
-    code_verifier: (codeVerifier || cfg.codeVerifier || '').trim() || 'challenge',
+    code_verifier: verifier,
   });
 
   const response = await axios.post(X_OAUTH_TOKEN_URL, body.toString(), {
@@ -1271,25 +1349,33 @@ export async function exchangeFacebookCode(
   const cfg = await getPlatformConfig('facebook');
   const appId = String(cfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
   const appSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+  if (!appId || !appSecret) throw new Error('Facebook app credentials are not configured. Set them in Admin → Integrations → Facebook.');
   const redirectUri = resolveOAuthRedirectUri(
     'facebook',
     redirectUriOverride || cfg.redirectUri || process.env.VITE_FACEBOOK_REDIRECT_URI,
     req,
   );
-  const response = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+  const response = await axios.get(`${META_GRAPH_BASE}/oauth/access_token`, {
     params: {
       client_id: appId,
       client_secret: appSecret,
       redirect_uri: redirectUri,
       code,
     },
+    validateStatus: () => true,
+    timeout: 15000,
   });
+  if (response.status >= 400 || !(response.data as any)?.access_token) {
+    const detail = (response.data as any)?.error?.message || `HTTP ${response.status}`;
+    logger.error('Facebook token exchange failed:', { status: response.status, body: response.data, redirectUri });
+    throw new Error(`Facebook token exchange failed: ${detail}`);
+  }
   const tokenData: any = response.data || {};
 
   const shortToken = String(tokenData?.access_token || '').trim();
   if (shortToken && appId && appSecret) {
     try {
-      const llResp = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      const llResp = await axios.get(`${META_GRAPH_BASE}/oauth/access_token`, {
         params: {
           grant_type: 'fb_exchange_token',
           client_id: appId,
@@ -1313,7 +1399,7 @@ export async function exchangeFacebookCode(
   const accessToken = String(tokenData?.access_token || '').trim();
   if (accessToken) {
     try {
-      const meResp = await axios.get('https://graph.facebook.com/v19.0/me', {
+      const meResp = await axios.get(`${META_GRAPH_BASE}/me`, {
         params: { fields: 'id,name,picture.width(256).height(256)', access_token: accessToken },
         validateStatus: () => true,
         timeout: 15000,
@@ -1338,11 +1424,12 @@ async function exchangeThreadsCode(
   getPlatformConfig: SocialConnectDeps['getPlatformConfig'],
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   code: string,
+  req?: Request,
 ) {
   const cfg = await getPlatformConfig('threads');
   const clientId = cfg.appId || process.env.VITE_THREADS_APP_ID || process.env.VITE_THREADS_CLIENT_ID || process.env.VITE_INSTAGRAM_APP_ID || '';
   const clientSecret = cfg.appSecret || process.env.THREADS_APP_SECRET || process.env.VITE_THREADS_APP_SECRET || process.env.INSTAGRAM_APP_SECRET || '';
-  const redirectUri = resolveOAuthRedirectUri('threads', cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI);
+  const redirectUri = resolveOAuthRedirectUri('threads', cfg.redirectUri || process.env.VITE_THREADS_REDIRECT_URI, req);
 
   if (!clientId || !clientSecret || !redirectUri) throw new Error('Threads credentials not configured');
 
@@ -1353,7 +1440,10 @@ async function exchangeThreadsCode(
     timeout: 15000,
   });
 
-  if (tokenRes.status >= 400) throw new Error(`Threads token exchange failed (${tokenRes.status})`);
+  if (tokenRes.status >= 400) {
+    const detail = (tokenRes.data as any)?.error?.message || (tokenRes.data as any)?.error_message || '';
+    throw new Error(`Threads token exchange failed (${tokenRes.status})${detail ? `: ${detail}` : ''}`);
+  }
 
   const tokenData: any = tokenRes.data || {};
   const shortLived = String(tokenData?.access_token || '').trim();
@@ -1407,11 +1497,13 @@ async function exchangeTikTokCode(
   resolveOAuthRedirectUri: SocialConnectDeps['resolveOAuthRedirectUri'],
   code: string,
   codeVerifier?: string,
+  req?: Request,
 ) {
   const cfg = await getPlatformConfig('tiktok');
   const clientKey = (cfg.clientKey || process.env.VITE_TIKTOK_CLIENT_ID || '').trim();
   const clientSecret = (cfg.clientSecret || process.env.TIKTOK_CLIENT_SECRET || '').trim();
-  const redirectUri = resolveOAuthRedirectUri('tiktok', cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI);
+  const redirectUri = resolveOAuthRedirectUri('tiktok', cfg.redirectUri || process.env.VITE_TIKTOK_REDIRECT_URI, req);
+  if (!clientKey || !clientSecret) throw new Error('TikTok client credentials are not configured. Set them in Admin → Integrations → TikTok.');
 
   const data = new URLSearchParams({ client_key: clientKey, client_secret: clientSecret, code, grant_type: 'authorization_code', redirect_uri: redirectUri });
   if (codeVerifier) data.set('code_verifier', codeVerifier);
@@ -1420,9 +1512,10 @@ async function exchangeTikTokCode(
     validateStatus: () => true,
     timeout: 15000,
   });
-  if (response.status >= 400) {
-    const errBody: any = response.data || {};
-    const detail = errBody?.error_description || errBody?.error || '';
+  // TikTok can report an OAuth error in the body of a 200 response.
+  const errBody: any = response.data || {};
+  if (response.status >= 400 || errBody?.error || !errBody?.access_token) {
+    const detail = errBody?.error_description || errBody?.error || errBody?.message || '';
     throw new Error(`TikTok token exchange failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
   const tokenData: any = response.data || {};
@@ -1614,9 +1707,9 @@ export async function exchangeOAuthCode(
     case 'pinterest':
       return exchangePinterestCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
     case 'threads':
-      return exchangeThreadsCode(getPlatformConfig, resolveOAuthRedirectUri, code);
+      return exchangeThreadsCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
     case 'tiktok':
-      return exchangeTikTokCode(getPlatformConfig, resolveOAuthRedirectUri, code, codeVerifier);
+      return exchangeTikTokCode(getPlatformConfig, resolveOAuthRedirectUri, code, codeVerifier, req);
     case 'gmail':
       return exchangeGmailCode(getPlatformConfig, resolveOAuthRedirectUri, code, req);
     case 'slack':
@@ -1773,7 +1866,7 @@ export async function storeUserConnection(deps: SocialConnectDeps, userId: strin
           needs_reapproval = false,
           token_data = EXCLUDED.token_data;
   `,
-    [randomUUID(), userId, platformId, platformDbId, accountId, accountName, profileImage, String(handle), followers, expiresAt, tokenExpiresAt, null, null, accessTokenEncrypted, refreshTokenEncrypted, normalizedTokenData || {}]
+    [randomUUID(), userId, platformId, platformDbId, accountId, accountName, profileImage, String(handle), followers, expiresAt, tokenExpiresAt, null, null, accessTokenEncrypted, refreshTokenEncrypted, sanitizeTokenData(normalizedTokenData, encryptIntegrationSecret)]
   );
 
   let integrationAccountId = accountId;
@@ -1814,22 +1907,61 @@ export async function storeUserConnection(deps: SocialConnectDeps, userId: strin
   }
 }
 
-async function removeUserConnection(deps: Pick<SocialConnectDeps, 'pool' | 'dbQuery' | 'normalizePlatformId' | 'upsertUserIntegration' | 'logIntegrationEvent'>, userId: string, platform: string): Promise<void> {
-  if (!deps.pool) return;
+async function removeUserConnection(
+  deps: Pick<SocialConnectDeps, 'pool' | 'dbQuery' | 'normalizePlatformId' | 'upsertUserIntegration' | 'logIntegrationEvent' | 'getPlatformConfig' | 'decryptIntegrationSecret'>,
+  userId: string,
+  platform: string,
+): Promise<{ revoked: boolean }> {
+  if (!deps.pool) return { revoked: false };
+  const platformId = deps.normalizePlatformId(platform);
+
+  // Revoke the grant at the provider (where it offers revocation) before the
+  // stored credentials are deleted; a provider outage never blocks disconnect.
+  let revoked = false;
+  if (platformId && deps.decryptIntegrationSecret) {
+    const { rows } = await deps.dbQuery<{ access_token_encrypted: string | null; refresh_token_encrypted: string | null }>(
+      `SELECT access_token_encrypted, refresh_token_encrypted FROM social_accounts
+       WHERE user_id = $1 AND LOWER(platform) = LOWER($2) AND account_type = 'profile' LIMIT 1`,
+      [userId, platformId],
+    ).catch(() => ({ rows: [] as Array<{ access_token_encrypted: string | null; refresh_token_encrypted: string | null }> }));
+    const decrypt = (value: string | null) => {
+      try { return value ? deps.decryptIntegrationSecret!(value) : ''; } catch { return ''; }
+    };
+    if (rows[0]) {
+      const cfg = await deps.getPlatformConfig(platformId).catch(() => ({} as Record<string, string>));
+      revoked = await revokeProviderAccess(platformId, {
+        accessToken: decrypt(rows[0].access_token_encrypted),
+        refreshToken: decrypt(rows[0].refresh_token_encrypted),
+      }, cfg);
+    }
+  }
+
   await deps.dbQuery('DELETE FROM social_accounts WHERE user_id = $1 AND LOWER(platform) = LOWER($2)', [userId, platform]);
 
-  const platformId = deps.normalizePlatformId(platform);
   if (platformId) {
     await deps.upsertUserIntegration({ userId, integrationSlug: platformId, accessTokenEncrypted: null, refreshTokenEncrypted: null, tokenExpiry: null, accountId: null, accountName: null, status: 'disconnected' });
-    await deps.logIntegrationEvent({ userId, integrationSlug: platformId, eventType: 'disconnect', status: 'info', response: {} });
+    await deps.logIntegrationEvent({ userId, integrationSlug: platformId, eventType: 'disconnect', status: 'info', response: { providerRevoked: revoked } });
   }
+  return { revoked };
 }
+
+// A relative in-app path only: "//host" and "/\host" are protocol-relative
+// URLs the browser would follow off-site.
+export function sanitizeOAuthReturnTo(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw || raw.length > 500 || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || /[\r\n\t]/.test(raw)) return null;
+  return raw;
+}
+
+const OAUTH_STATE_PATTERN = /^[A-Za-z0-9._~-]{16,256}$/;
+const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
 
 // ── Factory ────────────────────────────────────────────────────────────────────
 
 export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
   const router = Router();
   const { requireAuth, hasDatabase, pool, dbQuery, getPublishableSocialConnection, encryptIntegrationSecret, upsertUserIntegration, logIntegrationEvent, getUserConnectedAccounts, normalizePlatformId, getPlatformConfig, resolveOAuthRedirectUri, parseLinkedInScopeList, computeIsoFromTtlSeconds, publishToplatform } = deps;
+  const decryptToken = (value: string) => (deps.decryptIntegrationSecret ? deps.decryptIntegrationSecret(value) : '');
 
   // POST /api/oauth/state
   router.post('/oauth/state', async (req: Request, res: Response) => {
@@ -1838,16 +1970,25 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       if (!auth) return;
 
       const { state, platform, returnTo, codeVerifier } = req.body as { state?: string; platform?: string; returnTo?: string; codeVerifier?: string };
-      if (!state || !platform) return res.status(400).json({ success: false, error: 'Missing state or platform' });
+      const stateValue = typeof state === 'string' ? state.trim() : '';
+      const platformId = String(platform || '').trim().toLowerCase();
+      if (!stateValue || !platformId) return res.status(400).json({ success: false, error: 'Missing state or platform' });
+      if (!OAUTH_STATE_PATTERN.test(stateValue)) return res.status(400).json({ success: false, error: 'Invalid state' });
+      if (!OAUTH_AUTH_URLS[platformId]) return res.status(400).json({ success: false, error: 'Unsupported platform' });
+      const verifier = typeof codeVerifier === 'string' ? codeVerifier.trim() : '';
+      if (verifier && !PKCE_VERIFIER_PATTERN.test(verifier)) return res.status(400).json({ success: false, error: 'Invalid PKCE code verifier' });
 
       if (!pool) return res.status(503).json({ success: false, error: 'Database not configured' });
 
-      await dbQuery(
+      // Expired rows are never read again; clear this user's so the table stays small.
+      await dbQuery('DELETE FROM oauth_states WHERE user_id = $1 AND expires_at < NOW()', [auth.userId]).catch(() => undefined);
+      const inserted = await dbQuery(
         `INSERT INTO oauth_states (state, user_id, platform, return_to, code_verifier, expires_at)
          VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '15 minutes')
          ON CONFLICT (state) DO NOTHING`,
-        [state, auth.userId, platform, typeof returnTo === 'string' ? returnTo.slice(0, 500) : null, typeof codeVerifier === 'string' ? codeVerifier.slice(0, 2048) : null]
+        [stateValue, auth.userId, platformId, sanitizeOAuthReturnTo(returnTo), verifier || null]
       );
+      if (inserted.rowCount === 0) return res.status(409).json({ success: false, error: 'State already in use — start the connection again' });
 
       return res.json({ success: true });
     } catch (error) {
@@ -1918,11 +2059,23 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       if (String(stateRow.user_id) !== auth.userId) return res.status(400).json({ success: false, error: 'State does not match user' });
       if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return res.status(400).json({ success: false, error: 'State does not match platform' });
 
+      // Claim the state before redeeming the code: a state is single-use, so a
+      // replayed or double-submitted callback can't run a second exchange.
+      const claimed = await dbQuery(
+        'DELETE FROM oauth_states WHERE state = $1 AND user_id = $2 RETURNING state',
+        [String(state), auth.userId],
+      );
+      if (claimed.rowCount === 0) return res.status(409).json({ success: false, error: 'This connection attempt was already completed' });
+
       const tokenData = await exchangeOAuthCode(getPlatformConfig, resolveOAuthRedirectUri, parseLinkedInScopeList, computeIsoFromTtlSeconds, platformId, String(code), stateRow.code_verifier || undefined, req);
       await storeUserConnection(deps, auth.userId, platformDisplayName(platformId), tokenData);
-      await dbQuery('DELETE FROM oauth_states WHERE state = $1', [String(state)]).catch(() => undefined);
 
-      return res.json({ success: true, data: tokenData, returnTo: (stateRow as any).return_to || null });
+      // Tokens stay server-side; the browser only learns which account connected.
+      return res.json({
+        success: true,
+        account: toPublicConnectionSummary(platformId, tokenData),
+        returnTo: sanitizeOAuthReturnTo(stateRow.return_to),
+      });
     } catch (error) {
       logger.error('OAuth callback error:', error);
       return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'OAuth callback failed' });
@@ -2009,27 +2162,9 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const pages = Array.from(byId.values());
       const warnings = [...discovered.warnings];
 
-      const graphBase = 'https://graph.facebook.com/v19.0';
-      let groups: Array<{ id: string; name: string }> = [];
-      try {
-        const groupsResp = await axios.get(
-          `${graphBase}/me/groups?fields=id,name&limit=200&access_token=${encodeURIComponent(accessToken)}`,
-          { validateStatus: () => true, timeout: 15000 }
-        );
-        const groupsData: any = groupsResp.data || {};
-        if (groupsResp.status >= 400) {
-          warnings.push(groupsData?.error?.message || `Facebook groups lookup failed (${groupsResp.status})`);
-        } else {
-          groups = Array.isArray(groupsData?.data)
-            ? groupsData.data.map((g: any) => ({ id: String(g?.id || '').trim(), name: String(g?.name || '').trim() })).filter((g: any) => g.id)
-            : [];
-        }
-      } catch (err) {
-        logger.error('Unhandled error:', err);
-        warnings.push('Facebook groups lookup failed');
-      }
-
-      return res.json({ success: true, pages, groups, missingPermissions: discovered.missingPermissions, warnings });
+      // Meta retired the Groups API (publish_to_groups) in 2024, so there are
+      // no group targets to list; the field stays for client compatibility.
+      return res.json({ success: true, pages, groups: [], missingPermissions: discovered.missingPermissions, warnings });
     } catch (error) {
       logger.error('Facebook targets error:', error);
       return res.status(500).json({ success: false, error: 'Failed to fetch Facebook targets' });
@@ -2054,7 +2189,7 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
 
       const accessToken = String(
         fbConn?.access_token ||
-        igTokenData.user_access_token ||
+        readUserAccessToken(igTokenData, decryptToken) ||
         (!igIsDirect ? igRawToken : '') ||
         ''
       ).trim();
@@ -2146,7 +2281,7 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
 
       const accessToken = String(
         fbConn?.access_token ||
-        igTokenData.user_access_token ||
+        readUserAccessToken(igTokenData, decryptToken) ||
         (!igIsDirect ? igRawToken : '') ||
         ''
       ).trim();
@@ -2171,7 +2306,11 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const handle = String(profile?.username || instagramUsername || '').trim() || null;
       const followers = Number(profile?.followers_count ?? 0);
       const profileImage = typeof profile?.profile_picture_url === 'string' ? profile.profile_picture_url : null;
-      const pageTokenExpiry = fbConn?.token_expires_at || igConn?.token_expires_at || null;
+      // A Page token minted from a long-lived user token never expires; one
+      // minted from a short-lived token lapses with it.
+      const sourceExpiry = (fbConn?.access_token ? fbConn?.token_expires_at : igConn?.token_expires_at) || null;
+      const sourceExpiryMs = sourceExpiry ? new Date(sourceExpiry).getTime() : NaN;
+      const pageTokenExpiry = Number.isFinite(sourceExpiryMs) && sourceExpiryMs - Date.now() < 24 * 3600 * 1000 ? sourceExpiry : null;
 
       const pageTokenEncrypted = encryptIntegrationSecret(pageToken);
 
@@ -2184,14 +2323,15 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
                profile_image=COALESCE(EXCLUDED.profile_image, social_accounts.profile_image),
                followers=CASE WHEN EXCLUDED.followers > 0 THEN EXCLUDED.followers ELSE social_accounts.followers END,
                connected=true, connected_at=NOW(),
-               token_expires_at=COALESCE(EXCLUDED.token_expires_at, social_accounts.token_expires_at),
+               token_expires_at=EXCLUDED.token_expires_at, expires_at=NULL,
                access_token=EXCLUDED.access_token, access_token_encrypted=EXCLUDED.access_token_encrypted,
                token_data=EXCLUDED.token_data, needs_reapproval=false`,
         [randomUUID(), auth.userId, igId, displayName, handle, profileImage, followers, pageTokenExpiry, null, pageTokenEncrypted,
           JSON.stringify({
             login_method: 'facebook',
             graph_host: 'graph.facebook.com',
-            user_access_token: accessToken,
+            facebook_user_id: (fbConn?.access_token ? fbConn?.account_id : igTokenData.facebook_user_id) || null,
+            user_access_token_enc: encryptIntegrationSecret(accessToken),
             pageId: pid,
             pageName: (match as any).pageName || null,
             pagePicture: (match as any).pagePicture || null,
@@ -2302,8 +2442,11 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
 
       const { apiKey, serverPrefix } = req.body as { apiKey?: string; serverPrefix?: string };
       const key = String(apiKey || '').trim();
-      const prefix = String(serverPrefix || '').trim();
-      if (!key || !prefix) return res.status(400).json({ success: false, error: 'apiKey and serverPrefix are required' });
+      if (!key) return res.status(400).json({ success: false, error: 'apiKey is required' });
+      // The prefix becomes part of the API hostname, so only a real datacenter
+      // id ("us6") is accepted — anything else could aim the request elsewhere.
+      const prefix = resolveMailchimpServerPrefix(key, serverPrefix);
+      if (!prefix) return res.status(400).json({ success: false, error: 'Invalid Mailchimp server prefix — use the datacenter at the end of your API key (e.g. us6)' });
 
       const resp = await axios.get(`https://${prefix}.api.mailchimp.com/3.0/`, {
         auth: { username: 'anystring', password: key },
@@ -2311,9 +2454,10 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
         timeout: 8000,
       });
       if (resp.status !== 200) return res.status(400).json({ success: false, error: 'Invalid Mailchimp API key or server prefix' });
+      const accountName = String((resp.data as any)?.account_name || '').trim() || 'Mailchimp';
 
       const tokenEncrypted = encryptIntegrationSecret(JSON.stringify({ apiKey: key, serverPrefix: prefix }));
-      await upsertUserIntegration({ userId: auth.userId, integrationSlug: 'mailchimp', accessTokenEncrypted: tokenEncrypted, refreshTokenEncrypted: null, tokenExpiry: null, accountId: prefix, accountName: 'Mailchimp', status: 'connected' });
+      await upsertUserIntegration({ userId: auth.userId, integrationSlug: 'mailchimp', accessTokenEncrypted: tokenEncrypted, refreshTokenEncrypted: null, tokenExpiry: null, accountId: prefix, accountName, status: 'connected' });
       await logIntegrationEvent({ userId: auth.userId, integrationSlug: 'mailchimp', eventType: 'connection_attempt', status: 'success', response: { serverPrefix: prefix } });
 
       return res.json({ success: true });
@@ -2352,8 +2496,9 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const pid = String(phoneNumberId || '').trim();
       const tok = String(accessToken || '').trim();
       if (!pid || !tok) return res.status(400).json({ success: false, error: 'phoneNumberId and accessToken are required' });
+      if (!/^\d{5,30}$/.test(pid)) return res.status(400).json({ success: false, error: 'phoneNumberId must be the numeric Phone Number ID from WhatsApp Manager' });
 
-      const verifyResp = await axios.get(`https://graph.facebook.com/v19.0/${pid}?fields=id,display_phone_number,verified_name`, {
+      const verifyResp = await axios.get(`${META_GRAPH_BASE}/${pid}?fields=id,display_phone_number,verified_name`, {
         headers: { Authorization: `Bearer ${tok}` },
         validateStatus: () => true,
         timeout: 10000,
@@ -2401,21 +2546,45 @@ export function registerSocialConnectRoutes(deps: SocialConnectDeps): Router {
       const auth = requireAuth(req, res);
       if (!auth) return;
 
-      await removeUserConnection({ pool, dbQuery, normalizePlatformId, upsertUserIntegration, logIntegrationEvent }, auth.userId, req.params.platform);
-      return res.json({ success: true });
+      const { revoked } = await removeUserConnection(
+        { pool, dbQuery, normalizePlatformId, upsertUserIntegration, logIntegrationEvent, getPlatformConfig, decryptIntegrationSecret: deps.decryptIntegrationSecret },
+        auth.userId,
+        req.params.platform,
+      );
+      return res.json({ success: true, providerRevoked: revoked });
     } catch (error) {
       logger.error('Disconnect error:', error);
       return res.status(500).json({ success: false, error: 'Failed to disconnect' });
     }
   });
 
-  // GET /api/accounts/:platform/test
+  // GET /api/accounts/:platform/test — live check that the stored credentials
+  // still work, using each provider's cheapest identity endpoint.
   router.get('/accounts/:platform/test', async (req: Request, res: Response) => {
     try {
       const auth = requireAuth(req, res);
       if (!auth) return;
+      const platformId = normalizePlatformId(req.params.platform);
 
-      return res.json({ success: true, data: { status: 'ok', platform: req.params.platform, userId: auth.userId } });
+      const conn = await getPublishableSocialConnection(auth.userId, platformId);
+      if (!conn) return res.status(404).json({ success: false, error: `${platformDisplayName(platformId)} is not connected` });
+      if (conn.needs_reapproval || !conn.access_token) {
+        return res.json({ success: true, data: { platform: platformId, status: 'reconnect_required', message: 'Access has expired or was revoked. Reconnect this account.' } });
+      }
+
+      const result = await probeConnectionIdentity(platformId, conn);
+      if (result.status === 'unauthorized' && deps.markSocialAccountNeedsReapproval) {
+        await deps.markSocialAccountNeedsReapproval({ platformId, userId: auth.userId, reason: 'token_inactive' }).catch(() => undefined);
+      }
+      return res.json({
+        success: true,
+        data: {
+          platform: platformId,
+          status: result.status === 'ok' ? 'ok' : result.status === 'unauthorized' ? 'reconnect_required' : 'error',
+          message: result.message,
+          tokenExpiresAt: conn.token_expires_at || null,
+        },
+      });
     } catch (error) {
       logger.error('Test connection error:', error);
       return res.status(500).json({ success: false, error: 'Connection test failed' });

@@ -16,7 +16,7 @@ export interface AnalyticsDeps {
 
 // ─── Module-level constants ───────────────────────────────────────────────────
 
-export const META_GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+export { META_GRAPH_BASE } from '../../meta-graph.ts';
 export const INSTAGRAM_PROFILE_FIELDS = 'id,username,name,account_type,biography,followers_count,follows_count,media_count,profile_picture_url,website,is_verified';
 
 const LINKEDIN_MARKETING_VERSION = String(process.env.LINKEDIN_API_VERSION || '202603').trim() || '202603';

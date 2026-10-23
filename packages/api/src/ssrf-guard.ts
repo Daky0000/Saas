@@ -137,3 +137,46 @@ export async function safeAxios<T = unknown>(config: AxiosRequestConfig & { url:
     timeout: config.timeout ?? 15_000,
   });
 }
+
+// The app's own public origins, whose /media URLs publishing re-fetches. They
+// are trusted so local development (localhost) can publish media too.
+function ownOrigins(): Set<string> {
+  const origins = new Set<string>();
+  for (const raw of [process.env.BACKEND_PUBLIC_URL, process.env.PUBLIC_API_URL, process.env.API_PUBLIC_URL, process.env.VITE_APP_URL]) {
+    try { if (raw) origins.add(new URL(raw).origin); } catch { /* not a URL */ }
+  }
+  return origins;
+}
+
+// Downloads media for re-upload to a social platform. The URL comes from user
+// content (a post's featured image), so it gets the same SSRF protection as
+// any user-supplied fetch, plus a size cap; data: URLs are decoded locally.
+export async function fetchMediaBytes(
+  url: string,
+  options: { maxBytes?: number; timeoutMs?: number } = {},
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  const maxBytes = options.maxBytes ?? 100 * 1024 * 1024;
+  const raw = String(url || '').trim();
+  const dataUrl = raw.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/s);
+  if (dataUrl) {
+    const buffer = Buffer.from(dataUrl[2], 'base64');
+    if (buffer.length > maxBytes) throw new Error('Media exceeds the size limit');
+    return { buffer, mimeType: dataUrl[1].toLowerCase() };
+  }
+  let origin = '';
+  try { origin = new URL(raw).origin; } catch { throw new Error('Invalid media URL'); }
+  const request: AxiosRequestConfig & { url: string } = {
+    url: raw,
+    method: 'GET',
+    responseType: 'arraybuffer',
+    timeout: options.timeoutMs ?? 120_000,
+    maxContentLength: maxBytes,
+    validateStatus: () => true,
+  };
+  const resp = ownOrigins().has(origin)
+    ? await axios.request<ArrayBuffer>({ ...request, maxRedirects: 2 })
+    : await safeAxios<ArrayBuffer>(request);
+  if (resp.status >= 400) throw new Error(`Media download failed (HTTP ${resp.status})`);
+  const mimeType = String(resp.headers['content-type'] || '').split(';')[0].trim().toLowerCase() || 'application/octet-stream';
+  return { buffer: Buffer.from(resp.data), mimeType };
+}

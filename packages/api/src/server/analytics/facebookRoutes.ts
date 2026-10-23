@@ -6,8 +6,9 @@ import type { AnalyticsDeps } from './helpers.ts';
 import { encryptIntegrationSecret } from '../../integration-helpers.ts';
 import { getPlatformConfig } from '../../user-auth.ts';
 import { syncFacebookPagesForUser } from '../socialConnectRoutes.ts';
+import { META_GRAPH_BASE } from '../../meta-graph.ts';
 
-const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
+const GRAPH_BASE = META_GRAPH_BASE;
 
 async function ensureFacebookPagesSyncedForAnalytics(
   pool: AnalyticsDeps['pool'],

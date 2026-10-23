@@ -1,9 +1,9 @@
 import type NodeFormData from 'form-data';
 import { randomBytes, createCipheriv, createDecipheriv, scryptSync, randomUUID } from 'crypto';
-import axios from 'axios';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { pool, dbQuery } from './db.ts';
+import { safeAxios } from './ssrf-guard.ts';
 
 const INTEGRATIONS_ENCRYPTION_KEY = scryptSync(config.integrationsEncryptionKey, 'integrations', 32);
 const WORDPRESS_ENCRYPTION_KEY = scryptSync(config.wordpressEncryptionKey, 'wordpress', 32);
@@ -70,6 +70,55 @@ export function decryptPlatformConfig(config: Record<string, any> | null | undef
     }
   }
   return out;
+}
+
+// Admin config reads show secrets masked; a masked value coming back on save
+// means "unchanged". Real secrets never contain the bullet character.
+const SECRET_MASK_CHAR = '•';
+
+export function maskSecretValue(value: unknown): string {
+  const v = String(value ?? '');
+  if (!v) return '';
+  return v.length > 4 ? `${SECRET_MASK_CHAR.repeat(4)}${v.slice(-4)}` : SECRET_MASK_CHAR.repeat(4);
+}
+
+export function isMaskedSecretValue(value: unknown): boolean {
+  return typeof value === 'string' && value.includes(SECRET_MASK_CHAR);
+}
+
+export function maskPlatformConfigSecrets(config: Record<string, any> | null | undefined): Record<string, any> {
+  if (!config || typeof config !== 'object') return {};
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(config)) {
+    out[k] = isSecretPlatformField(k) && typeof v === 'string' && v ? maskSecretValue(v) : v;
+  }
+  return out;
+}
+
+// Restores the stored secret wherever the incoming (decrypted-space) config
+// still carries the mask the admin UI was shown.
+export function mergeMaskedSecrets(
+  existing: Record<string, any> | null | undefined,
+  incoming: Record<string, any>,
+): Record<string, any> {
+  const out: Record<string, any> = { ...incoming };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (isSecretPlatformField(k) && isMaskedSecretValue(v)) {
+      const previous = existing && typeof existing[k] === 'string' ? existing[k] : '';
+      if (previous) out[k] = previous;
+      else delete out[k];
+    }
+  }
+  return out;
+}
+
+// Mailchimp keys end in "-<datacenter>" (e.g. "...-us6"); the datacenter is
+// the API host prefix. Validated strictly because it becomes part of a hostname.
+export function resolveMailchimpServerPrefix(apiKey: string, serverPrefix?: string | null): string | null {
+  const key = String(apiKey || '').trim();
+  const fromKey = key.includes('-') ? key.slice(key.lastIndexOf('-') + 1) : '';
+  const candidate = String(serverPrefix || '').trim().toLowerCase() || fromKey.toLowerCase();
+  return /^[a-z]{2,4}\d{1,3}$/.test(candidate) ? candidate : null;
 }
 
 export async function getIntegrationRowBySlug(slug: string): Promise<{ id: number; slug: string; name: string | null; type: string | null } | null> {
@@ -163,9 +212,39 @@ export function decryptWordPressPassword(encrypted: string): string {
   return decipher.update(data).toString('utf8') + decipher.final('utf8');
 }
 
+// Media sent to WordPress as a data URL (or bare base64). The declared type
+// and the file extension must match the bytes: WordPress checks uploads
+// against both, and a PNG sent as "image/jpeg ... .jpg" can be rejected.
+const UPLOAD_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'application/pdf': 'pdf',
+};
+
+export function decodeWordPressUpload(
+  input: string,
+  requestedName: string | undefined,
+  defaultName: string,
+): { buffer: Buffer; contentType: string; filename: string } {
+  const raw = String(input || '').trim();
+  const match = raw.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[^,]*)?;base64,(.*)$/is);
+  const contentType = match ? match[1].toLowerCase() : 'image/jpeg';
+  const buffer = Buffer.from(match ? match[2] : raw, 'base64');
+  const base = String(requestedName || '').split(/[\\/]/).pop()!.replace(/[\x00-\x1f"]/g, '').trim() || defaultName;
+  const extension = UPLOAD_EXTENSIONS[contentType];
+  const stem = base.replace(/\.[a-z0-9]{1,5}$/i, '');
+  const filename = extension ? `${stem || 'upload'}.${extension}` : base;
+  return { buffer, contentType, filename };
+}
+
 export function normalizeWordPressSiteUrl(url: string): string {
-  const u = url.trim().replace(/\/+$/, '');
-  return u.startsWith('http') ? u : `https://${u}`;
+  const u = String(url || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\//i.test(u) ? u : `https://${u}`;
 }
 
 export interface WordPressConnection {
@@ -241,10 +320,19 @@ export async function removeWordPressSocialAccount(userId: string) {
 }
 
 export function isValidWebhookUrl(url: string): boolean {
-  const u = url.trim();
-  return u.startsWith('https://') || u.startsWith('http://');
+  try {
+    const parsed = new URL(String(url || '').trim());
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
+const WORDPRESS_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
+
+// The site URL is user-supplied, so every call goes through the SSRF guard
+// (validated up front and pinned to public IPs at connect time, including on
+// redirects), with bounded response sizes and a timeout.
 export async function wpRequest(
   siteUrl: string,
   username: string,
@@ -259,41 +347,27 @@ export async function wpRequest(
   const headers: Record<string, string> = {
     Authorization: `Basic ${auth}`,
   };
-  if (options.formData) {
-    // Let axios set Content-Type for FormData
-    try {
-      const res = await axios.request({
-        method,
-        url,
-        data: options.formData,
-        headers: { ...headers, ...('getHeaders' in options.formData ? options.formData.getHeaders() : {}) },
-        maxRedirects: 2,
-        validateStatus: () => true,
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-      });
-      return { data: res.data, status: res.status, error: res.status >= 400 ? (res.data?.message || res.statusText) : undefined };
-    } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Request failed';
-      return { status: err?.response?.status || 500, error: msg };
-    }
-  }
-  if (options.data !== undefined) headers['Content-Type'] = 'application/json';
+  const isUpload = Boolean(options.formData);
+  if (options.formData && 'getHeaders' in options.formData) Object.assign(headers, options.formData.getHeaders());
+  if (!isUpload && options.data !== undefined) headers['Content-Type'] = 'application/json';
   try {
-    const res = await axios.request({
+    const res = await safeAxios<any>({
       method,
       url,
-      data: options.data,
+      data: isUpload ? options.formData : options.data,
       headers,
       maxRedirects: 2,
       validateStatus: () => true,
+      timeout: isUpload ? 60_000 : 20_000,
+      maxBodyLength: isUpload ? WORDPRESS_UPLOAD_LIMIT_BYTES : 10 * 1024 * 1024,
+      maxContentLength: 10 * 1024 * 1024,
     });
     const error = res.status >= 400 ? (res.data?.message || res.data?.code || res.statusText) : undefined;
     return { data: res.data, status: res.status, error };
   } catch (err: any) {
     const msg = err?.response?.data?.message || err?.message || 'Request failed';
-    return { status: err?.response?.status || 500, error: msg };
+    return { status: err?.response?.status || 502, error: msg };
   }
 }
 
-// POST /api/wordpress/connect 뿯붿?validate and store connection (tries Application Password first, then login password)
+// POST /api/wordpress/connect — validate and store connection (tries Application Password first, then login password)

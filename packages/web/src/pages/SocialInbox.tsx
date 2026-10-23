@@ -13,6 +13,7 @@ import {
   Check,
 } from 'lucide-react';
 import { API_BASE_URL } from '../utils/apiBase';
+import { integrationService } from '../services/integrationService';
 
 interface SocialThread {
   id: string;
@@ -37,6 +38,13 @@ interface SocialMessage {
   body: string;
   ai_generated: boolean;
   created_at: string;
+}
+
+// Returned when a reply needs the account reconnected or a permission approved.
+interface ReconnectHint {
+  platform: 'facebook' | 'instagram';
+  method?: 'instagram' | 'facebook';
+  extraScopes: string[];
 }
 
 interface ApprovalLinkItem {
@@ -65,6 +73,8 @@ export default function SocialInbox() {
   const [replyText, setReplyText] = useState<string>('');
   const [aiDrafting, setAiDrafting] = useState<boolean>(false);
   const [sending, setSending] = useState<boolean>(false);
+  const [aiDraft, setAiDraft] = useState<string | null>(null);
+  const [replyError, setReplyError] = useState<{ text: string; reconnect?: ReconnectHint } | null>(null);
   const [converting, setConverting] = useState<boolean>(false);
   const [bannerMsg, setBannerMsg] = useState<string | null>(null);
 
@@ -154,6 +164,7 @@ export default function SocialInbox() {
       const data = await res.json();
       if (data.success && data.draft) {
         setReplyText(data.draft);
+        setAiDraft(data.draft);
       }
     } finally {
       setAiDrafting(false);
@@ -163,20 +174,26 @@ export default function SocialInbox() {
   const handleSendReply = async (markResolved = false) => {
     if (!selectedThread || !replyText.trim()) return;
     setSending(true);
+    setReplyError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/social-inbox/threads/${selectedThread.id}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           body: replyText,
-          aiGenerated: true,
+          aiGenerated: aiDraft !== null && replyText.trim() === aiDraft.trim(),
           markResolved,
         }),
       });
-      const data = await res.json();
-      if (data.success && data.message) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        setReplyError({ text: data.error || 'The reply could not be sent.', reconnect: data.reconnect });
+        return;
+      }
+      if (data.message) {
         setMessages((prev) => [...prev, data.message]);
         setReplyText('');
+        setAiDraft(null);
         if (markResolved) {
           setSelectedThread({ ...selectedThread, status: 'resolved' });
           setThreads((prev) =>
@@ -482,7 +499,7 @@ export default function SocialInbox() {
                       {aiDrafting ? 'Drafting with Brand Memory...' : 'Draft Smart Reply with AI'}
                     </button>
                     <span className="text-[11px] text-slate-400">
-                      Replies sync directly to thread history
+                      Replies are sent on {selectedThread.platform === 'facebook' ? 'Facebook' : selectedThread.platform === 'instagram' ? 'Instagram' : 'the platform'} and saved to this thread
                     </span>
                   </div>
 
@@ -493,6 +510,28 @@ export default function SocialInbox() {
                     placeholder={`Reply to ${selectedThread.sender_name}...`}
                     className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
+
+                  {replyError ? (
+                    <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      <span>{replyError.text}</span>
+                      {replyError.reconnect ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const hint = replyError.reconnect!;
+                            void integrationService.startOAuth(hint.platform, '/social-inbox', {
+                              extraScopes: hint.extraScopes,
+                              rerequest: hint.extraScopes.length > 0,
+                              method: hint.method,
+                            });
+                          }}
+                          className="shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 font-semibold text-rose-700 hover:bg-rose-100"
+                        >
+                          Reconnect {replyError.reconnect.platform === 'facebook' ? 'Facebook' : 'Instagram'}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="flex items-center justify-end gap-2">
                     <button

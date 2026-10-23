@@ -26,6 +26,8 @@ const PLATFORM_BADGE: Record<string, { bg: string; text: string }> = {
   connected: { bg: 'bg-emerald/10', text: 'text-emerald' },
   disconnected: { bg: 'bg-soft', text: 'text-muted' },
   disabled: { bg: 'bg-amber/15', text: 'text-amber' },
+  expiring: { bg: 'bg-warn-surface', text: 'text-warn-text' },
+  reconnect: { bg: 'bg-danger-surface', text: 'text-danger-text' },
 };
 
 const formatDate = (value?: string | null) => {
@@ -48,6 +50,7 @@ function Card({
   icon,
   meta,
   disabledReason,
+  notice,
   children,
 }: {
   title: string;
@@ -57,6 +60,7 @@ function Card({
   icon: React.ReactNode;
   meta?: string | null;
   disabledReason?: string | null;
+  notice?: { tone: 'warn' | 'danger'; text: string } | null;
   children: React.ReactNode;
 }) {
   const badge = PLATFORM_BADGE[statusTone];
@@ -79,6 +83,17 @@ function Card({
         {disabledReason ? (
           <p className="mt-2.5 rounded-lg border border-amber/30 bg-amber/5 px-2.5 py-1.5 text-xs font-medium text-amber">
             {disabledReason}
+          </p>
+        ) : null}
+        {notice ? (
+          <p
+            role="status"
+            className={`mt-2.5 flex items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+              notice.tone === 'danger' ? 'border-danger-line bg-danger-surface text-danger-text' : 'border-warn-line bg-warn-surface text-warn-text'
+            }`}
+          >
+            <AlertCircle size={14} className="mt-px shrink-0" />
+            <span>{notice.text}</span>
           </p>
         ) : null}
       </div>
@@ -858,11 +873,24 @@ export default function Integrations({ onNavigateSettings }: Props) {
       );
     }
 
+    // Credentials the server says are dead (or about to lapse) need the user.
+    const health = item.connected ? item.health : null;
+    const needsReconnect = health?.status === 'reconnect_required';
+    const expiringSoon = health?.status === 'expiring';
+    const healthNotice = needsReconnect || expiringSoon
+      ? { tone: needsReconnect ? 'danger' as const : 'warn' as const, text: health?.message || 'Reconnect this account to keep publishing.' }
+      : null;
+
     const statusTone: keyof typeof PLATFORM_BADGE =
-      effectiveDisabledReason ? 'disabled' : item.connected ? 'connected' : 'disconnected';
+      effectiveDisabledReason ? 'disabled'
+        : needsReconnect ? 'reconnect'
+          : expiringSoon ? 'expiring'
+            : item.connected ? 'connected' : 'disconnected';
     const statusLabel = effectiveDisabledReason
       ? item.adminEnabled ? 'Needs setup' : 'Admin disabled'
-      : item.connected ? 'Connected' : 'Disconnected';
+      : needsReconnect ? 'Reconnect required'
+        : expiringSoon ? 'Expiring soon'
+          : item.connected ? 'Connected' : 'Disconnected';
 
     const connectLabel = item.connected ? 'Reconnect' : 'Connect';
 
@@ -893,12 +921,13 @@ export default function Integrations({ onNavigateSettings }: Props) {
         statusLabel={statusLabel}
         statusTone={statusTone}
         disabledReason={effectiveDisabledReason}
+        notice={effectiveDisabledReason ? null : healthNotice}
         icon={<PlatformLogo platform={slug} size={48} />}
         meta={connectedMeta}
       >
         {slug === 'instagram' ? (
           <>
-            {!item.connected ? (
+            {!item.connected || needsReconnect || expiringSoon ? (
               <button
                 type="button"
                 onClick={() => void startOAuth('instagram', '/integrations?igConnected=1&igMethod=instagram', { method: 'instagram' })}
@@ -906,7 +935,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 className={PRIMARY_ACTION}
                 title="Connect directly with Instagram Business or Creator account (no Facebook Page required)"
               >
-                {busy === 'instagram' ? <Loader2 size={16} className="animate-spin" /> : <Instagram size={16} />} Connect Instagram
+                {busy === 'instagram' ? <Loader2 size={16} className="animate-spin" /> : <Instagram size={16} />} {item.connected ? 'Reconnect Instagram' : 'Connect Instagram'}
               </button>
             ) : null}
             <button
@@ -975,7 +1004,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
             onClick={() => openFacebookType()}
             disabled={!item.connected}
             className={SECONDARY_ACTION}
-            title={!item.connected ? 'Connect Facebook first' : 'Select or manage Facebook Pages & Groups'}
+            title={!item.connected ? 'Connect Facebook first' : 'Select or manage Facebook Pages'}
           >
             <Settings2 size={16} /> Manage Pages
           </button>
@@ -1222,7 +1251,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 <div className="mt-1 truncate font-mono text-[11px] text-muted">
                   {window.location.origin}/api/meta/data-deletion
                 </div>
-                <p className="mt-1 text-[10px] text-muted">Meta App Settings → User Data Deletion.</p>
+                <p className="mt-1 text-[10px] text-muted">Meta App Settings → User Data Deletion. Verified with the app secret.</p>
               </div>
 
               <div className="rounded-xl border border-line bg-soft/60 p-3">
@@ -1258,7 +1287,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 <div className="mt-1 truncate font-mono text-[11px] text-muted">
                   {window.location.origin}/api/oauth/[tool]/deauthorize
                 </div>
-                <p className="mt-1 text-[10px] text-muted">Zoom, TikTok, Slack, X deauthorization webhook.</p>
+                <p className="mt-1 text-[10px] text-muted">Zoom, TikTok and Slack deauthorization events. Only signed requests are accepted (Slack signing secret, Zoom secret token, TikTok client secret).</p>
               </div>
 
               <div className="rounded-xl border border-line bg-soft/60 p-3">
@@ -1276,7 +1305,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                 <div className="mt-1 truncate font-mono text-[11px] text-muted">
                   {window.location.origin}/api/oauth/[tool]/data-deletion
                 </div>
-                <p className="mt-1 text-[10px] text-muted">Universal compliance data deletion webhook.</p>
+                <p className="mt-1 text-[10px] text-muted">Signed data deletion requests (Meta, Zoom, TikTok, Slack); unsigned requests are rejected.</p>
               </div>
 
               <div className="rounded-xl border border-line bg-soft/60 p-3">
@@ -1371,6 +1400,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
                     <div>
                       <label className="text-xs font-semibold text-slate-600">Application Password</label>
                       <input
+                        type="password"
+                        autoComplete="off"
                         value={wpAppPassword}
                         onChange={(e) => setWpAppPassword(e.target.value)}
                         placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
@@ -1404,7 +1435,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
               {modal.type === 'facebook-type' ? (
                 <div className="space-y-4">
                   <div className="text-sm text-slate-600">
-                    Choose what you want to connect. Pages support direct publishing, Groups are available for reminders.
+                    Connect the Facebook Pages you manage for direct publishing. Meta retired the Groups publishing API, so Groups can no longer be connected.
                   </div>
                   <button
                     type="button"
@@ -1424,26 +1455,6 @@ export default function Integrations({ onNavigateSettings }: Props) {
                     </div>
                     <div className={`h-5 w-5 rounded-full border ${fbTargetType === 'page' ? 'border-blue-500' : 'border-slate-300'}`}>
                       <div className={`h-full w-full rounded-full ${fbTargetType === 'page' ? 'bg-blue-500' : 'bg-transparent'}`} />
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFbTargetType('group')}
-                    className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition ${
-                      fbTargetType === 'group' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">G</div>
-                      <div>
-                        <div className="text-sm font-bold text-slate-900">Group</div>
-                        <div className="text-xs text-slate-500">
-                          Use Groups for reminders or discussion posts. Availability depends on Meta permissions.
-                        </div>
-                      </div>
-                    </div>
-                    <div className={`h-5 w-5 rounded-full border ${fbTargetType === 'group' ? 'border-blue-500' : 'border-slate-300'}`}>
-                      <div className={`h-full w-full rounded-full ${fbTargetType === 'group' ? 'bg-blue-500' : 'bg-transparent'}`} />
                     </div>
                   </button>
                   <div className="flex justify-end gap-2">
@@ -2105,6 +2116,8 @@ export default function Integrations({ onNavigateSettings }: Props) {
                     <div className="sm:col-span-2">
                       <label className="text-xs font-semibold text-slate-600">API key</label>
                       <input
+                        type="password"
+                        autoComplete="off"
                         value={mcApiKey}
                         onChange={(e) => setMcApiKey(e.target.value)}
                         placeholder="xxxxxxxxxxxxxxxx-us19"
@@ -2112,11 +2125,11 @@ export default function Integrations({ onNavigateSettings }: Props) {
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-semibold text-slate-600">Server prefix</label>
+                      <label className="text-xs font-semibold text-slate-600">Server prefix (optional)</label>
                       <input
                         value={mcServerPrefix}
                         onChange={(e) => setMcServerPrefix(e.target.value)}
-                        placeholder="us19"
+                        placeholder="Read from the key, e.g. us19"
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                       />
                     </div>
@@ -2139,7 +2152,7 @@ export default function Integrations({ onNavigateSettings }: Props) {
                         setBusy(null);
                       }
                     }}
-                    disabled={busy === 'mailchimp' || !mcApiKey.trim() || !mcServerPrefix.trim()}
+                    disabled={busy === 'mailchimp' || !mcApiKey.trim()}
                     className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
                   >
                     {busy === 'mailchimp' ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />} Connect

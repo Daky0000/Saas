@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { encryptIntegrationSecret, decryptIntegrationSecret, logIntegrationEvent } from '../integration-helpers.ts';
 import { inMemoryPlatformConfigs } from '../user-auth.ts';
-import { OAUTH_AUTH_URLS, resolveOAuthRedirectUri, formatSocialAccountLabel, getMetaOAuthScopeString } from '../platform-helpers.ts';
-import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, fetchAccessibleFacebookPages, syncFacebookPagesForUser, type SocialConnectDeps } from './socialConnectRoutes.ts';
+import { OAUTH_AUTH_URLS, resolveOAuthRedirectUri, formatSocialAccountLabel, getMetaOAuthScopeString, resolveInstagramAppConfig } from '../platform-helpers.ts';
+import { getOAuthStateRow as stateImpl, exchangeFacebookCode as facebookImpl, exchangeOAuthCode as exchangeImpl, storeUserConnection as storeImpl, platformDisplayName, fetchAccessibleFacebookPages, syncFacebookPagesForUser, sanitizeOAuthReturnTo, type SocialConnectDeps } from './socialConnectRoutes.ts';
+import { META_GRAPH_BASE, META_OAUTH_DIALOG_URL } from '../meta-graph.ts';
+import { normalizeWordPressSiteUrl, resolveMailchimpServerPrefix } from '../integration-helpers.ts';
+import { safeAxios } from '../ssrf-guard.ts';
+import { verifyOAuthClientCredentials } from '../oauth-provider-checks.ts';
 import axios from 'axios';
 import type { Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -60,6 +64,9 @@ function resolveBackendRedirectUri(uri: string | undefined, req?: Request): stri
   return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
 }
 
+// This router is mounted under /api.
+const FACEBOOK_V1_CALLBACK_PATH = '/api/v1/social/facebook/callback';
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 export function registerSocialRoutes(deps: SocialDeps): Router {
@@ -93,7 +100,7 @@ router.get('/v1/social/facebook/connect', async (req: Request, res: Response) =>
     if (!clientId || !clientSecret) return res.status(400).send('Facebook integration not configured');
 
     const state = randomUUID();
-    const returnTo = String((req.query as any)?.returnTo || '').trim() || '/posts?view=automation&subtab=connections';
+    const returnTo = sanitizeOAuthReturnTo((req.query as any)?.returnTo) || '/posts?view=automation&subtab=connections';
 
     await dbQuery(
       `INSERT INTO oauth_states (state, user_id, platform, return_to, created_at, expires_at)
@@ -102,7 +109,7 @@ router.get('/v1/social/facebook/connect', async (req: Request, res: Response) =>
       [state, auth.userId, returnTo]
     );
 
-    const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
+    const redirectUri = resolveBackendRedirectUri(FACEBOOK_V1_CALLBACK_PATH, req);
     const baseScope = getMetaOAuthScopeString();
     const extraScopes = String((req.query as any)?.extra_scopes || '')
       .split(',')
@@ -110,7 +117,7 @@ router.get('/v1/social/facebook/connect', async (req: Request, res: Response) =>
       .filter((s) => /^[a-z0-9_]+$/i.test(s));
     const scope = Array.from(new Set([...baseScope.split(','), ...extraScopes].filter(Boolean))).join(',');
 
-    const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
+    const oauthUrl = new URL(META_OAUTH_DIALOG_URL);
     oauthUrl.searchParams.set('client_id', clientId);
     oauthUrl.searchParams.set('redirect_uri', redirectUri);
     oauthUrl.searchParams.set('state', state);
@@ -138,7 +145,7 @@ router.get('/v1/social/facebook/authorize-url', async (req: Request, res: Respon
     if (!clientId || !clientSecret) return res.status(400).json({ success: false, error: 'Facebook integration not configured' });
 
     const state = randomUUID();
-    const returnTo = String((req.query as any)?.returnTo || '').trim() || '/posts?view=automation&subtab=connections';
+    const returnTo = sanitizeOAuthReturnTo((req.query as any)?.returnTo) || '/posts?view=automation&subtab=connections';
 
     await dbQuery(
       `INSERT INTO oauth_states (state, user_id, platform, return_to, created_at, expires_at)
@@ -147,14 +154,14 @@ router.get('/v1/social/facebook/authorize-url', async (req: Request, res: Respon
       [state, auth.userId, returnTo]
     );
 
-    const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
+    const redirectUri = resolveBackendRedirectUri(FACEBOOK_V1_CALLBACK_PATH, req);
     const extraScopes = String((req.query as any)?.extra_scopes || '')
       .split(',')
       .map((s) => s.trim())
       .filter((s) => /^[a-z0-9_]+$/i.test(s));
     const scope = getMetaOAuthScopeString(extraScopes);
 
-    const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
+    const oauthUrl = new URL(META_OAUTH_DIALOG_URL);
     oauthUrl.searchParams.set('client_id', clientId);
     oauthUrl.searchParams.set('redirect_uri', redirectUri);
     oauthUrl.searchParams.set('state', state);
@@ -188,45 +195,17 @@ router.get('/v1/social/facebook/callback', async (req: Request, res: Response) =
     const stateRow = await getOAuthStateRow(state);
     if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
     if (String(stateRow.platform || '').trim().toLowerCase() !== 'facebook') return res.redirect(fallbackErr('State/platform mismatch'));
+    // Single use: claim the state before redeeming the code.
+    const claimed = await dbQuery('DELETE FROM oauth_states WHERE state = $1 RETURNING state', [state]);
+    if (!claimed.rows.length) return res.redirect(fallbackErr('This connection link was already used'));
 
-    const redirectUri = resolveBackendRedirectUri('/v1/social/facebook/callback', req);
+    // exchangeFacebookCode already swaps in the long-lived (~60 day) token.
+    const redirectUri = resolveBackendRedirectUri(FACEBOOK_V1_CALLBACK_PATH, req);
     const tokenData = await exchangeFacebookCode(code, redirectUri, req);
-
-    // Exchange short-lived user token for a long-lived one (~60 days)
-    const shortToken = String(tokenData?.access_token || '').trim();
-    if (shortToken) {
-      try {
-        const cfg2 = await getPlatformConfig('facebook');
-        const appId = String(cfg2.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
-        const appSecret = String(cfg2.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
-        if (appId && appSecret) {
-          const llResp = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
-            params: {
-              grant_type: 'fb_exchange_token',
-              client_id: appId,
-              client_secret: appSecret,
-              fb_exchange_token: shortToken,
-            },
-            validateStatus: () => true,
-            timeout: 15000,
-          });
-          const llData: any = llResp.data || {};
-          if (llResp.status < 400 && llData.access_token) {
-            tokenData.access_token = llData.access_token;
-            tokenData.expires_in = llData.expires_in || 60 * 24 * 3600;
-          }
-        }
-      } catch (e) {
-        logger.warn({ e }, 'linkedin_long_lived_token_exchange_failed — using short-lived token');
-      }
-    }
-
     await storeUserConnection(stateRow.user_id, 'facebook', tokenData);
-    await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
 
-    const returnTo = (stateRow as any).return_to as string | null | undefined;
-    const dest = returnTo && returnTo.startsWith('/') ? `${FRONTEND_URL}${returnTo}` : fallbackOk;
-    return res.redirect(dest);
+    const returnTo = sanitizeOAuthReturnTo((stateRow as any).return_to);
+    return res.redirect(returnTo ? `${FRONTEND_URL}${returnTo}` : fallbackOk);
   } catch (err) {
     logger.error('v1 facebook callback error:', err);
     const msg = err instanceof Error ? err.message : 'Facebook OAuth failed';
@@ -345,7 +324,7 @@ router.get('/v1/social/facebook/targets', async (req: Request, res: Response) =>
     const missingPermissions = pageResult.missingPermissions;
     const warnings = [...pageResult.warnings];
 
-    const graphBase = 'https://graph.facebook.com/v19.0';
+    const graphBase = META_GRAPH_BASE;
     let groups: Array<{ id: string; name: string }> = [];
     try {
       const groupsResp = await axios.get(
@@ -483,7 +462,7 @@ router.get('/v1/social/facebook/page-insights', async (req: Request, res: Respon
     }
     if (!pageToken) return res.status(400).json({ success: false, error: 'Facebook page token not available — reconnect the page' });
 
-    const graphBase = 'https://graph.facebook.com/v19.0';
+    const graphBase = META_GRAPH_BASE;
     const metrics = [
       'page_impressions',
       'page_impressions_unique',
@@ -568,7 +547,7 @@ router.get('/v1/social/facebook/post-insights', async (req: Request, res: Respon
     }
     if (!pageToken) return res.status(400).json({ success: false, error: 'Facebook token not available — reconnect' });
 
-    const graphBase = 'https://graph.facebook.com/v19.0';
+    const graphBase = META_GRAPH_BASE;
 
     // Fetch post insights metrics
     const insightsResp = await axios.get(`${graphBase}/${encodeURIComponent(postId)}/insights`, {
@@ -642,7 +621,7 @@ router.post('/v1/social/facebook/token-refresh', async (req: Request, res: Respo
     const appSecret = String(cfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
     if (!appId || !appSecret) return res.status(500).json({ success: false, error: 'Facebook app credentials not configured' });
 
-    const resp = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+    const resp = await axios.get(`${META_GRAPH_BASE}/oauth/access_token`, {
       params: {
         grant_type: 'fb_exchange_token',
         client_id: appId,
@@ -750,10 +729,16 @@ router.post('/v1/social/accounts', async (req: Request, res: Response) => {
           error: 'You do not have permission to publish to this Facebook Page. Ask for Editor/Admin access.',
         });
       }
-      accessTokenToStore = String(match.access_token || profileToken || '').trim() || null;
+      // A user token cannot publish as the Page, so it is never stored in place of one.
+      accessTokenToStore = String(match.access_token || '').trim() || null;
       profileImage = match.picture || null;
       tokenExpiresAtToStore = null;
-      if (!accessTokenToStore) return res.status(400).json({ success: false, error: 'Facebook Page access token not available' });
+      if (!accessTokenToStore) {
+        return res.status(400).json({
+          success: false,
+          error: 'Facebook did not return a Page access token for this Page. Make sure your Page role allows creating content, then reconnect Facebook.',
+        });
+      }
       accessTokenEncryptedToStore = encryptIntegrationSecret(accessTokenToStore);
       accessTokenToStore = null;
     }
@@ -1342,14 +1327,15 @@ router.get('/auth/:platform/callback', async (req: Request, res: Response) => {
     const stateRow = await getOAuthStateRow(state);
     if (!stateRow) return res.redirect(fallbackErr('Invalid or expired state'));
     if (String(stateRow.platform || '').trim().toLowerCase() !== platformId) return res.redirect(fallbackErr('State/platform mismatch'));
+    // Single use: claim the state before redeeming the code.
+    const claimed = await dbQuery('DELETE FROM oauth_states WHERE state = $1 RETURNING state', [state]);
+    if (!claimed.rows.length) return res.redirect(fallbackErr('This connection link was already used'));
 
     const tokenData = await exchangeOAuthCode(platformId, code, stateRow.code_verifier || undefined, req);
     await storeUserConnection(stateRow.user_id, platformDisplayName(platformId), tokenData);
-    await dbQuery('DELETE FROM oauth_states WHERE state = $1', [state]).catch(() => undefined);
 
-    const returnTo = (stateRow as any).return_to as string | null | undefined;
-    const dest = returnTo && returnTo.startsWith('/') ? `${FRONTEND_URL}${returnTo}` : fallbackOk;
-    return res.redirect(dest);
+    const returnTo = sanitizeOAuthReturnTo((stateRow as any).return_to);
+    return res.redirect(returnTo ? `${FRONTEND_URL}${returnTo}` : fallbackOk);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'OAuth connection failed';
     logger.error('Platform OAuth callback error:', err);
@@ -1403,18 +1389,21 @@ router.get('/admin/platform-configs/:platform/test', async (req: Request, res: R
         if (!siteUrl || !username || !applicationPassword) {
           return res.json({ success: false, error: 'Missing WordPress credentials' });
         }
-        const base = siteUrl.replace(/\/$/, '');
-        const resp = await axios.get(`${base}/wp-json/wp/v2/users/me`, {
+        const resp = await safeAxios({
+          method: 'GET',
+          url: `${normalizeWordPressSiteUrl(siteUrl)}/wp-json/wp/v2/users/me`,
           auth: { username, password: applicationPassword },
           validateStatus: () => true,
           timeout: 8000,
+          maxContentLength: 2 * 1024 * 1024,
         });
-        if (resp.status === 200) return res.json({ success: true, message: `Connected as ${resp.data?.name || username}` });
+        if (resp.status === 200) return res.json({ success: true, message: `Connected as ${(resp.data as any)?.name || username}` });
         return res.json({ success: false, error: `WordPress returned ${resp.status}` });
       }
       case 'mailchimp': {
-        const { apiKey, serverPrefix } = cfg;
-        if (!apiKey || !serverPrefix) return res.json({ success: false, error: 'Missing Mailchimp credentials' });
+        const { apiKey } = cfg;
+        const serverPrefix = resolveMailchimpServerPrefix(apiKey, cfg.serverPrefix);
+        if (!apiKey || !serverPrefix) return res.json({ success: false, error: 'Missing Mailchimp API key or server prefix' });
         const resp = await axios.get(`https://${serverPrefix}.api.mailchimp.com/3.0/`, {
           auth: { username: 'anystring', password: apiKey },
           validateStatus: () => true,
@@ -1477,14 +1466,31 @@ router.get('/admin/platform-configs/:platform/test', async (req: Request, res: R
         if (!host || !port) return res.json({ success: false, error: 'SMTP host and port are required' });
         return res.json({ success: true, message: 'SMTP credentials saved. Send a test email to verify delivery.' });
       }
+      case 'google_calendar': {
+        // Calendar may reuse the Gmail OAuth client.
+        const calendarCfg = cfg.clientId ? cfg : await getPlatformConfig('gmail').catch(() => ({} as Record<string, string>));
+        const redirectUri = String(cfg.calendarRedirectUri || '').trim() || resolveBackendRedirectUri('/api/calendar/google/callback', req);
+        const check = await verifyOAuthClientCredentials('google_calendar', calendarCfg, redirectUri);
+        if (check.status === 'valid') return res.json({ success: true, status: check.status, message: check.message });
+        return res.json({ success: false, status: check.status, error: check.message });
+      }
       default: {
-        // For OAuth platforms (instagram, facebook, etc.) — check credentials are set
+        // OAuth apps: ask the provider whether it accepts the client id/secret.
         const meta = OAUTH_AUTH_URLS[platform];
         if (!meta) return res.json({ success: false, error: 'Unsupported platform' });
-        const clientId = cfg[meta.idField];
-        const redirectUri = resolveOAuthRedirectUri(platform, cfg.redirectUri, req);
-        if (!clientId || !redirectUri) return res.json({ success: false, error: 'Credentials not configured' });
-        return res.json({ success: true, message: 'Credentials are saved. Test the OAuth flow by clicking "Test OAuth" on the user page.' });
+        let probePlatform = platform;
+        let probeCfg = cfg;
+        if (platform === 'instagram') {
+          const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+          const resolved = resolveInstagramAppConfig(cfg, fbCfg);
+          probeCfg = resolved.cfg;
+          // Instagram through Facebook Login runs on the Facebook app's credentials.
+          if (resolved.inheritedFromFacebook || String(cfg.loginType || '').toLowerCase() === 'facebook') probePlatform = 'facebook';
+        }
+        const redirectUri = resolveOAuthRedirectUri(platform, probeCfg.redirectUri, req);
+        const check = await verifyOAuthClientCredentials(probePlatform, probeCfg, redirectUri);
+        if (check.status === 'valid') return res.json({ success: true, status: check.status, message: check.message });
+        return res.json({ success: false, status: check.status, error: check.message });
       }
     }
   } catch (err) {

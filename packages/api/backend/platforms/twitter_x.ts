@@ -1,5 +1,6 @@
 import axios from 'axios';
 import FormData from 'form-data';
+import { fetchMediaBytes } from '../../src/ssrf-guard.ts';
 import type {
   AnalyticsResult,
   PlatformContext,
@@ -50,7 +51,7 @@ function parseXError(data: any, httpStatus: number): { message: string; code?: n
   const title: string  = data?.title  || firstErr.title  || '';
   const reason: string = data?.reason || firstErr.reason || '';
 
-  // "client-not-enrolled" �?app not inside a Project in the developer portal
+  // "client-not-enrolled" — app not inside a Project in the developer portal
   if (reason === 'client-not-enrolled' || String(detail).includes('client-not-enrolled')) {
     return {
       message: 'X app is not attached to a Project. In the X Developer Portal, move your app inside a Project, then reconnect your X account.',
@@ -67,7 +68,7 @@ function parseXError(data: any, httpStatus: number): { message: string; code?: n
     135: 'Timestamp out of bounds. Check server time.',
     185: 'Daily post limit reached for this X account.',
     186: 'Tweet text is too long (max 280 characters).',
-    187: 'Duplicate tweet �?this exact text was posted recently.',
+    187: 'Duplicate tweet — this exact text was posted recently.',
     215: 'Bad authentication data.',
     226: 'Tweet flagged as automated. Vary your content.',
     261: 'App does not have write permission. Enable "Read and Write" in the X Developer Portal.',
@@ -123,7 +124,7 @@ async function uploadV2(
   const useChunked = totalBytes > CHUNK_SIZE || mimeType.startsWith('video/') || mimeType === 'image/gif';
   log(`[X] v2 upload (${Math.round(totalBytes / 1024)} KB, ${mimeType}, chunked=${useChunked})`);
 
-  // INIT �?first chunk (or full file if �?CHUNK_SIZE)
+  // INIT — first chunk (or full file if ≤ CHUNK_SIZE)
   if (!useChunked) {
     const uploadForm = new FormData();
     uploadForm.append('media', buffer, { filename: 'upload', contentType: mimeType });
@@ -163,7 +164,7 @@ async function uploadV2(
   if (!mediaId) return { error: 'No media id in initialize response' };
   log(`[X] INITIALIZE OK, id=${mediaId}`);
 
-  // APPEND �?remaining chunks (if file > CHUNK_SIZE)
+  // APPEND — remaining chunks (if file > CHUNK_SIZE)
   let segmentIndex = 0;
   for (let offset = 0; offset < totalBytes; offset += CHUNK_SIZE) {
     const chunk = buffer.subarray(offset, offset + CHUNK_SIZE);
@@ -205,7 +206,7 @@ async function uploadV2(
   return { mediaId };
 }
 
-/** Upload via legacy v1.1 endpoint �?fallback when media.write scope is absent. */
+/** Upload via legacy v1.1 endpoint — fallback when media.write scope is absent. */
 async function uploadV1(
   buffer: Buffer,
   mimeType: string,
@@ -298,17 +299,14 @@ async function uploadMediaItem(
   const url = item.url || '';
   if (!url) return null;
 
-  // Fetch the file
+  // Fetch the file (user-supplied URL: SSRF-guarded and size-capped)
   let buffer: Buffer;
   let mimeType: string;
   try {
-    const fetchResp: any = await axios.get(url, {
-      responseType: 'arraybuffer', validateStatus: () => true, timeout: 60_000,
-    });
-    if (fetchResp.status >= 400) { log(`[X] Failed to fetch media (${fetchResp.status})`); return null; }
-    buffer = Buffer.from(fetchResp.data as ArrayBuffer);
+    const fetched = await fetchMediaBytes(url, { maxBytes: MAX_VIDEO_BYTES, timeoutMs: 60_000 });
+    buffer = fetched.buffer;
     mimeType = item.mimeType
-      || String(fetchResp.headers['content-type'] || '').split(';')[0].trim()
+      || (fetched.mimeType !== 'application/octet-stream' ? fetched.mimeType : '')
       || 'image/jpeg';
   } catch (err) {
     log(`[X] Media fetch error: ${err instanceof Error ? err.message : err}`);
@@ -403,9 +401,16 @@ export class TwitterXPlatform implements SocialPlatform {
       const text = String(post?.content?.text || '').trim().slice(0, TWITTER_MAX_TEXT);
       const body: Record<string, any> = { text };
 
-      // Media upload (non-fatal �?tweet goes out as text-only if all uploads fail)
+      // Media upload (non-fatal: the post goes out text-only if every upload fails)
       const mediaItems = Array.isArray(post.media) ? post.media.slice(0, 4) : [];
-      if (mediaItems.length > 0) {
+      // Uploads need the media.write scope. A token granted without it would
+      // fail every attempt, so skip straight to text-only and say why.
+      const grantedScopes = String(ctx.tokenData?.scope || '').split(/[\s,]+/).filter(Boolean);
+      let mediaWarning: string | undefined;
+      if (mediaItems.length > 0 && grantedScopes.length > 0 && !grantedScopes.includes('media.write')) {
+        mediaWarning = 'Image not attached: this X connection was approved without media upload access. Reconnect X to post images.';
+        log(`[X] ${mediaWarning}`);
+      } else if (mediaItems.length > 0) {
         log(`[X] Uploading ${mediaItems.length} media item(s)…`);
         const mediaIds: string[] = [];
         for (const item of mediaItems) {
@@ -416,7 +421,8 @@ export class TwitterXPlatform implements SocialPlatform {
           body.media = { media_ids: mediaIds };
           log(`[X] Attached media_ids: ${mediaIds.join(', ')}`);
         } else {
-          log('[X] All media uploads failed �?posting text-only');
+          mediaWarning = 'Image not attached: X rejected the media upload, so the post went out as text only.';
+          log('[X] All media uploads failed — posting text-only');
         }
       }
 
@@ -441,7 +447,7 @@ export class TwitterXPlatform implements SocialPlatform {
             const { message, retryable } = parseXError(resp.data, resp.status);
             log(`[X] Failed (${resp.status}): ${message}`);
             if (retryable && attempt < 2 && TRANSIENT_STATUSES.has(resp.status)) {
-              log('[X] Transient error �?retrying in 2s');
+              log('[X] Transient error — retrying in 2s');
               await wait(2000);
               continue;
             }
@@ -450,13 +456,13 @@ export class TwitterXPlatform implements SocialPlatform {
 
           helpers.incrementGlobalWriteCount?.();
           const tweetId: string = (resp.data as any)?.data?.id || '';
-          log(`[X] Published �?id=${tweetId}`);
-          return { status: 'published', platformPostId: tweetId, raw: { ...(resp.data as any), rateLimit } };
+          log(`[X] Published — id=${tweetId}`);
+          return { status: 'published', platformPostId: tweetId, warning: mediaWarning, raw: { ...(resp.data as any), rateLimit } };
 
         } catch (err: any) {
           const { retryable, message } = this.handleError(err);
           if (retryable && attempt < 2 && TRANSIENT_STATUSES.has(Number(err?.response?.status))) {
-            log(`[X] Request error (attempt ${attempt}): ${message} �?retrying in 2s`);
+            log(`[X] Request error (attempt ${attempt}): ${message} — retrying in 2s`);
             await wait(2000);
             continue;
           }

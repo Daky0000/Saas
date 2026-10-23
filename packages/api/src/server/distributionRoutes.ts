@@ -1,25 +1,5 @@
-import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
-import { decodeHtmlEntities } from '../link-metadata.ts';
-import { hasDatabase } from '../db.ts';
-import { encryptIntegrationSecret, upsertUserIntegration } from '../integration-helpers.ts';
-import { formatSocialAccountLabel, getVisibleUserPlatformSlugs, isInstagramDirectLogin, resolveInstagramGraphBase, resolveOAuthRedirectUri } from '../platform-helpers.ts';
-import { getLinkedInScopeSet, parseLinkedInScopeList, computeIsoFromTtlSeconds } from '../social-helpers.ts';
-import { getLinkedInOAuthCredentials as credentialsImpl, postLinkedInOAuthForm, enrichLinkedInTokenData as enrichImpl } from './socialConnectRoutes.ts';
-import type { MediaModule } from './mediaRoutes.ts';
-type DataDeletionStatus = 'received' | 'completed' | 'unknown';
-type DataDeletionRecord = { code: string; metaUserId: string | null; status: DataDeletionStatus; createdAt: string; completedAt: string | null };
-const inMemoryDataDeletionRequests = new Map<string,DataDeletionRecord>();
-const META_GRAPH_BASE = 'https://graph.facebook.com/v19.0';
-const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = config.socialTokenSafetyMarginDays;
-const TWITTER_MONTHLY_WRITE_LIMIT = config.twitterMonthlyWriteLimit;
-const X_OAUTH_TOKEN_URL = 'https://api.x.com/2/oauth2/token';
-const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
-const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
-const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
-let socialAutomationQueue: Queue | null = null;
-let socialAutomationWorker: Worker | null = null;
-let socialAutomationRedis: IORedis | null = null;
-﻿import axios from 'axios';
+import { randomUUID } from 'node:crypto';
+import axios from 'axios';
 import type { Response } from 'express';
 import type { Request } from '../types/http.ts';
 import { Router } from 'express';
@@ -30,10 +10,19 @@ import { FacebookPagesPlatform } from '../../backend/platforms/facebook_pages.ts
 import { InstagramBusinessPlatform } from '../../backend/platforms/instagram_business.ts';
 import { LinkedInPlatform } from '../../backend/platforms/linkedin.ts';
 import { TwitterXPlatform } from '../../backend/platforms/twitter_x.ts';
-import { TikTokAdapter } from '../../backend/src/services/platform-adapters/tiktok.adapter.ts';
 import type { PostObject } from '../../backend/platforms/types.ts';
 import { config } from '../config.ts';
 import { logger } from '../logger.ts';
+import { decodeHtmlEntities } from '../link-metadata.ts';
+import { hasDatabase } from '../db.ts';
+import { encryptIntegrationSecret, upsertUserIntegration } from '../integration-helpers.ts';
+import { formatSocialAccountLabel, getVisibleUserPlatformSlugs, isInstagramDirectLogin, resolveInstagramGraphBase, resolveOAuthRedirectUri } from '../platform-helpers.ts';
+import { getLinkedInScopeSet, parseLinkedInScopeList, computeIsoFromTtlSeconds } from '../social-helpers.ts';
+import { META_GRAPH_BASE } from '../meta-graph.ts';
+import { sanitizeTokenData, TOKEN_DATA_SECRET_KEYS } from '../token-data.ts';
+import { getRefreshMarginMs, getRefreshMode, isSoftReapprovalReason, PUBLISHING_TOKEN_PLATFORMS } from '../social-token-policy.ts';
+import { getLinkedInOAuthCredentials as credentialsImpl, postLinkedInOAuthForm, enrichLinkedInTokenData as enrichImpl } from './socialConnectRoutes.ts';
+import type { MediaModule } from './mediaRoutes.ts';
 import {
   getLinkedInRestHeaders,
   parseLinkedInOrganizationId as _parseLinkedInOrganizationId,
@@ -50,7 +39,17 @@ import {
   extractLinkedInPostMediaType,
 } from './distribution/linkedinHelpers.ts';
 
-// 鈹€鈹€鈹€ Deps 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+const SOCIAL_TOKEN_SAFETY_MARGIN_DAYS = config.socialTokenSafetyMarginDays;
+const TWITTER_MONTHLY_WRITE_LIMIT = config.twitterMonthlyWriteLimit;
+const X_OAUTH_TOKEN_URL = 'https://api.x.com/2/oauth2/token';
+const SOCIAL_AUTOMATION_MAX_ATTEMPTS = 3;
+const SOCIAL_AUTOMATION_RETRY_BASE_DELAY_MS = 30_000;
+const SOCIAL_AUTOMATION_QUEUE_NAME = 'social-publish';
+let socialAutomationQueue: Queue | null = null;
+let socialAutomationWorker: Worker | null = null;
+let socialAutomationRedis: IORedis | null = null;
+
+// ─── Deps ─────────────────────────────────────────────────────────────────────
 
 export interface DistributionDeps {
   ensureMediaRecordForSource: MediaModule['ensureMediaRecordForSource'];
@@ -77,7 +76,7 @@ export type PublishableSocialConnection = {
   token_expires_at?: string | null;
 };
 
-// 鈹€鈹€鈹€ Platform instances (singletons) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Platform instances (singletons) ─────────────────────────────────────────
 
 const facebookPagesPlatform = new FacebookPagesPlatform();
 const instagramBusinessPlatform = new InstagramBusinessPlatform();
@@ -89,13 +88,13 @@ function isBullMqEnabled() {
   return Boolean(REDIS_URL && REDIS_URL.trim());
 }
 
-// 鈹€鈹€鈹€ Factory 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Factory ──────────────────────────────────────────────────────────────────
 
 export interface DistributionModule {
   queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
   publishToplatform: (userId: string, post: any, platformId: string) => Promise<any>;
   router: Router;
-  getPublishableSocialConnection: (userId: string, platformId: string) => Promise<PublishableSocialConnection | null>;
+  getPublishableSocialConnection: (userId: string, platformId: string, options?: { refreshWithinMs?: number }) => Promise<PublishableSocialConnection | null>;
   markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
   listLinkedInAdminOrganizations: (accessToken: string, personId: string, options?: { allowedRoles?: string[] }) => Promise<{ organizations: Array<{ id: string; name: string; picture_url?: string | null; roles?: string[] }>; warning: string | null }>;
   fetchLinkedInOrganizationNetworkSize: (accessToken: string, organizationUrn: string) => Promise<number | null>;
@@ -150,7 +149,7 @@ function toHashtags(tags: unknown): string {
   const tagsText = list
     .map((t) => String(t || '').trim())
     .filter(Boolean)
-    .map((t) => `#${t.replace(/\\s+/g, '').replace(/^#/, '')}`);
+    .map((t) => `#${t.replace(/\s+/g, '').replace(/^#/, '')}`);
   return tagsText.join(' ');
 }
 
@@ -569,43 +568,24 @@ async function incrementPlatformMonthlyCounter(platformId: string, limit: number
   const startDate = start.toISOString().slice(0, 10);
   const endDate = end.toISOString().slice(0, 10);
 
+  // One atomic statement: BEGIN/COMMIT issued through the pool can run on
+  // different connections, leaving a transaction open on a pooled client that
+  // unrelated queries then join.
   try {
-    await pool.query('BEGIN');
-    const existing = await pool.query(
-      `SELECT counter FROM platform_rate_counters
-       WHERE platform=$1 AND period_start=$2 AND period_end=$3
-       FOR UPDATE`,
-      [platformId, startDate, endDate]
+    const { rows } = await pool.query(
+      `INSERT INTO platform_rate_counters (platform, period_start, period_end, counter, updated_at)
+       VALUES ($1, $2, $3, 1, NOW())
+       ON CONFLICT (platform, period_start, period_end)
+       DO UPDATE SET counter = platform_rate_counters.counter + 1, updated_at = NOW()
+       WHERE platform_rate_counters.counter < $4
+       RETURNING counter`,
+      [platformId, startDate, endDate, limit]
     );
-    let counter = existing.rows[0]?.counter ?? 0;
-    if (!existing.rows.length) {
-      await pool.query(
-        `INSERT INTO platform_rate_counters (platform, period_start, period_end, counter)
-         VALUES ($1,$2,$3,0)`,
-        [platformId, startDate, endDate]
-      );
-      counter = 0;
-    }
-    if (counter >= limit) {
-      await pool.query('ROLLBACK');
-      return { allowed: false, remaining: 0, counter };
-    }
-    const nextCounter = counter + 1;
-    await pool.query(
-      `UPDATE platform_rate_counters
-       SET counter=$4, updated_at=NOW()
-       WHERE platform=$1 AND period_start=$2 AND period_end=$3`,
-      [platformId, startDate, endDate, nextCounter]
-    );
-    await pool.query('COMMIT');
-    return { allowed: true, remaining: Math.max(0, limit - nextCounter), counter: nextCounter };
+    if (!rows.length) return { allowed: false, remaining: 0, counter: limit };
+    const counter = Number(rows[0].counter);
+    return { allowed: true, remaining: Math.max(0, limit - counter), counter };
   } catch (err) {
-    try {
-      await pool.query('ROLLBACK');
-    } catch (err) {
-    logger.error('Unhandled error:', err);
-      // ignore rollback failures
-    }
+    logger.error({ err, platformId }, 'platform_rate_counter_failed');
     return { allowed: true, remaining: null, counter: null };
   }
 }
@@ -636,10 +616,14 @@ async function markSocialAccountNeedsReapproval(params: {
     "needs_reapproval = true",
     `token_data = COALESCE(token_data, '{}'::jsonb) || ${metaRef}::jsonb`,
   ];
-  if (disconnect) updates.push('connected = false');
+  // A deauthorized grant's tokens are dead; don't keep them around.
+  if (disconnect) updates.push('connected = false', 'access_token = NULL', 'refresh_token = NULL', 'access_token_encrypted = NULL', 'refresh_token_encrypted = NULL');
 
   const whereClauses: string[] = [`LOWER(platform)=LOWER(${platformRef})`];
   if (accountId) whereClauses.push(`account_id = ${pushValue(accountId)}`);
+  // Without an account id this is about the user's own login token: Facebook
+  // Page rows hold separate Page tokens that keep working, so leave them be.
+  else whereClauses.push(`(account_type = 'profile' OR account_type IS NULL)`);
   if (userId) whereClauses.push(`user_id = ${pushValue(userId)}`);
 
   const { rows } = await pool.query(
@@ -675,7 +659,7 @@ async function markSocialAccountNeedsReapproval(params: {
 
 async function resolveLinkedInAuthorUrn(params: { userId: string; accessToken: string }) {
   if (!pool) return null;
-  // Primary: /v2/me (r_liteprofile 鈥?standard "Share on LinkedIn" scope)
+  // Primary: /v2/me (r_liteprofile — standard "Share on LinkedIn" scope)
   const meResp = await axios.get('https://api.linkedin.com/v2/me', {
     headers: { Authorization: `Bearer ${params.accessToken}` },
     validateStatus: () => true,
@@ -711,43 +695,74 @@ async function resolveLinkedInAuthorUrn(params: { userId: string; accessToken: s
   return `urn:li:person:${meId}`;
 }
 
-async function flagExpiringSocialAccounts() {
-  if (!pool) return;
-  const windowMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const cutoff = new Date(Date.now() + windowMs).toISOString();
+const TOKEN_HEALTH_SCAN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+// Renews every token the server can renew before it would lapse ahead of the
+// next scan, and flags only the tokens that genuinely need the user. The old
+// scan flagged anything expiring within the safety window — which, for X
+// (2 h tokens) and TikTok (24 h), was every account on every run — and a
+// flagged, expired account was then never refreshed again. Gmail and Google
+// Calendar renew their own tokens and are left out.
+async function runTokenHealthScan(): Promise<{ refreshed: number; flagged: number }> {
+  if (!pool) return { refreshed: 0, flagged: 0 };
+  const now = Date.now();
+  const horizon = new Date(now + Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000).toISOString();
   const { rows } = await pool.query(
-    `SELECT id, user_id, platform, account_id
+    `SELECT user_id, platform, account_id, token_data, needs_reapproval,
+            COALESCE(token_expires_at, expires_at) AS expires_at,
+            (COALESCE(refresh_token_encrypted, '') <> '' OR COALESCE(refresh_token, '') <> '') AS has_refresh
      FROM social_accounts
-     WHERE connected=true
-       AND needs_reapproval=false
+     WHERE connected = true
+       AND LOWER(platform) = ANY($1::text[])
+       AND (account_type = 'profile' OR account_type IS NULL)
        AND COALESCE(token_expires_at, expires_at) IS NOT NULL
-       AND COALESCE(token_expires_at, expires_at) <= $1`,
-    [cutoff]
+       AND COALESCE(token_expires_at, expires_at) <= $2`,
+    [Array.from(PUBLISHING_TOKEN_PLATFORMS), horizon]
   ).catch(() => ({ rows: [] as any[] }));
 
-  for (const row of rows) {
-    await markSocialAccountNeedsReapproval({
-      platformId: String(row.platform),
-      accountId: String(row.account_id || ''),
-      userId: String(row.user_id || ''),
-      reason: 'token_expiring',
-      disconnect: false,
+  let refreshed = 0;
+  let flagged = 0;
+  for (const row of rows as any[]) {
+    const platformId = normalizePlatformId(String(row.platform));
+    const userId = String(row.user_id || '');
+    const tokenData = row.token_data && typeof row.token_data === 'object' ? row.token_data : {};
+    const mode = getRefreshMode(platformId, {
+      hasRefreshToken: Boolean(row.has_refresh),
+      isInstagramDirect: platformId === 'instagram' && isInstagramDirectLogin({ tokenData }),
     });
+    if (mode === 'none') {
+      if (!row.needs_reapproval) {
+        await markSocialAccountNeedsReapproval({ platformId, userId, reason: 'token_expiring' });
+        flagged++;
+      }
+      continue;
+    }
+    if (row.needs_reapproval && !isSoftReapprovalReason(tokenData.reason)) continue;
+    const msLeft = new Date(row.expires_at).getTime() - now;
+    const renewWithin = Math.max(getRefreshMarginMs(platformId, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS), TOKEN_HEALTH_SCAN_INTERVAL_MS + 60 * 60 * 1000);
+    if (Number.isFinite(msLeft) && msLeft > renewWithin) continue;
+    try {
+      const conn = await getPublishableSocialConnection(userId, platformId, { refreshWithinMs: renewWithin });
+      if (conn?.access_token && !conn.needs_reapproval) refreshed++;
+    } catch (err) {
+      logger.warn({ err, platformId, userId }, 'token_health_refresh_failed');
+    }
   }
+  return { refreshed, flagged };
 }
 
 function startTokenHealthMonitor() {
   if (!pool) return;
   const run = async () => {
     try {
-      await flagExpiringSocialAccounts();
+      const result = await runTokenHealthScan();
+      if (result.refreshed || result.flagged) logger.info(result, 'token_health_scan');
     } catch (err) {
       logger.warn('[SocialAutomation] Token health scan failed:', err);
     }
   };
   void run();
-  setInterval(run, 6 * 60 * 60 * 1000);
+  setInterval(run, TOKEN_HEALTH_SCAN_INTERVAL_MS);
 }
 
 function computeExpiresAtIso(expiresInSeconds: unknown): string | null {
@@ -808,6 +823,16 @@ async function getUserIntegrationTokenFallback(userId: string, platformId: strin
   };
 }
 
+function describeRefreshFailure(label: string, status: number, data: any): string {
+  const detail =
+    data?.error_description ||
+    data?.error?.message ||
+    (typeof data?.error === 'string' ? data.error : '') ||
+    data?.message ||
+    '';
+  return `${label} token refresh failed (${status})${detail ? `: ${String(detail).slice(0, 200)}` : ''}`;
+}
+
 async function refreshTwitterAccessToken(refreshToken: string) {
   const cfg = await getPlatformConfig('twitter');
   const clientId = (cfg.clientId || process.env.VITE_TWITTER_CLIENT_ID || '').trim();
@@ -827,7 +852,7 @@ async function refreshTwitterAccessToken(refreshToken: string) {
   };
 
   const resp = await axios.post(X_OAUTH_TOKEN_URL, data.toString(), axiosCfg);
-  if (resp.status >= 400) throw new Error(`Twitter token refresh failed (${resp.status})`);
+  if (resp.status >= 400 || !(resp.data as any)?.access_token) throw new Error(describeRefreshFailure('X', resp.status, resp.data));
   return resp.data;
 }
 
@@ -840,7 +865,7 @@ async function refreshLinkedInAccessToken(refreshToken: string, req?: Request) {
     },
     credentials
   );
-  if (resp.status >= 400) throw new Error(`LinkedIn token refresh failed (${resp.status})`);
+  if (resp.status >= 400) throw new Error(describeRefreshFailure('LinkedIn', resp.status, resp.data));
   return enrichLinkedInTokenData(resp.data || {}, req);
 }
 
@@ -861,7 +886,33 @@ async function refreshTikTokAccessToken(refreshToken: string) {
     validateStatus: () => true,
     timeout: 15000,
   });
-  if (resp.status >= 400) throw new Error(`TikTok token refresh failed (${resp.status})`);
+  // TikTok can answer 200 with an OAuth error in the body.
+  const body: any = resp.data || {};
+  if (resp.status >= 400 || body.error || !body.access_token) throw new Error(describeRefreshFailure('TikTok', resp.status, body));
+  return body;
+}
+
+// Pinterest access tokens last 30 days. Refresh tokens rotate (the response
+// carries a new one), which getPublishableSocialConnection stores.
+async function refreshPinterestAccessToken(refreshToken: string) {
+  const cfg = await getPlatformConfig('pinterest');
+  const clientId = String(cfg.clientId || process.env.VITE_PINTEREST_CLIENT_ID || '').trim();
+  const clientSecret = String(cfg.clientSecret || process.env.PINTEREST_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) throw new Error('Pinterest client credentials not configured');
+
+  const resp = await axios.post(
+    'https://api.pinterest.com/v5/oauth/token',
+    new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }).toString(),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+      },
+      validateStatus: () => true,
+      timeout: 15000,
+    }
+  );
+  if (resp.status >= 400 || !(resp.data as any)?.access_token) throw new Error(describeRefreshFailure('Pinterest', resp.status, resp.data));
   return resp.data;
 }
 
@@ -880,15 +931,7 @@ async function refreshThreadsAccessToken(accessToken: string) {
   });
 
   const data: any = resp.data || {};
-  if (resp.status >= 400) {
-    const msg =
-      data?.error?.message ||
-      data?.error_description ||
-      data?.error ||
-      `Threads token refresh failed (${resp.status})`;
-    throw new Error(msg);
-  }
-
+  if (resp.status >= 400) throw new Error(describeRefreshFailure('Threads', resp.status, data));
   return data;
 }
 
@@ -906,26 +949,29 @@ async function refreshInstagramAccessToken(accessToken: string) {
   });
 
   const data: any = resp.data || {};
-  if (resp.status >= 400) {
-    const msg =
-      data?.error?.message ||
-      data?.error_description ||
-      data?.error ||
-      `Instagram token refresh failed (${resp.status})`;
-    throw new Error(msg);
-  }
-
+  if (resp.status >= 400) throw new Error(describeRefreshFailure('Instagram', resp.status, data));
   return data;
 }
 
-// Fetch TikTok user profile with graceful scope fallback.
-// Fetch TikTok user profile using two independent requests so a missing
-// user.info.stats scope never blocks the basic profile from being saved.
-// Call 1 (always): basic identity fields 鈥?always works with user.info.basic
-// Call 2 (optional): stats fields 鈥?silently skipped if scope not approved
+type SocialTokenRow = {
+  platform: string;
+  account_type: string | null;
+  account_id: string | null;
+  account_name: string | null;
+  access_token: string | null;
+  refresh_token: string | null;
+  access_token_encrypted: string | null;
+  refresh_token_encrypted: string | null;
+  token_data: any;
+  expires_at: string | null;
+  token_expires_at: string | null;
+  needs_reapproval: boolean | null;
+  connected_at: string | null;
+  created_at: string | null;
+};
 
-async function getPublishableSocialConnection(userId: string, platformId: string): Promise<PublishableSocialConnection | null> {
-  if (!pool) return null;
+async function loadSocialTokenRow(userId: string, platformId: string): Promise<SocialTokenRow | undefined> {
+  if (!pool) return undefined;
   const rows = await pool.query(
     `SELECT platform, account_type, account_id, account_name, access_token, refresh_token, access_token_encrypted, refresh_token_encrypted, token_data, expires_at, token_expires_at, needs_reapproval, connected_at, created_at
      FROM social_accounts
@@ -941,24 +987,23 @@ async function getPublishableSocialConnection(userId: string, platformId: string
        created_at DESC`,
     [userId, platformId]
   );
-  const match = rows.rows[0] as
-    | {
-        platform: string;
-        account_type: string | null;
-        account_id: string | null;
-        account_name: string | null;
-        access_token: string | null;
-        refresh_token: string | null;
-        access_token_encrypted: string | null;
-        refresh_token_encrypted: string | null;
-        token_data: any;
-        expires_at: string | null;
-        token_expires_at: string | null;
-        needs_reapproval: boolean | null;
-        connected_at: string | null;
-        created_at: string | null;
-      }
-    | undefined;
+  return rows.rows[0] as SocialTokenRow | undefined;
+}
+
+// How long a failed refresh waits before it is attempted again.
+const REFRESH_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
+
+// One refresh per account at a time in this process: concurrent callers share
+// the result instead of spending a rotating refresh token twice.
+const inFlightTokenRefreshes = new Map<string, Promise<PublishableSocialConnection | null>>();
+
+async function getPublishableSocialConnection(
+  userId: string,
+  platformId: string,
+  options: { refreshWithinMs?: number } = {},
+): Promise<PublishableSocialConnection | null> {
+  if (!pool) return null;
+  const match = await loadSocialTokenRow(userId, platformId);
 
   const integrationFallback = await getUserIntegrationTokenFallback(userId, platformId);
   if (!match && !integrationFallback) return null;
@@ -990,7 +1035,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       reason: 'stored_token_decrypt_failed',
     }).catch(() => undefined);
   }
-  let tokenData = {
+  // In-memory view for callers; never written back with these credentials in it.
+  let tokenData: Record<string, any> = {
     ...(match?.token_data || {}),
     ...(refreshToken ? { refresh_token: refreshToken } : {}),
   };
@@ -1000,6 +1046,21 @@ async function getPublishableSocialConnection(userId: string, platformId: string
     String(tokenData?.access_token_expires_at || '').trim() ||
     integrationFallback?.tokenExpiry ||
     null;
+
+  const base = {
+    platform: match?.platform || platformId,
+    account_id: match?.account_id || integrationFallback?.accountId || null,
+    account_name: match?.account_name || integrationFallback?.accountName || null,
+  };
+  const unusable = (overrides: Partial<PublishableSocialConnection> = {}): PublishableSocialConnection => ({
+    ...base,
+    access_token: '',
+    refresh_token: refreshToken || null,
+    token_data: tokenData,
+    needs_reapproval: true,
+    token_expires_at: rawExpiry,
+    ...overrides,
+  });
 
   if (platformId === 'linkedin' && accessToken) {
     const needsMetadataHydration =
@@ -1028,8 +1089,8 @@ async function getPublishableSocialConnection(userId: string, platformId: string
            SET token_data = COALESCE(token_data, '{}'::jsonb) || $3::jsonb,
                expires_at = COALESCE($4, expires_at),
                token_expires_at = COALESCE($4, token_expires_at)
-           WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`,
-          [userId, platformId, JSON.stringify(enrichedTokenData || {}), enrichedExpiry]
+           WHERE user_id=$1 AND LOWER(platform)=LOWER($2) AND (account_type = 'profile' OR account_type IS NULL)`,
+          [userId, platformId, JSON.stringify(sanitizeTokenData(enrichedTokenData)), enrichedExpiry]
         );
 
         if (enrichedTokenData?.access_token_active === false) {
@@ -1039,38 +1100,30 @@ async function getPublishableSocialConnection(userId: string, platformId: string
             reason: 'token_inactive',
             disconnect: false,
           });
-          return {
-            platform: match?.platform || platformId,
-            access_token: '',
-            refresh_token: refreshToken || null,
-            token_data: enrichedTokenData,
-            account_id: match?.account_id || integrationFallback?.accountId || null,
-            account_name: match?.account_name || integrationFallback?.accountName || null,
-            needs_reapproval: true,
-            token_expires_at: enrichedExpiry,
-          };
+          return unusable({ token_expires_at: enrichedExpiry });
         }
       } catch (err) {
-    logger.error('Unhandled error:', err);
+        logger.error('Unhandled error:', err);
         // Metadata hydration is best-effort; keep the token usable if LinkedIn inspection fails.
       }
     }
   }
 
+  const now = Date.now();
   const expiresAtMs = rawExpiry ? new Date(rawExpiry).getTime() : NaN;
-  const hasUsableToken = Boolean(accessToken) && (!Number.isFinite(expiresAtMs) || expiresAtMs > Date.now());
+  const isExpired = Number.isFinite(expiresAtMs) && expiresAtMs <= now;
+  const hasUsableToken = Boolean(accessToken) && !isExpired;
+  const flaggedReason = String(match?.token_data?.reason || '').trim().toLowerCase();
+  const refreshMode = getRefreshMode(platformId, {
+    hasRefreshToken: Boolean(refreshToken),
+    isInstagramDirect: platformId === 'instagram' && isInstagramDirectLogin({ accessToken, tokenData }),
+  });
 
-  if (match?.needs_reapproval && !hasUsableToken) {
-    return {
-      platform: match.platform,
-      access_token: '',
-      refresh_token: refreshToken || null,
-      token_data: tokenData,
-      account_id: match.account_id || integrationFallback?.accountId || null,
-      account_name: match.account_name || integrationFallback?.accountName || null,
-      needs_reapproval: true,
-      token_expires_at: rawExpiry,
-    };
+  // A hard flag (revoked, undecryptable, expired refresh token) waits for the
+  // user. A soft one (expiring/expired/refresh failed) on a refreshable
+  // platform falls through so the refresh below can clear it.
+  if (match?.needs_reapproval && !hasUsableToken && (refreshMode === 'none' || !isSoftReapprovalReason(flaggedReason))) {
+    return unusable();
   }
 
   const linkedInRefreshExpiry =
@@ -1078,49 +1131,24 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       ? String(tokenData?.refresh_token_expires_at || '').trim()
       : '';
   const linkedInRefreshExpiryMs = linkedInRefreshExpiry ? new Date(linkedInRefreshExpiry).getTime() : NaN;
-  if (platformId === 'linkedin' && refreshToken && Number.isFinite(linkedInRefreshExpiryMs) && linkedInRefreshExpiryMs <= Date.now()) {
+  if (platformId === 'linkedin' && refreshToken && Number.isFinite(linkedInRefreshExpiryMs) && linkedInRefreshExpiryMs <= now) {
     await markSocialAccountNeedsReapproval({
       platformId,
       userId,
       reason: 'refresh_token_expired',
       disconnect: false,
     });
-    return {
-      platform: match?.platform || platformId,
-      access_token: '',
-      refresh_token: refreshToken || null,
-      token_data: tokenData,
-      account_id: match?.account_id || integrationFallback?.accountId || null,
-      account_name: match?.account_name || integrationFallback?.accountName || null,
-      needs_reapproval: true,
-      token_expires_at: rawExpiry,
-    };
+    return unusable();
   }
 
-  const refreshMarginMs = Math.max(1, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS) * 24 * 60 * 60 * 1000;
-  const refreshMode: 'none' | 'refresh_token' | 'threads_access_token' | 'instagram_access_token' =
-    platformId === 'threads'
-      ? 'threads_access_token'
-      : platformId === 'instagram' && isInstagramDirectLogin({ accessToken, tokenData })
-        ? 'instagram_access_token'
-        : platformId === 'twitter' || platformId === 'tiktok' || (platformId === 'linkedin' && !!refreshToken)
-          ? 'refresh_token'
-          : 'none';
-  const isExpired = Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
-  const shouldRefreshSoon =
-    refreshMode !== 'none' && Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() + refreshMarginMs : false;
+  const refreshMarginMs = Math.max(
+    getRefreshMarginMs(platformId, SOCIAL_TOKEN_SAFETY_MARGIN_DAYS),
+    Number(options.refreshWithinMs) || 0,
+  );
+  const shouldRefreshSoon = refreshMode !== 'none' && Number.isFinite(expiresAtMs) && expiresAtMs <= now + refreshMarginMs;
 
   if (!Number.isFinite(expiresAtMs) || (refreshMode === 'none' && !isExpired) || (refreshMode !== 'none' && !shouldRefreshSoon)) {
-    return {
-      platform: match?.platform || platformId,
-      access_token: accessToken,
-      refresh_token: refreshToken || null,
-      token_data: tokenData,
-      account_id: match?.account_id || integrationFallback?.accountId || null,
-      account_name: match?.account_name || integrationFallback?.accountName || null,
-      needs_reapproval: false,
-      token_expires_at: rawExpiry,
-    };
+    return unusable({ access_token: accessToken, needs_reapproval: false });
   }
 
   if (refreshMode === 'none') {
@@ -1130,16 +1158,7 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       reason: 'token_expired',
       disconnect: false,
     });
-    return {
-      platform: match?.platform || platformId,
-      access_token: '',
-      refresh_token: refreshToken || null,
-      token_data: tokenData,
-      account_id: match?.account_id || integrationFallback?.accountId || null,
-      account_name: match?.account_name || integrationFallback?.accountName || null,
-      needs_reapproval: true,
-      token_expires_at: rawExpiry,
-    };
+    return unusable();
   }
 
   if (refreshMode === 'refresh_token' && !refreshToken) {
@@ -1149,72 +1168,100 @@ async function getPublishableSocialConnection(userId: string, platformId: string
       reason: 'token_missing_refresh',
       disconnect: false,
     });
-    return {
-      platform: match?.platform || platformId,
-      access_token: '',
-      refresh_token: null,
-      token_data: tokenData,
-      account_id: match?.account_id || integrationFallback?.accountId || null,
-      account_name: match?.account_name || integrationFallback?.accountName || null,
-      needs_reapproval: true,
-      token_expires_at: rawExpiry,
-    };
+    return unusable({ refresh_token: null });
   }
 
-  let refreshed: any = null;
-  try {
-    if (platformId === 'threads') {
-      refreshed = await refreshThreadsAccessToken(accessToken);
-    } else if (platformId === 'instagram' && refreshMode === 'instagram_access_token') {
-      refreshed = await refreshInstagramAccessToken(accessToken);
-    } else if (platformId === 'twitter') {
-      refreshed = await refreshTwitterAccessToken(refreshToken);
-    } else if (platformId === 'linkedin') {
-      refreshed = await refreshLinkedInAccessToken(refreshToken);
-    } else if (platformId === 'tiktok') {
-      refreshed = await refreshTikTokAccessToken(refreshToken);
+  // After a failed refresh, wait before trying again; a still-valid token
+  // keeps working in the meantime.
+  if (match?.needs_reapproval && flaggedReason === 'token_refresh_failed') {
+    const lastAttemptMs = Date.parse(String(match.token_data?.needs_reapproval_at || ''));
+    if (Number.isFinite(lastAttemptMs) && now - lastAttemptMs < REFRESH_RETRY_COOLDOWN_MS) {
+      return hasUsableToken ? unusable({ access_token: accessToken, needs_reapproval: false }) : unusable();
     }
-  } catch (err) {
-    logger.error('Unhandled error:', err);
-    await markSocialAccountNeedsReapproval({
-      platformId,
-      userId,
-      reason: 'token_refresh_failed',
-      disconnect: false,
-    });
-    return {
-      platform: match?.platform || platformId,
-      access_token: '',
-      refresh_token: refreshToken || null,
-      token_data: tokenData,
-      account_id: match?.account_id || integrationFallback?.accountId || null,
-      account_name: match?.account_name || integrationFallback?.accountName || null,
-      needs_reapproval: true,
-      token_expires_at: rawExpiry,
-    };
   }
 
-  const nextAccess = String(refreshed?.access_token || '').trim();
-  const nextRefresh = String(refreshed?.refresh_token || refreshToken || '').trim() || null;
-  const nextExpiresAt = String(refreshed?.access_token_expires_at || '').trim() || computeExpiresAtIso(refreshed?.expires_in) || rawExpiry;
-  const mergedTokenData = { ...(tokenData || {}), ...(refreshed || {}) };
+  const key = `${userId}:${platformId}`;
+  const pending = inFlightTokenRefreshes.get(key);
+  if (pending) return pending;
+  const run = (async (): Promise<PublishableSocialConnection | null> => {
+    let refreshed: any = null;
+    try {
+      if (platformId === 'threads') {
+        refreshed = await refreshThreadsAccessToken(accessToken);
+      } else if (platformId === 'instagram' && refreshMode === 'instagram_access_token') {
+        refreshed = await refreshInstagramAccessToken(accessToken);
+      } else if (platformId === 'twitter') {
+        refreshed = await refreshTwitterAccessToken(refreshToken);
+      } else if (platformId === 'linkedin') {
+        refreshed = await refreshLinkedInAccessToken(refreshToken);
+      } else if (platformId === 'tiktok') {
+        refreshed = await refreshTikTokAccessToken(refreshToken);
+      } else if (platformId === 'pinterest') {
+        refreshed = await refreshPinterestAccessToken(refreshToken);
+      }
+    } catch (err) {
+      // X, TikTok and Pinterest rotate refresh tokens: if another process
+      // refreshed first, our now-stale refresh token is rejected. Use the token
+      // it stored rather than declaring the connection broken.
+      const latest = await loadSocialTokenRow(userId, platformId).catch(() => undefined);
+      if (latest?.access_token_encrypted && latest.access_token_encrypted !== match?.access_token_encrypted) {
+        const latestAccess = decodeStoredIntegrationSecret(latest.access_token_encrypted);
+        const latestExpiry = latest.token_expires_at || latest.expires_at || null;
+        const latestExpiryMs = latestExpiry ? new Date(latestExpiry).getTime() : NaN;
+        if (latestAccess && (!Number.isFinite(latestExpiryMs) || latestExpiryMs > Date.now())) {
+          return {
+            ...base,
+            access_token: latestAccess,
+            refresh_token: decodeStoredIntegrationSecret(latest.refresh_token_encrypted) || null,
+            token_data: latest.token_data || {},
+            needs_reapproval: false,
+            token_expires_at: latestExpiry,
+          };
+        }
+      }
+      logger.warn({ platformId, userId, err: err instanceof Error ? err.message : String(err) }, 'social_token_refresh_failed');
+      await markSocialAccountNeedsReapproval({
+        platformId,
+        userId,
+        reason: 'token_refresh_failed',
+        disconnect: false,
+      });
+      return hasUsableToken ? unusable({ access_token: accessToken, needs_reapproval: false }) : unusable();
+    }
 
-  if (nextAccess) {
+    const nextAccess = String(refreshed?.access_token || '').trim();
+    const nextRefresh = String(refreshed?.refresh_token || refreshToken || '').trim() || null;
+    const nextExpiresAt = String(refreshed?.access_token_expires_at || '').trim() || computeExpiresAtIso(refreshed?.expires_in) || rawExpiry;
+    const mergedTokenData = { ...(tokenData || {}), ...(refreshed || {}) };
+
+    if (!nextAccess) {
+      await markSocialAccountNeedsReapproval({ platformId, userId, reason: 'token_refresh_failed', disconnect: false });
+      return hasUsableToken ? unusable({ access_token: accessToken, needs_reapproval: false }) : unusable();
+    }
+
     const nextAccessEncrypted = encryptIntegrationSecret(nextAccess);
     const nextRefreshEncrypted = nextRefresh ? encryptIntegrationSecret(nextRefresh) : null;
     try {
       await pool.query(
         `UPDATE social_accounts
-         SET access_token=$3,
-             refresh_token=$4,
-             access_token_encrypted=$5,
-             refresh_token_encrypted=$6,
-             expires_at=$7,
-             token_expires_at=$7,
+         SET access_token=NULL,
+             refresh_token=NULL,
+             access_token_encrypted=$3,
+             refresh_token_encrypted=$4,
+             expires_at=$5,
+             token_expires_at=$5,
              needs_reapproval=false,
-             token_data = COALESCE(token_data, '{}'::jsonb) || $8::jsonb
-         WHERE user_id=$1 AND LOWER(platform)=LOWER($2)`,
-        [userId, match?.platform || platformId, null, null, nextAccessEncrypted, nextRefreshEncrypted, nextExpiresAt, JSON.stringify(refreshed || {})]
+             token_data = (COALESCE(token_data, '{}'::jsonb) - $7::text[]) || $6::jsonb
+         WHERE user_id=$1 AND LOWER(platform)=LOWER($2) AND (account_type = 'profile' OR account_type IS NULL)`,
+        [
+          userId,
+          match?.platform || platformId,
+          nextAccessEncrypted,
+          nextRefreshEncrypted,
+          nextExpiresAt,
+          JSON.stringify(sanitizeTokenData(refreshed)),
+          ['reason', 'needs_reapproval_at', ...TOKEN_DATA_SECRET_KEYS],
+        ]
       );
       await upsertUserIntegration({
         userId,
@@ -1234,31 +1281,20 @@ async function getPublishableSocialConnection(userId: string, platformId: string
         response: { expiresAt: nextExpiresAt },
       });
     } catch (err) {
-    logger.error('Unhandled error:', err);
+      logger.error('Unhandled error:', err);
       // ignore persistence issues; still return refreshed token for this request
     }
     return {
-      platform: match?.platform || platformId,
+      ...base,
       access_token: nextAccess,
       refresh_token: nextRefresh,
       token_data: mergedTokenData,
-      account_id: match?.account_id || integrationFallback?.accountId || null,
-      account_name: match?.account_name || integrationFallback?.accountName || null,
       needs_reapproval: false,
       token_expires_at: nextExpiresAt,
     };
-  }
-
-  return {
-    platform: match?.platform || platformId,
-    access_token: '',
-    refresh_token: refreshToken || null,
-    token_data: tokenData,
-    account_id: match?.account_id || integrationFallback?.accountId || null,
-    account_name: match?.account_name || integrationFallback?.accountName || null,
-    needs_reapproval: true,
-    token_expires_at: rawExpiry,
-  };
+  })().finally(() => inFlightTokenRefreshes.delete(key));
+  inFlightTokenRefreshes.set(key, run);
+  return run;
 }
 
 async function getUserSettingValue(userId: string, key: string): Promise<any | null> {
@@ -1464,8 +1500,17 @@ async function insertSocialPostLog(params: {
 async function processSocialAutomationTaskById(taskId: string, attemptNumber: number, maxAttempts: number) {
   if (!pool) throw new Error('DATABASE_URL is not configured');
 
-  const taskRows = await pool.query(`SELECT * FROM social_automation_tasks WHERE id=$1 LIMIT 1`, [taskId]);
-  if (!taskRows.rows.length) return { ok: false, error: 'Task not found' };
+  // Claim the task atomically before publishing. Without the claim, the 5 s DB
+  // worker re-selected a task still in flight (publishes can take longer than
+  // a tick) and a duplicate BullMQ delivery ran it again — posting twice.
+  const taskRows = await pool.query(
+    `UPDATE social_automation_tasks
+     SET status='processing', attempts=attempts+1, updated_at=NOW()
+     WHERE id=$1 AND status IN ('scheduled','pending')
+     RETURNING *`,
+    [taskId]
+  );
+  if (!taskRows.rows.length) return { ok: false, error: 'Task not found or already being processed' };
   const task = taskRows.rows[0] as any;
 
   const userId = String(task.user_id);
@@ -1475,11 +1520,6 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
   const payload = safeJsonObject(task.payload);
   const destination = payload?.destination || null;
   const template = payload?.template ? String(payload.template) : '';
-
-  await pool.query(
-    `UPDATE social_automation_tasks SET status='pending', attempts=attempts+1, updated_at=NOW() WHERE id=$1`,
-    [taskId]
-  );
 
   const scheduleRetry = async (msg: string) => {
     const retryAt = new Date(Date.now() + getRetryDelayMs(attemptNumber, platform));
@@ -1533,23 +1573,27 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
       await scheduleRetry(result.error || 'Automation failed');
     }
 
+    // Only two outcomes are final for a task; anything else would leave it
+    // selectable by the worker and publish again on the next tick.
+    const finalStatus = result.status === 'published' ? 'published' : 'failed';
     await pool.query(
       `UPDATE social_automation_tasks SET status=$2, last_error=$3, updated_at=NOW() WHERE id=$1`,
-      [taskId, result.status, result.error || null]
+      [taskId, finalStatus, result.error || null]
     );
 
     if (logId) {
       await pool.query(
         `UPDATE publishing_logs
-         SET status=$1, platform_post_id=$2, error_message=$3, response=$4
+         SET status=$1, platform_post_id=$2, error_message=$3, response=$4,
+             posted_at = CASE WHEN $1 = 'published' THEN NOW() ELSE posted_at END
          WHERE id=$5 AND user_id=$6`,
-        [result.status, result.platformPostId || null, result.error || null, result as any, logId, userId]
+        [finalStatus, result.platformPostId || null, result.error || null, result as any, logId, userId]
       );
     } else {
       await pool
         .query(
           'INSERT INTO publishing_logs (id,post_id,user_id,platform,status,platform_post_id,error_message,response,posted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)',
-          [randomUUID(), postId, userId, platform, result.status, result.platformPostId || null, result.error || null, JSON.stringify(result as any), result.status === 'published' ? new Date().toISOString() : null]
+          [randomUUID(), postId, userId, platform, finalStatus, result.platformPostId || null, result.error || null, JSON.stringify(result as any), finalStatus === 'published' ? new Date().toISOString() : null]
         )
         .catch(() => undefined);
     }
@@ -1559,12 +1603,12 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
       postId,
       platform,
       destination,
-      status: result.status,
+      status: finalStatus,
       apiResponse: result,
-      postedAtIso: result.status === 'published' ? new Date().toISOString() : null,
+      postedAtIso: finalStatus === 'published' ? new Date().toISOString() : null,
     });
 
-    return { ok: result.status !== 'failed', ...result };
+    return { ok: finalStatus === 'published', ...result, status: finalStatus };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Automation failed';
     if ((err as any)?.retryScheduled) {
@@ -1746,29 +1790,62 @@ async function queueSocialAutomationForPublishedPost(userId: string, post: Recor
 }
 
 let socialAutomationWorkerStarted = false;
+let socialAutomationTickRunning = false;
+
+// A task left in 'processing' this long was interrupted mid-publish (deploy,
+// crash). It may or may not have reached the platform, so it is surfaced as
+// failed for a deliberate retry rather than re-sent automatically.
+const STALE_PROCESSING_MS = 15 * 60 * 1000;
+
+async function failInterruptedSocialAutomationTasks() {
+  if (!pool) return;
+  const message = 'Publishing was interrupted before it finished. Check the platform, then retry if the post is missing.';
+  const { rows } = await pool.query(
+    `UPDATE social_automation_tasks
+     SET status='failed', last_error=$2, updated_at=NOW()
+     WHERE status='processing' AND updated_at < NOW() - ($1::int * INTERVAL '1 millisecond')
+     RETURNING log_id, user_id`,
+    [STALE_PROCESSING_MS, message]
+  ).catch(() => ({ rows: [] as any[] }));
+  for (const row of rows as any[]) {
+    if (!row.log_id) continue;
+    await pool.query(
+      `UPDATE publishing_logs SET status='failed', error_message=$1 WHERE id=$2 AND user_id=$3 AND status IN ('pending','scheduled')`,
+      [message, row.log_id, row.user_id]
+    ).catch(() => undefined);
+  }
+}
 
 async function processDueSocialAutomationTasks() {
   if (!pool) return;
+  // Ticks are 5 s apart and a publish can take longer; never overlap them.
+  if (socialAutomationTickRunning) return;
+  socialAutomationTickRunning = true;
+  try {
+    await failInterruptedSocialAutomationTasks();
+    const { rows: tasks } = await pool.query(
+      `SELECT id, attempts, platform FROM social_automation_tasks
+       WHERE status IN ('scheduled','pending') AND run_at <= NOW()
+       ORDER BY run_at ASC
+       LIMIT 10`
+    );
 
-  const { rows: tasks } = await pool.query(
-    `SELECT * FROM social_automation_tasks
-     WHERE status IN ('scheduled','pending') AND run_at <= NOW()
-     ORDER BY run_at ASC
-     LIMIT 10`
-  );
-
-  for (const task of tasks) {
-    const taskId = String((task as any).id);
-    try {
-      const attemptNumber = Number((task as any).attempts || 0) + 1;
-      await processSocialAutomationTaskById(
-        taskId,
-        attemptNumber,
-        getSocialAutomationMaxAttempts(String((task as any).platform || ''))
-      );
-    } catch (err) {
-      void err;
+    for (const task of tasks) {
+      const taskId = String((task as any).id);
+      try {
+        const attemptNumber = Number((task as any).attempts || 0) + 1;
+        // Claims the task itself; a task another worker already took is skipped.
+        await processSocialAutomationTaskById(
+          taskId,
+          attemptNumber,
+          getSocialAutomationMaxAttempts(String((task as any).platform || ''))
+        );
+      } catch (err) {
+        void err;
+      }
     }
+  } finally {
+    socialAutomationTickRunning = false;
   }
 }
 
@@ -1787,6 +1864,7 @@ function startSocialAutomationProcessor() {
     void (async () => {
       try {
         await ensureBullMqSocialAutomationQueue();
+        await failInterruptedSocialAutomationTasks();
         const { rows } = await pool.query(
           `SELECT id, run_at, platform FROM social_automation_tasks
            WHERE status IN ('scheduled','pending')
@@ -1812,6 +1890,23 @@ function renderMessageTemplate(template: string, vars: Record<string, string>) {
     if (Object.prototype.hasOwnProperty.call(vars, key)) return vars[key] ?? '';
     return m;
   });
+}
+
+async function hasStoredFacebookPageToken(userId: string, destination?: { type?: string; id?: string } | null): Promise<boolean> {
+  if (!pool) return false;
+  const destType = String(destination?.type || '').toLowerCase();
+  if (destType && destType !== 'page') return false;
+  const destId = String(destination?.id || '').trim();
+  const { rows } = await pool.query(
+    `SELECT 1 FROM social_accounts
+     WHERE user_id=$1 AND platform='facebook' AND account_type='page' AND connected=true
+       AND COALESCE(needs_reapproval, false) = false
+       AND (COALESCE(access_token_encrypted, '') <> '' OR COALESCE(access_token, '') <> '')
+       ${destId ? 'AND account_id=$2' : ''}
+     LIMIT 1`,
+    destId ? [userId, destId] : [userId]
+  ).catch(() => ({ rows: [] as any[] }));
+  return rows.length > 0;
 }
 
 async function resolveFacebookPageToken(params: {
@@ -1871,8 +1966,9 @@ async function resolveFacebookPageToken(params: {
     }
   }
 
-  const graphBase = 'https://graph.facebook.com/v19.0';
-  const pagesResp = await axios.get(`${graphBase}/me/accounts?access_token=${encodeURIComponent(params.userAccessToken)}`, {
+  if (!params.userAccessToken) return null;
+  const pagesResp = await axios.get(`${META_GRAPH_BASE}/me/accounts`, {
+    params: { fields: 'id,name,access_token', limit: 200, access_token: params.userAccessToken },
     validateStatus: () => true,
     timeout: 15000,
   });
@@ -1885,7 +1981,41 @@ async function resolveFacebookPageToken(params: {
   const pageId = String(page?.id || '').trim();
   const pageToken = String(page?.access_token || '').trim();
   if (!pageId || !pageToken) return null;
+  if (pool) {
+    // Cache the Page token on the saved Page row so later posts skip this lookup.
+    await pool.query(
+      `UPDATE social_accounts SET access_token_encrypted = $1, access_token = NULL
+       WHERE user_id = $2 AND platform = 'facebook' AND account_type = 'page' AND account_id = $3`,
+      [encryptIntegrationSecret(pageToken), params.userId, pageId],
+    ).catch(() => undefined);
+  }
   return { pageId, pageToken, pageName: String(page?.name || '').trim() || desiredName || undefined };
+}
+
+// Polls a Threads media container until it can be published.
+async function waitForThreadsContainer(
+  threadsBase: string,
+  containerId: string,
+  accessToken: string,
+  options: { attempts?: number; intervalMs?: number } = {},
+): Promise<{ status: 'ready' | 'error' | 'timeout'; message: string }> {
+  const attempts = options.attempts ?? 15;
+  const intervalMs = options.intervalMs ?? 3000;
+  for (let i = 0; i < attempts; i++) {
+    const resp = await axios.get(`${threadsBase}/${encodeURIComponent(containerId)}`, {
+      params: { fields: 'status,error_message', access_token: accessToken },
+      validateStatus: () => true,
+      timeout: 10000,
+    }).catch(() => null);
+    const status = String((resp?.data as any)?.status || '').toUpperCase();
+    if (status === 'FINISHED' || status === 'PUBLISHED') return { status: 'ready', message: '' };
+    if (status === 'ERROR' || status === 'EXPIRED') {
+      const detail = String((resp?.data as any)?.error_message || status);
+      return { status: 'error', message: `Threads could not process the media (${detail}).` };
+    }
+    await sleep(intervalMs);
+  }
+  return { status: 'timeout', message: 'Threads is still processing the media; the post will be retried.' };
 }
 
 // Helper: publish a blog post to a single platform, return result
@@ -1930,13 +2060,22 @@ async function publishToplatform(
       return { status: 'published', platformPostId: String(wpData?.id || '') };
     }
 
-    const conn = await getPublishableSocialConnection(userId, platformId);
-    if (!conn) throw new Error(`${platform} is not connected`);
-    if (conn.needs_reapproval) {
+    const connection = await getPublishableSocialConnection(userId, platformId);
+    // Facebook Pages publish with their own long-lived Page tokens, which keep
+    // working after the user's login token lapses — don't block them on it.
+    const facebookPageTokensOnly =
+      platformId === 'facebook' &&
+      (!connection?.access_token || Boolean(connection?.needs_reapproval)) &&
+      await hasStoredFacebookPageToken(userId, options?.destination);
+    if (!connection && !facebookPageTokensOnly) throw new Error(`${platform} is not connected`);
+    if (!facebookPageTokensOnly && connection?.needs_reapproval) {
       return { status: 'failed', error: `${platform} connection needs re-approval. Please reconnect.`, retryable: false };
     }
+    const conn: PublishableSocialConnection = facebookPageTokensOnly
+      ? { platform: 'facebook', access_token: '', token_data: connection?.token_data || {}, account_id: connection?.account_id ?? null, account_name: connection?.account_name ?? null }
+      : connection!;
     const { access_token, token_data } = conn;
-    if (!access_token) throw new Error(`${platform} access token missing - please reconnect`);
+    if (!access_token && !facebookPageTokensOnly) throw new Error(`${platform} access token missing - please reconnect`);
 
     const PLATFORM_NAMES: Record<string, string> = {
       linkedin: 'LinkedIn', twitter: 'Twitter / X', facebook: 'Facebook',
@@ -2130,7 +2269,7 @@ async function publishToplatform(
       if (!boardId) {
         return {
           status: 'failed',
-          error: 'No Pinterest board selected. Pick a default board in Analytics 鈫?Pinterest, or create a board on Pinterest first.',
+          error: 'No Pinterest board selected. Pick a default board in Analytics → Pinterest, or create a board on Pinterest first.',
         };
       }
 
@@ -2302,7 +2441,7 @@ async function publishToplatform(
         accountName: conn.account_name,
         tokenData: token_data,
         helpers: {
-          graphBase: 'https://graph.facebook.com/v19.0',
+          graphBase: META_GRAPH_BASE,
           resolvePageToken: async (dest: any) => resolveFacebookPageToken({
             userId,
             userAccessToken: access_token,
@@ -2362,6 +2501,14 @@ async function publishToplatform(
       const creationId = String(createData?.id || '').trim();
       if (!creationId) throw new Error('Threads creation id missing');
 
+      // Media containers must finish processing before they can be published
+      // (Meta suggests ~30 s); text containers are ready at once.
+      if (featuredImage) {
+        const readiness = await waitForThreadsContainer(threadsBase, creationId, access_token);
+        if (readiness.status === 'error') return { status: 'failed', error: readiness.message, retryable: false };
+        if (readiness.status === 'timeout') return { status: 'failed', error: readiness.message, retryable: true };
+      }
+
       const publishParams = new URLSearchParams({
         creation_id: creationId,
         access_token: access_token,
@@ -2378,12 +2525,22 @@ async function publishToplatform(
       const pubData: any = pubResp.data || {};
       if (pubResp.status >= 400) {
         const msg = pubData?.error?.message || `Threads publish error ${pubResp.status}`;
-        return { status: 'pending', error: msg };
+        return { status: 'failed', error: msg, retryable: pubResp.status === 429 || pubResp.status >= 500 };
       }
       return { status: 'published', platformPostId: String(pubData?.id || '') };
     }
 
     if (platformId === 'tiktok') {
+      // TikTok has no text-only posts. The previous "draft" fallback sent an
+      // empty video upload that TikTok always rejects, yet reported success.
+      if (!featuredImage || !/^https?:\/\//i.test(featuredImage)) {
+        return {
+          status: 'failed',
+          error: 'TikTok posts need a public image. Add a featured image to publish this post to TikTok.',
+          retryable: false,
+        };
+      }
+
       // Step 1: Query creator info to get posting capabilities
       const creatorResp = await axios.get(
         'https://open.tiktokapis.com/v2/post/publish/creator_info/query/',
@@ -2410,82 +2567,45 @@ async function publishToplatform(
       const commentDisabled = creatorInfo?.comment_disabled ?? false;
       const maxVideoDuration = Number(creatorInfo?.max_video_post_duration_sec || 60);
 
-      // Step 2: Initialize post 鈥?photo post if image available, otherwise text-to-video (draft)
+      // Step 2: Initialize a photo post pulled from the featured image URL
       const postCaption = text.slice(0, 2200); // TikTok caption limit
 
-      if (featuredImage) {
-        // Photo post flow
-        const initBody = {
-          post_info: {
-            title: postCaption,
-            privacy_level: privacyLevel,
-            disable_duet: duetDisabled,
-            disable_stitch: stitchDisabled,
-            disable_comment: commentDisabled,
-          },
-          source_info: {
-            source: 'PULL_FROM_URL',
-            photo_images: [featuredImage],
-            photo_cover_index: 0,
-          },
-          post_mode: 'DIRECT_POST',
-          media_type: 'PHOTO',
-        };
-        const initResp = await axios.post(
-          'https://open.tiktokapis.com/v2/post/publish/content/init/',
-          initBody,
-          {
-            headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
-            validateStatus: () => true,
-            timeout: 20000,
-          }
-        );
-        const initData: any = initResp.data || {};
-        if (initResp.status >= 400) {
-          const msg = initData?.error?.message || `TikTok photo post init failed (${initResp.status})`;
-          return { status: 'failed', error: msg, retryable: initResp.status >= 500 };
-        }
-        const publishId = String(initData?.data?.publish_id || '').trim();
-        if (!publishId) return { status: 'failed', error: 'TikTok did not return a publish_id' };
-        await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_published', status: 'success', response: { publishId } });
-        return { status: 'published', platformPostId: publishId };
-      }
-
-      // No image 鈥?send as draft video so user can finish in TikTok app
-      const draftBody = {
+      const initBody = {
         post_info: {
           title: postCaption,
-          privacy_level: 'SELF_ONLY', // draft always goes to self
-          disable_duet: true,
-          disable_stitch: true,
-          disable_comment: false,
+          privacy_level: privacyLevel,
+          disable_duet: duetDisabled,
+          disable_stitch: stitchDisabled,
+          disable_comment: commentDisabled,
         },
-        source_info: { source: 'FILE_UPLOAD', video_size: 0, chunk_size: 0, total_chunk_count: 1 },
-        post_mode: 'UPLOAD_TO_DRAFT',
-        media_type: 'VIDEO',
+        source_info: {
+          source: 'PULL_FROM_URL',
+          photo_images: [featuredImage],
+          photo_cover_index: 0,
+        },
+        post_mode: 'DIRECT_POST',
+        media_type: 'PHOTO',
       };
-      const draftResp = await axios.post(
-        'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/',
-        draftBody,
+      const initResp = await axios.post(
+        'https://open.tiktokapis.com/v2/post/publish/content/init/',
+        initBody,
         {
           headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
           validateStatus: () => true,
           timeout: 20000,
         }
       );
-      const draftData: any = draftResp.data || {};
-      if (draftResp.status >= 400) {
-        const msg = draftData?.error?.message || `TikTok draft init failed (${draftResp.status})`;
-        return { status: 'failed', error: msg, retryable: draftResp.status >= 500 };
+      const initData: any = initResp.data || {};
+      // TikTok reports success as error.code "ok"; any other code is a failure.
+      const initErrorCode = String(initData?.error?.code || 'ok');
+      if (initResp.status >= 400 || initErrorCode !== 'ok') {
+        const msg = initData?.error?.message || `TikTok photo post init failed (${initResp.status}${initErrorCode !== 'ok' ? `, ${initErrorCode}` : ''})`;
+        return { status: 'failed', error: msg, retryable: initResp.status === 429 || initResp.status >= 500 };
       }
-      const draftPublishId = String(draftData?.data?.publish_id || '').trim();
-      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_drafted', status: 'success', response: { publishId: draftPublishId, note: 'Text-only post sent as TikTok draft 鈥?open TikTok app to finish and post' } });
-      // Return as published with a note so the user knows to check their TikTok drafts
-      return {
-        status: 'published',
-        platformPostId: draftPublishId,
-        error: 'Sent to TikTok drafts (text-only posts must be completed in the TikTok app)',
-      };
+      const publishId = String(initData?.data?.publish_id || '').trim();
+      if (!publishId) return { status: 'failed', error: 'TikTok did not return a publish_id' };
+      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_published', status: 'success', response: { publishId } });
+      return { status: 'published', platformPostId: publishId };
     }
 
     logger.info(`[Distribution] ${platformName}: token available, platform publishing not yet implemented`);
@@ -2617,9 +2737,27 @@ router.post('/automation/retry/:logId', async (req: Request, res: Response) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const { logId } = req.params;
-    const logRows = await pool!.query('SELECT * FROM publishing_logs WHERE id=$1 AND user_id=$2', [logId, auth.userId]);
-    if (!logRows.rows.length) return res.status(404).json({ success: false, error: 'Log not found' });
-    const log = logRows.rows[0];
+    // Only a failed entry is retried, and the claim makes a double click (or
+    // a retry racing the automation worker) publish once.
+    const claimed = await pool!.query(
+      `UPDATE publishing_logs SET status='processing', error_message=NULL
+       WHERE id=$1 AND user_id=$2 AND status IN ('failed','error')
+       RETURNING *`,
+      [logId, auth.userId]
+    );
+    if (!claimed.rows.length) {
+      const existing = await pool!.query('SELECT status FROM publishing_logs WHERE id=$1 AND user_id=$2', [logId, auth.userId]);
+      if (!existing.rows.length) return res.status(404).json({ success: false, error: 'Log not found' });
+      const status = String((existing.rows[0] as any).status || '');
+      return res.status(409).json({
+        success: false,
+        error: status === 'published' ? 'This post was already published; retrying would post it again.' : `This post is ${status || 'in progress'} and cannot be retried now.`,
+      });
+    }
+    const log = claimed.rows[0];
+    const releaseClaim = (error: string) =>
+      pool!.query(`UPDATE publishing_logs SET status='failed', error_message=$1 WHERE id=$2 AND user_id=$3`, [error, logId, auth.userId]).catch(() => undefined);
+
     const postRows = await pool!.query(
       `SELECT p.*,
         ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
@@ -2627,229 +2765,60 @@ router.post('/automation/retry/:logId', async (req: Request, res: Response) => {
        WHERE p.id=$1 AND p.user_id=$2`,
       [log.post_id, auth.userId]
     );
-    if (!postRows.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    if (!postRows.rows.length) {
+      await releaseClaim('Post not found');
+      return res.status(404).json({ success: false, error: 'Post not found' });
+    }
+    // Publish to the same destination (Page, company, board) with the same
+    // template as the automation that produced this entry.
+    const taskRows = await pool!.query(
+      `SELECT id, payload FROM social_automation_tasks WHERE log_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [logId, auth.userId]
+    ).catch(() => ({ rows: [] as any[] }));
+    const task = taskRows.rows[0] as { id: string; payload: unknown } | undefined;
+    const payload = safeJsonObject(task?.payload);
+    const destination = payload?.destination || null;
+    const template = payload?.template ? String(payload.template) : '';
+
     const platformId = normalizePlatformId(log.platform);
-    const result = await publishToplatform(auth.userId, postRows.rows[0], platformId);
+    let result: Awaited<ReturnType<typeof publishToplatform>>;
+    try {
+      result = await publishToplatform(auth.userId, postRows.rows[0], platformId, { template, destination });
+    } catch (err) {
+      await releaseClaim(err instanceof Error ? err.message : 'Retry failed');
+      throw err;
+    }
+    const finalStatus = result.status === 'published' ? 'published' : 'failed';
     await pool!.query(
-      'UPDATE publishing_logs SET status=$1, platform_post_id=$2, error_message=$3 WHERE id=$4',
-      [result.status, result.platformPostId || null, result.error || null, logId]
+      `UPDATE publishing_logs
+       SET status=$1, platform_post_id=$2, error_message=$3, response=$4,
+           posted_at = CASE WHEN $1 = 'published' THEN NOW() ELSE posted_at END
+       WHERE id=$5 AND user_id=$6`,
+      [finalStatus, result.platformPostId || null, result.error || null, result as any, logId, auth.userId]
     );
-    return res.json({ success: true, result });
+    if (task) {
+      await pool!.query(
+        `UPDATE social_automation_tasks SET status=$2, last_error=$3, updated_at=NOW() WHERE id=$1 AND status='failed'`,
+        [task.id, finalStatus, result.error || null]
+      ).catch(() => undefined);
+    }
+    await insertSocialPostLog({
+      userId: auth.userId,
+      postId: String(log.post_id),
+      platform: platformId,
+      destination,
+      status: finalStatus,
+      apiResponse: result,
+      postedAtIso: finalStatus === 'published' ? new Date().toISOString() : null,
+    });
+    return res.json({ success: true, result: { ...result, status: finalStatus } });
   } catch (err) {
     logger.error('Unhandled error:', err);
     return res.status(500).json({ success: false, error: 'Retry failed' });
   }
 });
 
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Meta Data Deletion (Facebook requirement) 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-const base64UrlToBuffer = (value: string): Buffer => {
-  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
-  return Buffer.from(padded, 'base64');
-};
-
-const parseSignedRequest = (signedRequest: string, appSecret: string): Record<string, unknown> => {
-  const parts = String(signedRequest || '').split('.');
-  if (parts.length !== 2) throw new Error('Invalid signed_request');
-  const [encodedSig, encodedPayload] = parts;
-
-  const sig = base64UrlToBuffer(encodedSig);
-  const expected = createHmac('sha256', appSecret).update(encodedPayload).digest();
-
-  if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) {
-    throw new Error('Invalid signed_request signature');
-  }
-
-  const payloadJson = base64UrlToBuffer(encodedPayload).toString('utf8');
-  const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-  return payload;
-};
-
-const getMetaAppSecretForDeletion = async (): Promise<string> => {
-  const envSecret =
-    (process.env.FACEBOOK_APP_SECRET || '').trim() ||
-    (process.env.META_APP_SECRET || '').trim();
-  if (envSecret) return envSecret;
-  const cfg = await getPlatformConfig('facebook').catch(() => ({} as any));
-  return String((cfg as any)?.appSecret || '').trim();
-};
-
-const createDeletionRequestRecord = async (
-  code: string,
-  metaUserId: string | null,
-  payload: Record<string, unknown>,
-): Promise<DataDeletionRecord> => {
-  const record: DataDeletionRecord = {
-    code,
-    metaUserId,
-    status: 'received',
-    createdAt: new Date().toISOString(),
-    completedAt: null,
-  };
-
-  if (!hasDatabase()) {
-    inMemoryDataDeletionRequests.set(code, record);
-    return record;
-  }
-
-  await dbQuery(
-    `INSERT INTO data_deletion_requests (code, platform, meta_user_id, status, payload, created_at)
-     VALUES ($1, 'meta', $2, 'received', $3::jsonb, NOW())
-     ON CONFLICT (code) DO NOTHING`,
-    [code, metaUserId, JSON.stringify(payload ?? {})],
-  );
-
-  return record;
-};
-
-const updateDeletionRequestStatus = async (code: string, status: DataDeletionStatus) => {
-  if (!hasDatabase()) {
-    const existing = inMemoryDataDeletionRequests.get(code);
-    if (!existing) return;
-    const completedAt = status === 'completed' ? new Date().toISOString() : null;
-    inMemoryDataDeletionRequests.set(code, { ...existing, status, completedAt });
-    return;
-  }
-
-  if (status === 'completed') {
-    await dbQuery(
-      `UPDATE data_deletion_requests
-       SET status = $2, completed_at = NOW()
-       WHERE code = $1`,
-      [code, status],
-    );
-    return;
-  }
-
-  await dbQuery('UPDATE data_deletion_requests SET status = $2 WHERE code = $1', [code, status]);
-};
-
-const getDeletionRequest = async (code: string): Promise<DataDeletionRecord | null> => {
-  if (!code) return null;
-  if (!hasDatabase()) return inMemoryDataDeletionRequests.get(code) ?? null;
-  const result = await dbQuery(
-    `SELECT code, meta_user_id, status, created_at, completed_at
-     FROM data_deletion_requests
-     WHERE code = $1`,
-    [code],
-  );
-  const row = result.rows[0] as any;
-  if (!row) return null;
-  return {
-    code: String(row.code),
-    metaUserId: row.meta_user_id ? String(row.meta_user_id) : null,
-    status: (String(row.status || 'received') as DataDeletionStatus) || 'received',
-    createdAt: new Date(row.created_at).toISOString(),
-    completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
-  };
-};
-
-const deleteBestEffortUserDataByMetaUserId = async (metaUserId: string): Promise<boolean> => {
-  if (!metaUserId || !hasDatabase()) return false;
-
-  let deleted = false;
-
-  // 1) If the user originally logged in via Facebook without email, we created a synthetic email.
-  const syntheticEmail = `fb_${metaUserId}@facebook.social`;
-  const userRows = await dbQuery('SELECT id FROM users WHERE email = $1', [syntheticEmail]);
-  if (userRows.rows.length > 0) {
-    const userId = String((userRows.rows[0] as any).id);
-    const delUser = await dbQuery('DELETE FROM users WHERE id = $1', [userId]);
-    deleted = deleted || delUser.rowCount > 0;
-  }
-
-  // 2) Also remove any connected accounts where token payload contains a matching user_id.
-  const delAccounts = await dbQuery(
-    `DELETE FROM social_accounts
-     WHERE token_data->>'user_id' = $1`,
-    [metaUserId],
-  );
-  deleted = deleted || delAccounts.rowCount > 0;
-
-  return deleted;
-};
-
-// POST /api/meta/data-deletion 鈥?Meta "Data Deletion Request URL"
-// Accepts both paths: /api/meta/... (correct) and /api/api/meta/... (in case
-// the older double-prefixed URL is what's registered in the Meta dashboard).
-router.post(['/meta/data-deletion', '/api/meta/data-deletion'], async (req: Request, res: Response) => {
-  try {
-    const signedRequest = String((req.body as any)?.signed_request || '').trim();
-    if (!signedRequest) return res.status(400).json({ success: false, error: 'signed_request required' });
-
-    const appSecret = await getMetaAppSecretForDeletion();
-    if (!appSecret) return res.status(500).json({ success: false, error: 'Meta app secret not configured' });
-
-    const payload = parseSignedRequest(signedRequest, appSecret);
-    const metaUserId = typeof payload.user_id === 'string' ? payload.user_id : null;
-
-    const confirmationCode = randomUUID();
-    await createDeletionRequestRecord(confirmationCode, metaUserId, payload);
-
-    if (metaUserId) {
-      const deleted = await deleteBestEffortUserDataByMetaUserId(metaUserId).catch(() => false);
-      if (deleted) await updateDeletionRequestStatus(confirmationCode, 'completed');
-    }
-
-    const FRONTEND_URL = process.env.VITE_APP_URL || process.env.FRONTEND_URL || 'https://marketing.dakyx.com';
-    const statusUrl = `${FRONTEND_URL.replace(/\/$/, '')}/data-deletion?code=${encodeURIComponent(confirmationCode)}`;
-
-    // Meta expects: { url, confirmation_code }
-    return res.json({ url: statusUrl, confirmation_code: confirmationCode });
-  } catch (error) {
-    logger.error('Meta data deletion error:', error);
-    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
-  }
-});
-
-// GET /api/meta/data-deletion/status?code=... 鈥?used by our public status page
-router.get(['/meta/data-deletion/status', '/api/meta/data-deletion/status'], async (req: Request, res: Response) => {
-  try {
-    const code = String((req.query as any)?.code || '').trim();
-    if (!code) return res.status(400).json({ success: false, error: 'code required' });
-
-    const record = await getDeletionRequest(code);
-    if (!record) return res.status(404).json({ success: false, error: 'Not found' });
-
-    return res.json({
-      success: true,
-      data: {
-        code: record.code,
-        status: record.status,
-        createdAt: record.createdAt,
-        completedAt: record.completedAt,
-      },
-    });
-  } catch (error) {
-    logger.error('Meta deletion status error:', error);
-    return res.status(500).json({ success: false, error: 'Failed to load status' });
-  }
-});
-
-// Meta Deauthorize Callback (uninstall)
-
-// POST /api/meta/deauthorize 鈥?Meta "Deauthorize Callback URL"
-router.post(['/meta/deauthorize', '/api/meta/deauthorize'], async (req: Request, res: Response) => {
-  try {
-    const signedRequest = String((req.body as any)?.signed_request || '').trim();
-    if (!signedRequest) return res.status(400).json({ success: false, error: 'signed_request required' });
-
-    const appSecret = await getMetaAppSecretForDeletion();
-    if (!appSecret) return res.status(500).json({ success: false, error: 'Meta app secret not configured' });
-
-    const payload = parseSignedRequest(signedRequest, appSecret);
-    const metaUserId = typeof payload.user_id === 'string' ? payload.user_id : null;
-
-    if (metaUserId) {
-      await deleteBestEffortUserDataByMetaUserId(metaUserId).catch(() => false);
-    }
-
-    return res.json({ success: true });
-  } catch (error) {
-    logger.error('Meta deauthorize error:', error);
-    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid request' });
-  }
-});
+// Meta deauthorize / data-deletion callbacks live in complianceRoutes.ts.
 
 
 

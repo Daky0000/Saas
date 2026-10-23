@@ -136,7 +136,8 @@ export function registerConnectorSyncRoutes({ requireAuth, pool }: Deps): Router
        WHERE ${wheres.join(' AND ')}
        ORDER BY r.started_at DESC
        LIMIT $${params.length+1} OFFSET $${params.length+2}`,
-      [...params, parseInt(limit), parseInt(offset)]
+      // Bounded page size; junk values fall back to the defaults.
+      [...params, Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 25)), Math.max(0, Number.parseInt(offset, 10) || 0)]
     );
     res.json(rows);
   });

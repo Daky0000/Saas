@@ -5,6 +5,8 @@ import axios from 'axios';
 import { randomBytes, randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { resolveBackendRedirectUri } from '../platform-helpers.ts';
+import { GOOGLE_HTTP_TIMEOUT_MS, isDeadGrantFlag, markGoogleGrantRevoked, refreshGoogleAccessToken, revokeGoogleToken } from '../google-oauth.ts';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -34,14 +36,24 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
     return getPlatformConfig('gmail').catch(() => ({} as Record<string, string>));
   }
 
+  // The default callback lives on this API; behind a proxy the request's own
+  // protocol/host can differ from what Google was given.
+  const defaultRedirectUri = (req: Request) => resolveBackendRedirectUri('/api/calendar/google/callback', req);
+
+  // 409, not 401: the app treats any 401 as an expired login and signs the
+  // user out, but here only the Calendar connection needs attention.
+  const notConnected = (res: Response, error = 'Google Calendar is not connected or its access has expired. Reconnect it to continue.') =>
+    void res.status(409).json({ error, notConnected: true });
+
   async function getValidToken(userId: string): Promise<string | null> {
     const { rows } = await pool.query(
-      `SELECT access_token_encrypted, refresh_token_encrypted, token_expires_at
+      `SELECT access_token_encrypted, refresh_token_encrypted, token_expires_at, needs_reapproval, token_data->>'reason' AS reason
        FROM social_accounts WHERE user_id=$1 AND platform='google_calendar' AND connected=true LIMIT 1`,
       [userId]
     );
     if (!rows.length) return null;
     const row = rows[0] as any;
+    if (isDeadGrantFlag(row.needs_reapproval, row.reason)) return null;
 
     const decrypt = (enc: string | null) => {
       try { return enc ? decryptIntegrationSecret(enc) : null; } catch { return null; }
@@ -56,34 +68,38 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
     const needsRefresh = !expiresAt || expiresAt.getTime() < Date.now() + 5 * 60 * 1000;
     if (!needsRefresh || !refreshToken) return accessToken;
 
-    try {
-      const cfg = await getCalendarCredentials();
-      const resp = await axios.post(
-        GOOGLE_TOKEN_URL,
-        new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: cfg.clientId, client_secret: cfg.clientSecret }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true }
-      );
-      if (resp.status < 400 && resp.data?.access_token) {
-        const newToken = String(resp.data.access_token);
-        const ttl = Number(resp.data.expires_in || 3600);
-        await pool.query(
-          `UPDATE social_accounts SET access_token_encrypted=$1, token_expires_at=$2 WHERE user_id=$3 AND platform='google_calendar'`,
-          [encryptIntegrationSecret(newToken), new Date(Date.now() + ttl * 1000).toISOString(), userId]
-        );
-        return newToken;
+    const cfg = await getCalendarCredentials();
+    const refreshed = await refreshGoogleAccessToken(refreshToken, String(cfg.clientId || ''), String(cfg.clientSecret || ''));
+    if (!refreshed.ok) {
+      if (refreshed.revoked) {
+        await markGoogleGrantRevoked((sql, params) => pool.query(sql, params as any[]), userId, 'google_calendar');
+        return null;
       }
-    } catch (e) { logger.error('[calendarRoutes] token refresh error:', e); }
-    return accessToken;
+      logger.warn({ userId, error: refreshed.error }, 'calendar_token_refresh_failed');
+      return accessToken;
+    }
+    await pool.query(
+      `UPDATE social_accounts
+       SET access_token_encrypted=$1, token_expires_at=$2, needs_reapproval=false,
+           token_data = COALESCE(token_data, '{}'::jsonb) - 'reason' - 'needs_reapproval_at'
+       WHERE user_id=$3 AND platform='google_calendar'`,
+      [encryptIntegrationSecret(refreshed.accessToken), refreshed.expiresAt, userId]
+    );
+    return refreshed.accessToken;
   }
 
   // ── GET /api/calendar/google/status ──────────────────────────────────────────
   router.get('/google/status', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     const { rows } = await pool.query(
-      `SELECT id FROM social_accounts WHERE user_id=$1 AND platform='google_calendar' AND connected=true LIMIT 1`,
+      `SELECT needs_reapproval, token_data->>'reason' AS reason FROM social_accounts
+       WHERE user_id=$1 AND platform='google_calendar' AND connected=true LIMIT 1`,
       [auth.userId]
     );
-    res.json({ connected: rows.length > 0 });
+    const row = rows[0] as any;
+    // A revoked grant reads as disconnected so the UI offers to connect again.
+    const reconnectRequired = Boolean(row) && isDeadGrantFlag(row.needs_reapproval, row.reason);
+    res.json({ connected: Boolean(row) && !reconnectRequired, reconnectRequired });
   });
 
   // ── POST /api/calendar/google/connect-url ─────────────────────────────────────
@@ -96,8 +112,7 @@ export function registerCalendarRoutes(deps: CalendarDeps): Router {
       }
 
       const state = randomBytes(16).toString('hex');
-      const apiOrigin = `${req.protocol}://${req.get('host')}`;
-      const redirectUri = cfg.calendarRedirectUri || `${apiOrigin}/api/calendar/google/callback`;
+      const redirectUri = cfg.calendarRedirectUri || defaultRedirectUri(req);
 
       // Persist state in DB so it survives server restarts / multi-instance deployments
       await pool.query(
@@ -161,8 +176,7 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
 
       // Reconstruct redirectUri: use what was stored, or fall back to the same derivation as connect-url
       const cfg = await getCalendarCredentials();
-      const apiOrigin = `${req.protocol}://${req.get('host')}`;
-      const redirectUri = storedRedirectUri || cfg.calendarRedirectUri || `${apiOrigin}/api/calendar/google/callback`;
+      const redirectUri = storedRedirectUri || cfg.calendarRedirectUri || defaultRedirectUri(req);
 
       const tokenResp = await axios.post(
         GOOGLE_TOKEN_URL,
@@ -173,7 +187,7 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
           client_id: cfg.clientId,
           client_secret: cfg.clientSecret,
         }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true }
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true, timeout: GOOGLE_HTTP_TIMEOUT_MS }
       );
 
       if (tokenResp.status >= 400) {
@@ -199,7 +213,9 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
          DO UPDATE SET
            access_token_encrypted = EXCLUDED.access_token_encrypted,
            token_expires_at = EXCLUDED.token_expires_at,
-           connected = true
+           connected = true,
+           needs_reapproval = false,
+           token_data = COALESCE(social_accounts.token_data, '{}'::jsonb) - 'reason' - 'needs_reapproval_at'
            ${encRefresh ? ", refresh_token_encrypted = EXCLUDED.refresh_token_encrypted" : ""}`,
         [randomUUID(), userId, encAccess, encRefresh, expiry]
       );
@@ -214,15 +230,28 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
   // ── DELETE /api/calendar/google/disconnect ────────────────────────────────────
   router.delete('/google/disconnect', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
-    await pool.query(`UPDATE social_accounts SET connected=false WHERE user_id=$1 AND platform='google_calendar'`, [auth.userId]);
-    res.json({ ok: true });
+    // Revoke the grant at Google too, then drop the stored credentials.
+    const { rows } = await pool.query(
+      `SELECT access_token_encrypted, refresh_token_encrypted FROM social_accounts WHERE user_id=$1 AND platform='google_calendar'`,
+      [auth.userId]
+    );
+    const decrypt = (enc: string | null) => { try { return enc ? decryptIntegrationSecret(enc) : ''; } catch { return ''; } };
+    const token = rows[0] ? decrypt((rows[0] as any).refresh_token_encrypted) || decrypt((rows[0] as any).access_token_encrypted) : '';
+    const revoked = await revokeGoogleToken(token);
+    await pool.query(
+      `UPDATE social_accounts
+       SET connected=false, access_token=NULL, refresh_token=NULL, access_token_encrypted=NULL, refresh_token_encrypted=NULL
+       WHERE user_id=$1 AND platform='google_calendar'`,
+      [auth.userId]
+    );
+    res.json({ ok: true, providerRevoked: revoked });
   });
 
   // ── GET /api/calendar/events?start=ISO&end=ISO ────────────────────────────────
   router.get('/events', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     const token = await getValidToken(auth.userId);
-    if (!token) return void res.status(401).json({ error: 'Google Calendar not connected', notConnected: true });
+    if (!token) return notConnected(res);
 
     const { start, end } = req.query as { start?: string; end?: string };
     const now = new Date();
@@ -234,8 +263,9 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
         headers: { Authorization: `Bearer ${token}` },
         params: { timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: 200 },
         validateStatus: () => true,
+        timeout: GOOGLE_HTTP_TIMEOUT_MS,
       });
-      if (resp.status === 401) return void res.status(401).json({ error: 'Token expired', notConnected: true });
+      if (resp.status === 401) return notConnected(res);
       if (resp.status >= 400) return void res.status(500).json({ error: 'Google Calendar API error' });
       res.json({ events: (resp.data as any).items ?? [] });
     } catch (e: any) {
@@ -247,7 +277,7 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
   router.post('/events', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     const token = await getValidToken(auth.userId);
-    if (!token) return void res.status(401).json({ error: 'Google Calendar not connected', notConnected: true });
+    if (!token) return notConnected(res);
 
     const { summary, description, start, end, attendees, recurrence, reminders } = req.body;
     if (!summary?.trim()) return void res.status(400).json({ error: 'summary required' });
@@ -276,8 +306,9 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
       const resp = await axios.post(`${GOOGLE_CALENDAR_API}/calendars/primary/events`, eventBody, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         validateStatus: () => true,
+        timeout: GOOGLE_HTTP_TIMEOUT_MS,
       });
-      if (resp.status === 401) return void res.status(401).json({ error: 'Token expired', notConnected: true });
+      if (resp.status === 401) return notConnected(res);
       if (resp.status >= 400) {
         logger.error('[calendarRoutes] create event failed:', resp.data);
         return void res.status(resp.status).json({ error: 'Failed to create Google Calendar event', details: resp.data });
@@ -308,13 +339,23 @@ setTimeout(function(){ window.location.href='${FRONTEND}'; },1500);
   router.delete('/events/:id', async (req: Request, res: Response) => {
     const auth = requireAuth(req, res); if (!auth) return;
     const token = await getValidToken(auth.userId);
-    if (!token) return void res.status(401).json({ error: 'Not connected', notConnected: true });
+    if (!token) return notConnected(res);
 
-    await axios.delete(`${GOOGLE_CALENDAR_API}/calendars/primary/events/${req.params.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      validateStatus: () => true,
-    });
-    res.json({ ok: true });
+    try {
+      const resp = await axios.delete(`${GOOGLE_CALENDAR_API}/calendars/primary/events/${encodeURIComponent(String(req.params.id || ''))}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        validateStatus: () => true,
+        timeout: GOOGLE_HTTP_TIMEOUT_MS,
+      });
+      if (resp.status === 401) return notConnected(res);
+      // Already gone counts as deleted.
+      if (resp.status >= 400 && resp.status !== 404 && resp.status !== 410) {
+        return void res.status(502).json({ error: 'Google Calendar could not delete the event' });
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(502).json({ error: e?.message || 'Google Calendar could not delete the event' });
+    }
   });
 
   return router;

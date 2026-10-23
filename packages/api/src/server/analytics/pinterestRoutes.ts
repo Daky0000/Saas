@@ -4,7 +4,7 @@ import { logger } from '../../logger.ts';
 import type { AnalyticsDeps } from './helpers.ts';
 import type { SyncHelpers } from './syncHelpers.ts';
 
-export function registerPinterestRoutes(router: Router, { requireAuth, pool }: AnalyticsDeps, syncHelpers: SyncHelpers): void {
+export function registerPinterestRoutes(router: Router, { requireAuth, pool, getPublishableSocialConnection }: AnalyticsDeps, syncHelpers: SyncHelpers): void {
   // POST /social/pinterest/sync
   router.post('/social/pinterest/sync', async (req: Request, res: Response) => {
     try {
@@ -22,7 +22,17 @@ export function registerPinterestRoutes(router: Router, { requireAuth, pool }: A
       );
       if (accountRes.rows.length === 0) return res.status(404).json({ success: false, error: 'No connected Pinterest account found' });
 
-      const result = await syncHelpers.syncPinterestAnalyticsAccount({ userId: auth.userId, account: accountRes.rows[0], days: 30, maxPins: 250 });
+      // Pinterest access tokens last 30 days; renew before syncing.
+      const conn = await getPublishableSocialConnection(auth.userId, 'pinterest').catch(() => null);
+      if (!conn || conn.needs_reapproval || !conn.access_token) {
+        return res.status(409).json({ success: false, error: 'Pinterest access expired or was revoked — reconnect Pinterest to sync analytics.' });
+      }
+      const result = await syncHelpers.syncPinterestAnalyticsAccount({
+        userId: auth.userId,
+        account: { ...accountRes.rows[0], access_token: conn.access_token, access_token_encrypted: null },
+        days: 30,
+        maxPins: 250,
+      });
       return res.json({ success: true, synced: result.synced, errors: result.errors.length > 0 ? result.errors : undefined });
     } catch (err) {
       logger.error('Pinterest sync error:', err);

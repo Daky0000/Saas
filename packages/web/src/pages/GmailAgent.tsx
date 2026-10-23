@@ -215,8 +215,9 @@ export default function GmailAgent() {
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, loadingBody: true } : m));
     try {
       const r = await fetch(`/api/gmail/messages/${encodeURIComponent(msgId)}/body`, { headers: authHeaders() });
-      const data = await r.json();
-      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, bodyText: data.body || '', loadingBody: false } : m));
+      const data = await r.json().catch(() => ({}));
+      const bodyText = r.ok && data.success ? data.body || '' : data.error || 'Could not load this message.';
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, bodyText, loadingBody: false } : m));
     } catch {
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, loadingBody: false } : m));
     }
@@ -234,12 +235,26 @@ export default function GmailAgent() {
     }
   };
 
-  const downloadAttachment = (msgId: string, att: Attachment) => {
+  // The API authenticates with a bearer token, which a plain link can't send:
+  // fetch the file, then hand the browser a local object URL.
+  const downloadAttachment = async (msgId: string, att: Attachment) => {
     const url = `/api/gmail/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(att.id)}?filename=${encodeURIComponent(att.filename)}&mimeType=${encodeURIComponent(att.mimeType)}`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = att.filename;
-    a.click();
+    try {
+      const r = await fetch(url, { headers: authHeaders() });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        alert(data.error || 'Could not download the attachment.');
+        return;
+      }
+      const objectUrl = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = att.filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      alert('Could not download the attachment.');
+    }
   };
 
   const summarize = async () => {
@@ -341,7 +356,7 @@ export default function GmailAgent() {
                   {msg.attachments.map(att => (
                     <button
                       key={att.id}
-                      onClick={() => downloadAttachment(msg.id, att)}
+                      onClick={() => void downloadAttachment(msg.id, att)}
                       className="flex items-center gap-2 text-xs text-[#2563EB] hover:underline group"
                     >
                       <Download className="w-3 h-3 text-gray-400 group-hover:text-[#2563EB]" />
