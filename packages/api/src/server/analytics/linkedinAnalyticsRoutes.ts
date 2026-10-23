@@ -172,7 +172,7 @@ export function registerLinkedInAnalyticsRoutes(router: Router, { requireAuth, p
       const linkedInAuth = await getLinkedInAuthContext(auth.userId);
       if (!linkedInAuth.hasConnection) return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
       const token = linkedInAuth.accessToken;
-      if (!token) return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
+      if (!token) return res.status(409).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect', reconnect: 'linkedin' });
       const scopeError = getLinkedInOrganizationScopeError(linkedInAuth.tokenData);
       if (scopeError) return res.status(400).json({ success: false, error: scopeError });
 
@@ -200,7 +200,7 @@ export function registerLinkedInAnalyticsRoutes(router: Router, { requireAuth, p
       const linkedInAuth = await getLinkedInAuthContext(auth.userId);
       if (!linkedInAuth.hasConnection || !linkedInAuth.socialAccountId) return res.status(404).json({ success: false, error: 'No connected LinkedIn account found' });
       const token = linkedInAuth.accessToken;
-      if (!token) return res.status(401).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect' });
+      if (!token) return res.status(409).json({ success: false, error: 'LinkedIn access token missing or expired — please reconnect', reconnect: 'linkedin' });
       const scopeError = getLinkedInOrganizationScopeError(linkedInAuth.tokenData, { requireSocialRead: true });
       if (scopeError) return res.status(400).json({ success: false, error: scopeError });
 

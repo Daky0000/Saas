@@ -212,6 +212,36 @@ export function decryptWordPressPassword(encrypted: string): string {
   return decipher.update(data).toString('utf8') + decipher.final('utf8');
 }
 
+// Media sent to WordPress as a data URL (or bare base64). The declared type
+// and the file extension must match the bytes: WordPress checks uploads
+// against both, and a PNG sent as "image/jpeg ... .jpg" can be rejected.
+const UPLOAD_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'application/pdf': 'pdf',
+};
+
+export function decodeWordPressUpload(
+  input: string,
+  requestedName: string | undefined,
+  defaultName: string,
+): { buffer: Buffer; contentType: string; filename: string } {
+  const raw = String(input || '').trim();
+  const match = raw.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[^,]*)?;base64,(.*)$/is);
+  const contentType = match ? match[1].toLowerCase() : 'image/jpeg';
+  const buffer = Buffer.from(match ? match[2] : raw, 'base64');
+  const base = String(requestedName || '').split(/[\\/]/).pop()!.replace(/[\x00-\x1f"]/g, '').trim() || defaultName;
+  const extension = UPLOAD_EXTENSIONS[contentType];
+  const stem = base.replace(/\.[a-z0-9]{1,5}$/i, '');
+  const filename = extension ? `${stem || 'upload'}.${extension}` : base;
+  return { buffer, contentType, filename };
+}
+
 export function normalizeWordPressSiteUrl(url: string): string {
   const u = String(url || '').trim().replace(/\/+$/, '');
   return /^https?:\/\//i.test(u) ? u : `https://${u}`;
@@ -340,4 +370,4 @@ export async function wpRequest(
   }
 }
 
-// POST /api/wordpress/connect 뿯붿?validate and store connection (tries Application Password first, then login password)
+// POST /api/wordpress/connect — validate and store connection (tries Application Password first, then login password)

@@ -5071,4 +5071,20 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
        AND token_data->>'login_method' = 'facebook'
        AND COALESCE(token_expires_at, expires_at) > COALESCE(connected_at, created_at) + INTERVAL '1 day';
   `).catch(() => undefined);
+
+  // 7. The old token scan flagged every connection whose token expired within
+  // days, including Gmail, Calendar and Zoom, whose hour-long tokens renew
+  // themselves. Those soft flags were never true; clear them.
+  await pool.query(`
+    UPDATE social_accounts
+       SET needs_reapproval = false,
+           token_data = COALESCE(token_data, '{}'::jsonb) - 'reason' - 'needs_reapproval_at'
+     WHERE LOWER(platform) IN ('gmail', 'google_calendar', 'slack', 'zoom')
+       AND needs_reapproval = true
+       AND COALESCE(token_data->>'reason', '') IN ('token_expiring', 'token_expired', 'token_refresh_failed');
+  `).catch(() => undefined);
+
+  // 8. The Page / Instagram account a Social Inbox conversation arrived on,
+  // so replies go out from the same account.
+  await pool.query(`ALTER TABLE social_inbox_threads ADD COLUMN IF NOT EXISTS external_account_id TEXT;`).catch(() => undefined);
 }

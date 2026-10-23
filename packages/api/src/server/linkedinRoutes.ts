@@ -4,6 +4,7 @@ import type { Request } from '../types/http.ts';
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import { logger } from '../logger.ts';
+import { sanitizeTokenData, TOKEN_DATA_SECRET_KEYS } from '../token-data.ts';
 
 // ─── Deps ─────────────────────────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ export function registerLinkedInRoutes(deps: LinkedInRouteDeps): Router {
     try {
       const conn = await getPublishableSocialConnection(user.userId, 'linkedin');
       if (!conn) return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
-      const refreshToken = String(conn.refresh_token || conn.token_data?.refresh_token || '').trim();
+      const refreshToken = String(conn.refresh_token || '').trim();
       if (!refreshToken) return res.status(400).json({ success: false, error: 'No refresh token stored — reconnect LinkedIn' });
 
       const refreshed = await refreshLinkedInAccessToken(refreshToken, req);
@@ -158,13 +159,14 @@ export function registerLinkedInRoutes(deps: LinkedInRouteDeps): Router {
       const accessTokenEncrypted = encryptIntegrationSecret(newToken);
       const refreshTokenEncrypted = nextRefreshToken ? encryptIntegrationSecret(nextRefreshToken) : null;
 
+      // Tokens live only in the encrypted columns; token_data keeps metadata.
       await pool.query(
         `UPDATE social_accounts
-         SET access_token=$1, refresh_token=$2, access_token_encrypted=$3, refresh_token_encrypted=$4,
-             token_expires_at=$5, expires_at=$5, needs_reapproval=false,
-             token_data = COALESCE(token_data, '{}'::jsonb) || $6::jsonb
-         WHERE user_id=$7 AND LOWER(platform)='linkedin'`,
-        [null, null, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, JSON.stringify(refreshed || {}), user.userId]
+         SET access_token=NULL, refresh_token=NULL, access_token_encrypted=$1, refresh_token_encrypted=$2,
+             token_expires_at=$3, expires_at=$3, needs_reapproval=false,
+             token_data = (COALESCE(token_data, '{}'::jsonb) - $4::text[]) || $5::jsonb
+         WHERE user_id=$6 AND LOWER(platform)='linkedin' AND (account_type = 'profile' OR account_type IS NULL)`,
+        [accessTokenEncrypted, refreshTokenEncrypted, expiresAt, ['reason', 'needs_reapproval_at', ...TOKEN_DATA_SECRET_KEYS], JSON.stringify(sanitizeTokenData(refreshed)), user.userId]
       );
       await upsertUserIntegration({
         userId: user.userId, integrationSlug: 'linkedin',

@@ -13,7 +13,7 @@ import {
 } from '../integration-helpers.ts';
 import { recordAuditLog } from '../link-metadata.ts';
 import { buildOAuthAuthorizeUrl, generatePkcePair, isInstagramDirectLogin, resolveInstagramAppConfig } from '../platform-helpers.ts';
-import { computeConnectionHealth, getRefreshMode, PUBLISHING_TOKEN_PLATFORMS as PUBLISHING_TOKEN_SLUGS, type ConnectionHealth } from '../social-token-policy.ts';
+import { computeConnectionHealth, getRefreshMode, isSoftReapprovalReason, PUBLISHING_TOKEN_PLATFORMS as PUBLISHING_TOKEN_SLUGS, type ConnectionHealth } from '../social-token-policy.ts';
 
 // ─── Local helpers ─────────────────────────────────────────────────────────────
 
@@ -521,7 +521,9 @@ export function registerPlatformConfigRoutes(deps: PlatformConfigDeps): Router {
           isInstagramDirect: slug === 'instagram' && isInstagramDirectLogin({ tokenData: { login_method: profile.login_method, graph_host: profile.graph_host, pageId: profile.page_id } }),
         }) !== 'none';
         const health = computeConnectionHealth({
-          needsReapproval: Boolean(profile.needs_reapproval),
+          // Older scans soft-flagged Gmail/Calendar/Zoom tokens that renew
+          // themselves; only a hard flag (revoked, inactive) means anything there.
+          needsReapproval: Boolean(profile.needs_reapproval) && (publishing || !isSoftReapprovalReason(profile.reason)),
           reason: profile.reason,
           expiresAt: publishing ? profile.expires_at : null,
           refreshable: publishing ? refreshable : true,

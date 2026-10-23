@@ -99,16 +99,20 @@ export function computeConnectionHealth(input: {
   const expired = Number.isFinite(expiresMs) && expiresMs <= now;
 
   if (input.needsReapproval) {
-    if (reason === 'token_expiring' && !expired) {
-      return {
-        status: 'expiring',
-        reason,
-        message: `Access expires on ${formatDay(expiresMs)}. Reconnect before then to avoid interruptions.`,
-        expiresAt,
-      };
-    }
-    if (reason === 'token_expiring' && expired && input.refreshable) {
-      return { status: 'healthy', reason: null, message: null, expiresAt };
+    if (reason === 'token_expiring') {
+      // A warning, not a failure. Older scans set it on tokens the server
+      // renews itself and on rows with no known expiry; neither needs the user.
+      if (input.refreshable || !Number.isFinite(expiresMs)) {
+        return { status: 'healthy', reason: null, message: null, expiresAt };
+      }
+      if (!expired) {
+        return {
+          status: 'expiring',
+          reason,
+          message: `Access expires on ${formatDay(expiresMs)}. Reconnect before then to avoid interruptions.`,
+          expiresAt,
+        };
+      }
     }
     const key = reason === 'token_expiring' ? 'token_expired' : reason || 'token_expired';
     return {

@@ -31,7 +31,7 @@ function getBackendPublicUrl(req?: Request): string {
   return hostHeader ? `${proto}://${hostHeader}` : '';
 }
 
-function resolveBackendRedirectUri(raw: string, req?: Request): string {
+export function resolveBackendRedirectUri(raw: string, req?: Request): string {
   const r = String(raw || '').trim();
   if (!r) return '';
   if (r.startsWith('http://') || r.startsWith('https://')) return r;

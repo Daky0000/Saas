@@ -137,7 +137,7 @@ export function registerConnectorPreferencesRoutes({ requireAuth, pool }: Deps):
 
   // ── Default field maps for a provider (system-suggested) ─────────────────────
   router.get('/field-maps/defaults/:domainSlug/:providerSlug', async (req: Request, res: Response) => {
-    requireAuth(req, res);
+    const auth = requireAuth(req, res); if (!auth) return;
     const { domainSlug, providerSlug } = req.params;
     const defaults: Record<string, { external: string; native: string }[]> = {
       'crm:hubspot': [

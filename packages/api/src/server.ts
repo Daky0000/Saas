@@ -830,7 +830,10 @@ app.use('/api/crm', registerCRMDealsRoutes({ requireAuth, pool: pool!, fireAutom
 app.use('/api/crm', registerCRMActivitiesRoutes({ requireAuth, pool: pool! }));
 
 // ─── Unified Social Inbox + Client Approvals + Outbound Webhooks + Agent Schedules ──
-app.use('/api', registerSocialInboxRoutes({ requireAuth, pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger }));
+app.use('/api', registerSocialInboxRoutes({
+  requireAuth, pool: pool!, fireAutomationTrigger: automationEngine.fireAutomationTrigger,
+  getPublishableSocialConnection, decryptIntegrationSecret,
+}));
 app.use('/api', registerClientApprovalAndWebhookRoutes({ requireAuth, getUserPlanName, pool: pool! }));
 
 // ─── AI Sales OS ──────────────────────────────────────────────────────────────

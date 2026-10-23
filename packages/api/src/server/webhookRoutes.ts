@@ -100,20 +100,28 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
     subject: string;
     sentiment: string;
     body: string;
+    // Instagram reports the account's own comment replies with an id that
+    // differs from the account id; its username gives them away.
+    senderUsername?: string;
   }) => {
     if (!pool || !params.accountId || !params.externalThreadId) return;
-    const { rows: owners } = await pool.query<{ user_id: string }>(
-      `SELECT DISTINCT user_id FROM social_accounts WHERE account_id = $1 AND connected = true`,
+    const { rows: owners } = await pool.query<{ user_id: string; handle: string }>(
+      `SELECT user_id, MAX(LOWER(COALESCE(handle, ''))) AS handle
+         FROM social_accounts WHERE account_id = $1 AND connected = true
+        GROUP BY user_id`,
       [params.accountId],
-    ).catch(() => ({ rows: [] as Array<{ user_id: string }> }));
+    ).catch(() => ({ rows: [] as Array<{ user_id: string; handle: string }> }));
     const preview = params.body.slice(0, 160);
-    for (const { user_id: ownerUserId } of owners) {
+    const senderUsername = String(params.senderUsername || '').trim().replace(/^@/, '').toLowerCase();
+    for (const { user_id: ownerUserId, handle } of owners) {
+      if (senderUsername && handle && handle.replace(/^@/, '') === senderUsername) continue;
       const updated = await pool.query<{ id: string }>(
         `UPDATE social_inbox_threads
             SET unread_count = unread_count + 1,
                 last_message_preview = $5,
                 last_message_at = NOW(),
                 updated_at = NOW(),
+                external_account_id = COALESCE(external_account_id, $6),
                 status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END
           WHERE id = (
             SELECT id FROM social_inbox_threads
@@ -121,18 +129,20 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
              ORDER BY last_message_at DESC LIMIT 1
           )
           RETURNING id`,
-        [ownerUserId, params.platform, params.externalThreadId, params.channelType, preview],
+        [ownerUserId, params.platform, params.externalThreadId, params.channelType, preview, params.accountId],
       ).catch(() => ({ rows: [] as Array<{ id: string }> }));
       let threadId = updated.rows[0]?.id;
       if (!threadId) {
         threadId = randomUUID();
+        // external_account_id: the Page / Instagram account that received it,
+        // which replies are sent from.
         await pool.query(
           `INSERT INTO social_inbox_threads (
             id, user_id, platform, external_thread_id, sender_name, sender_handle,
-            subject_or_post_preview, channel_type, sentiment, status, unread_count, last_message_preview
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',1,$10)`,
+            subject_or_post_preview, channel_type, sentiment, status, unread_count, last_message_preview, external_account_id
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',1,$10,$11)`,
           [threadId, ownerUserId, params.platform, params.externalThreadId, params.senderName, params.senderHandle,
-            params.subject, params.channelType, params.sentiment, preview],
+            params.subject, params.channelType, params.sentiment, preview, params.accountId],
         ).catch(() => undefined);
       }
       await pool.query(
@@ -345,19 +355,25 @@ export function registerWebhookRoutes(deps: WebhookDeps): Router {
               }
             }
             if ((field === 'mention' || field === 'comments') && pool) {
-              await logIntegrationEvent({ userId: null, integrationSlug: eventPlatform, eventType: 'page_mention', status: 'success', response: { pageId: entryId, raw: value } }).catch(() => undefined);
-              if (value?.text || value?.message) {
-                const senderName = String(value?.from?.username || value?.from?.name || 'Social Mention');
+              const isComment = field === 'comments';
+              await logIntegrationEvent({ userId: null, integrationSlug: eventPlatform, eventType: isComment ? 'comment_received' : 'page_mention', status: 'success', response: { pageId: entryId, raw: value } }).catch(() => undefined);
+              // The account's own replies come back through the same field.
+              const fromSelf = String(value?.from?.id || '') === entryId;
+              if ((value?.text || value?.message) && !fromSelf) {
+                const senderName = String(value?.from?.username || value?.from?.name || (isComment ? 'Instagram User' : 'Social Mention'));
+                const parentId = String(value?.parent_id || '').trim();
                 await recordInboxMessage({
                   platform: eventPlatform,
                   accountId: entryId,
-                  externalThreadId: String(value?.id || value?.comment_id || value?.media_id || ''),
-                  channelType: 'mention',
+                  // A reply joins the thread of the comment it answers.
+                  externalThreadId: isComment ? (parentId || String(value?.id || '')) : String(value?.id || value?.comment_id || value?.media_id || ''),
+                  channelType: isComment ? 'comment' : 'mention',
                   senderName,
                   senderHandle: `@${senderName}`,
-                  subject: 'Social Mention',
+                  subject: isComment ? `Post ${String(value?.media?.id || '')}`.trim() : 'Social Mention',
                   sentiment: 'positive',
                   body: String(value?.text || value?.message || ''),
+                  senderUsername: value?.from?.username ? String(value.from.username) : undefined,
                 });
               }
             }

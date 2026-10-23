@@ -1,4 +1,4 @@
-import { normalizeWordPressSiteUrl, getMakeWebhookConnection, removeWordPressSocialAccount, isValidWebhookUrl } from '../integration-helpers.ts';
+import { normalizeWordPressSiteUrl, getMakeWebhookConnection, removeWordPressSocialAccount, isValidWebhookUrl, decodeWordPressUpload } from '../integration-helpers.ts';
 import axios from 'axios';
 import type { Response } from 'express';
 import type { Request } from '../types/http.ts';
@@ -44,7 +44,7 @@ router.post('/wordpress/connect', async (req: Request, res: Response) => {
     if (!hasAppPassword && !hasLoginPassword) {
       return res.status(400).json({
         success: false,
-        error: 'Provide either your WordPress login password or an Application Password (Users 뿯붿?Profile 뿯붿?Application Passwords).',
+        error: 'Provide either your WordPress login password or an Application Password (Users → Profile → Application Passwords).',
       });
     }
 
@@ -84,9 +84,9 @@ router.post('/wordpress/connect', async (req: Request, res: Response) => {
       if (isNotFound) {
         message = `Site not found. ${urlHint}`;
       } else if (isNotLoggedIn) {
-        message = 'WordPress REST API requires an Application Password, not your normal login password. In your WordPress admin go to Users 뿯붿?your profile 뿯붿?Application Passwords, create a new one, and paste it in the "Application Password" field above. Some hosts disable this; if you don’t see it, check your host’s docs or use a plugin that enables REST API auth.';
+        message = 'WordPress REST API requires an Application Password, not your normal login password. In your WordPress admin go to Users → your profile → Application Passwords, create a new one, and paste it in the "Application Password" field above. Some hosts disable this; if you don’t see it, check your host’s docs or use a plugin that enables REST API auth.';
       } else {
-        message = lastError || 'WordPress authentication failed. Try an Application Password (Users 뿯붿?Profile 뿯붿?Application Passwords).';
+        message = lastError || 'WordPress authentication failed. Try an Application Password (Users → Profile → Application Passwords).';
       }
       return res.status(400).json({ success: false, error: message });
     }
@@ -200,7 +200,7 @@ router.delete('/wordpress/disconnect', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/wordpress/connect-webhook 뿯붿?validate and store Make webhook URL
+// POST /api/wordpress/connect-webhook — validate and store Make webhook URL
 const MAKE_TEST_PAYLOAD = {
   title: 'Connection Test',
   content: 'This is a test post from the web app.',
@@ -286,7 +286,7 @@ router.delete('/wordpress/disconnect-webhook', async (req: Request, res: Respons
   }
 });
 
-// POST /api/wordpress/publish-webhook 뿯붿?send payload to stored Make webhook
+// POST /api/wordpress/publish-webhook — send payload to stored Make webhook
 router.post('/wordpress/publish-webhook', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -391,7 +391,7 @@ router.get('/wordpress/tags', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/wordpress/publish 뿯붿?create post (optionally upload featured image, set meta)
+// POST /api/wordpress/publish — create post (optionally upload featured image, set meta)
 // GET /api/wordpress/posts — import/list posts from WordPress
 router.get('/wordpress/posts', async (req: Request, res: Response) => {
   try {
@@ -480,22 +480,13 @@ router.post('/wordpress/media/upload', async (req: Request, res: Response) => {
     if (!conn) return res.status(400).json({ success: false, error: 'WordPress not connected' });
 
     const { fileBase64, filename } = req.body as { fileBase64?: string; filename?: string };
-    const base64 = typeof fileBase64 === 'string' ? fileBase64.replace(/^data:.*;base64,/, '') : '';
-    if (!base64) return res.status(400).json({ success: false, error: 'fileBase64 is required' });
-
-    let buffer: Buffer;
-    try {
-      buffer = Buffer.from(base64, 'base64');
-    } catch (err) {
-    logger.error('Unhandled error:', err);
-      return res.status(400).json({ success: false, error: 'Invalid fileBase64' });
-    }
-
-    const safeName = typeof filename === 'string' && filename.trim() ? filename.trim() : 'upload.jpg';
+    if (typeof fileBase64 !== 'string' || !fileBase64.trim()) return res.status(400).json({ success: false, error: 'fileBase64 is required' });
+    const upload = decodeWordPressUpload(fileBase64, filename, 'upload.jpg');
+    if (!upload.buffer.length) return res.status(400).json({ success: false, error: 'Invalid fileBase64' });
 
     const FormData = (await import('form-data')).default;
     const form = new FormData();
-    form.append('file', buffer, { filename: safeName, contentType: 'image/jpeg' });
+    form.append('file', upload.buffer, { filename: upload.filename, contentType: upload.contentType });
 
     const appPassword = decryptWordPressPassword(conn.appPasswordEncrypted);
     const { data, status: s, error } = await wpRequest(conn.siteUrl, conn.username, appPassword, 'POST', '/wp/v2/media', { formData: form });
@@ -516,7 +507,7 @@ router.post('/wordpress/media/upload', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/wordpress/publish 붿?create post (optionally upload featured image, set meta)
+// POST /api/wordpress/publish — create post (optionally upload featured image, set meta)
 router.post('/wordpress/publish', async (req: Request, res: Response) => {
   try {
     const auth = requireAuth(req, res);
@@ -550,20 +541,11 @@ router.post('/wordpress/publish', async (req: Request, res: Response) => {
 
     let featuredMediaId: number | undefined;
     if (featuredImageBase64 && typeof featuredImageBase64 === 'string') {
-      const base64 = featuredImageBase64.replace(/^data:image\/\w+;base64,/, '');
-      let buffer: Buffer;
-      try {
-        buffer = Buffer.from(base64, 'base64');
-      } catch (err) {
-    logger.error('Unhandled error:', err);
-        return res.status(400).json({ success: false, error: 'Invalid featured image data' });
-      }
-      const filename = featuredImageFilename && typeof featuredImageFilename === 'string'
-        ? featuredImageFilename
-        : 'featured.jpg';
+      const upload = decodeWordPressUpload(featuredImageBase64, typeof featuredImageFilename === 'string' ? featuredImageFilename : undefined, 'featured.jpg');
+      if (!upload.buffer.length) return res.status(400).json({ success: false, error: 'Invalid featured image data' });
       const FormData = (await import('form-data')).default;
       const form = new FormData();
-      form.append('file', buffer, { filename, contentType: 'image/jpeg' });
+      form.append('file', upload.buffer, { filename: upload.filename, contentType: upload.contentType });
       const { data: mediaData, status: mediaStatus, error: mediaError } = await wpRequest(
         conn.siteUrl,
         conn.username,
