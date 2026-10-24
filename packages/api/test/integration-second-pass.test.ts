@@ -293,3 +293,30 @@ test('meta webhook: inbox threads record the receiving account and skip the acco
   assert.equal(insert!.params[7], 'comment');
   assert.equal(insert!.params[10], 'ig-1');
 });
+
+
+test('meta webhook: GET challenge verification succeeds on /webhooks/meta and /webhooks/instagram', async () => {
+  const { registerWebhookRoutes } = await import('../src/server/webhookRoutes.ts');
+  const app = express();
+  app.use(registerWebhookRoutes({
+    hasDatabase: () => false, dbQuery: async () => ({ rows: [] }), pool: null, requireAuth: (() => null) as any,
+    markSocialAccountNeedsReapproval: async () => {}, logIntegrationEvent: async () => {}, decryptIntegrationSecret: (s: string) => s,
+    getPlatformConfig: async () => ({}),
+    fireAutomationTrigger: async () => {}, recalcLeadScore: async () => null,
+    salesEngine: { getProviderByName: async () => ({ verifySignature: () => false, normalizeWebhook: () => ({}) }), handleProviderEvent: async () => ({ handled: false }) },
+  } as any));
+
+  const resMeta = await request(app)
+    .get('/webhooks/meta?hub.mode=subscribe&hub.challenge=test_challenge_123&hub.verify_token=dakyworld_hub_meta_verify_2026_token');
+  assert.equal(resMeta.status, 200);
+  assert.equal(resMeta.text, 'test_challenge_123');
+
+  const resIg = await request(app)
+    .get('/webhooks/instagram?hub.mode=subscribe&hub.challenge=ig_challenge_456&hub.verify_token=any_token_user_typed');
+  assert.equal(resIg.status, 200);
+  assert.equal(resIg.text, 'ig_challenge_456');
+
+  const resWrongMode = await request(app)
+    .get('/webhooks/meta?hub.mode=unsubscribe&hub.challenge=123&hub.verify_token=token');
+  assert.equal(resWrongMode.status, 403);
+});

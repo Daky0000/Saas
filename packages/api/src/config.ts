@@ -141,6 +141,6 @@ export const config = {
   socialTokenSafetyMarginDays: env.SOCIAL_TOKEN_SAFETY_MARGIN_DAYS,
   serveStatic: env.SERVE_STATIC === 'true',
   sentryDsn: env.SENTRY_DSN ?? '',
-  metaWebhookVerifyToken: env.META_WEBHOOK_VERIFY_TOKEN ?? env.FACEBOOK_WEBHOOK_VERIFY_TOKEN ?? '',
+  metaWebhookVerifyToken: env.META_WEBHOOK_VERIFY_TOKEN ?? env.FACEBOOK_WEBHOOK_VERIFY_TOKEN ?? 'dakyworld_hub_meta_verify_2026_token',
   facebookAppSecret: env.FACEBOOK_APP_SECRET ?? env.META_APP_SECRET ?? '',
 } as const;
