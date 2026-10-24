@@ -165,6 +165,7 @@ const PLATFORMS: PlatformDef[] = [
       { id: 'clientId', label: 'Client ID', placeholder: 'LinkedIn Client ID', type: 'text', helpText: 'From LinkedIn Developer Portal → Your App → Auth tab.' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'LinkedIn Client Secret', type: 'password', helpText: 'Keep this secret. Used server-side for token exchange.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/linkedin/callback', type: 'text', helpText: 'Must match the Authorized redirect URLs for your app in the LinkedIn Auth tab.' },
+      { id: 'scopes', label: 'OAuth Scopes (Optional)', placeholder: 'openid,profile,email,w_member_social', type: 'text', required: false, helpText: 'Leave empty for defaults. Use "openid,profile,email,w_member_social" for standard personal posting, or include organization scopes if approved.' },
     ],
     docsUrl: 'https://learn.microsoft.com/en-us/linkedin/',
     redirectHint: 'Use `/auth/linkedin/callback` under LinkedIn Developer Portal → Auth → OAuth 2.0 settings.',
