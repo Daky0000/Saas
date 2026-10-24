@@ -725,9 +725,18 @@ app.put('/api/admin/nav-settings', async (req: Request, res: Response) => {
   );
   res.json({ ok: true, disabled });
 });
-app.get('/tiktokGuHuKYUdxb13mmRk5PkdrDFlLEBosnIF.txt', (req: Request, res: Response) => {
+// TikTok Developer Domain Verification:
+// Automatically satisfies TikTok's file verification for any /tiktok<token>.txt check requested by TikTok's validator bot.
+app.get(/^\/tiktok([a-zA-Z0-9_-]+)\.txt$/, (req: Request, res: Response) => {
+  const token = req.params[0];
   res.setHeader('Content-Type', 'text/plain');
-  res.send('tiktok-developers-site-verification=GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF');
+  res.send(`tiktok-developers-site-verification=${token}`);
+});
+
+app.get(['/tiktok-developers-site-verification.txt', '/.well-known/tiktok-developers-site-verification.txt'], (req: Request, res: Response) => {
+  const token = process.env.TIKTOK_VERIFICATION_CODE || 'GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF';
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`tiktok-developers-site-verification=${token}`);
 });
 
 app.use(registerLinkedInRoutes({

@@ -2531,15 +2531,17 @@ async function publishToplatform(
     }
 
     if (platformId === 'tiktok') {
-      // TikTok has no text-only posts. The previous "draft" fallback sent an
-      // empty video upload that TikTok always rejects, yet reported success.
-      if (!featuredImage || !/^https?:\/\//i.test(featuredImage)) {
+      const rawVideoUrl = String((post as any)?.video_url || (post as any)?.video || (post as any)?.featured_video || (options as any)?.videoUrl || '').trim();
+      const mediaCandidate = rawVideoUrl || featuredImage;
+      if (!mediaCandidate || !/^https?:\/\//i.test(mediaCandidate)) {
         return {
           status: 'failed',
-          error: 'TikTok posts need a public image. Add a featured image to publish this post to TikTok.',
+          error: 'TikTok posts need a public image or video. Add media to publish this post to TikTok.',
           retryable: false,
         };
       }
+
+      const isVideo = Boolean(rawVideoUrl) || /\.(mp4|mov|webm|m4v)(\?.*)?$/i.test(mediaCandidate);
 
       // Step 1: Query creator info to get posting capabilities
       const creatorResp = await axios.get(
@@ -2565,22 +2567,125 @@ async function publishToplatform(
       const duetDisabled  = creatorInfo?.duet_disabled  ?? false;
       const stitchDisabled = creatorInfo?.stitch_disabled ?? false;
       const commentDisabled = creatorInfo?.comment_disabled ?? false;
-      const maxVideoDuration = Number(creatorInfo?.max_video_post_duration_sec || 60);
 
-      // Step 2: Initialize a photo post pulled from the featured image URL
-      const postCaption = text.slice(0, 2200); // TikTok caption limit
+      const postCaption = text.slice(0, 2200);
 
+      const postInfo = {
+        title: postCaption,
+        privacy_level: privacyLevel,
+        disable_duet: duetDisabled,
+        disable_stitch: stitchDisabled,
+        disable_comment: commentDisabled,
+      };
+
+      if (isVideo) {
+        // Video publishing: Support both pull_by_url (PULL_FROM_URL) and push_by_file (FILE_UPLOAD)
+        let publishId = '';
+
+        // Attempt PULL_FROM_URL first
+        const pullBody = {
+          post_info: postInfo,
+          source_info: {
+            source: 'PULL_FROM_URL',
+            video_url: mediaCandidate,
+          },
+        };
+
+        const pullResp = await axios.post(
+          'https://open.tiktokapis.com/v2/post/publish/video/init/',
+          pullBody,
+          {
+            headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
+            validateStatus: () => true,
+            timeout: 20000,
+          }
+        );
+        const pullData: any = pullResp.data || {};
+        const pullErrorCode = String(pullData?.error?.code || 'ok');
+
+        if (pullResp.status < 400 && pullErrorCode === 'ok' && pullData?.data?.publish_id) {
+          publishId = String(pullData.data.publish_id).trim();
+        } else {
+          // If pull_by_url failed (e.g. unverified domain / ownership error), fallback to push_by_file (FILE_UPLOAD)
+          logger.info(`[TikTok] PULL_FROM_URL video init returned (${pullResp.status}, ${pullErrorCode}). Falling back to push_by_file (FILE_UPLOAD)... `);
+
+          try {
+            const vidRes = await axios.get(mediaCandidate, {
+              responseType: 'arraybuffer',
+              timeout: 60000,
+              maxContentLength: 100 * 1024 * 1024,
+            });
+            const videoBuf = Buffer.from(vidRes.data);
+            const videoSize = videoBuf.length;
+
+            const uploadInitResp = await axios.post(
+              'https://open.tiktokapis.com/v2/post/publish/video/init/',
+              {
+                post_info: postInfo,
+                source_info: {
+                  source: 'FILE_UPLOAD',
+                  video_size: videoSize,
+                  chunk_size: videoSize,
+                  total_chunk_count: 1,
+                },
+              },
+              {
+                headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
+                validateStatus: () => true,
+                timeout: 20000,
+              }
+            );
+            const uploadInitData: any = uploadInitResp.data || {};
+            const uploadInitErrorCode = String(uploadInitData?.error?.code || 'ok');
+            if (uploadInitResp.status >= 400 || uploadInitErrorCode !== 'ok') {
+              const errMsg = uploadInitData?.error?.message || `TikTok video FILE_UPLOAD init failed (${uploadInitResp.status})`;
+              return { status: 'failed', error: errMsg, retryable: uploadInitResp.status >= 500 };
+            }
+
+            const uploadUrl = String(uploadInitData?.data?.upload_url || '').trim();
+            publishId = String(uploadInitData?.data?.publish_id || '').trim();
+
+            if (!uploadUrl || !publishId) {
+              return { status: 'failed', error: 'TikTok did not return upload_url or publish_id for push_by_file' };
+            }
+
+            // Stream / PUT binary to TikTok upload_url
+            const putResp = await axios.put(uploadUrl, videoBuf, {
+              headers: {
+                'Content-Type': 'video/mp4',
+                'Content-Range': `bytes 0-${videoSize - 1}/${videoSize}`,
+              },
+              validateStatus: () => true,
+              timeout: 120000,
+              maxBodyLength: Infinity,
+            });
+
+            if (putResp.status >= 400) {
+              return { status: 'failed', error: `TikTok video file upload PUT failed (${putResp.status})` };
+            }
+          } catch (fileUploadErr) {
+            const uploadErrMsg = fileUploadErr instanceof Error ? fileUploadErr.message : 'Unknown upload error';
+            return {
+              status: 'failed',
+              error: `TikTok video posting failed (PULL_FROM_URL: ${pullData?.error?.message || pullErrorCode}; FILE_UPLOAD: ${uploadErrMsg})`,
+            };
+          }
+        }
+
+        if (!publishId) {
+          return { status: 'failed', error: 'TikTok did not return a publish_id for video' };
+        }
+
+        await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_published', status: 'success', response: { publishId, mediaType: 'video' } });
+        return { status: 'published', platformPostId: publishId };
+      }
+
+      // Step 2: Initialize a photo post pulled from the image URL
       const initBody = {
-        post_info: {
-          title: postCaption,
-          privacy_level: privacyLevel,
-          disable_duet: duetDisabled,
-          disable_stitch: stitchDisabled,
-          disable_comment: commentDisabled,
-        },
+        post_info: postInfo,
         source_info: {
           source: 'PULL_FROM_URL',
-          photo_images: [featuredImage],
+          photo_images: [mediaCandidate],
           photo_cover_index: 0,
         },
         post_mode: 'DIRECT_POST',
@@ -2596,15 +2701,18 @@ async function publishToplatform(
         }
       );
       const initData: any = initResp.data || {};
-      // TikTok reports success as error.code "ok"; any other code is a failure.
       const initErrorCode = String(initData?.error?.code || 'ok');
       if (initResp.status >= 400 || initErrorCode !== 'ok') {
-        const msg = initData?.error?.message || `TikTok photo post init failed (${initResp.status}${initErrorCode !== 'ok' ? `, ${initErrorCode}` : ''})`;
+        const rawMsg = String(initData?.error?.message || '');
+        const isDomainError = /domain|unverified|ownership/i.test(rawMsg) || /domain|unverified|ownership/i.test(initErrorCode);
+        const msg = isDomainError
+          ? `TikTok photo post requires a verified domain for PULL_FROM_URL (${rawMsg || initErrorCode}). Verify your domain in TikTok Developer Portal → Content Posting API → Domain Verification (file verification is automatically supported at https://marketing.dakyx.com/tiktok*.txt).`
+          : (rawMsg || `TikTok photo post init failed (${initResp.status}${initErrorCode !== 'ok' ? `, ${initErrorCode}` : ''})`);
         return { status: 'failed', error: msg, retryable: initResp.status === 429 || initResp.status >= 500 };
       }
       const publishId = String(initData?.data?.publish_id || '').trim();
       if (!publishId) return { status: 'failed', error: 'TikTok did not return a publish_id' };
-      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_published', status: 'success', response: { publishId } });
+      await logIntegrationEvent({ userId, integrationSlug: 'tiktok', eventType: 'post_published', status: 'success', response: { publishId, mediaType: 'photo' } });
       return { status: 'published', platformPostId: publishId };
     }
 

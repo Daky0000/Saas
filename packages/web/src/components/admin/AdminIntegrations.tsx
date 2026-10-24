@@ -218,11 +218,12 @@ const PLATFORMS: PlatformDef[] = [
   {
     id: 'tiktok',
     name: 'TikTok',
-    description: 'OAuth credentials for publishing photo posts and video drafts via Content Posting API.',
+    description: 'OAuth credentials for publishing video posts (push_by_file & pull_by_url) and photo posts via Content Posting API.',
     fields: [
       { id: 'clientKey', label: 'Client Key', placeholder: 'TikTok Client Key', type: 'text', helpText: 'From developers.tiktok.com → your app → App info. This is the "Client Key" (not Client ID).' },
       { id: 'clientSecret', label: 'Client Secret', placeholder: 'TikTok Client Secret', type: 'password', helpText: 'Keep this secret. From developers.tiktok.com → your app → App info.' },
       { id: 'redirectUri', label: 'Redirect URL', placeholder: 'https://YOUR-BACKEND/auth/tiktok/callback', type: 'text', helpText: 'Must match the Redirect URI in your TikTok Login Kit settings.' },
+      { id: 'verificationCode', label: 'Domain Verification Code (Optional)', placeholder: 'e.g. GuHuKYUdxb13mmRk5PkdrDFlLEBosnIF', type: 'text', helpText: 'Required by TikTok for pull_by_url. File verification is automatically answered at /tiktok*.txt.' },
     ],
     docsUrl: 'https://developers.tiktok.com/doc/login-kit-web/',
     redirectHint: 'Use `/auth/tiktok/callback` on the backend. Required scopes: user.info.basic, video.upload, video.publish.',
@@ -232,6 +233,7 @@ const PLATFORMS: PlatformDef[] = [
       'Open TikTok for Developers (developers.tiktok.com) → Manage apps → Your App.',
       'Copy the Client Key and Client Secret from Basic Information into the fields below.',
       'Under Products → Login Kit → Web → Redirect URI, paste the Valid OAuth Redirect URI below and validate it.',
+      'Under Content Posting API → Domain verification (for pull_by_url), select HTML file verification. Your app automatically answers all https://marketing.dakyx.com/tiktok*.txt verification challenges.',
     ],
   },
   {
