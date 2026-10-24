@@ -1017,18 +1017,18 @@ export default function Integrations({ onNavigateSettings }: Props) {
               onClick={() => void openLinkedInTargets()}
               disabled={!item.connected}
               className={SECONDARY_ACTION}
-              title={!item.connected ? 'Connect LinkedIn first' : ''}
+              title={!item.connected ? 'Connect LinkedIn first' : 'Choose whether to post to your personal profile, company pages, or both'}
             >
-              <Settings2 size={16} /> Manage Profile
+              <Settings2 size={16} /> Manage Posting Targets
             </button>
             <button
               type="button"
               onClick={() => void openLinkedInCompanySelect()}
               disabled={!item.connected}
               className={SECONDARY_ACTION}
-              title={!item.connected ? 'Connect LinkedIn first' : ''}
+              title={!item.connected ? 'Connect LinkedIn first' : 'Manage and sync company pages for analytics and publishing'}
             >
-              <Settings2 size={16} /> Connect Company Pages
+              <Settings2 size={16} /> Manage Company Pages
             </button>
           </>
         ) : null}
