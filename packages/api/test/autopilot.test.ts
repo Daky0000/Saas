@@ -1623,7 +1623,7 @@ test('PostgreSQL E2E: migrations, full Autopilot SQL repository, review link, an
       [userId, `autopilot-pg-${userId}@example.com`],
     );
     await pool.query(
-      `INSERT INTO user_credits (user_id, credits, purchased_credits, reset_date) VALUES ($1, 1000, 1000, NOW() + INTERVAL '1 month') ON CONFLICT (user_id) DO UPDATE SET credits = 1000, purchased_credits = 1000`,
+      `INSERT INTO user_credits (user_id, credits, purchased_credits, reset_date) VALUES ($1, 1000, 0, NOW() + INTERVAL '1 month') ON CONFLICT (user_id) DO UPDATE SET credits = 1000, purchased_credits = 0`,
       [userId],
     );
 
