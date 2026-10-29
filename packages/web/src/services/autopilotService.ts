@@ -65,10 +65,10 @@ export const autopilotService = {
       body: JSON.stringify({}),
     }),
 
-  scanWebsiteBrand: (url: string) =>
+  scanWebsiteBrand: (url: string, preserveTokens = true) =>
     requestJson<{ success: true; scan: any; brand: any }>('/autopilot/brand/scan-website', {
       method: 'POST',
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, preserve_approved_tokens: preserveTokens }),
     }),
   getBrandStudio: () =>
     requestJson<{ success: true; brand: any; tokens: any[]; assets: any[]; versions: any[] }>('/autopilot/brand-profile'),
@@ -91,6 +91,10 @@ export const autopilotService = {
     requestJson<{ success: true; token: any }>(`/autopilot/brand/tokens/${encodeURIComponent(tokenId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    }),
+  deleteBrandToken: (tokenId: string) =>
+    requestJson<{ success: true; deleted: boolean }>(`/autopilot/brand/tokens/${encodeURIComponent(tokenId)}`, {
+      method: 'DELETE',
     }),
   addBrandAsset: (payload: Record<string, any>) =>
     requestJson<{ success: true; asset: any }>('/autopilot/brand/assets', {
@@ -230,7 +234,44 @@ export const autopilotService = {
       '/autopilot/analytics/recommendations/generate',
       { method: 'POST', body: JSON.stringify({}) },
     ),
-  decideRecommendation: (recId: string, decision: 'accepted' | 'rejected') =>
+  getBrandDiff: (v1: number, v2: number) =>
+    requestJson<{ success: true; v1: number; v2: number; diff: any }>(`/autopilot/brand/diff?v1=${v1}&v2=${v2}`),
+  restoreBrandVersion: (version: number) =>
+    requestJson<{ success: true; brand: any }>('/autopilot/brand/restore', {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    }),
+
+  getTenantControls: () => requestJson<{ success: true; controls: any }>('/autopilot/controls'),
+  updateTenantControls: (controls: Record<string, any>) =>
+    requestJson<{ success: true; controls: any }>('/autopilot/controls', {
+      method: 'POST',
+      body: JSON.stringify(controls),
+    }),
+  getUsageLedger: () => requestJson<{ success: true; ledger: any }>('/autopilot/usage/ledger'),
+  exportTenantData: () => requestJson<{ success: true; export: any }>('/autopilot/tenant/export'),
+  purgeTenantData: () => requestJson<{ success: true }>('/autopilot/tenant-data', { method: 'DELETE' }),
+
+  getOpsHealth: () =>
+    requestJson<{ success: true; service: string; timestamp: string; providers: any; controls: any }>('/autopilot/ops/health'),
+
+  pausePublication: (pubId: string) =>
+    requestJson<{ success: true; publication: any }>(`/autopilot/publications/${encodeURIComponent(pubId)}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  resumePublication: (pubId: string) =>
+    requestJson<{ success: true; publication: any }>(`/autopilot/publications/${encodeURIComponent(pubId)}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  reschedulePublication: (pubId: string, scheduled_at: string) =>
+    requestJson<{ success: true; publication: any }>(`/autopilot/publications/${encodeURIComponent(pubId)}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduled_at }),
+    }),
+
+  decideRecommendation: (recId: string, decision: 'accepted' | 'rejected' | 'defer') =>
     requestJson<{ success: true; recommendation: any; updatedStrategy: any }>(
       `/autopilot/analytics/recommendations/${encodeURIComponent(recId)}/decide`,
       { method: 'POST', body: JSON.stringify({ decision }) },

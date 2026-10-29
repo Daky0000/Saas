@@ -488,10 +488,17 @@ export async function executePublication(params: {
   const existingKeyCollision = await repo.findAttemptByIdempotencyKey(tenant.tenantId, baseKey);
   const attemptIdempotencyKey = existingKeyCollision ? `${baseKey}:attempt:${attemptNumber}` : baseKey;
 
-  // Mark publishing in progress
+  // Mark publishing in progress via atomic claim lock
+  const claimed = await repo.claimPublicationForExecution(tenant.tenantId, publication.id);
+  if (!claimed && publication.status !== 'publishing') {
+    throw new AutopilotLifecycleError(
+      'PUBLICATION_ALREADY_IN_PROGRESS',
+      'This publication is currently in progress or already published.',
+      409,
+    );
+  }
   publication.status = 'publishing';
   publication.updated_at = new Date().toISOString();
-  await repo.savePublication(publication);
 
   if (item.lifecycle_state === 'approved' || item.lifecycle_state === 'scheduled' || item.lifecycle_state === 'publish_failed') {
     item.lifecycle_state = 'publishing';
@@ -616,4 +623,112 @@ export async function executePublication(params: {
 
     return { publication, attempt, item, deduplicated: false };
   }
+}
+
+
+export async function pausePublication(
+  repo: AutopilotRepository,
+  tenant: AutopilotTenantContext,
+  publicationId: string,
+): Promise<PublicationRecord> {
+  const pub = await repo.getPublication(tenant.tenantId, publicationId);
+  if (!pub) {
+    throw new AutopilotLifecycleError('PUBLICATION_NOT_FOUND', 'Publication not found.', 404);
+  }
+  if (pub.status === 'published' || pub.status === 'publishing') {
+    throw new AutopilotLifecycleError('CANNOT_PAUSE_ACTIVE', 'Cannot pause a publication that is already publishing or published.', 400);
+  }
+  pub.paused = true;
+  pub.updated_at = new Date().toISOString();
+  await repo.savePublication(pub);
+  await repo.recordAudit(tenant.tenantId, tenant.userId, tenant.userRole, 'publication.paused', 'publication', pub.id, {});
+  return pub;
+}
+
+export async function resumePublication(
+  repo: AutopilotRepository,
+  tenant: AutopilotTenantContext,
+  publicationId: string,
+): Promise<PublicationRecord> {
+  const pub = await repo.getPublication(tenant.tenantId, publicationId);
+  if (!pub) {
+    throw new AutopilotLifecycleError('PUBLICATION_NOT_FOUND', 'Publication not found.', 404);
+  }
+  pub.paused = false;
+  pub.updated_at = new Date().toISOString();
+  await repo.savePublication(pub);
+  await repo.recordAudit(tenant.tenantId, tenant.userId, tenant.userRole, 'publication.resumed', 'publication', pub.id, {});
+  return pub;
+}
+
+export async function reschedulePublication(
+  repo: AutopilotRepository,
+  tenant: AutopilotTenantContext,
+  publicationId: string,
+  newScheduledAtIso: string,
+): Promise<PublicationRecord> {
+  const pub = await repo.getPublication(tenant.tenantId, publicationId);
+  if (!pub) {
+    throw new AutopilotLifecycleError('PUBLICATION_NOT_FOUND', 'Publication not found.', 404);
+  }
+  if (pub.status === 'published' || pub.status === 'publishing') {
+    throw new AutopilotLifecycleError('CANNOT_RESCHEDULE_ACTIVE', 'Cannot reschedule an in-progress or completed publication.', 400);
+  }
+  const date = new Date(newScheduledAtIso);
+  if (Number.isNaN(date.getTime())) {
+    throw new AutopilotLifecycleError('INVALID_DATE', 'Invalid scheduled_at ISO timestamp.', 400);
+  }
+  pub.scheduled_at = date.toISOString();
+  pub.status = 'scheduled';
+  pub.paused = false;
+  pub.updated_at = new Date().toISOString();
+  await repo.savePublication(pub);
+  await repo.recordAudit(tenant.tenantId, tenant.userId, tenant.userRole, 'publication.rescheduled', 'publication', pub.id, {
+    new_scheduled_at: pub.scheduled_at,
+  });
+  return pub;
+}
+
+export async function processDueAutopilotPublications(params: {
+  repo: AutopilotRepository;
+  publisherAdapter: (input: SocialPublisherInput) => Promise<SocialPublisherResult>;
+  limit?: number;
+}): Promise<{ processed: number; succeeded: number; failed: number }> {
+  const { repo, publisherAdapter, limit = 10 } = params;
+  const due = await repo.listDuePublications(limit);
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const pub of due) {
+    try {
+      const tenant: AutopilotTenantContext = {
+        tenantId: pub.tenant_id,
+        orgId: null,
+        projectId: null,
+        userId: 'system_autopilot_worker',
+        userRole: 'owner',
+        canEdit: true,
+        canApprove: true,
+        canPublish: true,
+        correlationId: `worker-${pub.id}`,
+      };
+
+      const res = await executePublication({
+        repo,
+        tenant,
+        publicationId: pub.id,
+        publisherAdapter,
+      });
+
+      if (res.publication.status === 'published') {
+        succeeded++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+
+  return { processed: due.length, succeeded, failed };
 }

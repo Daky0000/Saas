@@ -197,12 +197,33 @@ export default function ApprovalQueueTab({ onRefreshOverview, onOpenPublishing }
                   </div>
                 )}
 
+                {/* Stale Revision Alert */}
+                {activeItem.approved_content_hash &&
+                  activeItem.content_hash &&
+                  activeItem.approved_content_hash !== activeItem.content_hash && (
+                    <div className="mb-4">
+                      <Notice tone="warn" title="STALE APPROVAL REVISION">
+                        This post content was modified after human sign-off (Hash changed from{' '}
+                        {activeItem.approved_content_hash.slice(0, 10)}… to {activeItem.content_hash.slice(0, 10)}…). Re-approval is required before scheduling.
+                      </Notice>
+                    </div>
+                  )}
+
                 {/* Risk & QA Summary */}
-                <div className="mb-5 grid gap-3 rounded-xl border border-line bg-sunken p-4 sm:grid-cols-3">
+                <div className="mb-5 grid gap-3 rounded-xl border border-line bg-sunken p-4 sm:grid-cols-4">
                   <div>
                     <Eyebrow>QA GATE SCORE</Eyebrow>
                     <div className="mt-1 font-mono text-lg font-medium text-ink">
                       {activeItem.validation_report?.score ?? '—'}/100
+                    </div>
+                  </div>
+                  <div>
+                    <Eyebrow>CONTENT HASH & DESTINATION</Eyebrow>
+                    <div className="mt-1 font-mono text-[11px] text-ink truncate" title={activeItem.content_hash}>
+                      {activeItem.content_hash ? `SHA: ${activeItem.content_hash.slice(0, 12)}…` : 'Pending synthesis'}
+                    </div>
+                    <div className="text-[10px] text-muted truncate">
+                      {activeItem.approved_destination ? `Bound to: ${activeItem.approved_destination}` : 'Unbound'}
                     </div>
                   </div>
                   <div>
@@ -229,6 +250,29 @@ export default function ApprovalQueueTab({ onRefreshOverview, onOpenPublishing }
                     setItems((prev) => prev.map((x) => (x.id === activeItem.id ? res.item : x)));
                   }}
                 />
+
+                {/* Full QA Policy Issues Breakdown */}
+                {activeItem.validation_report?.issues && activeItem.validation_report.issues.length > 0 && (
+                  <div className="mt-5 rounded-xl border border-line bg-sunken p-4 space-y-2">
+                    <Eyebrow>QA GATE POLICY ISSUES & REMEDIATION</Eyebrow>
+                    <div className="space-y-1.5">
+                      {activeItem.validation_report.issues.map((iss: any, idx: number) => (
+                        <div key={idx} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-line bg-white p-2.5 text-xs">
+                          <div>
+                            <span className="font-mono text-muted mr-1">[{iss.code || iss.rule_id || 'RULE'}]</span>
+                            <span className="text-ink font-medium">{iss.message}</span>
+                            {iss.remediation && (
+                              <div className="text-muted text-[11px] mt-0.5">Remediation: {iss.remediation}</div>
+                            )}
+                          </div>
+                          <Badge tone={iss.severity === 'blocker' || iss.severity === 'error' ? 'danger' : 'warn'}>
+                            {iss.severity}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Reviewer Decision & Scheduling Bar */}
                 <div className="mt-6 space-y-4 border-t border-line pt-5">

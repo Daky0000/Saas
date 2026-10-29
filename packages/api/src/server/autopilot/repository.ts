@@ -523,6 +523,17 @@ export function createAutopilotRepository({ pool, hasDatabase }: AutopilotRepoDe
     return true;
   }
 
+  async function deleteBrandToken(tenantId: string, tokenId: string): Promise<boolean> {
+    if (usePg()) {
+      const { rows } = await pool.query(`DELETE FROM autopilot_brand_tokens WHERE id::text = $1 AND tenant_id = $2 RETURNING id`, [tokenId, tenantId]);
+      return rows.length > 0;
+    }
+    const cur = mem.brandTokens.get(tokenId);
+    if (!cur || cur.tenant_id !== tenantId) return false;
+    mem.brandTokens.delete(tokenId);
+    return true;
+  }
+
   // ── Content Strategies & Versions ───────────────────────────────────────────
   async function getLatestStrategy(tenantId: string): Promise<ContentStrategyRecord | null> {
     if (usePg()) {
@@ -1130,9 +1141,115 @@ export function createAutopilotRepository({ pool, hasDatabase }: AutopilotRepoDe
     return [...mem.experiments.values()].filter((e) => e.tenant_id === tenantId);
   }
 
+  async function claimPublicationForExecution(tenantId: string, pubId: string): Promise<PublicationRecord | null> {
+    if (usePg()) {
+      const { rows } = await pool.query(
+        `UPDATE autopilot_publications
+         SET status = 'publishing', updated_at = NOW()
+         WHERE id::text = $1 AND tenant_id = $2 AND status IN ('pending', 'scheduled', 'publish_failed')
+         RETURNING *`,
+        [pubId, tenantId],
+      );
+      return (rows[0] as PublicationRecord) ?? null;
+    }
+    const pub = mem.publications.get(pubId);
+    if (!pub || pub.tenant_id !== tenantId || !['pending', 'scheduled', 'publish_failed'].includes(pub.status)) {
+      return null;
+    }
+    pub.status = 'publishing';
+    pub.updated_at = new Date().toISOString();
+    return structuredClone(pub);
+  }
+
+  async function listDuePublications(limit = 10): Promise<PublicationRecord[]> {
+    if (usePg()) {
+      const { rows } = await pool.query(
+        `SELECT * FROM autopilot_publications
+         WHERE status = 'scheduled'
+           AND scheduled_at IS NOT NULL
+           AND scheduled_at <= NOW()
+           AND (paused IS NOT TRUE)
+         ORDER BY scheduled_at ASC
+         LIMIT $1`,
+        [limit],
+      );
+      return rows as PublicationRecord[];
+    }
+    const now = new Date().toISOString();
+    return [...mem.publications.values()]
+      .filter((p) => p.status === 'scheduled' && p.scheduled_at && p.scheduled_at <= now && !p.paused)
+      .slice(0, limit);
+  }
+
+  async function recordContentItemRevision(
+    tenantId: string,
+    contentItemId: string,
+    version: number,
+    snapshot: any,
+    changeRationale: string,
+    createdBy: string,
+  ) {
+    const id = randomUUID();
+    const createdAt = new Date().toISOString();
+    if (usePg()) {
+      await pool.query(
+        `INSERT INTO autopilot_content_item_revisions (id, tenant_id, content_item_id, version, snapshot, change_rationale, created_by, created_at)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
+         ON CONFLICT (tenant_id, content_item_id, version) DO UPDATE SET
+           snapshot = EXCLUDED.snapshot,
+           change_rationale = EXCLUDED.change_rationale`,
+        [id, tenantId, contentItemId, version, JSON.stringify(snapshot), changeRationale, createdBy, createdAt],
+      );
+    }
+    return { id, tenant_id: tenantId, content_item_id: contentItemId, version, snapshot, change_rationale: changeRationale, created_by: createdBy, created_at: createdAt };
+  }
+
+  async function exportTenantAutopilotData(tenantId: string) {
+    const strategy = await getLatestStrategy(tenantId);
+    const strategyVersions = strategy ? await listStrategyVersions(tenantId, strategy.id) : [];
+    const [business, brand, brandVersions, tokens, assets, items, briefs, runs, pubs, metrics, recommendations, experiments, audit] = await Promise.all([
+      getBusinessProfile(tenantId),
+      getBrandProfile(tenantId),
+      listBrandVersions(tenantId),
+      listBrandTokens(tenantId),
+      listBrandAssets(tenantId),
+      listContentItems(tenantId),
+      usePg() ? pool.query('SELECT * FROM autopilot_creative_briefs WHERE tenant_id = $1', [tenantId]).then((r: any) => r.rows).catch(() => []) : [...mem.creativeBriefs.values()].filter((b) => b.tenant_id === tenantId),
+      listWorkflowRuns(tenantId),
+      listPublications(tenantId),
+      listChannelMetrics(tenantId),
+      listRecommendations(tenantId),
+      listExperiments(tenantId),
+      listAuditEvents(tenantId, 500),
+    ]);
+    return {
+      exported_at: new Date().toISOString(),
+      tenant_id: tenantId,
+      business_profile: business,
+      brand_profile: brand,
+      brand_versions: brandVersions,
+      brand_tokens: tokens,
+      brand_assets: assets,
+      current_strategy: strategy,
+      strategy_versions: strategyVersions,
+      content_items: items,
+      creative_briefs: briefs,
+      workflow_runs: runs,
+      publications: pubs,
+      channel_metrics: metrics,
+      recommendations,
+      experiments,
+      audit_events: audit,
+    };
+  }
+
   // Retention & GDPR/Tenant data deletion control (Section 13)
   async function purgeTenantAutopilotData(tenantId: string) {
     if (usePg()) {
+      await pool.query(`DELETE FROM autopilot_website_scans WHERE tenant_id = $1`, [tenantId]).catch(() => {});
+      await pool.query(`DELETE FROM autopilot_budget_reservations WHERE tenant_id = $1`, [tenantId]).catch(() => {});
+      await pool.query(`DELETE FROM autopilot_tenant_controls WHERE tenant_id = $1`, [tenantId]).catch(() => {});
+      await pool.query(`DELETE FROM autopilot_content_item_revisions WHERE tenant_id = $1`, [tenantId]).catch(() => {});
       await pool.query(`DELETE FROM autopilot_publication_attempts WHERE tenant_id = $1`, [tenantId]);
       await pool.query(`DELETE FROM autopilot_publications WHERE tenant_id = $1`, [tenantId]);
       await pool.query(`DELETE FROM autopilot_approval_events WHERE tenant_id = $1`, [tenantId]);
@@ -1187,6 +1304,7 @@ export function createAutopilotRepository({ pool, hasDatabase }: AutopilotRepoDe
     getBrandAssetById,
     addBrandAsset,
     deleteBrandAsset,
+    deleteBrandToken,
     getLatestStrategy,
     getStrategyById,
     saveStrategy,
@@ -1213,6 +1331,10 @@ export function createAutopilotRepository({ pool, hasDatabase }: AutopilotRepoDe
     getRecommendation,
     saveExperiment,
     listExperiments,
+    claimPublicationForExecution,
+    listDuePublications,
+    recordContentItemRevision,
+    exportTenantAutopilotData,
     purgeTenantAutopilotData,
   };
 }

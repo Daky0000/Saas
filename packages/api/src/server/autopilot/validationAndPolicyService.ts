@@ -35,6 +35,25 @@ export function maskSecretsAndPii(text: string): { masked: string; redactionsCou
   return { masked: out, redactionsCount: redactions };
 }
 
+
+export const PROMPT_INJECTION_PATTERNS: Array<{ re: RegExp; reason: string }> = [
+  { re: /\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above)\s+(instructions|rules|prompts|commands)\b/i, reason: 'system instruction override' },
+  { re: /\byou\s+are\s+now\s+(dan|unfiltered|jailbroken|an\s+ai\s+without\s+rules|an\s+adversary)\b/i, reason: 'roleplay jailbreak' },
+  { re: /\b(system\s*prompt|system\s*instructions|developer\s*instructions)\s*[:=]/i, reason: 'prompt extraction or mock system directive' },
+  { re: /\b(show|reveal|leak|print|output|dump)\s+(your\s+)?(system\s*prompt|initial\s*prompt|system\s*instructions)\b/i, reason: 'prompt exfiltration attempt' },
+  { re: /<\|im_start\|>|<\|im_end\|>|\[INST\]|\[\/INST\]|Human:\s*Assistant:/i, reason: 'raw template delimiter injection' },
+];
+
+export function scanForPromptInjection(text: string): { safe: boolean; reason?: string } {
+  const str = String(text || '');
+  for (const { re, reason } of PROMPT_INJECTION_PATTERNS) {
+    if (re.test(str)) {
+      return { safe: false, reason };
+    }
+  }
+  return { safe: true };
+}
+
 const NUMERICAL_CLAIM_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d+(?:\.\d+)?%\s*(?:increase|growth|faster|more|higher|reduction|roi|conversion|lift|better)/i, label: 'percentage performance claim' },
   { re: /\b(?:10x|5x|3x|2x|\d+x)\s+(?:faster|roi|leads|revenue|growth|output)/i, label: 'multiplier performance claim' },
@@ -114,6 +133,20 @@ export function validateAutopilotContentItem(params: {
     ...item.slides.map((s) => `${s.heading} ${s.body}`),
     ...item.storyboard.map((sc) => `${sc.voiceover} ${sc.caption_text}`),
   ].join('\n');
+
+  
+  // 0. Prompt Injection & Adversarial Pattern Scanner
+  const injectionCheck = scanForPromptInjection(fullCopy);
+  if (!injectionCheck.safe) {
+    issues.push({
+      gate: 'brand_compliance',
+      severity: 'blocker',
+      code: 'PROMPT_INJECTION_DETECTED',
+      message: `Copy contains prohibited prompt injection or adversarial pattern (${injectionCheck.reason}).`,
+      remediation: 'Remove prompt override phrasing and maintain standard brand copy.',
+    });
+    escalationReasons.push(`Adversarial prompt injection pattern detected: ${injectionCheck.reason}`);
+  }
 
   // ── 1. Brand Compliance Gate (Section 10.1) ─────────────────────────────────
   const approvedHexSet = new Set(
@@ -244,18 +277,19 @@ export function validateAutopilotContentItem(params: {
 
   // Product demo authenticity check (Section 8.4 & 18)
   if (item.workflow_type === 'product_demo') {
-    const hasRealProductCapture =
-      brief.controls.media_source_mode === 'real_screenshot' ||
-      item.media_assets.some((m) => m.provenance === 'real_product_capture') ||
-      (params.referencedAssets ?? []).some((a) => a.asset_type === 'product_screenshot' || a.asset_type === 'video_capture');
+    // Require at least one verified authentic product UI screenshot or video recording
+    const hasRealAsset =
+      item.media_assets.some((m) => m.provenance === 'real_product_capture' || m.type === 'video' || (m.url && !m.url.includes('placeholder'))) ||
+      (params.referencedAssets ?? []).some((a) => a.asset_type === 'product_screenshot' || a.asset_type === 'video_capture') ||
+      (brief.reference_asset_ids?.length > 0 && brief.controls.media_source_mode !== 'ai_generated');
 
-    if (!hasRealProductCapture) {
+    if (!hasRealAsset) {
       issues.push({
         gate: 'factual_integrity',
         severity: 'blocker',
         code: 'PRODUCT_DEMO_REQUIRES_REAL_CAPTURE',
-        message: 'Product demo workflow cannot fabricate UI pixels; a real product screen capture or approved demo video is required.',
-        remediation: 'Attach a real product screenshot or screen recording in Brand Studio or the Creative Brief.',
+        message: 'Product demo workflow cannot fabricate UI pixels; an authentic product screen capture or verified recording is required.',
+        remediation: 'Attach an authentic product screenshot or screen recording in Brand Studio or Creative Queue.',
       });
     }
   }
@@ -400,8 +434,11 @@ export function validateAutopilotContentItem(params: {
     Boolean(business.risk_profile?.require_human_review_always) ||
     brand?.approval_status !== 'approved';
 
+  const outcome: 'pass' | 'warning' | 'fail' = blockerCount > 0 ? 'fail' : (warningCount > 0 ? 'warning' : 'pass');
+
   return {
     passed: blockerCount === 0,
+    outcome,
     score,
     requires_human_review: requiresHumanReview,
     escalation_reasons: escalationReasons,

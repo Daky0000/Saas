@@ -114,7 +114,7 @@ export const ALLOWED_LIFECYCLE_TRANSITIONS: Record<ContentLifecycleState, readon
   needs_changes: ['brief_ready', 'generating', 'draft_ready', 'review_required', 'cancelled', 'archived'],
   rejected: ['brief_ready', 'archived'],
   approved: ['scheduled', 'publishing', 'needs_changes', 'cancelled', 'archived'],
-  scheduled: ['publishing', 'approved', 'cancelled'],
+  scheduled: ['publishing', 'approved', 'scheduled', 'cancelled'],
   publishing: ['published', 'publish_failed'],
   publish_failed: ['scheduled', 'publishing', 'approved', 'cancelled', 'archived'],
   published: ['archived'],
@@ -364,7 +364,7 @@ export interface ContentStrategyRecord {
   owner_user_id: string;
   name: string;
   current_version: number;
-  status: 'proposed' | 'approved' | 'superseded' | 'archived';
+  status: 'proposed' | 'approved' | 'paused' | 'rejected' | 'superseded' | 'archived';
   objective: {
     primary: MarketingObjective;
     secondary: MarketingObjective[];
@@ -475,6 +475,7 @@ export interface ValidationIssue {
 
 export interface ValidationReport {
   passed: boolean;
+  outcome?: 'pass' | 'warning' | 'fail';
   score: number;
   requires_human_review: boolean;
   escalation_reasons: string[];
@@ -517,7 +518,12 @@ export interface ContentItemRecord {
   strategy_version: number | null;
   brand_profile_id: string | null;
   brand_version: number | null;
+  campaign_id?: string | null;
   campaign_name: string;
+  content_hash?: string;
+  approved_content_hash?: string | null;
+  approved_destination?: string | null;
+  execution_mode?: 'live_provider' | 'sandbox_fallback';
   pillar_id: string;
   pillar_name: string;
   funnel_stage: string;
@@ -596,6 +602,10 @@ export interface PublicationRecord {
   remote_post_id: string | null;
   error_message: string | null;
   retryable: boolean;
+  reconcile_required?: boolean;
+  approved_revision_hash?: string | null;
+  provider_response?: Record<string, any> | null;
+  paused?: boolean;
   published_at: string | null;
   created_at: string;
   updated_at: string;

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { scanForPromptInjection } from './validationAndPolicyService.ts';
 import type {
   BrandProfileRecord,
   BrandTokenRecord,
@@ -490,6 +491,10 @@ export function buildBrandAwarePrompt(params: {
   const { item, brief, brand, approvedTokens } = params;
   const mode: CreativeMode = brief.creative_mode;
 
+  // Sanitize any user tone or prompt override to prevent jailbreak leakage into image generator
+  const toneCheck = scanForPromptInjection(brief.controls.tone_override || '');
+  const cleanTone = toneCheck.safe ? brief.controls.tone_override : undefined;
+
   const approvedColors = [
     ...(brand?.visual?.colors ?? []).map((c) => `${c.name} (${c.hex}, ${c.role})`),
     ...approvedTokens
@@ -592,7 +597,7 @@ export function createCreativeBriefForItem(params: {
     motion_intensity: placement === 'REEL' ? 'moderate' : 'none',
     background_complexity: params.creativeMode === 'strict_brand' ? 'minimal_studio' : 'contextual',
     confirmation_threshold_usd: 2.0,
-    user_confirmed_spend: true,
+    user_confirmed_spend: false,
     ...(params.controlsOverride ?? {}),
   };
 

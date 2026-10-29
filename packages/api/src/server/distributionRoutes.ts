@@ -92,7 +92,7 @@ function isBullMqEnabled() {
 
 export interface DistributionModule {
   queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
-  publishToplatform: (userId: string, post: any, platformId: string) => Promise<any>;
+  publishToplatform: (userId: string, post: any, platformId: string, options?: any) => Promise<any>;
   router: Router;
   getPublishableSocialConnection: (userId: string, platformId: string, options?: { refreshWithinMs?: number }) => Promise<PublishableSocialConnection | null>;
   markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
@@ -2159,25 +2159,48 @@ async function publishToplatform(
     // Don't duplicate: only include excerpt if it differs from the title
     const fallbackCaption = socialExcerpt && socialExcerpt !== title ? socialExcerpt : '';
     const fallbackHashtags = toHashtags((post as any).tag_names);
+    const hasCustomCaption = typeof options?.captionOverride === 'string' && options.captionOverride.trim().length > 0;
+    const isSocialOnly = post.post_format === 'social_only' || !post.slug;
+    const effectivePostUrl = isSocialOnly ? '' : postUrl;
+
     const fallbackTextParts = [
       title,
       fallbackCaption,
       fallbackHashtags,
-      postUrl,
+      effectivePostUrl,
       // Note: featuredImage is passed as media, NOT embedded in the caption text
     ].filter(Boolean);
 
-    const text =
-      (customTemplate
-        ? renderMessageTemplate(customTemplate, {
-            title: String(post.title || ''),
-            excerpt: String(post.excerpt || ''),
-            url: postUrl,
-            featured_image: featuredImage,
-            author: author,
-          })
-        : fallbackTextParts.join('\n\n')
-      ).trim().slice(0, maxLen);
+    const text = (
+      hasCustomCaption
+        ? (options!.captionOverride as string)
+        : customTemplate
+          ? renderMessageTemplate(customTemplate, {
+              title: String(post.title || ''),
+              excerpt: String(post.excerpt || ''),
+              url: effectivePostUrl,
+              featured_image: featuredImage,
+              author: author,
+            })
+          : fallbackTextParts.join('\n\n')
+    ).trim().slice(0, maxLen);
+
+    const rawAssets: Array<{ url: string; type?: 'image' | 'video' }> = Array.isArray(options?.mediaAssets) && options!.mediaAssets!.length > 0
+      ? options!.mediaAssets!
+      : Array.isArray(post.media_assets) && post.media_assets.length > 0
+        ? post.media_assets
+        : [];
+
+    const normalizedMedia: Array<{ url: string; type: 'image' | 'video' }> = [];
+    for (const item of rawAssets) {
+      const u = String(item?.url || '').trim();
+      if (!u) continue;
+      const isVid = item?.type === 'video' || /\.(mp4|mov|m4v)(\?|$)/i.test(u);
+      normalizedMedia.push({ url: u, type: isVid ? 'video' : 'image' });
+    }
+    if (normalizedMedia.length === 0 && featuredImage) {
+      normalizedMedia.push({ url: featuredImage, type: 'image' });
+    }
 
     if (platformId === 'instagram') {
       const igUserId = String(conn.account_id || '').trim();
@@ -2192,19 +2215,7 @@ async function publishToplatform(
         : (requestedFormatRaw === 'STORY' || requestedFormatRaw === 'STORIES') ? 'STORY'
         : 'FEED_POST';
 
-      const rawAssets: Array<{ url: string; type?: 'image' | 'video' }> = Array.isArray(options?.mediaAssets) && options!.mediaAssets!.length > 0
-        ? options!.mediaAssets!
-        : Array.isArray(post.media_assets) && post.media_assets.length > 0
-          ? post.media_assets
-          : [];
-
-      const normalizedMedia: Array<{ url: string; type: 'image' | 'video' }> = [];
-      for (const item of rawAssets) {
-        const u = String(item?.url || '').trim();
-        if (!u) continue;
-        const isVid = item?.type === 'video' || /\.(mp4|mov|m4v)(\?|$)/i.test(u);
-        normalizedMedia.push({ url: u, type: isVid ? 'video' : 'image' });
-      }
+      // Uses pre-computed normalizedMedia
 
       if (normalizedMedia.length === 0) {
         const videoCandidate = String(post.video_url || '').trim();
@@ -2373,9 +2384,9 @@ async function publishToplatform(
       const pinBody: any = {
         board_id: boardId,
         title: String(post.title || '').trim().slice(0, 100) || 'New post',
-        description: String(post.excerpt || '').trim().slice(0, 500),
-        link: postUrl || undefined,
-        media_source: { source_type: 'image_url', url: featuredImage },
+        description: String(options?.captionOverride || post.excerpt || '').trim().slice(0, 500),
+        link: effectivePostUrl || undefined,
+        media_source: { source_type: 'image_url', url: (normalizedMedia.find((m) => m.type === 'image')?.url || featuredImage) },
       };
 
       const pinResp = await axios.post('https://api.pinterest.com/v5/pins', pinBody, {
@@ -2414,9 +2425,11 @@ async function publishToplatform(
           id: destination.id,
           name: destination.name,
         } : undefined,
-        media: featuredImage && (/^https?:\/\//i.test(featuredImage) || featuredImage.startsWith('data:'))
-          ? [{ url: featuredImage, type: 'image' }]
-          : undefined,
+        media: normalizedMedia.length > 0
+          ? normalizedMedia
+          : (featuredImage && (/^https?:\/\//i.test(featuredImage) || featuredImage.startsWith('data:'))
+              ? [{ url: featuredImage, type: 'image' }]
+              : undefined),
       };
 
       const validation = linkedInPlatform.validate(linkedinPost);
@@ -2470,7 +2483,7 @@ async function publishToplatform(
       const twitterPost: PostObject = {
         type: 'TWEET',
         content: { text: text.slice(0, 280) },
-        ...(featuredImage ? { media: [{ url: featuredImage, type: 'image' }] } : {}),
+        ...(normalizedMedia.length > 0 ? { media: normalizedMedia } : (featuredImage ? { media: [{ url: featuredImage, type: 'image' }] } : {})),
       };
 
       const validation = twitterXPlatform.validate(twitterPost);
@@ -2516,13 +2529,15 @@ async function publishToplatform(
         return { status: 'failed', error: 'Facebook Pages only. Groups and profiles are not supported.', retryable: false };
       }
 
-      const media = featuredImage && (/^https?:\/\//i.test(featuredImage) || featuredImage.startsWith('data:'))
-        ? [{ url: featuredImage, type: 'image' as const }]
-        : undefined;
+      const media = normalizedMedia.length > 0
+        ? normalizedMedia
+        : (featuredImage && (/^https?:\/\//i.test(featuredImage) || featuredImage.startsWith('data:'))
+            ? [{ url: featuredImage, type: 'image' as const }]
+            : undefined);
 
       const facebookPost: PostObject = {
         type: 'FEED_POST',
-        content: { text, link: postUrl || undefined },
+        content: { text, link: effectivePostUrl || undefined },
         destination: destination ? {
           type: destination.type,
           id: destination.id,

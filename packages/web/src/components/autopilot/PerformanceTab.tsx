@@ -7,6 +7,7 @@ import {
   Field,
   Loading,
   Notice,
+  RelativeTime,
   SectionHeading,
   StatGrid,
   StatTile,
@@ -31,6 +32,8 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
   const [summary, setSummary] = useState<any | null>(null);
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [experiments, setExperiments] = useState<any[]>([]);
+  const [ledger, setLedger] = useState<any | null>(null);
+  const [trafficFilter, setTrafficFilter] = useState<'all' | 'organic' | 'paid'>('all');
 
   // Metric logging form
   const [metricPillar, setMetricPillar] = useState('Educational Breakdown');
@@ -48,10 +51,14 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await autopilotService.getAnalyticsSummary();
+      const [res, ledgerRes] = await Promise.all([
+        autopilotService.getAnalyticsSummary(),
+        autopilotService.getUsageLedger().catch(() => ({ ledger: null })),
+      ]);
       setSummary(res.summary);
       setRecommendations(res.recommendations || []);
       setExperiments(res.experiments || []);
+      if (ledgerRes?.ledger) setLedger(ledgerRes.ledger);
     } catch (e: any) {
       setError(e.message || 'Failed to load performance & insights');
     } finally {
@@ -102,7 +109,7 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
     }
   };
 
-  const handleDecide = async (recId: string, decision: 'accepted' | 'rejected') => {
+  const handleDecide = async (recId: string, decision: 'accepted' | 'rejected' | 'defer') => {
     setBusy(true);
     setError(null);
     try {
@@ -110,7 +117,9 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
       setNote(
         decision === 'accepted'
           ? `Accepted recommendation and created Strategy v${res.updatedStrategy?.current_version ?? 'next'}.`
-          : 'Rejected recommendation; strategy left unchanged.',
+          : decision === 'defer'
+            ? 'Deferred recommendation. It will be re-evaluated after additional sample posts are gathered.'
+            : 'Rejected recommendation; strategy left unchanged.',
       );
       await loadAnalytics();
       onRefreshOverview();
@@ -154,9 +163,38 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
 
       {summary && (
         <>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted font-medium">Traffic Scope:</span>
+              {(['all', 'organic', 'paid'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setTrafficFilter(mode)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium capitalize transition ${
+                    trafficFilter === mode
+                      ? 'bg-ink text-white'
+                      : 'bg-sunken text-muted hover:text-ink border border-line'
+                  }`}
+                >
+                  {mode === 'all' ? 'All Channels' : mode}
+                </button>
+              ))}
+            </div>
+            <div className="font-mono text-xs text-muted">
+              Observation Window: 30-Day Moving Baseline (n = {summary.sample_size} posts)
+            </div>
+          </div>
+
           <Notice tone="info" title={`Objective KPI Lens: ${summary.kpi_framework?.label || summary.objective}`}>
             {summary.kpi_framework?.attribution_note}
           </Notice>
+
+          {!summary.sufficient_for_strategy_recommendations && (
+            <Notice tone="warn" title="LOW STATISTICAL SAMPLE SIZE (< 5 SAMPLES)">
+              Currently {summary.sample_size} of 5 required post outcomes ingested. Strategy recommendations remain locked until sufficient sample volume avoids overreacting to single-post anomalies.
+            </Notice>
+          )}
 
           <StatGrid columns={4}>
             <StatTile
@@ -170,11 +208,23 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
             />
             <StatTile
               label="BASELINE SCORE"
-              value={summary.baseline_objective_score}
+              value={summary.baseline_objective_score ?? '—'}
               sub={`Primary: ${(summary.kpi_framework?.primary_kpis || []).slice(0, 2).join(', ')}`}
             />
-            <StatTile label="TOTAL SAVES" value={summary.totals?.saves ?? 0} sub="Educational utility signal" />
-            <StatTile label="QUALIFIED LEADS / CONV" value={(summary.totals?.qualified_leads ?? 0) + (summary.totals?.conversions ?? 0)} sub="Attributed downstream actions" />
+            <StatTile
+              label="TOTAL SAVES"
+              value={summary.totals?.saves !== null && summary.totals?.saves !== undefined ? summary.totals.saves : '—'}
+              sub="Educational utility signal"
+            />
+            <StatTile
+              label="QUALIFIED LEADS / CONV"
+              value={
+                summary.totals?.qualified_leads !== null && summary.totals?.qualified_leads !== undefined
+                  ? summary.totals.qualified_leads + (summary.totals?.conversions ?? 0)
+                  : '—'
+              }
+              sub="Attributed downstream actions"
+            />
           </StatGrid>
         </>
       )}
@@ -214,6 +264,9 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
                       </Button>
                       <Button variant="secondary" size="sm" onClick={() => void handleDecide(rec.id, 'rejected')} disabled={busy}>
                         Reject
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => void handleDecide(rec.id, 'defer')} disabled={busy}>
+                        Defer
                       </Button>
                     </div>
                   )}
@@ -320,6 +373,69 @@ export default function PerformanceTab({ onRefreshOverview }: Props) {
           </div>
         </Card>
       </div>
+
+      {/* Provider Usage & Cost Ledger Table */}
+      {ledger && (
+        <Card>
+          <SectionHeading
+            title="Third-Party Provider & Workspace Credit Usage Ledger"
+            hint="Full dual-currency audit ledger tracking live provider vs sandbox fallback runs, reservation timestamps, and USD/credit settlement."
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="muted">MTD Spend: ${Number(ledger.month_to_date_spend_usd ?? 0).toFixed(2)} USD</Badge>
+                <Badge tone="muted">MTD Credits: {ledger.month_to_date_credits ?? 0} cr</Badge>
+              </div>
+            }
+          />
+          {(ledger.entries || []).length === 0 ? (
+            <EmptyState message="No model generation ledger entries recorded in this billing cycle." />
+          ) : (
+            <Table>
+              <Thead>
+                <Th>Workflow / Job</Th>
+                <Th>Provider / Model</Th>
+                <Th>Mode</Th>
+                <Th>Cost (USD)</Th>
+                <Th>Credits</Th>
+                <Th>Status</Th>
+                <Th>Time</Th>
+              </Thead>
+              <tbody>
+                {ledger.entries.slice(0, 15).map((e: any) => (
+                  <Tr key={e.id}>
+                    <Td>
+                      <div className="font-mono text-xs text-ink">{e.workflow_type || 'workflow'}</div>
+                      <div className="font-mono text-[10px] text-muted">{e.job_id?.slice(0, 8)}</div>
+                    </Td>
+                    <Td>
+                      <span className="font-mono text-xs text-muted">{e.provider || 'internal'}</span>
+                    </Td>
+                    <Td>
+                      <Badge tone={e.execution_mode === 'live_provider' ? 'positive' : 'muted'}>
+                        {e.execution_mode === 'live_provider' ? 'Live Provider' : 'Sandbox Fallback'}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      <span className="font-mono text-xs text-ink">${Number(e.cost_usd ?? 0).toFixed(3)}</span>
+                    </Td>
+                    <Td>
+                      <span className="font-mono text-xs text-ink">{e.credits_deducted ?? 0} cr</span>
+                    </Td>
+                    <Td>
+                      <Badge tone={e.status === 'settled' ? 'positive' : e.status === 'released' ? 'muted' : 'info'}>
+                        {e.status}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      <RelativeTime value={e.created_at} />
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

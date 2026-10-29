@@ -4,8 +4,10 @@ import {
   Button,
   Card,
   EmptyState,
+  Eyebrow,
   Field,
   Loading,
+  Modal,
   Notice,
   SectionHeading,
   Table,
@@ -28,11 +30,20 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
   const [note, setNote] = useState<string | null>(null);
 
   const [scanUrl, setScanUrl] = useState('');
+  const [preserveTokens, setPreserveTokens] = useState(true);
   const [scanWarnings, setScanWarnings] = useState<string[]>([]);
   const [brand, setBrand] = useState<any | null>(null);
   const [tokens, setTokens] = useState<any[]>([]);
   const [assets, setAssets] = useState<any[]>([]);
   const [versions, setVersions] = useState<any[]>([]);
+
+  // Version Diff & Restore Modal State
+  const [diffModalOpen, setDiffModalOpen] = useState(false);
+  const [diffVersion1, setDiffVersion1] = useState(1);
+  const [diffVersion2, setDiffVersion2] = useState(1);
+  const [diffData, setDiffData] = useState<any | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState(false);
 
   // Manual Brand System fields
   const [brandName, setBrandName] = useState('');
@@ -95,7 +106,7 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
     setError(null);
     setNote(null);
     try {
-      const res = await autopilotService.scanWebsiteBrand(scanUrl.trim());
+      const res = await autopilotService.scanWebsiteBrand(scanUrl.trim(), preserveTokens);
       setScanWarnings(res.scan?.warnings || []);
       setNote(`Scanned ${res.scan?.pages_scanned?.length || 0} public page(s). Extracted ${res.scan?.candidate_tokens?.length || 0} candidate token(s) marked for review.`);
       await loadStudio();
@@ -119,6 +130,56 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
       setError(e.message || 'Failed to update token');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleDeleteToken = async (tokenId: string) => {
+    setBusy(true);
+    try {
+      await autopilotService.deleteBrandToken(tokenId);
+      await loadStudio();
+    } catch (e: any) {
+      setError(e.message || 'Failed to delete token');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleOpenDiffModal = async () => {
+    if (versions.length === 0) return;
+    const latestV = brand?.current_version || versions[versions.length - 1].version;
+    const prevV = versions.length > 1 ? versions[versions.length - 2].version : Math.max(1, latestV - 1);
+    setDiffVersion1(prevV);
+    setDiffVersion2(latestV);
+    setDiffModalOpen(true);
+    await fetchDiff(prevV, latestV);
+  };
+
+  const fetchDiff = async (v1: number, v2: number) => {
+    setLoadingDiff(true);
+    try {
+      const res = await autopilotService.getBrandDiff(v1, v2);
+      setDiffData(res.diff);
+    } catch (e: any) {
+      setError(e.message || 'Failed to compare brand versions');
+    } finally {
+      setLoadingDiff(false);
+    }
+  };
+
+  const handleRestoreVersion = async (v: number) => {
+    setRestoringVersion(true);
+    try {
+      const res = await autopilotService.restoreBrandVersion(v);
+      hydrateBrand(res.brand);
+      setNote(`Successfully restored Brand Profile to version v${v}.`);
+      setDiffModalOpen(false);
+      await loadStudio();
+      onRefreshOverview();
+    } catch (e: any) {
+      setError(e.message || `Failed to restore brand version v${v}`);
+    } finally {
+      setRestoringVersion(false);
     }
   };
 
@@ -264,6 +325,9 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
             </Button>
           )}
         </div>
+        <div className="mt-2.5 flex items-center gap-2">
+          <Toggle checked={preserveTokens} onChange={setPreserveTokens} label="Preserve previously approved tokens on re-scan" />
+        </div>
       </Card>
 
       {/* Extracted & Custom Brand Tokens Table */}
@@ -313,6 +377,11 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
                   <Td>
                     <div className="font-medium text-ink">{t.name}</div>
                     {t.notes && <div className="text-xs text-muted">{t.notes}</div>}
+                    {!t.rights_confirmed && (
+                      <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                        Rights Unconfirmed
+                      </span>
+                    )}
                   </Td>
                   <Td>
                     <span className="font-mono text-xs text-muted">{t.category}/{t.sub_type}</span>
@@ -351,6 +420,9 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
                           Ignore
                         </Button>
                       )}
+                      <Button variant="danger" size="sm" onClick={() => void handleDeleteToken(t.id)} disabled={busy}>
+                        Delete
+                      </Button>
                     </div>
                   </Td>
                 </Tr>
@@ -366,9 +438,16 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
           title="Brand Voice, Retired Colors & Factuality Rules"
           hint="Versioned rules enforced by the QA & Policy Gate across graphics, carousels, Reels, and product demos."
           action={
-            <Button variant="primary" size="sm" onClick={handleSaveBrandSystem} disabled={busy}>
-              Save Brand Version
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {versions.length > 0 && (
+                <Button variant="secondary" size="sm" onClick={handleOpenDiffModal} disabled={busy}>
+                  Compare & Restore Versions
+                </Button>
+              )}
+              <Button variant="primary" size="sm" onClick={handleSaveBrandSystem} disabled={busy}>
+                Save Brand Version
+              </Button>
+            </div>
           }
         />
 
@@ -473,6 +552,131 @@ export default function BrandStudioTab({ onRefreshOverview }: Props) {
           </div>
         )}
       </Card>
+
+      {/* Brand Version Diff & Restore Modal */}
+      <Modal
+        open={diffModalOpen}
+        onClose={() => setDiffModalOpen(false)}
+        title="Brand System Version Diff & Rollback"
+        subtitle="Compare historical brand profiles against the current baseline and restore earlier rules or palettes with audit tracking."
+      >
+        <div className="space-y-4 text-xs">
+          <div className="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-sunken p-3">
+            <Field label="Version to Inspect / Restore">
+              <select
+                className="rounded-[10px] border border-line bg-white px-3 py-1.5 font-mono text-xs text-ink"
+                value={diffVersion1}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setDiffVersion1(v);
+                  void fetchDiff(v, diffVersion2);
+                }}
+              >
+                {versions.map((ver) => (
+                  <option key={ver.version} value={ver.version}>
+                    v{ver.version} ({new Date(ver.created_at).toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Compare Against">
+              <select
+                className="rounded-[10px] border border-line bg-white px-3 py-1.5 font-mono text-xs text-ink"
+                value={diffVersion2}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setDiffVersion2(v);
+                  void fetchDiff(diffVersion1, v);
+                }}
+              >
+                {versions.map((ver) => (
+                  <option key={ver.version} value={ver.version}>
+                    v{ver.version} ({new Date(ver.created_at).toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void fetchDiff(diffVersion1, diffVersion2)}
+              disabled={loadingDiff}
+            >
+              {loadingDiff ? 'Calculating Diff…' : 'Refresh Comparison'}
+            </Button>
+          </div>
+
+          {loadingDiff ? (
+            <Loading label="Computing version diff" rows={2} />
+          ) : diffData ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-line bg-white p-3 space-y-2">
+                <Eyebrow>IDENTITY & POSITIONING</Eyebrow>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded border border-line bg-sunken p-2">
+                    <span className="font-mono text-[10px] text-muted">v{diffVersion1}:</span>
+                    <div className="text-ink mt-0.5">{diffData.v1?.identity?.positioning || '(none)'}</div>
+                  </div>
+                  <div className="rounded border border-line bg-sunken p-2">
+                    <span className="font-mono text-[10px] text-muted">v{diffVersion2}:</span>
+                    <div className="text-ink mt-0.5">{diffData.v2?.identity?.positioning || '(none)'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-line bg-white p-3 space-y-2">
+                <Eyebrow>VOICE ATTRIBUTES & PROHIBITED TERMS</Eyebrow>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <span className="font-mono text-[10px] text-muted">Added in v{diffVersion2}:</span>
+                    <div className="text-positive-text font-mono mt-0.5">
+                      {diffData.voice_attributes_added?.length ? diffData.voice_attributes_added.join(', ') : 'None'}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="font-mono text-[10px] text-muted">Removed in v{diffVersion2}:</span>
+                    <div className="text-danger-text font-mono mt-0.5">
+                      {diffData.voice_attributes_removed?.length ? diffData.voice_attributes_removed.join(', ') : 'None'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-line bg-white p-3 space-y-2">
+                <Eyebrow>RETIRED COLOR BANS</Eyebrow>
+                <div className="text-muted text-[11px]">
+                  v{diffVersion1}: {(diffData.v1?.visual?.retired_colors || []).join(', ') || 'None'}
+                </div>
+                <div className="text-muted text-[11px]">
+                  v{diffVersion2}: {(diffData.v2?.visual?.retired_colors || []).join(', ') || 'None'}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-muted text-center py-4">Select versions above to view diff.</div>
+          )}
+
+          <div className="flex items-center justify-between pt-3 border-t border-line">
+            <Button variant="secondary" size="sm" onClick={() => setDiffModalOpen(false)}>
+              Close
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void handleRestoreVersion(diffVersion1)}
+              disabled={restoringVersion || (brand?.current_version === diffVersion1)}
+            >
+              {restoringVersion
+                ? 'Restoring…'
+                : brand?.current_version === diffVersion1
+                  ? `v${diffVersion1} is Current Baseline`
+                  : `Restore Version v${diffVersion1}`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

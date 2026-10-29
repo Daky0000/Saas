@@ -1,3 +1,5 @@
+import { getTenantControls, upsertTenantControls, getTenantUsageLedger } from './billingAndBudgetService.ts';
+import { getAutopilotProviderStatus } from './autopilotProviderBridge.ts';
 import { Router, type Response } from 'express';
 import { randomUUID, randomBytes } from 'crypto';
 import type { Pool } from 'pg';
@@ -29,6 +31,9 @@ import {
   executePublication,
   scheduleApprovedContentItem,
   transitionContentItemState,
+  pausePublication,
+  resumePublication,
+  reschedulePublication,
   type SocialPublisherInput,
   type SocialPublisherResult,
 } from './lifecycleAndPublishingService.ts';
@@ -69,6 +74,7 @@ export interface AutopilotRoutesDeps {
   createNotification?: (userId: string, type: string, title: string, message: string, data?: Record<string, any>, pinned?: boolean) => Promise<any>;
   websiteFetcher?: WebsiteFetchFn;
   visualAdapter?: (input: VisualProviderAdapterInput) => Promise<VisualProviderAdapterResult>;
+  copyAdapter?: (prompt: string, systemPrompt?: string) => Promise<string>;
   publisherAdapter?: (input: SocialPublisherInput) => Promise<SocialPublisherResult>;
   repo?: AutopilotRepository;
 }
@@ -516,6 +522,16 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
       return res.status(404).json({ success: false, error: 'Brand token not found in this workspace' });
     }
     return res.json({ success: true, token: updated });
+  });
+
+  router.delete('/autopilot/brand/tokens/:tokenId', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'editor');
+    if (!tenant) return;
+    const deleted = await repo.deleteBrandToken(tenant.tenantId, req.params.tokenId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: 'Brand token not found or already deleted' });
+    }
+    return res.json({ success: true, deleted: true });
   });
 
   router.get('/autopilot/brand/assets', async (req: Request, res: Response) => {
@@ -994,6 +1010,8 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
 
       const result = await executeAutopilotWorkflow({
         repo,
+        pool: deps.pool,
+        hasDatabase: deps.hasDatabase,
         tenantId: tenant.tenantId,
         actorUserId: tenant.userId,
         actorRole: tenant.userRole,
@@ -1004,6 +1022,10 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
           ? req.body.regenerate_scene_numbers.map(Number)
           : undefined,
         regenerateFailedScenesOnly: Boolean(req.body?.regenerate_failed_scenes_only),
+        regenerateCaptionOnly: Boolean(req.body?.regenerate_caption_only),
+        regenerateSlideIndices: Array.isArray(req.body?.regenerate_slide_indices)
+          ? req.body.regenerate_slide_indices.map(Number)
+          : undefined,
         proposedPaletteHexes: Array.isArray(req.body?.proposed_palette_hexes)
           ? req.body.proposed_palette_hexes
           : undefined,
@@ -1011,6 +1033,7 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
         magnificSpaceId: req.body?.magnific_space_id,
         magnificFlowId: req.body?.magnific_flow_id,
         visualAdapter: deps.visualAdapter,
+        copyAdapter: deps.copyAdapter,
       });
 
       return res.json({ success: true, ...result });
@@ -1396,6 +1419,132 @@ export function registerAutopilotRoutes(deps: AutopilotRoutesDeps) {
     if (!tenant) return;
     await repo.purgeTenantAutopilotData(tenant.tenantId);
     return res.json({ success: true, purged_tenant_id: tenant.tenantId });
+  });
+
+
+  // ── Brand Version Diff & Restore ───────────────────────────────────────────
+  router.get('/autopilot/brand/diff', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'viewer');
+    if (!tenant) return;
+    const v1 = parseInt(String(req.query.v1 || ''), 10);
+    const v2 = parseInt(String(req.query.v2 || ''), 10);
+    const versions = await repo.listBrandVersions(tenant.tenantId);
+    const snap1 = versions.find((v: any) => v.version === v1)?.snapshot;
+    const snap2 = versions.find((v: any) => v.version === v2)?.snapshot;
+    if (!snap1 || !snap2) {
+      return res.status(404).json({ success: false, error: 'One or both requested versions not found' });
+    }
+    return res.json({ success: true, v1, v2, diff: { before: snap1, after: snap2 } });
+  });
+
+  router.post('/autopilot/brand/restore', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'admin');
+    if (!tenant) return;
+    const targetVersion = parseInt(String(req.body?.version || ''), 10);
+    const versions = await repo.listBrandVersions(tenant.tenantId);
+    const target = versions.find((v: any) => v.version === targetVersion);
+    if (!target) {
+      return res.status(404).json({ success: false, error: `Brand version ${targetVersion} not found` });
+    }
+    const restored = await repo.upsertBrandProfile(
+      tenant.tenantId,
+      tenant.userId,
+      tenant.orgId,
+      tenant.projectId,
+      target.snapshot,
+      tenant.userId,
+      `Restored from version ${targetVersion}`,
+      true
+    );
+    await repo.recordAudit(tenant.tenantId, tenant.userId, tenant.userRole, 'brand.restored', 'brand_profile', restored.id, {
+      from_version: targetVersion,
+      to_version: restored.current_version,
+    });
+    return res.json({ success: true, brand: restored });
+  });
+
+  // ── Tenant Controls & Kill Switches ───────────────────────────────────────
+  router.get('/autopilot/controls', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'viewer');
+    if (!tenant) return;
+    const controls = await getTenantControls(deps.pool, tenant.tenantId);
+    return res.json({ success: true, controls });
+  });
+
+  router.post('/autopilot/controls', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'admin');
+    if (!tenant) return;
+    const controls = await upsertTenantControls(deps.pool, tenant.tenantId, req.body || {}, tenant.userId);
+    await repo.recordAudit(tenant.tenantId, tenant.userId, tenant.userRole, 'controls.updated', 'tenant_controls', tenant.tenantId, controls);
+    return res.json({ success: true, controls });
+  });
+
+  router.get('/autopilot/usage/ledger', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'viewer');
+    if (!tenant) return;
+    const ledger = await getTenantUsageLedger(deps.pool, tenant.tenantId);
+    return res.json({ success: true, ledger });
+  });
+
+  // ── Tenant Data Export ────────────────────────────────────────────────────
+  router.get('/autopilot/tenant/export', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'admin');
+    if (!tenant) return;
+    const exported = await repo.exportTenantAutopilotData(tenant.tenantId);
+    return res.json({ success: true, export: exported });
+  });
+
+  // ── Publication Pause, Resume & Reschedule ─────────────────────────────────
+  router.post('/autopilot/publications/:pubId/pause', async (req: Request, res: Response) => {
+    try {
+      const tenant = await guardTenant(req, res, 'editor');
+      if (!tenant) return;
+      const publication = await pausePublication(repo, tenant, req.params.pubId);
+      return res.json({ success: true, publication });
+    } catch (err: any) {
+      return res.status(err.status || 500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.post('/autopilot/publications/:pubId/resume', async (req: Request, res: Response) => {
+    try {
+      const tenant = await guardTenant(req, res, 'editor');
+      if (!tenant) return;
+      const publication = await resumePublication(repo, tenant, req.params.pubId);
+      return res.json({ success: true, publication });
+    } catch (err: any) {
+      return res.status(err.status || 500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.post('/autopilot/publications/:pubId/reschedule', async (req: Request, res: Response) => {
+    try {
+      const tenant = await guardTenant(req, res, 'editor');
+      if (!tenant) return;
+      const publication = await reschedulePublication(repo, tenant, req.params.pubId, String(req.body?.scheduled_at || ''));
+      return res.json({ success: true, publication });
+    } catch (err: any) {
+      return res.status(err.status || 500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ── Autopilot Ops Health & Provider Status ────────────────────────────────
+  router.get('/autopilot/ops/health', async (req: Request, res: Response) => {
+    const tenant = await guardTenant(req, res, 'viewer');
+    if (!tenant) return;
+    const providerStatus = await getAutopilotProviderStatus(deps.pool);
+    const controls = await getTenantControls(deps.pool, tenant.tenantId);
+    return res.json({
+      success: true,
+      service: 'autopilot-core',
+      timestamp: new Date().toISOString(),
+      providers: providerStatus,
+      controls: {
+        global_kill_switch: controls.global_kill_switch,
+        publishing_kill_switch: controls.publishing_kill_switch,
+        ai_generation_kill_switch: controls.ai_generation_kill_switch,
+      },
+    });
   });
 
   return router;

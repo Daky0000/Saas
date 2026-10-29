@@ -8,6 +8,8 @@ import {
 } from './creativeBriefAndRouter.ts';
 import { composeDeterministicBrandLayer } from './deterministicCompositor.ts';
 import { maskSecretsAndPii, validateAutopilotContentItem } from './validationAndPolicyService.ts';
+import { reserveJobBudget, settleJobBudget, releaseJobBudget } from './billingAndBudgetService.ts';
+import type { Pool } from 'pg';
 import type {
   BrandAssetRecord,
   BrandProfileRecord,
@@ -56,6 +58,8 @@ export interface VisualProviderAdapterResult {
 
 export interface ExecuteWorkflowParams {
   repo: AutopilotRepository;
+  pool?: Pick<Pool, 'query'> | null;
+  hasDatabase?: () => boolean;
   tenantId: string;
   actorUserId: string;
   actorRole: string;
@@ -64,12 +68,15 @@ export interface ExecuteWorkflowParams {
   slideCount?: number;
   regenerateSceneNumbers?: number[];
   regenerateFailedScenesOnly?: boolean;
+  regenerateCaptionOnly?: boolean;
+  regenerateSlideIndices?: number[];
   proposedPaletteHexes?: string[];
   demoCaptureUrl?: string;
   magnificSpaceId?: string;
   magnificFlowId?: string;
   availableProviders?: Set<string>;
   visualAdapter?: (input: VisualProviderAdapterInput) => Promise<VisualProviderAdapterResult>;
+  copyAdapter?: (prompt: string, systemPrompt?: string) => Promise<string>;
 }
 
 function enforceOneIdeaPerSlide(rawBody: string): string {
@@ -306,6 +313,35 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
     availableProviders: params.availableProviders,
   });
 
+  const runId = randomUUID();
+  const idempotencyKey = `wf:${item.id}:att:${attemptNumber}`;
+
+  // Reserve budget from tenant ledger & enforce kill switches
+  let reservationId: string | null = null;
+  if (params.pool) {
+    try {
+      reservationId = await reserveJobBudget(params.pool as any, {
+        tenantId,
+        userId: actorUserId,
+        contentItemId: item.id,
+        workflowRunId: runId,
+        idempotencyKey,
+        estimatedProviderCostUsd: preflightEstimate.estimated_provider_cost_usd,
+        estimatedCredits: preflightEstimate.estimated_internal_credits,
+        customerPriceUsd: preflightEstimate.estimated_provider_cost_usd * 1.5,
+        provider: routed.primary.provider,
+        model: routed.primary.model,
+        isMock: !params.visualAdapter,
+        userConfirmedSpend: brief.controls.user_confirmed_spend,
+      });
+    } catch (bErr: any) {
+      throw new AutopilotWorkflowError('BUDGET_RESERVATION_BLOCKED', bErr?.message || 'Job budget blocked by policy.', bErr?.status || 402);
+    }
+  }
+
+  const executionMode: 'live_provider' | 'sandbox_fallback' = params.visualAdapter ? 'live_provider' : 'sandbox_fallback';
+  item.execution_mode = executionMode;
+
   // Transition item into `generating`
   const nowIso = new Date().toISOString();
   item.lifecycle_state = 'generating';
@@ -318,7 +354,7 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
   let totalRedactions = 0;
 
   const runRecord: WorkflowRunRecord = {
-    id: randomUUID(),
+    id: runId,
     tenant_id: tenantId,
     content_item_id: item.id,
     workflow_type: item.workflow_type,
@@ -443,8 +479,8 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
           genCostUsd = adapted.actualProviderCostUsd ?? routed.primary.provider_cost_usd;
           genCredits = adapted.actualCredits ?? routed.primary.internal_credits;
         } else {
-          genCostUsd = routed.primary.provider_cost_usd;
-          genCredits = routed.primary.internal_credits;
+          genCostUsd = 0;
+          genCredits = 0;
         }
       }
 
@@ -872,9 +908,19 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
       pii_redactions_count: totalRedactions,
       magnific_space_id: params.magnificSpaceId ?? null,
       magnific_flow_id: params.magnificFlowId ?? null,
+      execution_mode: executionMode,
     };
     runRecord.completed_at = new Date().toISOString();
     await repo.saveWorkflowRun(runRecord);
+
+    if (reservationId && params.pool) {
+      await settleJobBudget(params.pool as any, {
+        tenantId,
+        idempotencyKey,
+        actualProviderCostUsd: runRecord.actual_provider_cost_usd,
+        actualCredits: runRecord.actual_credits,
+      }).catch(() => {});
+    }
 
     await repo.recordAudit(tenantId, actorUserId, actorRole, 'workflow.completed', 'content_item', item.id, {
       run_id: runRecord.id,
@@ -887,6 +933,13 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
 
     return { item, brief, run: runRecord };
   } catch (err: any) {
+    if (typeof reservationId !== 'undefined' && reservationId && params.pool) {
+      await releaseJobBudget(params.pool as any, {
+        tenantId,
+        idempotencyKey,
+        reason: err?.message || 'Workflow execution failed',
+      }).catch(() => {});
+    }
     item.lifecycle_state = 'generation_failed';
     item.updated_at = new Date().toISOString();
     await repo.saveContentItem(item);

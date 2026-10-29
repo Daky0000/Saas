@@ -5,7 +5,9 @@ import {
   Card,
   Drawer,
   EmptyState,
+  Field,
   Loading,
+  Modal,
   Notice,
   RelativeTime,
   SectionHeading,
@@ -32,6 +34,14 @@ export default function PublishingActivityTab({ onRefreshOverview }: Props) {
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const [legacyLogs, setLegacyLogs] = useState<any[]>([]);
   const [attemptsDrawer, setAttemptsDrawer] = useState<{ pub: any; attempts: any[] } | null>(null);
+
+  // Reschedule & Purge Modal States
+  const [reschedulePubId, setReschedulePubId] = useState<string | null>(null);
+  const [rescheduleIso, setRescheduleIso] = useState('');
+  const [purgeModalOpen, setPurgeModalOpen] = useState(false);
+  const [purgeConfirmationInput, setPurgeConfirmationInput] = useState('');
+  const [purging, setPurging] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -93,6 +103,84 @@ export default function PublishingActivityTab({ onRefreshOverview }: Props) {
     }
   };
 
+  const handlePausePublication = async (pubId: string) => {
+    setBusyId(pubId);
+    try {
+      await autopilotService.pausePublication(pubId);
+      setNote('Publication held in queue (paused).');
+      await loadAll();
+    } catch (e: any) {
+      setError(e.message || 'Failed to pause publication');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleResumePublication = async (pubId: string) => {
+    setBusyId(pubId);
+    try {
+      await autopilotService.resumePublication(pubId);
+      setNote('Publication resumed and scheduled for delivery.');
+      await loadAll();
+    } catch (e: any) {
+      setError(e.message || 'Failed to resume publication');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleRescheduleSubmit = async () => {
+    if (!reschedulePubId || !rescheduleIso) return;
+    setBusyId(reschedulePubId);
+    try {
+      const iso = new Date(rescheduleIso).toISOString();
+      await autopilotService.reschedulePublication(reschedulePubId, iso);
+      setNote('Publication slot rescheduled.');
+      setReschedulePubId(null);
+      await loadAll();
+    } catch (e: any) {
+      setError(e.message || 'Failed to reschedule publication');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleExportData = async () => {
+    setExporting(true);
+    try {
+      const res = await autopilotService.exportTenantData();
+      const blob = new Blob([JSON.stringify(res.export, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `autopilot-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setNote('Exported complete tenant autopilot records to JSON file.');
+    } catch (e: any) {
+      setError(e.message || 'Failed to export tenant data');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handlePurgeData = async () => {
+    if (purgeConfirmationInput !== 'PURGE') return;
+    setPurging(true);
+    try {
+      await autopilotService.purgeTenantData();
+      setPurgeModalOpen(false);
+      setPurgeConfirmationInput('');
+      setNote('Successfully purged all workspace autopilot data, profiles, and publications.');
+      await loadAll();
+      onRefreshOverview();
+    } catch (e: any) {
+      setError(e.message || 'Failed to purge tenant data');
+    } finally {
+      setPurging(false);
+    }
+  };
+
   if (loading) {
     return <Loading label="Loading publishing & idempotency ledger" rows={4} />;
   }
@@ -138,19 +226,23 @@ export default function PublishingActivityTab({ onRefreshOverview }: Props) {
                     </div>
                   </Td>
                   <Td>
-                    <Badge
-                      tone={
-                        p.status === 'published'
-                          ? 'positive'
-                          : p.status === 'publish_failed'
-                            ? 'danger'
-                            : p.status === 'scheduled'
-                              ? 'info'
-                              : 'muted'
-                      }
-                    >
-                      {p.status}
-                    </Badge>
+                    <div className="flex flex-col gap-1 items-start">
+                      <Badge
+                        tone={
+                          p.status === 'published'
+                            ? 'positive'
+                            : p.status === 'publish_failed'
+                              ? 'danger'
+                              : p.status === 'scheduled'
+                                ? 'info'
+                                : 'muted'
+                        }
+                      >
+                        {p.status}
+                      </Badge>
+                      {p.paused && <Badge tone="warn">Paused</Badge>}
+                      {p.reconcile_required && <Badge tone="danger">Reconcile Required</Badge>}
+                    </div>
                   </Td>
                   <Td>
                     {p.remote_post_id ? (
@@ -166,7 +258,44 @@ export default function PublishingActivityTab({ onRefreshOverview }: Props) {
                       <Button variant="ghost" size="sm" onClick={() => void handleInspectAttempts(p.id)}>
                         Attempts
                       </Button>
+                      {p.status === 'scheduled' && !p.paused && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={busyId === p.id}
+                          onClick={() => void handlePausePublication(p.id)}
+                        >
+                          Pause
+                        </Button>
+                      )}
+                      {p.status === 'scheduled' && p.paused && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={busyId === p.id}
+                          onClick={() => void handleResumePublication(p.id)}
+                        >
+                          Resume
+                        </Button>
+                      )}
                       {p.status === 'scheduled' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busyId === p.id}
+                          onClick={() => {
+                            setReschedulePubId(p.id);
+                            setRescheduleIso(
+                              p.scheduled_at
+                                ? new Date(p.scheduled_at).toISOString().slice(0, 16)
+                                : new Date(Date.now() + 86400000).toISOString().slice(0, 16),
+                            );
+                          }}
+                        >
+                          Reschedule
+                        </Button>
+                      )}
+                      {p.status === 'scheduled' && !p.paused && (
                         <Button
                           variant="primary"
                           size="sm"
@@ -298,6 +427,89 @@ export default function PublishingActivityTab({ onRefreshOverview }: Props) {
           </div>
         )}
       </Drawer>
+
+      {/* Tenant Autopilot Data Governance (Export & GDPR Purge) */}
+      <Card>
+        <SectionHeading
+          title="Tenant Autopilot Data Governance"
+          hint="Export complete workspace autopilot records in machine-readable JSON format, or request GDPR tenant data deletion."
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="text-xs text-muted">
+            All brand tokens, creative briefs, media asset records, publications, and audit trail events.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={handleExportData} disabled={exporting}>
+              {exporting ? 'Exporting…' : 'Export Autopilot Data (JSON)'}
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => setPurgeModalOpen(true)}>
+              Purge Workspace Data
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Reschedule Publication Modal */}
+      <Modal
+        open={Boolean(reschedulePubId)}
+        onClose={() => setReschedulePubId(null)}
+        title="Reschedule Publication"
+        subtitle="Pick a new named calendar slot or execution timestamp."
+      >
+        <div className="space-y-4 text-xs">
+          <Field label="New Publication Timestamp">
+            <input
+              type="datetime-local"
+              className="w-full rounded-[10px] border border-line bg-white px-3 py-2 font-mono text-xs text-ink"
+              value={rescheduleIso}
+              onChange={(e) => setRescheduleIso(e.target.value)}
+            />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2 border-t border-line">
+            <Button variant="secondary" size="sm" onClick={() => setReschedulePubId(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleRescheduleSubmit} disabled={!rescheduleIso}>
+              Save New Slot
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* GDPR Data Purge Confirmation Modal */}
+      <Modal
+        open={purgeModalOpen}
+        onClose={() => setPurgeModalOpen(false)}
+        title="Purge Workspace Autopilot Data"
+        subtitle="Irreversible action: Permanently deletes all brand profiles, tokens, briefs, items, publications, and ledger entries for this tenant."
+      >
+        <div className="space-y-4 text-xs">
+          <Notice tone="danger" title="PERMANENT DELETION WARNING">
+            This will wipe all Autopilot tables for this tenant. To confirm this action, type <strong>PURGE</strong> below.
+          </Notice>
+          <Field label='Type "PURGE" to confirm'>
+            <input
+              className="w-full rounded-[10px] border border-line bg-white px-3 py-2 font-mono text-xs text-ink uppercase"
+              value={purgeConfirmationInput}
+              onChange={(e) => setPurgeConfirmationInput(e.target.value)}
+              placeholder="PURGE"
+            />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2 border-t border-line">
+            <Button variant="secondary" size="sm" onClick={() => setPurgeModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handlePurgeData}
+              disabled={purging || purgeConfirmationInput !== 'PURGE'}
+            >
+              {purging ? 'Purging…' : 'Permanently Purge Data'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

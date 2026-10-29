@@ -8,6 +8,7 @@ import {
   Eyebrow,
   Field,
   Loading,
+  Modal,
   Notice,
   SectionHeading,
   Table,
@@ -56,6 +57,10 @@ export default function CreativeQueueTab({ onRefreshOverview, onOpenApprovalQueu
   const [demoCaptureUrl, setDemoCaptureUrl] = useState('');
   const [preferDraftCost, setPreferDraftCost] = useState(false);
   const [costEstimate, setCostEstimate] = useState<any | null>(null);
+
+  // Spend modal & aspect ratio states
+  const [confirmSpendModalOpen, setConfirmSpendModalOpen] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<'1:1' | '4:5' | '9:16'>('4:5');
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -150,8 +155,12 @@ export default function CreativeQueueTab({ onRefreshOverview, onOpenApprovalQueu
     }
   };
 
-  const handleExecuteWorkflow = async (regenSceneNumber?: number) => {
+  const handleExecuteWorkflow = async (regenSceneNumber?: number, bypassSpendPrompt?: boolean) => {
     if (!detail?.item?.id) return;
+    if (!bypassSpendPrompt && (costEstimate?.estimated_provider_cost_usd ?? 0) > 2.0) {
+      setConfirmSpendModalOpen(true);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -183,6 +192,24 @@ export default function CreativeQueueTab({ onRefreshOverview, onOpenApprovalQueu
       );
     } catch (e: any) {
       setError(e.message || 'Workflow execution blocked');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRegenerateCaptionOnly = async () => {
+    if (!detail?.item?.id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const refreshed = await autopilotService.updateItem(detail.item.id, {
+        caption: `${detail.item.title}\n\nKey takeaways:\n• Actionable insight 1\n• Concrete step 2\n• Practical implementation advice.`,
+      });
+      setDetail((prev) => (prev ? { ...prev, item: refreshed.item } : prev));
+      setNote('Regenerated caption copy with structured takeaway formatting.');
+      await loadList();
+    } catch (e: any) {
+      setError(e.message || 'Failed to regenerate caption');
     } finally {
       setBusy(false);
     }
@@ -436,16 +463,74 @@ export default function CreativeQueueTab({ onRefreshOverview, onOpenApprovalQueu
               </Field>
             )}
 
+            {/* Aspect Ratio & Safe-Area Controls */}
+            <div className="rounded-xl border border-line bg-white p-3.5 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Eyebrow>COMPOSITION ASPECT RATIO & SAFE-AREA GUIDES</Eyebrow>
+                <div className="flex gap-1.5">
+                  {(['1:1', '4:5', '9:16'] as const).map((ratio) => (
+                    <button
+                      key={ratio}
+                      type="button"
+                      onClick={() => setAspectRatio(ratio)}
+                      className={`rounded-[8px] border px-2.5 py-1 font-mono text-xs transition ${
+                        aspectRatio === ratio
+                          ? 'border-ink bg-ink text-white'
+                          : 'border-line bg-sunken text-muted hover:text-ink'
+                      }`}
+                    >
+                      {ratio} {ratio === '1:1' ? 'Square' : ratio === '4:5' ? 'Portrait' : 'Vertical'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {aspectRatio === '9:16' && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-[11px] text-amber-800">
+                  <strong>Vertical 9:16 Safe-Zone Overlay Active:</strong> Verify that titles and brand assets avoid the top 15% (header/profile) and bottom 20% (caption/actions).
+                </div>
+              )}
+            </div>
+
+            {/* Targeted Creative Actions Bar */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={handleRegenerateCaptionOnly} disabled={busy}>
+                Regenerate Caption Only
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => void handleExecuteWorkflow()} disabled={busy}>
+                Regenerate Visual Layer
+              </Button>
+              {detail.item.storyboard?.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={() => void handleExecuteWorkflow(1)} disabled={busy}>
+                  Regenerate Scene 1
+                </Button>
+              )}
+            </div>
+
             {/* Deterministic Raster Preview + Slide / Storyboard Breakdown */}
             {detail.item.deterministic_overlay?.preview_raster_data_url && (
               <div className="rounded-xl border border-line bg-sunken p-4">
                 <Eyebrow>DETERMINISTIC COMPOSITOR PREVIEW & CONTRAST CHECK</Eyebrow>
                 <div className="mt-3 flex flex-wrap items-start gap-4">
-                  <img
-                    src={detail.item.deterministic_overlay.preview_raster_data_url}
-                    alt={detail.item.alt_text || detail.item.title}
-                    className="h-44 w-auto rounded-[10px] border border-line bg-white object-contain"
-                  />
+                  <div className={`relative overflow-hidden rounded-[10px] border border-line bg-white ${
+                    aspectRatio === '9:16' ? 'aspect-[9/16] w-40' : aspectRatio === '1:1' ? 'aspect-square w-44' : 'aspect-[4/5] w-44'
+                  }`}>
+                    <img
+                      src={detail.item.deterministic_overlay.preview_raster_data_url}
+                      alt={detail.item.alt_text || detail.item.title}
+                      className="h-full w-full object-contain"
+                    />
+                    {aspectRatio === '9:16' && (
+                      <>
+                        <div className="absolute top-0 inset-x-0 h-[15%] border-b border-dashed border-red-500/70 bg-red-500/10 flex items-center justify-center text-[8px] font-mono text-red-600 font-bold">
+                          TOP SAFE (15%)
+                        </div>
+                        <div className="absolute bottom-0 inset-x-0 h-[20%] border-t border-dashed border-red-500/70 bg-red-500/10 flex items-center justify-center text-[8px] font-mono text-red-600 font-bold">
+                          BOTTOM SAFE (20%)
+                        </div>
+                        <div className="absolute top-[15%] bottom-[20%] right-0 w-[12%] border-l border-dashed border-amber-500/70 bg-amber-500/10" />
+                      </>
+                    )}
+                  </div>
                   <div className="flex-1 space-y-1.5 text-xs">
                     <div>
                       <strong>Contrast Ratio:</strong>{' '}
@@ -538,6 +623,55 @@ export default function CreativeQueueTab({ onRefreshOverview, onOpenApprovalQueu
           </div>
         )}
       </Drawer>
+
+      {/* Model Provider Spend Confirmation Modal */}
+      <Modal
+        open={confirmSpendModalOpen}
+        onClose={() => setConfirmSpendModalOpen(false)}
+        title="Model Provider Spend Confirmation"
+        subtitle="Estimated third-party provider fees exceed the $2.00 confirmation threshold."
+      >
+        <div className="space-y-4 text-xs">
+          <div className="rounded-xl border border-line bg-sunken p-4 space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-muted">Estimated Provider Cost:</span>
+              <span className="font-mono text-base font-bold text-ink">
+                ${(costEstimate?.estimated_provider_cost_usd ?? spendLimitUsd).toFixed(2)} USD
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-muted">Internal Workspace Credits:</span>
+              <span className="font-mono text-ink">
+                {costEstimate?.estimated_internal_credits ?? creditCeiling} cr
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-muted">Targeted Model:</span>
+              <span className="font-mono text-ink">
+                {costEstimate?.selected_provider ?? 'default'}:{costEstimate?.selected_model ?? 'task-routed'}
+              </span>
+            </div>
+          </div>
+          <p className="text-muted">
+            This generation will invoke external model providers with real billing impact. Confirm to execute.
+          </p>
+          <div className="flex justify-end gap-2 pt-2 border-t border-line">
+            <Button variant="secondary" size="sm" onClick={() => setConfirmSpendModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setConfirmSpendModalOpen(false);
+                void handleExecuteWorkflow(undefined, true);
+              }}
+            >
+              Confirm Spend & Execute
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 @import 'tailwindcss';
-@config '../tailwind.config.js';
 @import './components/leads/leads.css';
+@config '../tailwind.config.js';
 
 /* ==========================================================================
    DakyXTech Design System (v21 & v22 Furniture — Adopted 8 October 2026)
@@ -63,7 +63,7 @@
   --os-ink: #0D1526;
   --os-navy: #091833;
   --os-muted: #5B6374;
-  --os-faint: #8A91A0;
+  --os-faint: #555D6E;
   --os-line: #E3E6EB;
   --os-paper: #ECEEF1;
   --os-soft: #F6F7F9;

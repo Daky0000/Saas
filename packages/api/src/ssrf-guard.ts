@@ -6,7 +6,7 @@ import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSRF guard for every server-side fetch of a user-controlled URL (automation
-// webhooks, WordPress/Make webhooks, the MCP image proxy).
+// webhooks, WordPress/Make webhooks, the MCP image proxy, Autopilot scanner).
 //
 // Two layers of defence:
 //  1. assertSafePublicUrl() — reject non-http(s) schemes and resolve the host,
@@ -54,21 +54,92 @@ function isPrivateIPv4(ip: string): boolean {
   );
 }
 
+function hextetsToIpv4(hi: number, lo: number): string {
+  return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
+}
+
+export function expandIPv6Hextets(rawIp: string): number[] | null {
+  let ip = rawIp.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const zoneIdx = ip.indexOf('%');
+  if (zoneIdx !== -1) ip = ip.slice(0, zoneIdx);
+
+  // Convert trailing dotted-quad IPv4 (e.g. ::ffff:127.0.0.1) into 2 hex groups
+  const v4Tail = ip.match(/^(.*:)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4Tail) {
+    const v4Long = ipv4ToLong(v4Tail[2]);
+    if (v4Long === null) return null;
+    const hi = ((v4Long >>> 16) & 0xffff).toString(16);
+    const lo = (v4Long & 0xffff).toString(16);
+    ip = `${v4Tail[1]}${hi}:${lo}`;
+  }
+
+  const dblParts = ip.split('::');
+  if (dblParts.length > 2) return null;
+
+  const parseSide = (s: string): number[] | null => {
+    if (!s) return [];
+    const tokens = s.split(':');
+    const nums: number[] = [];
+    for (const tok of tokens) {
+      if (!/^[0-9a-f]{1,4}$/.test(tok)) return null;
+      nums.push(parseInt(tok, 16));
+    }
+    return nums;
+  };
+
+  if (dblParts.length === 2) {
+    const left = parseSide(dblParts[0]);
+    const right = parseSide(dblParts[1]);
+    if (!left || !right || left.length + right.length >= 8) return null;
+    const zeros = new Array<number>(8 - left.length - right.length).fill(0);
+    return [...left, ...zeros, ...right];
+  }
+
+  const full = parseSide(ip);
+  if (!full || full.length !== 8) return null;
+  return full;
+}
+
 export function isPrivateAddress(addr: string): boolean {
-  const ip = addr.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const ip = addr.trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
   const kind = net.isIP(ip);
   if (kind === 4) return isPrivateIPv4(ip);
   if (kind === 6) {
-    if (ip === '::1' || ip === '::') return true;            // loopback / unspecified
-    // IPv4-mapped / -embedded (::ffff:a.b.c.d, ::ffff:0:a.b.c.d, 64:ff9b::a.b.c.d)
-    const v4 = ip.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (v4) return isPrivateIPv4(v4[1]);
-    const first = ip.split(':')[0] || '';
-    const hextet = parseInt(first, 16);
-    if (Number.isNaN(hextet)) return true;
-    if ((hextet & 0xfe00) === 0xfc00) return true;           // fc00::/7 unique-local
-    if ((hextet & 0xffc0) === 0xfe80) return true;           // fe80::/10 link-local
-    if (hextet === 0x64 && ip.startsWith('64:ff9b:')) return true; // NAT64
+    const h = expandIPv6Hextets(ip);
+    if (!h) return true;
+    const allZeroPrefix5 = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+    // ::/128 unspecified, ::1/128 loopback, or ::/96 IPv4-compatible
+    if (allZeroPrefix5 && h[5] === 0) {
+      if (h[6] === 0 && (h[7] === 0 || h[7] === 1)) return true;
+      return isPrivateIPv4(hextetsToIpv4(h[6], h[7]));
+    }
+    // ::ffff:0:0/96 IPv4-mapped (covers ::ffff:127.0.0.1 and 0:0:0:0:0:ffff:7f00:1 / a9fe:a9fe)
+    if (allZeroPrefix5 && h[5] === 0xffff) {
+      return isPrivateIPv4(hextetsToIpv4(h[6], h[7]));
+    }
+    // ::ffff:0:0:0/96 IPv4-translated
+    if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0xffff && h[5] === 0) {
+      return isPrivateIPv4(hextetsToIpv4(h[6], h[7]));
+    }
+    // NAT64 well-known 64:ff9b::/96 & local-use 64:ff9b:1::/48
+    if (h[0] === 0x0064 && h[1] === 0xff9b && (h[2] === 0 || h[2] === 1)) {
+      return true;
+    }
+    // 6to4 2002::/16 — inspect embedded IPv4 in h[1..2]
+    if (h[0] === 0x2002) {
+      return isPrivateIPv4(hextetsToIpv4(h[1], h[2]));
+    }
+    // Teredo 2001:0000::/32, Benchmarking 2001:0002::/48, Documentation 2001:0db8::/32
+    if (h[0] === 0x2001 && (h[1] === 0x0000 || h[1] === 0x0002 || h[1] === 0x0db8)) {
+      return true;
+    }
+    // Discard-only 0100::/64
+    if (h[0] === 0x0100 && h[1] === 0 && h[2] === 0 && h[3] === 0) {
+      return true;
+    }
+    if ((h[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+    if ((h[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+    if ((h[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
     return false;
   }
   return true; // not a valid IP literal → unsafe
@@ -87,7 +158,15 @@ export async function assertSafePublicUrl(rawUrl: string): Promise<URL> {
     if (isPrivateAddress(host)) throw new Error('URL points to a private or reserved address');
     return u;
   }
-  if (host.toLowerCase() === 'localhost') throw new Error('URL points to localhost');
+  const lowerHost = host.toLowerCase().replace(/\.$/, '');
+  if (
+    lowerHost === 'localhost' ||
+    lowerHost.endsWith('.localhost') ||
+    lowerHost.endsWith('.internal') ||
+    lowerHost === 'metadata.google.internal'
+  ) {
+    throw new Error('URL points to an internal or localhost hostname');
+  }
 
   const results = await dns.promises.lookup(host, { all: true }).catch(() => {
     throw new Error('Could not resolve host');
@@ -124,8 +203,16 @@ export async function safeAxios<T = unknown>(config: AxiosRequestConfig & { url:
   await assertSafePublicUrl(config.url);
   return axios.request<T>({
     ...config,
-    beforeRedirect: options => {
-      const host=String(options.hostname || '').replace(/^\[|\]$/g,'');
+    beforeRedirect: (options) => {
+      const proto = String((options as any).protocol || 'https:');
+      if (proto !== 'http:' && proto !== 'https:') {
+        throw new Error('Redirect to unsupported protocol is blocked');
+      }
+      const host = String(options.hostname || '').replace(/^\[|\]$/g, '');
+      const lower = host.toLowerCase().replace(/\.$/, '');
+      if (lower === 'localhost' || lower.endsWith('.localhost') || lower.endsWith('.internal')) {
+        throw new Error('Redirect to internal hostname is blocked');
+      }
       if (net.isIP(host) && isPrivateAddress(host)) throw new Error('Redirect to a private address is blocked');
       if (options.auth) throw new Error('Redirect with embedded credentials is blocked');
     },

@@ -16,6 +16,7 @@ import { Queue, Worker } from 'bullmq';
 import { Redis as IORedis } from 'ioredis';
 import { z } from 'zod';
 import {
+  randomUUID,
   randomBytes,
   createCipheriv,
   createDecipheriv,
@@ -90,6 +91,9 @@ import { registerDakyworldOsRoutes } from './server/dakyworldOsRoutes.ts';
 import { registerSocialInboxRoutes } from './server/socialInboxRoutes.ts';
 import { registerClientApprovalAndWebhookRoutes, runDueAgentSchedules } from './server/clientApprovalRoutes.ts';
 import { registerAutopilotRoutes } from './server/autopilot/autopilotRoutes.ts';
+import { createAutopilotRepository } from './server/autopilot/repository.ts';
+import { buildAutopilotVisualAdapter, buildAutopilotCopyAdapter, getAutopilotProviderStatus } from './server/autopilot/autopilotProviderBridge.ts';
+import { processDueAutopilotPublications } from './server/autopilot/lifecycleAndPublishingService.ts';
 import { buildWorkflowEngine } from './server/workflowRoutes.ts';
 import { registerAIChatRoutes } from './server/aiChatRoutes.ts';
 import { registerMagnificRoutes, getMagnificApiKey, getFreepikApiKey, magnificPost, pollMagnificTask, magnificGenerateImage, freepikGenerateImage, MAGNIFIC_BASE, FREEPIK_BASE, ASPECT_TO_WH, MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS, ASPECT_RATIO_MAP, FREEPIK_IMAGE_MODELS, proxyHeaders, sanitizeMagnificError } from './server/magnificRoutes.ts';
@@ -217,13 +221,29 @@ app.get('/ping', (_req, res) => res.send('pong'));
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 app.get('/api/health', async (_req, res) => {
   let ready = dbReady;
+  let migrationVersion = '2026.10.29-autopilot-v2-production';
   if (ready && config.databaseUrl) {
-    try { await pool.query('SELECT 1'); }
+    try {
+      await pool.query('SELECT 1');
+      const migRes = await pool.query('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1').catch(() => ({ rows: [] }));
+      if (migRes.rows?.[0]?.version) {
+        migrationVersion = migRes.rows[0].version;
+      }
+    }
     catch { ready = false; }
   }
+  const providerStatus = await getAutopilotProviderStatus(pool);
   res.status(ready ? 200 : 503).json({
-    status: ready ? 'ok' : 'unavailable', timestamp: new Date().toISOString(),
+    status: ready ? 'ok' : 'unavailable',
+    timestamp: new Date().toISOString(),
+    service: 'contentflow-api',
+    revision: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.COMMIT_SHA || 'master',
+    migrationVersion,
     db: { configured: Boolean(config.databaseUrl), ready },
+    autopilot: {
+      providers: providerStatus,
+      status: 'operational',
+    },
   });
 });
 
@@ -847,7 +867,21 @@ app.use('/api', registerSocialInboxRoutes({
   getPublishableSocialConnection, decryptIntegrationSecret,
 }));
 app.use('/api', registerClientApprovalAndWebhookRoutes({ requireAuth, getUserPlanName, pool: pool! }));
-const autopilotRouter = registerAutopilotRoutes({ requireAuth, requireAdmin, pool: pool!, hasDatabase, publishToplatform, createNotification });
+const autopilotVisualAdapter = buildAutopilotVisualAdapter({ pool: pool!, hasDatabase });
+const autopilotCopyAdapter = buildAutopilotCopyAdapter();
+const autopilotRepo = createAutopilotRepository({ pool: pool!, hasDatabase });
+
+const autopilotRouter = registerAutopilotRoutes({
+  requireAuth,
+  requireAdmin,
+  pool: pool!,
+  hasDatabase,
+  publishToplatform,
+  createNotification,
+  visualAdapter: autopilotVisualAdapter,
+  copyAdapter: autopilotCopyAdapter,
+  repo: autopilotRepo,
+});
 app.use('/api/v1', autopilotRouter);
 app.use('/api', autopilotRouter);
 
@@ -1048,6 +1082,47 @@ if (config.nodeEnv !== 'test') {
     const schedulerDeps = { queueSocialAutomationForPublishedPost: distModule.queueSocialAutomationForPublishedPost, fireWorkflowTriggers };
     void publishDuePosts(schedulerDeps);
     setInterval(() => void publishDuePosts(schedulerDeps), 2 * 60 * 1000);
+
+    // Run due Autopilot publications every 60 seconds
+    const runAutopilotPublishing = () =>
+      processDueAutopilotPublications({
+        repo: autopilotRepo,
+        publisherAdapter: async (input) => {
+          if (!publishToplatform) throw new Error('publishToplatform not configured');
+          const coverImage = input.mediaAssets.find((m) => m.type === 'image')?.url ?? null;
+          const videoUrl = input.mediaAssets.find((m) => m.type === 'video')?.url ?? null;
+          const res = await publishToplatform(
+            input.userId,
+            {
+              id: input.idempotencyKey,
+              title: input.title,
+              excerpt: input.caption.slice(0, 260),
+              content: input.caption,
+              featured_image: coverImage,
+              video_url: videoUrl,
+              media_assets: input.mediaAssets,
+              post_format: input.platformMediaType,
+              approval_status: 'approved',
+              status: 'published',
+            },
+            input.channel,
+            {
+              mediaType: input.platformMediaType,
+              mediaAssets: input.mediaAssets,
+              captionOverride: input.caption,
+            },
+          );
+          if (res.status !== 'published') {
+            const err = new Error(res.error || `Failed to publish to ${input.channel}`);
+            (err as any).status = res.retryable ? 503 : 400;
+            throw err;
+          }
+          return { remotePostId: res.platformPostId || `remote_${randomUUID().slice(0, 8)}` };
+        },
+      }).catch((err) => logger.error({ err }, 'autopilot_publishing_worker_failed'));
+
+    void runAutopilotPublishing();
+    setInterval(() => void runAutopilotPublishing(), 60 * 1000);
 
     // Fire task reminders every 2 minutes
     void runTaskReminders();

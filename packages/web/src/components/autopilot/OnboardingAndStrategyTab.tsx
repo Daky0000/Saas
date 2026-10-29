@@ -32,6 +32,176 @@ const RISK_CATEGORIES = [
 
 const CHANNELS = ['instagram', 'linkedin', 'facebook', 'twitter', 'tiktok', 'pinterest', 'wordpress'];
 
+const INDUSTRY_PRESETS = [
+  {
+    id: 'b2b_saas',
+    label: 'B2B SaaS',
+    industry: 'B2B SaaS',
+    niche: 'Developer tooling & cloud infrastructure',
+    businessModel: 'saas',
+    primaryOffer: 'Self-serve cloud automation platform',
+    priceRange: '$99–$499/month',
+    audienceSegment: 'Engineering Leads & DevOps Directors',
+    audienceRole: 'VP of Engineering',
+    audienceJob: 'Eliminate manual release errors and reduce deployment cycle time',
+    primaryObjective: 'lead_generation',
+    successMetric: 'Qualified self-serve trial activations',
+    preferredChannels: ['linkedin', 'twitter'],
+    riskCategory: 'standard',
+    proofType: 'demo' as const,
+    proofSummary: 'Automated 1-click zero-downtime deployment screen capture',
+  },
+  {
+    id: 'healthcare',
+    label: 'Healthcare & Wellness',
+    industry: 'Healthcare',
+    niche: 'Preventive digital health & physiotherapy',
+    businessModel: 'local_service',
+    primaryOffer: 'Personalized evidence-based recovery program',
+    priceRange: '$150/session',
+    audienceSegment: 'Active adults recovering from mobility injuries',
+    audienceRole: 'Patient / Health Consumer',
+    audienceJob: 'Restore painless movement without surgery',
+    primaryObjective: 'education',
+    successMetric: 'Educational saves & verified clinic inquiries',
+    preferredChannels: ['instagram', 'facebook'],
+    riskCategory: 'healthcare',
+    proofType: 'case_study' as const,
+    proofSummary: 'Verified clinical outcome study on range-of-motion recovery',
+  },
+  {
+    id: 'finance',
+    label: 'Regulated Finance',
+    industry: 'Finance',
+    niche: 'Treasury & cross-border FX hedging for SMEs',
+    businessModel: 'professional_services',
+    primaryOffer: 'Automated FX exposure risk mitigation',
+    priceRange: 'Basis points on settled volume',
+    audienceSegment: 'CFOs and Controllers at import/export companies',
+    audienceRole: 'Chief Financial Officer',
+    audienceJob: 'Protect operating margins from currency volatility',
+    primaryObjective: 'thought_leadership',
+    successMetric: 'Consultation requests from certified SME finance teams',
+    preferredChannels: ['linkedin'],
+    riskCategory: 'finance',
+    proofType: 'data' as const,
+    proofSummary: 'Audited benchmark demonstrating margin preservation during currency swings',
+  },
+  {
+    id: 'ecommerce',
+    label: 'Ecommerce & DTC',
+    industry: 'Ecommerce',
+    niche: 'Clean sustainable skincare formulations',
+    businessModel: 'ecommerce',
+    primaryOffer: 'Microbiome-friendly daily essentials bundle',
+    priceRange: '$35–$85',
+    audienceSegment: 'Eco-conscious skincare enthusiasts',
+    audienceRole: 'Consumer Shopper',
+    audienceJob: 'Soothe reactive barrier without synthetic fragrances',
+    primaryObjective: 'sales',
+    successMetric: 'Add-to-cart clicks and unboxing saves',
+    preferredChannels: ['instagram', 'tiktok', 'pinterest'],
+    riskCategory: 'standard',
+    proofType: 'portfolio' as const,
+    proofSummary: 'Lab-tested ingredient breakdown and dermatological patch tests',
+  },
+  {
+    id: 'local_service',
+    label: 'Local Services',
+    industry: 'Local Services',
+    niche: 'Commercial HVAC & electrical engineering',
+    businessModel: 'local_service',
+    primaryOffer: 'Preventative quarterly building maintenance contract',
+    priceRange: '$500–$2,500/quarter',
+    audienceSegment: 'Commercial property managers and facility heads',
+    audienceRole: 'Facilities Director',
+    audienceJob: 'Prevent costly emergency cooling failures during heat spikes',
+    primaryObjective: 'lead_generation',
+    successMetric: 'Scheduled on-site building audits',
+    preferredChannels: ['linkedin', 'facebook'],
+    riskCategory: 'standard',
+    proofType: 'case_study' as const,
+    proofSummary: 'Before-after thermal audit of commercial distribution hub',
+  },
+  {
+    id: 'education',
+    label: 'Education & Coaching',
+    industry: 'Education',
+    niche: 'Data engineering & AI infrastructure bootcamp',
+    businessModel: 'education',
+    primaryOffer: '12-week part-time production data systems accelerator',
+    priceRange: '$2,800 tuition',
+    audienceSegment: 'Software engineers transitioning to data engineering',
+    audienceRole: 'Mid-Level Software Engineer',
+    audienceJob: 'Build portfolio of real production pipelines to land senior roles',
+    primaryObjective: 'education',
+    successMetric: 'Syllabus downloads and application submissions',
+    preferredChannels: ['linkedin', 'twitter', 'instagram'],
+    riskCategory: 'standard',
+    proofType: 'review' as const,
+    proofSummary: 'Consented graduate career outcomes and salary progression audit',
+  },
+  {
+    id: 'creator',
+    label: 'Creator & Media',
+    industry: 'Creator',
+    niche: 'Design systems and product architecture newsletter',
+    businessModel: 'creator',
+    primaryOffer: 'Weekly deep-dive newsletter & Figma component kit',
+    priceRange: '$12/month or $99/year',
+    audienceSegment: 'Product designers and frontend developers',
+    audienceRole: 'Senior Product Designer',
+    audienceJob: 'Master component tokens and multi-brand design architectures',
+    primaryObjective: 'awareness',
+    successMetric: 'Newsletter subscriptions and social shares',
+    preferredChannels: ['twitter', 'linkedin', 'instagram'],
+    riskCategory: 'standard',
+    proofType: 'portfolio' as const,
+    proofSummary: 'Interactive token architecture preview and case teardowns',
+  },
+  {
+    id: 'hospitality',
+    label: 'Hospitality & Dining',
+    industry: 'Hospitality',
+    niche: 'Boutique farm-to-table culinary retreats',
+    businessModel: 'hospitality',
+    primaryOffer: 'Seasonal weekend tasting retreat & workshop',
+    priceRange: '$450/guest',
+    audienceSegment: 'Food lovers and urban professionals seeking culinary escapes',
+    audienceRole: 'Guest / Experience Buyer',
+    audienceJob: 'Unplug and experience authentic seasonal culinary craftsmanship',
+    primaryObjective: 'engagement',
+    successMetric: 'Weekend retreat reservations and waitlist joins',
+    preferredChannels: ['instagram', 'facebook'],
+    riskCategory: 'standard',
+    proofType: 'portfolio' as const,
+    proofSummary: 'Photographic seasonal menu audit and guest experience footage',
+  },
+];
+
+const COMMON_TIMEZONES = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Toronto',
+  'America/Sao_Paulo',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Africa/Accra',
+  'Africa/Lagos',
+  'Africa/Johannesburg',
+  'Africa/Nairobi',
+  'Africa/Cairo',
+  'Asia/Dubai',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Asia/Hong_Kong',
+  'Australia/Sydney',
+];
+
 interface Props {
   onRefreshOverview: () => void;
   onOpenCreativeQueue: () => void;
@@ -78,6 +248,8 @@ export default function OnboardingAndStrategyTab({
   const [availableProof, setAvailableProof] = useState<any[]>([]);
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   const [blackoutDatesInput, setBlackoutDatesInput] = useState('');
+  const [blackoutDates, setBlackoutDates] = useState<string[]>([]);
+  const [newBlackoutDate, setNewBlackoutDate] = useState('');
 
   const [followUpQuestions, setFollowUpQuestions] = useState<any[]>([]);
   const [strategy, setStrategy] = useState<any | null>(null);
@@ -120,9 +292,86 @@ export default function OnboardingAndStrategyTab({
     setAvailableProof(Array.isArray(p.available_proof) ? p.available_proof : []);
     if (p.schedule_config?.timezone) setTimezone(p.schedule_config.timezone);
     if (Array.isArray(p.schedule_config?.blackout_dates)) {
+      setBlackoutDates(p.schedule_config.blackout_dates);
       setBlackoutDatesInput(p.schedule_config.blackout_dates.join(', '));
     }
   }, []);
+
+  const handleAddBlackoutDate = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newBlackoutDate)) return;
+    if (!blackoutDates.includes(newBlackoutDate)) {
+      const updated = [...blackoutDates, newBlackoutDate].sort();
+      setBlackoutDates(updated);
+      setBlackoutDatesInput(updated.join(', '));
+    }
+    setNewBlackoutDate('');
+  };
+
+  const handleRemoveBlackoutDate = (d: string) => {
+    const updated = blackoutDates.filter((x) => x !== d);
+    setBlackoutDates(updated);
+    setBlackoutDatesInput(updated.join(', '));
+  };
+
+  const handleSelectPreset = (preset: (typeof INDUSTRY_PRESETS)[0]) => {
+    setIndustry(preset.industry);
+    setNiche(preset.niche);
+    setBusinessModel(preset.businessModel);
+    setPrimaryOffer(preset.primaryOffer);
+    setPriceRange(preset.priceRange);
+    setAudienceSegment(preset.audienceSegment);
+    setAudienceRole(preset.audienceRole);
+    setAudienceJob(preset.audienceJob);
+    setPrimaryObjective(preset.primaryObjective);
+    setSuccessMetric(preset.successMetric);
+    setPreferredChannels(preset.preferredChannels);
+    setRiskCategory(preset.riskCategory);
+    if (!businessName.trim()) {
+      setBusinessName(`My ${preset.label} Brand`);
+    }
+    setAvailableProof([
+      {
+        id: `proof_${Date.now().toString(36)}`,
+        type: preset.proofType,
+        summary: preset.proofSummary,
+        verified: true,
+        permission_confirmed: true,
+      },
+    ]);
+    setStatusNote(`Loaded "${preset.label}" industry profile preset with tailored audience, channels, and proof asset.`);
+  };
+
+  const handlePauseStrategy = async () => {
+    if (!strategy?.id) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await autopilotService.updateStrategy(strategy.id, { status: 'paused' });
+      setStrategy(res.strategy);
+      setStatusNote(`Strategy v${res.strategy.current_version} is now paused.`);
+      onRefreshOverview();
+    } catch (e: any) {
+      setError(e.message || 'Failed to pause strategy');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRejectStrategy = async () => {
+    if (!strategy?.id) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await autopilotService.updateStrategy(strategy.id, { status: 'rejected' });
+      setStrategy(res.strategy);
+      setStatusNote(`Strategy marked as rejected. Edit parameters and re-generate.`);
+      onRefreshOverview();
+    } catch (e: any) {
+      setError(e.message || 'Failed to reject strategy');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -365,32 +614,53 @@ export default function OnboardingAndStrategyTab({
         </div>
 
         {step === 1 && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Business Name">
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="e.g. Northstar Dental, Looma Skincare, Vertex Cloud" />
-            </Field>
-            <Field label="Public Website URL" hint="Optional — used for Brand Studio candidate token extraction">
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} placeholder="https://example.com" />
-            </Field>
-            <Field label="Industry">
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. B2B SaaS, Ecommerce, Local Services, Healthcare, Finance" />
-            </Field>
-            <Field label="Specific Niche / Category">
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={niche} onChange={(e) => setNiche(e.target.value)} placeholder="e.g. Workflow automation for logistics teams" />
-            </Field>
-            <Field label="Business Model">
-              <select className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={businessModel} onChange={(e) => setBusinessModel(e.target.value)}>
-                {BUSINESS_MODELS.map((m) => (
-                  <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-line bg-sunken p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-mono text-[11px] font-medium text-ink uppercase">8-Industry Tailored Presets</span>
+                <span className="text-[11px] text-muted">Auto-populates positioning, audience, risk, and verified proof</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {INDUSTRY_PRESETS.map((prs) => (
+                  <button
+                    key={prs.id}
+                    type="button"
+                    onClick={() => handleSelectPreset(prs)}
+                    className="rounded-[8px] border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink hover:bg-sunken hover:border-ink transition"
+                  >
+                    {prs.label}
+                  </button>
                 ))}
-              </select>
-            </Field>
-            <Field label="Price Positioning / Sales Cycle">
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={priceRange} onChange={(e) => setPriceRange(e.target.value)} placeholder="e.g. $49/mo self-serve or $8k consultative retainer" />
-            </Field>
-            <Field label="Primary Offer / Core Product" full>
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={primaryOffer} onChange={(e) => setPrimaryOffer(e.target.value)} placeholder="Describe what customers actually buy and the concrete outcome it delivers" />
-            </Field>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Business Name">
+                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="e.g. Northstar Dental, Looma Skincare, Vertex Cloud" />
+              </Field>
+              <Field label="Public Website URL" hint="Optional — used for Brand Studio candidate token extraction">
+                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} placeholder="https://example.com" />
+              </Field>
+              <Field label="Industry">
+                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. B2B SaaS, Ecommerce, Local Services, Healthcare, Finance" />
+              </Field>
+              <Field label="Specific Niche / Category">
+                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={niche} onChange={(e) => setNiche(e.target.value)} placeholder="e.g. Workflow automation for logistics teams" />
+              </Field>
+              <Field label="Business Model">
+                <select className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={businessModel} onChange={(e) => setBusinessModel(e.target.value)}>
+                  {BUSINESS_MODELS.map((m) => (
+                    <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Price Positioning / Sales Cycle">
+                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={priceRange} onChange={(e) => setPriceRange(e.target.value)} placeholder="e.g. $49/mo self-serve or $8k consultative retainer" />
+              </Field>
+              <Field label="Primary Offer / Core Product" full>
+                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 text-sm text-ink" value={primaryOffer} onChange={(e) => setPrimaryOffer(e.target.value)} placeholder="Describe what customers actually buy and the concrete outcome it delivers" />
+              </Field>
+            </div>
           </div>
         )}
 
@@ -523,14 +793,70 @@ export default function OnboardingAndStrategyTab({
                   <option value="streamlined_evergreen">Streamlined low-risk evergreen</option>
                 </select>
               </Field>
-              <Field label="Schedule Timezone">
-                <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 font-mono text-sm text-ink" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+              <Field label="Schedule Timezone" hint="Controls named-slot posting time calculations">
+                <div className="flex gap-2">
+                  <select
+                    className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 font-mono text-xs text-ink"
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                  >
+                    {COMMON_TIMEZONES.map((tz) => (
+                      <option key={tz} value={tz}>{tz}</option>
+                    ))}
+                    {!COMMON_TIMEZONES.includes(timezone) && (
+                      <option value={timezone}>{timezone}</option>
+                    )}
+                  </select>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')}
+                    title="Auto-detect browser timezone"
+                  >
+                    Detect
+                  </Button>
+                </div>
               </Field>
             </div>
 
-            <Field label="Blackout Dates (YYYY-MM-DD, comma-separated)" hint="Calendar scheduler automatically skips blackout windows">
-              <input className="os-input w-full rounded-[10px] border border-line bg-white px-3.5 py-2 font-mono text-xs text-ink" value={blackoutDatesInput} onChange={(e) => setBlackoutDatesInput(e.target.value)} placeholder="2026-12-25, 2027-01-01" />
-            </Field>
+            <div className="space-y-2 rounded-xl border border-line bg-sunken p-3.5">
+              <Field label="Blackout Dates Manager" hint="Calendar scheduler automatically holds outgoing publications during blackout windows">
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="date"
+                    className="os-input rounded-[10px] border border-line bg-white px-3 py-1.5 font-mono text-xs text-ink"
+                    value={newBlackoutDate}
+                    onChange={(e) => setNewBlackoutDate(e.target.value)}
+                  />
+                  <Button variant="secondary" size="sm" onClick={handleAddBlackoutDate} disabled={!newBlackoutDate}>
+                    Add Blackout Date
+                  </Button>
+                </div>
+              </Field>
+
+              {blackoutDates.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {blackoutDates.map((d) => (
+                    <span
+                      key={d}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 font-mono text-xs text-ink shadow-sm"
+                    >
+                      <span>{d}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveBlackoutDate(d)}
+                        className="text-muted hover:text-danger-text font-bold"
+                        title="Remove date"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-muted italic">No blackout windows active. Publications will run on all scheduled days.</div>
+              )}
+            </div>
 
             <div className="grid gap-3 pt-2 sm:grid-cols-2 lg:grid-cols-4">
               <Toggle checked={hasProductDemos} onChange={setHasProductDemos} label="Has real product screen captures" />
@@ -629,12 +955,21 @@ export default function OnboardingAndStrategyTab({
               hint={strategy.rationale}
               action={
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={strategy.status === 'approved' ? 'positive' : 'warn'}>
+                  <Badge tone={strategy.status === 'approved' ? 'positive' : strategy.status === 'paused' ? 'muted' : 'warn'}>
                     v{strategy.current_version} · {strategy.status}
                   </Badge>
-                  {strategy.status !== 'approved' && (
+                  {strategy.status !== 'approved' ? (
                     <Button variant="primary" size="sm" onClick={handleApproveStrategy} disabled={saving}>
                       Approve Strategy
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={handlePauseStrategy} disabled={saving}>
+                      Pause Strategy
+                    </Button>
+                  )}
+                  {strategy.status !== 'rejected' && (
+                    <Button variant="ghost" size="sm" onClick={handleRejectStrategy} disabled={saving}>
+                      Reject
                     </Button>
                   )}
                   <Button variant="secondary" size="sm" onClick={handleGeneratePilotBatch} disabled={saving}>

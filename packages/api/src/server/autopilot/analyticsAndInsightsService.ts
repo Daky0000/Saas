@@ -98,10 +98,13 @@ export const OBJECTIVE_KPI_FRAMEWORK: Record<MarketingObjective, ObjectiveKpiSpe
 
 function computeObjectiveScore(metrics: Record<string, number>, objective: MarketingObjective): number {
   const spec = OBJECTIVE_KPI_FRAMEWORK[objective] ?? OBJECTIVE_KPI_FRAMEWORK.awareness;
-  const primaryVal = Number(metrics[spec.primary_metric_key] ?? 0);
-  if (primaryVal > 0) return primaryVal;
+  const rawPrimary = metrics[spec.primary_metric_key];
+  // If the primary KPI was explicitly measured and supplied (even if 0!), return it directly
+  if (rawPrimary !== undefined && rawPrimary !== null && !Number.isNaN(Number(rawPrimary))) {
+    return Number(rawPrimary);
+  }
 
-  // Fallback weighted composite when raw platform payload uses standard social keys
+  // Fallback weighted composite only when raw platform payload lacks the primary metric key
   const saves = Number(metrics.saves ?? 0);
   const shares = Number(metrics.shares ?? 0);
   const clicks = Number(metrics.link_clicks ?? metrics.clicks ?? 0);
@@ -182,7 +185,19 @@ export async function buildAnalyticsSummary(params: {
     }
   }
 
-  const baselineAvgScore = rows.length > 0 ? Number((totalScore / rows.length).toFixed(2)) : 0;
+  // Robust trimmed mean: if n >= 10, drop extreme top & bottom 5% outliers
+  let baselineAvgScore = 0;
+  if (rows.length > 0) {
+    if (rows.length >= 10) {
+      const scores = rows.map((r) => computeObjectiveScore(r.metrics || {}, primaryObjective)).sort((a, b) => a - b);
+      const trimCount = Math.max(1, Math.floor(scores.length * 0.05));
+      const trimmed = scores.slice(trimCount, scores.length - trimCount);
+      const sumTrimmed = trimmed.reduce((a, b) => a + b, 0);
+      baselineAvgScore = Number((sumTrimmed / Math.max(1, trimmed.length)).toFixed(2));
+    } else {
+      baselineAvgScore = Number((totalScore / rows.length).toFixed(2));
+    }
+  }
 
   return {
     objective: primaryObjective,
@@ -309,7 +324,7 @@ export async function decideStrategyRecommendation(params: {
   repo: AutopilotRepository;
   tenantId: string;
   recommendationId: string;
-  decision: 'accepted' | 'rejected';
+  decision: 'accepted' | 'rejected' | 'defer';
   actorUserId: string;
   actorRole: string;
 }): Promise<{ recommendation: Record<string, any>; updatedStrategy: ContentStrategyRecord | null }> {
@@ -320,7 +335,7 @@ export async function decideStrategyRecommendation(params: {
   }
 
   const now = new Date().toISOString();
-  rec.status = decision;
+  rec.status = decision === 'defer' ? 'deferred' : decision;
   rec.decided_by = actorUserId;
   rec.decided_at = now;
   await repo.saveRecommendation(rec);

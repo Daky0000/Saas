@@ -1,5 +1,5 @@
 // Generated from the migration source. Regenerate before build or development.
-export const SCHEMA_SOURCE_HASH = 'aacf8f6dfd9a21404905facf582900b7e30a9621a064b583fb58fd459f027452';
+export const SCHEMA_SOURCE_HASH = '17a5ad1f9c304579ac85a8c56f878883de4ab8f478c0c93939a38870783524aa';
 export const REQUIRED_SCHEMA_TABLES = [
   "account_metrics",
   "admin_agent_runs",
@@ -29,8 +29,10 @@ export const REQUIRED_SCHEMA_TABLES = [
   "autopilot_brand_profiles",
   "autopilot_brand_tokens",
   "autopilot_brand_versions",
+  "autopilot_budget_reservations",
   "autopilot_business_profiles",
   "autopilot_channel_metrics",
+  "autopilot_content_item_revisions",
   "autopilot_content_items",
   "autopilot_creative_briefs",
   "autopilot_experiments",
@@ -39,6 +41,8 @@ export const REQUIRED_SCHEMA_TABLES = [
   "autopilot_recommendations",
   "autopilot_strategies",
   "autopilot_strategy_versions",
+  "autopilot_tenant_controls",
+  "autopilot_website_scans",
   "autopilot_workflow_runs",
   "billing_events",
   "billing_invoices",

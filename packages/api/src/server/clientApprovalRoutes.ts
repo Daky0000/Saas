@@ -2,7 +2,7 @@ import express from 'express';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import type { Pool } from 'pg';
-import { randomBytes, randomUUID } from 'crypto';
+import { randomBytes, randomUUID, createHash } from 'crypto';
 import { isValidWebhookUrl } from '../integration-helpers.ts';
 import { callAINonStreaming, getAIConfig, resolveActiveKey, FAST_MODEL } from '../ai-helpers.ts';
 import { createNotification } from '../social-helpers.ts';
@@ -214,9 +214,9 @@ export function registerClientApprovalAndWebhookRoutes({
       const clientEmail = String(req.body?.clientEmail || '').trim() || null;
       const resourceType = String(req.body?.resourceType || 'post').toLowerCase();
       const resourceId = String(req.body?.resourceId || randomUUID());
-      const snapshot =
+      const snapshot: Record<string, any> =
         req.body?.resourceSnapshot && typeof req.body.resourceSnapshot === 'object'
-          ? req.body.resourceSnapshot
+          ? { ...req.body.resourceSnapshot }
           : {
               title,
               content: String(req.body?.content || ''),
@@ -224,6 +224,65 @@ export function registerClientApprovalAndWebhookRoutes({
               scheduledAt: req.body?.scheduledAt || null,
               mediaUrl: req.body?.mediaUrl || null,
             };
+
+      let tenantId: string | null = null;
+      if (resourceType === 'autopilot_item') {
+        const itemRes = await pool.query(
+          `SELECT id, tenant_id, owner_user_id, title, hook, caption, validation_report, lifecycle_state, version, media_assets, slides, storyboard, disclosures, channel_variants
+           FROM autopilot_content_items WHERE id::text = $1 LIMIT 1`,
+          [resourceId]
+        );
+        const item = itemRes.rows[0];
+        if (!item) {
+          return res.status(404).json({ success: false, error: 'Autopilot content item not found' });
+        }
+        if (item.owner_user_id !== auth.userId) {
+          const tId = String(item.tenant_id || '');
+          let hasAccess = false;
+          if (tId.startsWith('org:')) {
+            const orgId = tId.replace('org:', '');
+            const m = await pool.query(`SELECT 1 FROM organization_memberships WHERE org_id = $1 AND user_id = $2`, [orgId, auth.userId]);
+            if (m.rows.length) hasAccess = true;
+          } else if (tId.startsWith('proj:')) {
+            const projId = tId.replace('proj:', '');
+            const p = await pool.query(
+              `SELECT 1 FROM projects p JOIN organization_memberships m ON m.org_id = p.org_id WHERE p.id = $1 AND m.user_id = $2`,
+              [projId, auth.userId]
+            );
+            if (p.rows.length) hasAccess = true;
+          }
+          if (!hasAccess) {
+            return res.status(403).json({ success: false, error: 'Forbidden: you do not have permission to create review links for this item' });
+          }
+        }
+
+        const valReport = item.validation_report || {};
+        if (valReport.passed === false) {
+          return res.status(422).json({
+            success: false,
+            code: 'UNRESOLVED_QA_BLOCKERS',
+            error: 'Cannot create client approval link for content item with unresolved QA blockers.',
+            details: valReport.issues || [],
+          });
+        }
+
+        const contentToHash = JSON.stringify({
+          id: item.id,
+          title: item.title,
+          hook: item.hook,
+          caption: item.caption,
+          media_assets: item.media_assets,
+          slides: item.slides,
+          storyboard: item.storyboard,
+          disclosures: item.disclosures,
+          channel_variants: item.channel_variants,
+        });
+        const contentHash = createHash('sha256').update(contentToHash).digest('hex');
+        tenantId = item.tenant_id;
+        snapshot.tenant_id = item.tenant_id;
+        snapshot.content_hash = contentHash;
+        snapshot.item_version = item.version;
+      }
 
       const token = `rev_${randomBytes(16).toString('hex')}`;
       const id = randomUUID();
@@ -331,10 +390,78 @@ export function registerClientApprovalAndWebhookRoutes({
         ).catch(() => undefined);
       } else if (link.resource_type === 'autopilot_item' && link.resource_id) {
         const nextLifecycle = decision === 'approved' ? 'approved' : 'needs_changes';
-        await pool.query(
-          `UPDATE autopilot_content_items SET lifecycle_state = $2, approved_by = CASE WHEN $2 = 'approved' THEN $3 ELSE approved_by END, approved_at = CASE WHEN $2 = 'approved' THEN NOW() ELSE approved_at END, updated_at = NOW() WHERE id::text = $1`,
-          [link.resource_id, nextLifecycle, reviewerName]
-        ).catch(() => undefined);
+        const snapshot = (link.resource_snapshot || {}) as Record<string, any>;
+        const expectedTenantId = snapshot.tenant_id as string | undefined;
+        const expectedContentHash = snapshot.content_hash as string | undefined;
+
+        const itemRes = await pool.query(
+          `SELECT id, tenant_id, lifecycle_state, validation_report, title, hook, caption, media_assets, slides, storyboard, disclosures, channel_variants
+           FROM autopilot_content_items WHERE id::text = $1 LIMIT 1`,
+          [link.resource_id]
+        );
+        const currentItem = itemRes.rows[0];
+        if (currentItem) {
+          if (expectedTenantId && currentItem.tenant_id !== expectedTenantId) {
+            return res.status(403).json({ success: false, error: 'Tenant boundary mismatch on approved item.' });
+          }
+          if (expectedContentHash) {
+            const currentContentToHash = JSON.stringify({
+              id: currentItem.id,
+              title: currentItem.title,
+              hook: currentItem.hook,
+              caption: currentItem.caption,
+              media_assets: currentItem.media_assets,
+              slides: currentItem.slides,
+              storyboard: currentItem.storyboard,
+              disclosures: currentItem.disclosures,
+              channel_variants: currentItem.channel_variants,
+            });
+            const currentHash = createHash('sha256').update(currentContentToHash).digest('hex');
+            if (currentHash !== expectedContentHash) {
+              return res.status(409).json({
+                success: false,
+                code: 'STALE_REVISION',
+                error: 'This item was modified after the review link was created. Please request a new review link for the latest revision.',
+              });
+            }
+          }
+          if (decision === 'approved') {
+            const valReport = currentItem.validation_report || {};
+            if (valReport.passed === false) {
+              return res.status(422).json({
+                success: false,
+                code: 'UNRESOLVED_QA_BLOCKERS',
+                error: 'Content item cannot be approved because QA blocking checks have failed.',
+              });
+            }
+          }
+
+          await pool.query(
+            `UPDATE autopilot_content_items
+             SET lifecycle_state = $2,
+                 approved_by = CASE WHEN $2 = 'approved' THEN $3 ELSE approved_by END,
+                 approved_at = CASE WHEN $2 = 'approved' THEN NOW() ELSE approved_at END,
+                 approved_content_hash = CASE WHEN $2 = 'approved' THEN $4 ELSE approved_content_hash END,
+                 updated_at = NOW()
+             WHERE id::text = $1`,
+            [link.resource_id, nextLifecycle, reviewerName, expectedContentHash || null]
+          );
+
+          await pool.query(
+            `INSERT INTO autopilot_approval_events (
+              id, tenant_id, content_item_id, action, from_state, to_state, actor_name, actor_role, notes, created_at
+            ) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'client_reviewer', $7, NOW())`,
+            [
+              currentItem.tenant_id,
+              currentItem.id,
+              decision === 'approved' ? 'approve' : 'request_changes',
+              currentItem.lifecycle_state,
+              nextLifecycle,
+              reviewerName,
+              feedback || `Decision via external review link token ${link.token.slice(0, 8)}...`,
+            ]
+          ).catch(() => undefined);
+        }
       }
 
       // Notify agency owner
