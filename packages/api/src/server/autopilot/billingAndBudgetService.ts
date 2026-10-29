@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { spend, CreditError } from '../creditAccounting.ts';
+import { spend, CreditError, account, creditAllowance, grant } from '../creditAccounting.ts';
 import { logger } from '../../logger.ts';
 
 export interface BudgetCheckInput {
@@ -276,6 +276,12 @@ export async function reserveJobBudget(
   // Deduct/reserve internal credits if not mock and credit spend is configured
   if (!params.isMock && params.estimatedCredits > 0) {
     try {
+      try {
+        const allowance = await creditAllowance(pool, params.userId);
+        await account(pool, params.userId, allowance);
+      } catch (acctErr: any) {
+        logger.warn({ err: acctErr?.message }, 'credit_account_init_failed');
+      }
       await spend(
         pool,
         params.userId,
@@ -357,6 +363,22 @@ export async function releaseJobBudget(
     reason: string;
   }
 ): Promise<void> {
+  try {
+    const existing = await pool.query<{ user_id: string; reserved_credits: number; is_mock: boolean }>(
+      `SELECT user_id, reserved_credits, is_mock FROM autopilot_budget_reservations
+       WHERE tenant_id = $1 AND idempotency_key = $2 AND status = 'reserved'`,
+      [params.tenantId, params.idempotencyKey]
+    );
+    if (existing.rows[0] && !existing.rows[0].is_mock && existing.rows[0].reserved_credits > 0) {
+      await grant(pool, existing.rows[0].user_id, existing.rows[0].reserved_credits, 'autopilot_job_refund', {
+        idempotencyKey: params.idempotencyKey,
+        reason: params.reason,
+      });
+    }
+  } catch (gErr: any) {
+    logger.warn({ err: gErr?.message }, 'credit_release_grant_failed');
+  }
+
   await pool.query(
     `UPDATE autopilot_budget_reservations
      SET status = 'released',

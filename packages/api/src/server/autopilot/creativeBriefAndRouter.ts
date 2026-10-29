@@ -442,7 +442,7 @@ export function estimateGenerationCost(params: {
     ? internalCredits > params.businessCapacity.monthly_credit_cap
     : false;
 
-  const confirmationThreshold = params.controls.confirmation_threshold_usd ?? 0.5;
+  const confirmationThreshold = params.controls.confirmation_threshold_usd ?? 2.0;
   const requiresConfirmation =
     providerUsd > confirmationThreshold && !params.controls.user_confirmed_spend;
 
