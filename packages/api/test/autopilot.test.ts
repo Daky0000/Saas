@@ -1642,10 +1642,7 @@ test('PostgreSQL E2E: migrations, full Autopilot SQL repository, review link, an
 
     // If product_demo was selected first, switch to branded_social_graphic for fast PG roundtrip
     await request(app).patch(`/api/v1/autopilot/items/${itemId}`).set(hdr).send({ format: 'static_graphic', workflow_type: 'branded_social_graphic' }).expect(200);
-    const genRes = await request(app).post(`/api/v1/autopilot/items/${itemId}/generate`).set(hdr).send({});
-    if (genRes.status !== 200) {
-      throw new Error(`Generate failed with status ${genRes.status}: ${JSON.stringify(genRes.body)}`);
-    }
+    await request(app).post(`/api/v1/autopilot/items/${itemId}/generate`).set(hdr).send({}).expect(200);
     const linkRes = await request(app).post(`/api/v1/autopilot/items/${itemId}/share-review-link`).set(hdr).send({}).expect(201);
     assert.ok(linkRes.body.token);
 

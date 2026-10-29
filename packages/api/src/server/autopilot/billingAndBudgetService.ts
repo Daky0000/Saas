@@ -297,6 +297,26 @@ export async function reserveJobBudget(
     }
   }
 
+  let validatedWorkflowRunId: string | null = null;
+  if (params.workflowRunId) {
+    try {
+      const runCheck = await pool.query(
+        `SELECT id FROM autopilot_workflow_runs WHERE id = $1 LIMIT 1`,
+        [params.workflowRunId]
+      );
+      if (runCheck.rows.length) {
+        validatedWorkflowRunId = params.workflowRunId;
+      }
+    } catch {
+      validatedWorkflowRunId = null;
+    }
+  }
+
+  const reservationMeta = {
+    workflow_run_id: params.workflowRunId,
+    ...(params.meta || {}),
+  };
+
   const reservationId = randomUUID();
   await pool.query(
     `INSERT INTO autopilot_budget_reservations (
@@ -312,7 +332,7 @@ export async function reserveJobBudget(
       params.tenantId,
       params.userId,
       params.contentItemId,
-      params.workflowRunId,
+      validatedWorkflowRunId,
       params.idempotencyKey,
       params.estimatedProviderCostUsd,
       params.customerPriceUsd,
@@ -320,7 +340,7 @@ export async function reserveJobBudget(
       params.provider,
       params.model,
       params.isMock,
-      JSON.stringify(params.meta || {}),
+      JSON.stringify(reservationMeta),
     ]
   );
 
@@ -335,6 +355,7 @@ export async function settleJobBudget(
     actualProviderCostUsd: number;
     actualCredits: number;
     customerPriceUsd?: number;
+    workflowRunId?: string;
   }
 ): Promise<void> {
   await pool.query(
@@ -343,6 +364,7 @@ export async function settleJobBudget(
          actual_provider_cost_usd = $3,
          settled_credits = $4,
          customer_price_usd = COALESCE($5, customer_price_usd),
+         workflow_run_id = COALESCE($6, workflow_run_id),
          updated_at = NOW()
      WHERE tenant_id = $1 AND idempotency_key = $2`,
     [
@@ -351,6 +373,7 @@ export async function settleJobBudget(
       params.actualProviderCostUsd,
       params.actualCredits,
       params.customerPriceUsd ?? null,
+      params.workflowRunId ?? null,
     ]
   );
 }

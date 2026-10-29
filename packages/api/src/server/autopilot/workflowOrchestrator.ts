@@ -919,6 +919,7 @@ export async function executeAutopilotWorkflow(params: ExecuteWorkflowParams): P
         idempotencyKey,
         actualProviderCostUsd: runRecord.actual_provider_cost_usd,
         actualCredits: runRecord.actual_credits,
+        workflowRunId: runRecord.id,
       }).catch(() => {});
     }
 
