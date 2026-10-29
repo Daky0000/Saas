@@ -1616,13 +1616,14 @@ test('PostgreSQL E2E: migrations, full Autopilot SQL repository, review link, an
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
   try {
     await (await import('../src/db-migrations.ts')).runDatabaseMigrations(pool);
+    await (await import('../src/payment-migrations.ts')).runPaymentMigrations(pool);
     const userId = randomUUID();
     await pool.query(
       `INSERT INTO users (id, email, password_hash, role, status) VALUES ($1, $2, 'fixture_hash', 'user', 'active')`,
       [userId, `autopilot-pg-${userId}@example.com`],
     );
     await pool.query(
-      `INSERT INTO user_credits (user_id, credits, purchased_credits, reset_date) VALUES ($1, 1000, 1000, NOW() + INTERVAL '1 month') ON CONFLICT (user_id) DO UPDATE SET credits = 1000`,
+      `INSERT INTO user_credits (user_id, credits, purchased_credits, reset_date) VALUES ($1, 1000, 1000, NOW() + INTERVAL '1 month') ON CONFLICT (user_id) DO UPDATE SET credits = 1000, purchased_credits = 1000`,
       [userId],
     );
 
