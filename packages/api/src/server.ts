@@ -120,7 +120,7 @@ import { registerCardTemplateRoutes } from './server/cardRoutes.ts';
 import { registerPricingRoutes } from './server/pricingRoutes.ts';
 import { registerWordPressRoutes } from './server/wordpressRoutes.ts';
 import { runPaymentMigrations } from './payment-migrations.ts';
-import { runDatabaseMigrations } from './db-migrations.ts';
+import { AUTOPILOT_P0_SCHEMA_VERSION, runDatabaseMigrations } from './db-migrations.ts';
 import { migrateLegacyTokenData } from './token-data.ts';
 import { pool, dbReady, setDbReady, setDbInitError, dbInitError, hasDatabase, dbQuery, normalizeEmail, normalizeUsername } from './db.ts';
 import type {
@@ -232,7 +232,10 @@ app.get('/api/health', async (_req, res) => {
   if (ready && config.databaseUrl) {
     try {
       await pool.query('SELECT 1');
-      const migRes = await pool.query('SELECT version FROM schema_migrations ORDER BY applied_at DESC, version DESC LIMIT 1').catch(() => ({ rows: [] as any[] }));
+      // The schema version this build requires, or null when it is missing. Not the newest
+      // row: older migrations re-stamp applied_at on every boot, so ordering by time names
+      // whichever one ran last.
+      const migRes = await pool.query('SELECT version FROM schema_migrations WHERE version = $1', [AUTOPILOT_P0_SCHEMA_VERSION]).catch(() => ({ rows: [] as any[] }));
       migrationVersion = migRes.rows?.[0]?.version ?? null;
     }
     catch { ready = false; }
