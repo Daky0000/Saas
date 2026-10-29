@@ -6,6 +6,7 @@ import {
   Bot,
   Building2,
   ChevronDown,
+  Compass,
   PhoneCall,
   CreditCard,
   HelpCircle,
@@ -25,6 +26,7 @@ import NotificationBell from './components/NotificationBell';
 import OnboardingWizard from './components/OnboardingWizard';
 import { onboardingService } from './services/onboardingService';
 import PageTour, { PAGE_GUIDES } from './components/PageTour';
+import GuidedTour, { SYSTEM_TOUR_STEPS, TourStep as GuidedTourStep } from './components/GuidedTour';
 import AdvancedTemplateCardModal from './components/TemplateEditorHost';
 import HelpModal from './components/HelpModal';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -346,6 +348,7 @@ type AppSidebarProps = {
   onMobileClose?: () => void;
   goTasks: (filter?: string) => void;
   disabledNav: Set<string>;
+  onStartSystemTour?: () => void;
 };
 
 function AppSidebar({
@@ -367,6 +370,7 @@ function AppSidebar({
   onMobileClose,
   goTasks,
   disabledNav,
+  onStartSystemTour,
 }: AppSidebarProps) {
   const navOn = (key: string) => authUser?.role === 'admin' || !disabledNav.has(key);
   const { currentOrg, currentProject, projects, refresh } = useWorkspace();
@@ -1006,7 +1010,7 @@ function AppSidebar({
         <NotificationBell />
       </div>
 
-      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} onStartTour={onStartSystemTour} />}
 
       {/* ── DakyXTech v22 Account Bar + Menu ── */}
       <div ref={userMenuRef} className="relative">
@@ -1092,6 +1096,22 @@ function AppSidebar({
               <Settings size={14} className="shrink-0 text-muted" /> Settings
             </button>
             <div className="mx-3 my-1 h-px bg-line" />
+            {onStartSystemTour && (
+              <button
+                type="button"
+                role="menuitem"
+                data-tour-id="menu-guided-tour"
+                onClick={() => {
+                  onStartSystemTour();
+                  setUserMenuOpen(false);
+                }}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[13px] font-medium text-blue hover:bg-pale transition-colors"
+              >
+                <Compass size={14} className="shrink-0 text-blue" />
+                <span className="flex-1 text-left">Guided Tour</span>
+                <span className="rounded-full bg-blue/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue">Tour</span>
+              </button>
+            )}
             <button
               type="button"
               role="menuitem"
@@ -1174,6 +1194,27 @@ function App() {
   const [currentTaskFilter, setCurrentTaskFilter] = useState('all');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [pendingTour, setPendingTour] = useState(false);
+  const [systemTourOpen, setSystemTourOpen] = useState(false);
+  const [customTourSteps, setCustomTourSteps] = useState<GuidedTourStep[] | null>(null);
+  const [customTourTitle, setCustomTourTitle] = useState('System Tour');
+
+  const startSystemTour = useCallback(() => {
+    setCustomTourSteps(null);
+    setCustomTourTitle('System Tour');
+    setSystemTourOpen(true);
+  }, []);
+
+  const startPageTour = useCallback((steps: GuidedTourStep[], title: string) => {
+    setCustomTourSteps(steps);
+    setCustomTourTitle(title);
+    setSystemTourOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const handleStartTour = () => startSystemTour();
+    window.addEventListener('start-system-tour', handleStartTour);
+    return () => window.removeEventListener('start-system-tour', handleStartTour);
+  }, [startSystemTour]);
   const [quotaModalPayload, setQuotaModalPayload] = useState<QuotaExceededPayload | null>(null);
 
   const goTasks = useCallback((filter = 'all') => {
@@ -1261,6 +1302,16 @@ function App() {
           const headers = new Headers(init.headers || {});
           if (!headers.has('Authorization')) {
             headers.set('Authorization', `Bearer ${token}`);
+          }
+          try {
+            const wsRaw = localStorage.getItem(`workspace_state:${getStoredUser()?.id || 'anonymous'}`);
+            if (wsRaw) {
+              const ws = JSON.parse(wsRaw);
+              if (ws?.orgId && !headers.has('X-Organization-Id')) headers.set('X-Organization-Id', String(ws.orgId));
+              if (ws?.projectId && !headers.has('X-Project-Id')) headers.set('X-Project-Id', String(ws.projectId));
+            }
+          } catch { /* ignore malformed workspace state */ }
+          if (false) {
           }
           init.headers = headers;
           args[1] = init;
@@ -1408,7 +1459,7 @@ function App() {
 
       if (!isAuthenticated) {
         const publicPaths = ['/', '/privacy', '/terms', '/refund', '/login', '/tools', '/pricing', '/changelog', '/data-deletion', '/reset-password', '/verify-email'];
-        if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/')) {
+        if (!publicPaths.includes(pathname) && !pathname.startsWith('/invite/') && !pathname.startsWith('/review/') && !pathname.startsWith('/survey/')) {
           navigatePath('/login', true);
           setCurrentPathname('/login');
         }
@@ -1502,6 +1553,16 @@ function App() {
       <TemplateEditorProvider>
         <Suspense fallback={<PageFallback />}><Admin currentUser={authUser} /></Suspense>
         <AdvancedTemplateCardModal />
+        {/* System & Interactive Guided Tour */}
+        <GuidedTour
+          isOpen={systemTourOpen}
+          steps={customTourSteps || SYSTEM_TOUR_STEPS}
+          tourTitle={customTourTitle || 'System Tour'}
+          onClose={() => setSystemTourOpen(false)}
+          onComplete={() => setSystemTourOpen(false)}
+          currentPage={currentPage}
+          onNavigate={(p) => navigateToPage(p as PageType)}
+        />
       </TemplateEditorProvider>
     );
   }
@@ -1585,6 +1646,7 @@ function App() {
     handleLogout,
     goTasks,
     disabledNav,
+    onStartSystemTour: startSystemTour,
   };
 
   const guide = PAGE_GUIDES[currentPage];
@@ -1685,6 +1747,8 @@ function App() {
             pageTitle={guide.title}
             forceStart={pendingTour}
             onForceStartConsumed={() => setPendingTour(false)}
+            onStartInteractiveTour={() => startPageTour(guide.steps as any, guide.title)}
+            onStartSystemTour={startSystemTour}
           />
         )}
 
@@ -1693,10 +1757,20 @@ function App() {
           <OnboardingWizard
             user={authUser}
             onNavigate={(page) => navigateToPage(page as any)}
-            onComplete={() => { setShowOnboarding(false); setPendingTour(true); }}
+            onComplete={() => { setShowOnboarding(false); startSystemTour(); }}
             onDismiss={() => setShowOnboarding(false)}
           />
         )}
+        {/* System & Interactive Guided Tour */}
+        <GuidedTour
+          isOpen={systemTourOpen}
+          steps={customTourSteps || SYSTEM_TOUR_STEPS}
+          tourTitle={customTourTitle || 'System Tour'}
+          onClose={() => setSystemTourOpen(false)}
+          onComplete={() => setSystemTourOpen(false)}
+          currentPage={currentPage}
+          onNavigate={(p) => navigateToPage(p as PageType)}
+        />
       </TemplateEditorProvider>
     </WorkspaceProvider>
   );

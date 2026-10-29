@@ -18,14 +18,14 @@ export const PUBLISHING_TOKEN_PLATFORMS = new Set([
   'threads',
 ]);
 
-export type RefreshMode = 'none' | 'refresh_token' | 'threads_access_token' | 'instagram_access_token';
+export type RefreshMode = 'none' | 'refresh_token' | 'threads_access_token' | 'instagram_access_token' | 'instagram_fb_exchange';
 
 export function getRefreshMode(
   platformId: string,
-  options: { hasRefreshToken: boolean; isInstagramDirect: boolean },
+  options: { hasRefreshToken: boolean; isInstagramDirect: boolean; hasFbAppCredentials?: boolean },
 ): RefreshMode {
   if (platformId === 'threads') return 'threads_access_token';
-  if (platformId === 'instagram') return options.isInstagramDirect ? 'instagram_access_token' : 'none';
+  if (platformId === 'instagram') return options.isInstagramDirect ? 'instagram_access_token' : (options.hasFbAppCredentials ? 'instagram_fb_exchange' : 'none');
   if (platformId === 'twitter' || platformId === 'tiktok') return 'refresh_token';
   if ((platformId === 'linkedin' || platformId === 'pinterest') && options.hasRefreshToken) return 'refresh_token';
   return 'none';

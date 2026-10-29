@@ -282,29 +282,42 @@ export function pickPlaybook(signals: PlaybookSignals): StrategyPlan {
 
 // ── Research routing ─────────────────────────────────────────────────────────
 
-export type ResearchTopic = 'trends' | 'audience' | 'competitors' | 'keywords' | 'content_formats' | 'opportunities';
-const ALL_TOPICS: ResearchTopic[] = ['trends', 'audience', 'competitors', 'keywords', 'content_formats', 'opportunities'];
+export type PlatformBenchmark = {
+  platform: string;
+  top_accounts: Array<{
+    handle: string;
+    name?: string;
+    why_popular?: string;
+    top_formats?: string[];
+    winning_hooks?: string[];
+  }>;
+  what_works: string;
+  what_to_avoid?: string;
+};
+
+export type ResearchTopic = 'trends' | 'audience' | 'competitors' | 'keywords' | 'content_formats' | 'opportunities' | 'platform_benchmarks';
+const ALL_TOPICS: ResearchTopic[] = ['trends', 'audience', 'competitors', 'keywords', 'content_formats', 'opportunities', 'platform_benchmarks'];
 
 export const AGENT_RESEARCH_FOCUS: Record<string, ResearchTopic[]> = {
   sage: ALL_TOPICS,
   campaign_brief: ALL_TOPICS,
   director: ALL_TOPICS,
-  trend_research: ['trends', 'content_formats', 'opportunities'],
+  trend_research: ['trends', 'content_formats', 'opportunities', 'platform_benchmarks'],
   audience_research: ['audience', 'competitors'],
   seo_research: ['keywords', 'competitors'],
-  daky: ['trends', 'audience', 'keywords'],
-  nova: ['content_formats', 'trends'],
+  daky: ['trends', 'audience', 'keywords', 'platform_benchmarks'],
+  nova: ['content_formats', 'trends', 'platform_benchmarks'],
   promo: ['audience', 'opportunities'],
   thumbnail_design: ['content_formats'],
-  hook_writing: ['trends', 'audience'],
-  social_caption: ['trends', 'audience', 'content_formats'],
-  video_script: ['trends', 'content_formats', 'audience'],
+  hook_writing: ['trends', 'audience', 'platform_benchmarks'],
+  social_caption: ['trends', 'audience', 'content_formats', 'platform_benchmarks'],
+  video_script: ['trends', 'content_formats', 'audience', 'platform_benchmarks'],
   ad_copy: ['audience', 'competitors'],
-  meta_ads: ['audience', 'competitors'],
-  aria: ['competitors', 'content_formats'],
+  meta_ads: ['audience', 'competitors', 'platform_benchmarks'],
+  aria: ['competitors', 'content_formats', 'platform_benchmarks'],
   flux: ['content_formats'],
   quality: ['audience'],
-  planner: ['trends', 'content_formats', 'opportunities'],
+  planner: ['trends', 'content_formats', 'opportunities', 'platform_benchmarks'],
   sales_insight: ['audience', 'competitors'],
   sales_caller: ['audience', 'competitors'],
 };
@@ -396,6 +409,7 @@ export type NicheFindings = {
   keywords: Array<{ term: string; intent?: string }>;
   content_formats: Array<{ format: string; platform?: string; why?: string }>;
   opportunities: string[];
+  platform_benchmarks?: PlatformBenchmark[];
 };
 
 const str = (v: unknown, max = 300) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -405,6 +419,21 @@ export function normalizeFindings(raw: unknown): NicheFindings | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, any>;
   const objs = (v: unknown, key: string) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object' && str(x[key])) : []);
+  const benchObjs = Array.isArray(r.platform_benchmarks)
+    ? r.platform_benchmarks.filter((p: any) => p && typeof p === 'object' && str(p.platform)).map((p: any) => ({
+        platform: str(p.platform, 40),
+        top_accounts: objs(p.top_accounts, 'handle').slice(0, 6).map((a: any) => ({
+          handle: str(a.handle, 80),
+          ...(str(a.name) ? { name: str(a.name, 80) } : {}),
+          ...(str(a.why_popular) ? { why_popular: str(a.why_popular, 250) } : {}),
+          ...(Array.isArray(a.top_formats) ? { top_formats: strList(a.top_formats, 4) } : {}),
+          ...(Array.isArray(a.winning_hooks) ? { winning_hooks: strList(a.winning_hooks, 4) } : {}),
+        })),
+        what_works: str(p.what_works, 500),
+        ...(str(p.what_to_avoid) ? { what_to_avoid: str(p.what_to_avoid, 300) } : {}),
+      }))
+    : [];
+
   const findings: NicheFindings = {
     summary: str(r.summary, 900),
     trends: objs(r.trends, 'name').slice(0, 8).map((t: any) => ({ name: str(t.name, 120), why: str(t.why), ...(str(t.angle) ? { angle: str(t.angle) } : {}) })),
@@ -417,8 +446,9 @@ export function normalizeFindings(raw: unknown): NicheFindings | null {
     keywords: objs(r.keywords, 'term').slice(0, 12).map((k: any) => ({ term: str(k.term, 120), ...(str(k.intent) ? { intent: str(k.intent, 60) } : {}) })),
     content_formats: objs(r.content_formats, 'format').slice(0, 8).map((f: any) => ({ format: str(f.format, 120), ...(str(f.platform) ? { platform: str(f.platform, 60) } : {}), ...(str(f.why) ? { why: str(f.why) } : {}) })),
     opportunities: strList(r.opportunities),
+    ...(benchObjs.length ? { platform_benchmarks: benchObjs } : {}),
   };
-  const hasContent = findings.summary || findings.trends.length || findings.audience.pains.length || findings.competitors.length || findings.keywords.length;
+  const hasContent = findings.summary || findings.trends.length || findings.audience.pains.length || findings.competitors.length || findings.keywords.length || (findings.platform_benchmarks && findings.platform_benchmarks.length > 0);
   return hasContent ? findings : null;
 }
 

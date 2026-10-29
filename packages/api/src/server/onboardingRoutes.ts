@@ -5,6 +5,7 @@ import { invalidateSharedContext } from './agentSharedContext.ts';
 import { safeAxios } from '../ssrf-guard.ts';
 import { FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { logger } from '../logger.ts';
+import { runNicheResearch } from './agentTeam/coordination.ts';
 
 type AuthResult = { userId: string; role?: string } | null;
 
@@ -465,6 +466,24 @@ Use empty strings/arrays when the pages don't support a confident answer — do 
         await dbQuery(`UPDATE users SET website = COALESCE(NULLIF(website, ''), $2) WHERE id = $1`, [auth.userId, website]).catch(() => undefined);
       }
 
+      // Synchronize brand_profiles immediately so agent team & director have verified niche & facts
+      const niche = industry || offering || 'General';
+      await dbQuery(
+        `INSERT INTO brand_profiles (user_id, brand_name, niche, tone, audience, goals, platforms, website, setup_done, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+           brand_name = COALESCE(NULLIF(EXCLUDED.brand_name, ''), brand_profiles.brand_name),
+           niche = COALESCE(NULLIF(EXCLUDED.niche, ''), brand_profiles.niche),
+           tone = COALESCE(NULLIF(EXCLUDED.tone, ''), brand_profiles.tone),
+           audience = COALESCE(NULLIF(EXCLUDED.audience, ''), brand_profiles.audience),
+           goals = CASE WHEN array_length(EXCLUDED.goals, 1) > 0 THEN EXCLUDED.goals ELSE brand_profiles.goals END,
+           platforms = CASE WHEN array_length(EXCLUDED.platforms, 1) > 0 THEN EXCLUDED.platforms ELSE brand_profiles.platforms END,
+           website = COALESCE(NULLIF(EXCLUDED.website, ''), brand_profiles.website),
+           setup_done = true,
+           updated_at = NOW()`,
+        [auth.userId, brandName, niche, tones[0] || 'Professional', audience, goals, platforms, website]
+      ).catch((err) => logger.warn({ err, userId: auth.userId }, 'brand_profile_onboarding_sync_failed'));
+
       if (entries.length) {
         // Re-running onboarding replaces the entries it owns instead of duplicating them.
         await dbQuery(
@@ -480,10 +499,16 @@ Use empty strings/arrays when the pages don't support a confident answer — do 
         triggerAgentCompilation(auth.userId).catch(() => undefined);
         invalidateSharedContext(auth.userId);
         void checkTaskActions(auth.userId, 'save_memory');
+
+        // Automatically trigger Omnichannel Niche & Competitor Research in the background
+        runNicheResearch(auth.userId).catch((err) =>
+          logger.warn({ err, userId: auth.userId }, 'post_onboarding_niche_research_failed')
+        );
+
         createNotification(
           auth.userId, 'onboarding_complete',
-          'Your AI team is briefed',
-          `${entries.length} brand ${entries.length === 1 ? 'fact' : 'facts'} saved to memory${brandName ? ` — every agent now personalizes for ${brandName}` : ''}. Refine anytime on the Memory page.`,
+          'Your AI team is briefed & researching your niche',
+          `${entries.length} brand ${entries.length === 1 ? 'fact' : 'facts'} saved to memory. We're actively analyzing top accounts in your niche across your connected channels to prepare your starter content.`,
         ).catch(() => undefined);
       }
 

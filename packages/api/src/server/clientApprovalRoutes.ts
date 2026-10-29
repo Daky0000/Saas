@@ -322,6 +322,21 @@ export function registerClientApprovalAndWebhookRoutes({
 
       if (!updated.length) return res.status(409).json({ success: false, error: 'This review was already decided or expired.' });
 
+      // Synchronize external client decision back to the canonical post / Autopilot item
+      const mappedApprovalStatus = decision === 'approved' ? 'approved' : 'needs_changes';
+      if (link.resource_type === 'post' && link.resource_id) {
+        await pool.query(
+          `UPDATE blog_posts SET approval_status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3`,
+          [link.resource_id, mappedApprovalStatus, link.user_id]
+        ).catch(() => undefined);
+      } else if (link.resource_type === 'autopilot_item' && link.resource_id) {
+        const nextLifecycle = decision === 'approved' ? 'approved' : 'needs_changes';
+        await pool.query(
+          `UPDATE autopilot_content_items SET lifecycle_state = $2, approved_by = CASE WHEN $2 = 'approved' THEN $3 ELSE approved_by END, approved_at = CASE WHEN $2 = 'approved' THEN NOW() ELSE approved_at END, updated_at = NOW() WHERE id::text = $1`,
+          [link.resource_id, nextLifecycle, reviewerName]
+        ).catch(() => undefined);
+      }
+
       // Notify agency owner
       await createNotification(
         link.user_id,

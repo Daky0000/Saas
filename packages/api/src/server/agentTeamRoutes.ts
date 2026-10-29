@@ -16,6 +16,7 @@ import {
   runNicheResearch,
   setStrategyFromUser,
 } from './agentTeam/coordination.ts';
+import { runWeeklyPerformanceScan } from './agentTeam/weeklyScanner.ts';
 import { DIRECTOR_KEY, DIRECTOR_NAME, KPI_DEFS, formatKpiValue, type StrategyKpi } from './agentTeam/policy.ts';
 
 // Agent team API: the director's strategy and its reviews, niche research,
@@ -196,6 +197,54 @@ export function registerAgentTeamRoutes(deps: AgentTeamDeps): Router {
     });
     if (!id) return res.status(500).json({ success: false, error: 'Could not send the message.' });
     return res.json({ success: true, id });
+  });
+
+  // POST /user/agent-team/scanner/weekly/run — on-demand or weekly triggered scan
+  router.post('/user/agent-team/scanner/weekly/run', async (req: Request, res: Response) => {
+    const userId = guard(req, res);
+    if (!userId) return;
+    try {
+      const scan = await runWeeklyPerformanceScan(userId);
+      return res.json({ success: true, scan });
+    } catch (err) {
+      logger.error({ err, userId }, 'weekly_scanner_endpoint_failed');
+      return res.status(500).json({ success: false, error: 'Weekly performance scan failed.' });
+    }
+  });
+
+  // GET /user/agent-team/strategy-milestone — monthly Double Down vs Pivot status
+  router.get('/user/agent-team/strategy-milestone', async (req: Request, res: Response) => {
+    const userId = guard(req, res);
+    if (!userId) return;
+    try {
+      const active = await getActiveStrategy(userId);
+      if (!active) {
+        return res.json({ success: true, milestone: null, message: 'No active strategy to review.' });
+      }
+      const reviews = await listStrategyReviews(userId, active.id, 5);
+      const latestReview = reviews[0] ?? null;
+      const isDoublingDown = latestReview?.verdict === 'on_track' || latestReview?.verdict === 'progressing';
+      const isPivot = latestReview?.verdict === 'switched' || active.consecutive_misses >= 2;
+
+      return res.json({
+        success: true,
+        milestone: {
+          strategyId: active.id,
+          title: active.title,
+          kpi: active.kpi,
+          target: active.target,
+          currentValue: active.last_value,
+          consecutiveMisses: active.consecutive_misses,
+          status: isPivot ? 'pivot_recommended' : isDoublingDown ? 'doubling_down' : 'evaluating',
+          latestVerdict: latestReview?.verdict ?? active.last_verdict ?? 'evaluating',
+          latestNotes: latestReview?.notes ?? 'Strategy evaluation in progress.',
+          evalWindowDays: active.eval_window_days,
+        },
+      });
+    } catch (err) {
+      logger.error({ err, userId }, 'strategy_milestone_endpoint_failed');
+      return res.status(500).json({ success: false, error: 'Could not load strategy milestone.' });
+    }
   });
 
   return router;

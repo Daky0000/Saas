@@ -1,5 +1,5 @@
 import express from 'express';
-import { chargeAICredits } from '../ai-helpers.ts';
+import { chargeAICredits, ensureCreditAccount } from '../ai-helpers.ts';
 import type { Router, Response } from 'express';
 import type { Request } from '../types/http.ts';
 import axios from 'axios';
@@ -21,13 +21,15 @@ interface OpenAIDeps {
 
 const OPENAI_BASE = 'https://api.openai.com/v1';
 
-const OPENAI_IMAGE_MODELS: Record<string, { credits: number; returnFormat: 'url' | 'b64' }> = {
-  'dall-e-3':    { credits: 6,  returnFormat: 'url' },
-  'dall-e-2':    { credits: 3,  returnFormat: 'url' },
-  'gpt-image-1': { credits: 8,  returnFormat: 'b64' },
+// Official current OpenAI image models; deprecated dall-e-2 / dall-e-3 removed per model audit.
+export const OPENAI_IMAGE_MODELS: Record<string, { credits: number; providerCostUsd: number; returnFormat: 'b64' }> = {
+  'gpt-image-1':      { credits: 8, providerCostUsd: 0.04, returnFormat: 'b64' },
+  'gpt-image-1-mini': { credits: 4, providerCostUsd: 0.015, returnFormat: 'b64' },
 };
 
-const OPENAI_TTS_CREDITS: Record<string, number> = { 'tts-1': 2, 'tts-1-hd': 4, 'gpt-4o-mini-tts': 3 };
+export const DEPRECATED_OPENAI_IMAGE_MODELS = new Set(['dall-e-2', 'dall-e-3']);
+
+const OPENAI_TTS_CREDITS: Record<string, number> = { 'gpt-4o-mini-tts': 3, 'tts-1': 2, 'tts-1-hd': 4 };
 
 export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, dbQuery, pool }: OpenAIDeps): Router {
   const router = express.Router();
@@ -42,15 +44,9 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     return process.env.OPENAI_API_KEY || null;
   }
 
-  function openaiImageSize(model: string, aspect: string): string {
-    if (model === 'dall-e-2') return '1024x1024';
-    if (model === 'gpt-image-1') {
-      if (aspect === '16:9') return '1536x1024';
-      if (aspect === '9:16') return '1024x1536';
-      return '1024x1024';
-    }
-    if (aspect === '16:9') return '1792x1024';
-    if (aspect === '9:16') return '1024x1792';
+  function openaiImageSize(_model: string, aspect: string): string {
+    if (aspect === '16:9') return '1536x1024';
+    if (aspect === '9:16') return '1024x1536';
     return '1024x1024';
   }
 
@@ -109,7 +105,7 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
       });
       const models: string[] = (resp.data?.data ?? [])
         .map((m: any) => m.id as string)
-        .filter((id: string) => id.includes('gpt') || id.includes('dall') || id.includes('tts') || id.includes('whisper'))
+        .filter((id: string) => id.includes('gpt') || id.includes('tts') || id.includes('whisper'))
         .slice(0, 8);
       res.json({ success: true, models });
     } catch (e: any) {
@@ -140,18 +136,34 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-    const { prompt = '', model = 'dall-e-3', aspect_ratio = '1:1', quality = 'standard', style = 'vivid', save = true } = req.body as Record<string, any>;
+    const { prompt = '', model = 'gpt-image-1', aspect_ratio = '1:1', quality = 'auto', save = true } = req.body as Record<string, any>;
     if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+    if (DEPRECATED_OPENAI_IMAGE_MODELS.has(String(model))) {
+      return res.status(400).json({ error: `Model "${model}" is deprecated and no longer supported. Use "gpt-image-1" or "gpt-image-1-mini".` });
+    }
 
-    const cfg = OPENAI_IMAGE_MODELS[model] ?? OPENAI_IMAGE_MODELS['dall-e-3'];
+    const cfg = OPENAI_IMAGE_MODELS[model];
+    if (!cfg) {
+      return res.status(400).json({ error: `Unsupported OpenAI image model "${model}". Supported models: ${Object.keys(OPENAI_IMAGE_MODELS).join(', ')}` });
+    }
     const apiKey = await getOpenAIApiKey();
     if (!apiKey) return res.status(503).json({ error: 'OpenAI API not configured' });
 
-    const creditCost = cfg.credits;
-    const credRow = await pool.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id=$1', [auth.userId])
-      .catch(() => ({ rows: [] as { credits: number }[] }));
-    const currentCredits = credRow.rows[0]?.credits ?? 0;
-    if (credRow.rows.length > 0 && currentCredits < creditCost) {
+    // Support admin-configurable rate card override in platform_configs('openai') so prices are never hard-coded indefinitely
+    let creditCost = cfg.credits;
+    let providerCostUsd = cfg.providerCostUsd;
+    try {
+      const cfgRow = await dbQuery<{ config: Record<string, string> }>('SELECT config FROM platform_configs WHERE platform=$1', ['openai']);
+      const dec = decryptPlatformConfig(cfgRow.rows[0]?.config);
+      const customCredits = Number(dec?.[`credits_${model}`]);
+      const customUsd = Number(dec?.[`cost_usd_${model}`]);
+      if (Number.isFinite(customCredits) && customCredits > 0) creditCost = Math.round(customCredits);
+      if (Number.isFinite(customUsd) && customUsd >= 0) providerCostUsd = customUsd;
+    } catch { /* fallback to default rate card */ }
+
+    const creditAcc = await ensureCreditAccount(auth.userId).catch(() => ({ credits: 0 }));
+    const currentCredits = typeof creditAcc === 'number' ? creditAcc : creditAcc.credits;
+    if (currentCredits < creditCost) {
       return res.status(402).json({ error: 'Insufficient credits', credits: currentCredits, required: creditCost });
     }
 
@@ -159,40 +171,34 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     await pool.query(
       `INSERT INTO openai_generations (id, user_id, type, model, prompt, params, status, credits_used)
        VALUES ($1,$2,'image',$3,$4,$5,'pending',$6)`,
-      [genId, auth.userId, model, prompt.trim(), JSON.stringify({ aspect_ratio, quality, style }), creditCost]
+      [genId, auth.userId, model, prompt.trim(), JSON.stringify({ aspect_ratio, quality, estimated_provider_cost_usd: providerCostUsd }), creditCost]
     ).catch(() => undefined);
 
     try {
       const size = openaiImageSize(model, aspect_ratio);
+      const validQuality = ['low', 'medium', 'high', 'auto'].includes(String(quality)) ? String(quality) : 'auto';
       const body: Record<string, any> = {
         model,
         prompt: prompt.trim(),
         n: 1,
         size,
-        response_format: cfg.returnFormat === 'b64' ? 'b64_json' : 'url',
+        quality: validQuality,
       };
-      if (model === 'dall-e-3') {
-        body.quality = quality;
-        body.style   = style;
-      }
 
       const resp = await axios.post(`${OPENAI_BASE}/images/generations`, body, {
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         timeout: 90000,
       });
 
-      let imageUrl: string;
       const item = resp.data?.data?.[0];
-      if (!item) throw new Error('No image data returned');
+      if (!item?.b64_json && !item?.url) throw new Error('No image data returned');
 
-      if (cfg.returnFormat === 'b64') {
-        imageUrl = await storeImageViaImgbb(item.b64_json, 'image/png');
-      } else {
-        imageUrl = item.url;
-      }
+      const imageUrl = item.b64_json
+        ? await storeImageViaImgbb(item.b64_json, 'image/png')
+        : String(item.url);
 
       await pool.query(`UPDATE openai_generations SET status='completed', result_url=$1, completed_at=NOW() WHERE id=$2`, [imageUrl, genId]).catch(() => undefined);
-      await chargeAICredits(auth.userId, creditCost, 'image_generate_openai', { gen_id: genId });
+      await chargeAICredits(auth.userId, creditCost, 'image_generate_openai', { gen_id: genId, model, provider_cost_usd: providerCostUsd });
 
       let designId: string | null = null;
       if (save && imageUrl) {
@@ -205,7 +211,7 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
         ).catch(() => undefined);
       }
 
-      return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId, revised_prompt: item.revised_prompt ?? null });
+      return res.json({ success: true, url: imageUrl, design_id: designId, gen_id: genId, model, credits_charged: creditCost, estimated_provider_cost_usd: providerCostUsd, revised_prompt: item.revised_prompt ?? null });
     } catch (e: any) {
       const msg: string = e.response?.data?.error?.message ?? e.message;
       logger.error('[openai/generate-image]', msg);
@@ -220,18 +226,17 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-    const { text = '', model = 'tts-1', voice = 'nova', speed = 1.0 } = req.body as Record<string, any>;
+    const { text = '', model = 'gpt-4o-mini-tts', voice = 'nova', speed = 1.0 } = req.body as Record<string, any>;
     if (!text.trim()) return res.status(400).json({ error: 'Text is required' });
     if (text.trim().length > 4096) return res.status(400).json({ error: 'Text must be 4096 characters or less' });
 
     const apiKey = await getOpenAIApiKey();
     if (!apiKey) return res.status(503).json({ error: 'OpenAI API not configured' });
 
-    const creditCost = OPENAI_TTS_CREDITS[model] ?? 2;
-    const credRow = await pool.query<{ credits: number }>('SELECT credits FROM user_credits WHERE user_id=$1', [auth.userId])
-      .catch(() => ({ rows: [] as { credits: number }[] }));
-    const currentCredits = credRow.rows[0]?.credits ?? 0;
-    if (credRow.rows.length > 0 && currentCredits < creditCost) {
+    const creditCost = OPENAI_TTS_CREDITS[model] ?? 3;
+    const creditAcc = await ensureCreditAccount(auth.userId).catch(() => ({ credits: 0 }));
+    const currentCredits = typeof creditAcc === 'number' ? creditAcc : creditAcc.credits;
+    if (currentCredits < creditCost) {
       return res.status(402).json({ error: 'Insufficient credits', credits: currentCredits, required: creditCost });
     }
 
@@ -256,10 +261,10 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
       const audioBase64 = Buffer.from(resp.data).toString('base64');
       const audioUrl = `data:audio/mpeg;base64,${audioBase64}`;
 
-      await pool.query(`UPDATE openai_generations SET status='completed', result_url='[audio]', completed_at=NOW() WHERE id=$2`, [genId]).catch(() => undefined);
-      await chargeAICredits(auth.userId, creditCost, 'image_generate_openai', { gen_id: genId });
+      await pool.query(`UPDATE openai_generations SET status='completed', result_url='[audio]', completed_at=NOW() WHERE id=$1`, [genId]).catch(() => undefined);
+      await chargeAICredits(auth.userId, creditCost, 'tts_openai', { gen_id: genId, model });
 
-      return res.json({ success: true, audio_url: audioUrl, gen_id: genId });
+      return res.json({ success: true, audio_url: audioUrl, gen_id: genId, model, credits_charged: creditCost });
     } catch (e: any) {
       const msg: string = e.response
         ? JSON.parse(Buffer.from(e.response.data).toString())?.error?.message ?? `HTTP ${e.response.status}`

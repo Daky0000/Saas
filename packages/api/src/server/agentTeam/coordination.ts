@@ -449,15 +449,22 @@ Search the web for what is current: rising topics and formats from roughly the l
 Report only what your sources support or what is well-established in the niche. Do not invent statistics, follower counts or growth percentages.
 Reply with one JSON object and nothing else.`;
 
-function researchPrompt(brand: any): string {
-  return `Research this business's niche.
+function researchPrompt(brand: any, connectedPlatforms: string[] = [], verifiedContext: string = ''): string {
+  const platforms = connectedPlatforms.length
+    ? connectedPlatforms
+    : (Array.isArray(brand.platforms) && brand.platforms.length ? brand.platforms : ['Instagram', 'LinkedIn', 'X']);
+
+  return `Research this business's niche and analyze top-performing accounts across its connected social media platforms.
 
 Business: ${brand.brand_name || 'unnamed'}
 Niche: ${brand.niche}
 Audience: ${brand.audience || 'not specified'}
 Website: ${brand.website || 'none'}
-Platforms: ${Array.isArray(brand.platforms) && brand.platforms.length ? brand.platforms.join(', ') : 'not specified'}
+Connected / Priority Platforms: ${platforms.join(', ')}
 Goals: ${Array.isArray(brand.goals) && brand.goals.length ? brand.goals.join('; ') : 'not specified'}
+${verifiedContext ? `\nVerified Business Details & Offerings (Ground Truth):\n${verifiedContext}\n` : ''}
+
+For the connected platforms (${platforms.join(', ')}), search for popular accounts and creators in this exact niche. Look through what has been working for them (top formats, hook types, visual structures, engagement drivers) and identify what will work for this business based strictly on their verified offerings and context without assuming unverified information.
 
 Return JSON in exactly this shape:
 {
@@ -467,9 +474,25 @@ Return JSON in exactly this shape:
   "competitors": [{"name": "competitor or competitor type", "positioning": "how they position", "gap": "what they leave open"}],
   "keywords": [{"term": "search term", "intent": "informational|commercial|transactional"}],
   "content_formats": [{"format": "format", "platform": "platform", "why": "why it works in this niche now"}],
-  "opportunities": ["specific, actionable opportunity for this business"]
+  "opportunities": ["specific, actionable opportunity for this business"],
+  "platform_benchmarks": [
+    {
+      "platform": "Platform name (e.g. Instagram, TikTok, LinkedIn, X, Facebook, Pinterest, Threads)",
+      "top_accounts": [
+        {
+          "handle": "@handle or account name",
+          "name": "display name or creator descriptor",
+          "why_popular": "why their content wins in this niche",
+          "top_formats": ["e.g. 4-slide carousels", "POV reels"],
+          "winning_hooks": ["e.g. 3 subtle signs..."]
+        }
+      ],
+      "what_works": "1-2 sentences on what format and style converts best on this platform in this niche",
+      "what_to_avoid": "1 sentence on low-performing content in this niche"
+    }
+  ]
 }
-Give 3-6 items per list.`;
+Give 3-6 items per list. Ground recommendations strictly in the verified business facts; never invent imaginary offerings or fake statistics.`;
 }
 
 export type ResearchOutcome = { ok: true; research: ResearchRow } | { ok: false; status: number; error: string };
@@ -487,9 +510,34 @@ export async function runNicheResearch(userId: string): Promise<ResearchOutcome>
   if (!ai) return { ok: false, status: 503, error: 'No AI provider is configured, so the team cannot research yet.' };
   if (!(await hasAICredits(userId))) return { ok: false, status: 402, error: 'You need more AI credits to run niche research.' };
 
+  // Fetch connected social accounts to inspect actual active platforms
+  const { rows: connectedAccounts } = await dbQuery<{ platform: string; handle: string }>(
+    `SELECT platform, handle FROM social_accounts WHERE user_id = $1 AND connected = true`,
+    [userId],
+  ).catch(() => ({ rows: [] as any[] }));
+
+  const connectedPlatforms = Array.from(new Set([
+    ...connectedAccounts.map((a) => a.platform),
+    ...(Array.isArray(brand.platforms) ? brand.platforms : []),
+  ])).filter(Boolean);
+
+  // Fetch verified memories (offerings, services, about, website snapshot)
+  const { rows: memRows } = await dbQuery<{ title: string; content: string }>(
+    `SELECT title, content FROM user_memories WHERE user_id = $1 AND category IN ('brand','business','website') LIMIT 10`,
+    [userId],
+  ).catch(() => ({ rows: [] as any[] }));
+  const verifiedContext = memRows.map((m) => `${m.title}: ${m.content}`).join('\n');
+
   let reply: ModelReply;
   try {
-    reply = await askModel(ai, { system: RESEARCH_SYSTEM, user: researchPrompt(brand), maxTokens: 6000, webSearch: true, userId, feature: 'agent_niche_research' });
+    reply = await askModel(ai, {
+      system: RESEARCH_SYSTEM,
+      user: researchPrompt(brand, connectedPlatforms, verifiedContext),
+      maxTokens: 6000,
+      webSearch: true,
+      userId,
+      feature: 'agent_niche_research',
+    });
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err), userId }, 'niche_research_failed');
     return { ok: false, status: 502, error: 'Research could not be completed. Try again shortly.' };
@@ -510,12 +558,13 @@ export async function runNicheResearch(userId: string): Promise<ResearchOutcome>
   ).catch(() => undefined);
   invalidateSharedContext(userId);
 
+  const benchCount = findings.platform_benchmarks?.length || 0;
   await postAgentMessage(userId, {
     from: 'trend_research',
     to: '*',
     kind: 'insight',
-    subject: `New ${String(brand.niche).slice(0, 60)} research is in`,
-    body: `${findings.summary}${findings.trends[0] ? `\nTop trend: ${findings.trends[0].name}.` : ''}${findings.audience.pains[0] ? `\nTop audience pain: ${findings.audience.pains[0]}.` : ''}${method === 'model_knowledge' ? '\n(Web search was unavailable; this is from general knowledge, so treat it as a starting point.)' : ''}`,
+    subject: `New ${String(brand.niche).slice(0, 50)} research & platform benchmarks in`,
+    body: `${findings.summary}${benchCount > 0 ? `\nAnalyzed top accounts & winning formats across ${findings.platform_benchmarks!.map((p) => p.platform).join(', ')}.` : ''}${findings.trends[0] ? `\nTop trend: ${findings.trends[0].name}.` : ''}${method === 'model_knowledge' ? '\n(Web search was unavailable; this is from general knowledge, so treat it as a starting point.)' : ''}`,
     priority: 1,
     ttlDays: RESEARCH_MAX_AGE_DAYS,
   });
@@ -747,8 +796,25 @@ export async function runDirectorReview(
     }
     if (evaluation.shouldSwitch) {
       replacing = { strategy: active, reason: evaluation.reason };
+      // Refresh niche research on pivot so new strategy is built on fresh competitor insights
+      try {
+        const refreshOutcome = await runNicheResearch(userId);
+        if (refreshOutcome.ok) {
+          research = refreshOutcome.research;
+          result.research_refreshed = true;
+        }
+      } catch (_e) { /* non-fatal */ }
     } else if (opts.replace) {
       replacing = { strategy: active, reason: 'You asked the director for a new strategy.' };
+    } else if (evaluation.verdict === 'on_track' || evaluation.verdict === 'progressing') {
+      if (counted) {
+        await postAgentMessage(userId, {
+          from: DIRECTOR_KEY, to: '*', kind: 'directive', priority: 1, ttlDays: active.eval_window_days,
+          subject: `Double Down: "${active.title}" is hitting performance targets`,
+          body: `Strategy review confirms ${active.kpi} reached ${formatKpiValue(active.kpi, observed.value)}. Double down on what is working: scale the winning content pillars, spin off top-performing hooks into new formats, and maintain consistent publishing cadence.`,
+          context: { strategy_id: active.id, verdict: 'doubling_down' },
+        });
+      }
     } else if (evaluation.verdict === 'underperforming' && evaluation.counted) {
       // Warn the team before the switch so they can adjust.
       await postAgentMessage(userId, {
@@ -932,7 +998,14 @@ export function renderBriefing(b: AgentBriefing): string {
     lines.push(`Niche research (${r.basis}, ${r.researched_on}): ${r.summary ?? ''}`);
     if (Array.isArray(r.trends) && r.trends.length) lines.push(`Trends: ${r.trends.slice(0, 3).map((t: any) => t.name).join('; ')}`);
     if (r.audience?.pains?.length) lines.push(`Audience pains: ${r.audience.pains.slice(0, 3).join('; ')}`);
+    if (Array.isArray(r.platform_benchmarks) && r.platform_benchmarks.length) {
+      lines.push(`Platform benchmarks & winning mechanics:`);
+      for (const pb of r.platform_benchmarks.slice(0, 4)) {
+        lines.push(`- [${pb.platform}]: What works: ${pb.what_works}${pb.what_to_avoid ? ` | Avoid: ${pb.what_to_avoid}` : ''}`);
+      }
+    }
   }
+  lines.push(`GROUNDING PRINCIPLE: Use the winning structural frameworks above, but fill them ONLY with verified business facts. Never fabricate unlisted products, pricing, reviews, or claims.`);
   if (b.inbox?.length) lines.push(`Messages from teammates:\n${b.inbox.map((m) => `- ${m.from} (${m.kind}): ${m.subject}`).join('\n')}`);
   if (b.your_track_record) lines.push(`Your last 30 days: ${b.your_track_record.approved} approved, ${b.your_track_record.rejected} rejected${b.your_track_record.recently_rejected.length ? ` (rejected: ${b.your_track_record.recently_rejected.join('; ')})` : ''}.`);
   return lines.join('\n');

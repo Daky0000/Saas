@@ -89,6 +89,7 @@ import { authLimiter, passwordLimiter, idempotencyMiddleware } from './middlewar
 import { registerDakyworldOsRoutes } from './server/dakyworldOsRoutes.ts';
 import { registerSocialInboxRoutes } from './server/socialInboxRoutes.ts';
 import { registerClientApprovalAndWebhookRoutes, runDueAgentSchedules } from './server/clientApprovalRoutes.ts';
+import { registerAutopilotRoutes } from './server/autopilot/autopilotRoutes.ts';
 import { buildWorkflowEngine } from './server/workflowRoutes.ts';
 import { registerAIChatRoutes } from './server/aiChatRoutes.ts';
 import { registerMagnificRoutes, getMagnificApiKey, getFreepikApiKey, magnificPost, pollMagnificTask, magnificGenerateImage, freepikGenerateImage, MAGNIFIC_BASE, FREEPIK_BASE, ASPECT_TO_WH, MAGNIFIC_IMAGE_MODELS, MAGNIFIC_VIDEO_MODELS, ASPECT_RATIO_MAP, FREEPIK_IMAGE_MODELS, proxyHeaders, sanitizeMagnificError } from './server/magnificRoutes.ts';
@@ -159,7 +160,7 @@ import {
   getVisibleUserPlatformSlugs, formatSocialAccountLabel, getUserConnectedAccounts,
   OAUTH_AUTH_URLS, resolveOAuthRedirectUri, buildOAuthAuthorizeUrl, resolveInstagramAppConfig,
 } from './platform-helpers.ts';
-import { runDueDateAlerts, publishDuePosts, runTaskReminders } from './scheduler.ts';
+import { runDueDateAlerts, publishDuePosts, runTaskReminders, runWeeklyPostScans } from './scheduler.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -846,6 +847,9 @@ app.use('/api', registerSocialInboxRoutes({
   getPublishableSocialConnection, decryptIntegrationSecret,
 }));
 app.use('/api', registerClientApprovalAndWebhookRoutes({ requireAuth, getUserPlanName, pool: pool! }));
+const autopilotRouter = registerAutopilotRoutes({ requireAuth, requireAdmin, pool: pool!, hasDatabase, publishToplatform, createNotification });
+app.use('/api/v1', autopilotRouter);
+app.use('/api', autopilotRouter);
 
 // ─── AI Sales OS ──────────────────────────────────────────────────────────────
 // Built on the CRM contact rather than beside it: sales_lead_profiles hangs off
@@ -1034,6 +1038,9 @@ if (config.nodeEnv !== 'test') {
     // (checked hourly), five minutes after boot so startup stays light.
     setTimeout(() => void runDirectorCycle(runAgentForUser), 5 * 60 * 1000);
     setInterval(() => void runDirectorCycle(runAgentForUser), 60 * 60 * 1000);
+    // Regular weekly post performance scan across all platforms
+    setTimeout(() => void runWeeklyPostScans(), 10 * 60 * 1000);
+    setInterval(() => void runWeeklyPostScans(), 6 * 60 * 60 * 1000);
     // Run autonomous multi-agent schedules & handoffs every 10 minutes
     void runDueAgentSchedules(pool);
     setInterval(() => void runDueAgentSchedules(pool), 10 * 60 * 1000);

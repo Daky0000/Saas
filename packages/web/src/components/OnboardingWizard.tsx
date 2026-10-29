@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   Building2,
   CheckCircle2,
+  Compass,
   Globe,
   Loader2,
   Megaphone,
@@ -508,33 +508,42 @@ export default function OnboardingWizard({ user, onNavigate, onComplete, onDismi
         <h1 className="text-3xl font-black tracking-tight text-gray-900">Your AI team is briefed 🎉</h1>
         <p className="text-[15px] text-gray-500 leading-relaxed">
           {memoriesCreated > 0
-            ? `${memoriesCreated} brand ${memoriesCreated === 1 ? 'fact' : 'facts'} saved to your memory. Every agent now reads your brief before every task — refine it anytime on the Memory page.`
-            : 'Your workspace is ready. You can teach your AI team about your brand anytime on the Memory page.'}
+            ? `${memoriesCreated} verified brand ${memoriesCreated === 1 ? 'fact' : 'facts'} saved to memory. In the background, your AI team is scanning top accounts in your niche across your connected channels to discover what works and prepare your first posts.`
+            : 'Your workspace is ready. Your AI team is analyzing your niche and connected social channels to prepare your starter strategy.'}
         </p>
       </div>
       <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-center">
         <button
           type="button"
-          onClick={() => { onDismiss?.(); onNavigate('integrations'); }}
+          onClick={() => { onComplete?.(); onDismiss?.(); onNavigate('nova'); }}
           className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-[14px] font-bold text-white hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200"
         >
-          <Plug size={15} /> Connect a platform
+          <Sparkles size={15} /> View AI Team & Content
         </button>
         <button
           type="button"
-          onClick={() => onComplete?.()}
+          onClick={() => { onDismiss?.(); onNavigate('integrations'); }}
           className="flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-6 py-3 text-[14px] font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
         >
-          <Bot size={15} /> Take a quick tour
+          <Plug size={15} /> Connect more platforms
         </button>
       </div>
-      <button
-        type="button"
-        onClick={() => onDismiss?.()}
-        className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-      >
-        Go to dashboard
-      </button>
+      <div className="flex flex-col items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={() => { onComplete?.(); onDismiss?.(); onNavigate('dashboard'); }}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+        >
+          <Compass size={14} /> Start guided system tour
+        </button>
+        <button
+          type="button"
+          onClick={() => onDismiss?.()}
+          className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          Go to dashboard
+        </button>
+      </div>
     </div>
   );
 

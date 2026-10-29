@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { HelpCircle, X, ChevronRight } from 'lucide-react';
+import { HelpCircle, X, ChevronRight, Compass, Sparkles } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -12,6 +12,8 @@ export type TourStep = {
   illu?: string;
   cta?: string;
   action?: string;
+  badge?: string;
+  page?: string;
 };
 
 type Props = {
@@ -20,11 +22,21 @@ type Props = {
   pageKey?: string;
   forceStart?: boolean;
   onForceStartConsumed?: () => void;
+  onStartInteractiveTour?: () => void;
+  onStartSystemTour?: () => void;
 };
 
 // ── Main export ────────────────────────────────────────────────────────────────
 
-export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForceStartConsumed }: Props) {
+export default function PageTour({
+  steps,
+  pageTitle,
+  pageKey,
+  forceStart,
+  onForceStartConsumed,
+  onStartInteractiveTour,
+  onStartSystemTour,
+}: Props) {
   const storageKey = `tour_seen_${pageKey ?? pageTitle?.toLowerCase().replace(/\s+/g, '-') ?? 'page'}`;
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState(() => localStorage.getItem(storageKey) === '1');
@@ -43,11 +55,16 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
     onForceStartConsumed?.();
   }
 
-  // forceStart: open the panel (used after onboarding)
+  // forceStart: open the panel or interactive tour
   useEffect(() => {
     if (forceStart && steps.length > 0) {
-      const t = setTimeout(() => openPanel(), 300);
-      return () => clearTimeout(t);
+      if (onStartSystemTour) {
+        onStartSystemTour();
+        onForceStartConsumed?.();
+      } else {
+        const t = setTimeout(() => openPanel(), 300);
+        return () => clearTimeout(t);
+      }
     }
   }, [forceStart]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -78,6 +95,7 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
       {/* Floating ? button */}
       <button
         type="button"
+        data-tour-id="help-guide-button"
         onClick={openPanel}
         title={`Quick guide${pageTitle ? ` — ${pageTitle}` : ''}`}
         className="fixed bottom-6 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-white shadow-menu text-muted hover:text-blue hover:border-blue transition-all"
@@ -97,7 +115,7 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
           style={{
             bottom: 56,
             right: 20,
-            width: 320,
+            width: 340,
             background: '#fff',
             borderRadius: 16,
             border: '1px solid #E3E6EB',
@@ -125,8 +143,45 @@ export default function PageTour({ steps, pageTitle, pageKey, forceStart, onForc
             </button>
           </div>
 
+          {/* Interactive Walkthrough Action Banners */}
+          <div style={{ padding: '10px 14px', background: '#F8FAFC', borderBottom: '1px solid #E3E6EB', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {onStartInteractiveTour && (
+              <button
+                type="button"
+                onClick={() => {
+                  closePanel();
+                  onStartInteractiveTour();
+                }}
+                className="flex items-center justify-between w-full rounded-xl bg-blue px-3 py-2 text-left text-xs font-semibold text-white shadow-sm hover:bg-blue-600 transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Sparkles size={13} />
+                  Start {pageTitle || 'Page'} Interactive Tour
+                </span>
+                <ChevronRight size={13} />
+              </button>
+            )}
+
+            {onStartSystemTour && (
+              <button
+                type="button"
+                onClick={() => {
+                  closePanel();
+                  onStartSystemTour();
+                }}
+                className="flex items-center justify-between w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Compass size={13} className="text-blue" />
+                  Take Full System Tour
+                </span>
+                <ChevronRight size={13} className="text-slate-400" />
+              </button>
+            )}
+          </div>
+
           {/* Steps list */}
-          <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+          <div style={{ maxHeight: 290, overflowY: 'auto' }}>
             {steps.map((step, i) => (
               <div
                 key={i}
@@ -190,19 +245,20 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   dashboard: {
     title: 'Dashboard',
     steps: [
-      { emoji: '🏠', title: 'Your command centre', description: 'The dashboard shows your key stats, scheduled posts, upcoming tasks, and live activity from your AI agent team.' },
-      { emoji: '📊', title: 'Stats at a glance', description: 'The top row shows your total posts, scheduled items, and connected social accounts. Click any card to drill in.' },
-      { emoji: '🤖', title: 'Agent activity feed', description: 'The right column shows what your agents (Nova, Sage, Aria, Flux) are learning and doing for your brand in real time.' },
-      { emoji: '💬', title: 'Chat with Daky', description: 'Click the chat bubble in the bottom-right to open your AI marketing butler. Ask anything — content ideas, strategies, analytics.' },
+      { emoji: '🏠', title: 'Your command centre', description: 'The dashboard shows your key stats, scheduled posts, upcoming tasks, and live activity from your AI agent team.', target: '[data-tour-id="nav-dashboard"]', placement: 'right' },
+      { emoji: '📊', title: 'Stats at a glance', description: 'The top row shows your total posts, scheduled items, and connected social accounts. Click any card to drill in.', target: '[data-tour-id="dashboard-stats"]', placement: 'bottom' },
+      { emoji: '🤖', title: 'Agent activity feed', description: 'The right column shows what your agents (Nova, Sage, Aria, Flux) are learning and doing for your brand in real time.', target: '[data-tour-id="dashboard-agent-activity"]', placement: 'left' },
+      { emoji: '⚡', title: 'Quick Action Shortcuts', description: 'One-click shortcuts to compose a new post, launch the visual studio, brainstorm fresh angles, or import leads.', target: '[data-tour-id="dashboard-quick-actions"]', placement: 'top' },
+      { emoji: '💬', title: 'Chat with Daky', description: 'Click the chat bubble in the bottom-right to open your AI marketing butler. Ask anything — content ideas, strategies, analytics.', target: '[data-tour-id="chat-widget-button"]', placement: 'left' },
     ],
   },
   posts: {
     title: 'Posts',
     steps: [
-      { emoji: '✍️', title: 'Create your first post', description: 'Click "Add Post" to open the editor. Write your content, add images, and choose which social accounts to publish to.' },
-      { emoji: '📅', title: 'Your post library', description: 'All your posts appear here — draft, scheduled, published, and archived. Click any post to edit or reschedule it.' },
+      { emoji: '✍️', title: 'Create your first post', description: 'Click "Add Post" to open the editor. Write your content, add images, and choose which social accounts to publish to.', target: '[data-tour-id="btn-new-post"]', placement: 'bottom' },
+      { emoji: '📅', title: 'Your post library', description: 'All your posts appear here — draft, scheduled, published, and archived. Click any post to edit or reschedule it.', target: '[data-tour-id="posts-list"]', placement: 'top' },
       { emoji: '🔄', title: 'Platform previews', description: 'Each platform has character limits and format rules. The editor shows a live preview per platform.' },
-      { emoji: '🤖', title: 'AI-assisted writing', description: 'Open the Daky chat and say "Write me a LinkedIn post about X" — the AI will create a draft you can edit and schedule.' },
+      { emoji: '🤖', title: 'AI-assisted writing', description: 'Open the Daky chat and say "Write me a LinkedIn post about X" — the AI will create a draft you can edit and schedule.', target: '[data-tour-id="chat-widget-button"]', placement: 'left' },
     ],
   },
   tasks: {
@@ -217,16 +273,16 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   memory: {
     title: 'Memory',
     steps: [
-      { emoji: '🧠', title: 'Your brand memory', description: 'Memory items are facts about your brand that all agents read before every response. The more you add, the better the advice.' },
+      { emoji: '🧠', title: 'Your brand memory', description: 'Memory items are facts about your brand that all agents read before every response. The more you add, the better the advice.', target: '[data-tour-id="memory-categories"]', placement: 'top' },
       { emoji: '➕', title: 'Add a memory item', description: 'Click the "Add" button inside any category to write anything relevant — niche, audience, tone of voice, key products.' },
-      { emoji: '🤖', title: 'AI-generated memory', description: 'Click "Generate with AI" to let Daky ask you questions and automatically fill in your brand profile.' },
+      { emoji: '🤖', title: 'AI-generated memory', description: 'Click "Generate with AI" to let Daky ask you questions and automatically fill in your brand profile.', target: '[data-tour-id="btn-generate-memory"]', placement: 'bottom' },
       { emoji: '⚡', title: 'Agent compilation', description: 'Every time you save a memory item, all 5 agents automatically recompile — so the next chat is already smarter.' },
     ],
   },
   integrations: {
     title: 'Integrations',
     steps: [
-      { emoji: '🔌', title: 'Connect your socials', description: 'Connect Twitter/X, Instagram, LinkedIn, Facebook, and more. Each connection enables scheduling and AI insights for that platform.' },
+      { emoji: '🔌', title: 'Connect your socials', description: 'Connect Twitter/X, Instagram, LinkedIn, Facebook, and more. Each connection enables scheduling and AI insights for that platform.', target: '[data-tour-id="integrations-cards"]', placement: 'top' },
       { emoji: '🔐', title: 'OAuth login', description: "Clicking \"Connect\" opens a secure OAuth flow. You approve access — no passwords are stored." },
       { emoji: '🧠', title: 'Auto memory', description: 'On first connection, your profile (handle, follower count, bio) is automatically saved to Memory so agents know your social presence.' },
       { emoji: '♻️', title: 'Refresh tokens', description: 'Tokens expire over time. If a platform shows "Reconnect", click it to refresh without losing settings.' },
@@ -235,9 +291,9 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   analytics: {
     title: 'Analytics',
     steps: [
-      { emoji: '📈', title: 'Performance overview', description: 'View publishing trends, engagement metrics, and growth data across all your connected social accounts in one place.' },
-      { emoji: '📆', title: 'Date range filter', description: 'Use the date picker to compare performance across different time periods — last 7 days, last month, or a custom range.' },
-      { emoji: '🤖', title: 'Ask Aria', description: 'Open the Daky chat and ask "What do my analytics say?" — Aria will interpret your numbers and suggest improvements.' },
+      { emoji: '📈', title: 'Performance overview', description: 'View publishing trends, engagement metrics, and growth data across all your connected social accounts in one place.', target: '[data-tour-id="analytics-stats"]', placement: 'bottom' },
+      { emoji: '📆', title: 'Date range filter', description: 'Use the date picker to compare performance across different time periods — last 7 days, last month, or a custom range.', target: '[data-tour-id="analytics-filters"]', placement: 'bottom' },
+      { emoji: '🤖', title: 'Ask Aria', description: 'Open the Daky chat and ask "What do my analytics say?" — Aria will interpret your numbers and suggest improvements.', target: '[data-tour-id="chat-widget-button"]', placement: 'left' },
     ],
   },
   cards: {
@@ -259,14 +315,14 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   'marketing-contacts': {
     title: 'Contacts',
     steps: [
-      { emoji: '👥', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.' },
+      { emoji: '👥', title: 'Contact management', description: 'Import contacts via CSV or add them manually. Segment your list with tags to target specific groups.', target: '[data-tour-id="mailing-contacts"]', placement: 'top' },
       { emoji: '🏷️', title: 'Segments', description: 'Group contacts by shared properties to send targeted campaigns.' },
     ],
   },
   'marketing-email': {
     title: 'Email Marketing',
     steps: [
-      { emoji: '📧', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write content in the rich-text editor or use AI to generate copy.' },
+      { emoji: '📧', title: 'Email campaigns', description: 'Create and send email campaigns to your subscriber list. Write content in the rich-text editor or use AI to generate copy.', target: '[data-tour-id="btn-new-email"]', placement: 'bottom' },
       { emoji: '⚡', title: 'Automations', description: 'Set up trigger-based email sequences — welcome emails on signup, re-engagement on inactivity, and more.' },
       { emoji: '📊', title: 'Analytics', description: 'Track open rates, click rates, and unsubscribes directly in the analytics tab.' },
     ],
@@ -274,8 +330,8 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   'marketing-campaigns': {
     title: 'Campaigns',
     steps: [
-      { emoji: '🎯', title: 'Multi-channel campaigns', description: 'Group posts, emails, and paid ads under one campaign goal.' },
-      { emoji: '➕', title: 'Create a campaign', description: 'Click "New Campaign", set a goal, add channels, and generate UTM tracking links.' },
+      { emoji: '➕', title: 'Create a campaign', description: 'Click "New Campaign", set a goal, add channels, and generate UTM tracking links.', target: '[data-tour-id="btn-new-campaign"]', placement: 'bottom' },
+      { emoji: '🎯', title: 'Multi-channel campaigns', description: 'Group posts, emails, and paid ads under one campaign goal.', target: '[data-tour-id="campaigns-list"]', placement: 'top' },
       { emoji: '📌', title: 'Track performance', description: 'The Performance tab shows clicks by source, conversion rates, and funnel drop-off.' },
     ],
   },
@@ -300,17 +356,17 @@ export const PAGE_GUIDES: Record<string, { title: string; steps: TourStep[] }> =
   admin: {
     title: 'Admin',
     steps: [
-      { emoji: '🧑‍🤝‍🧑', title: 'User Management', description: 'View all registered users, their plans, and last active dates. Promote users to admin or suspend accounts.' },
-      { emoji: '💳', title: 'Billing & Subscriptions', description: 'See MRR, ARR, active subscriptions, and recent transactions. Drill into individual payments.' },
-      { emoji: '🤖', title: 'AI Configuration', description: 'Set your Anthropic or Google Gemini API key, choose the model, and customise the Daky system prompt.' },
+      { emoji: '🧑‍🤝‍🧑', title: 'User Management', description: 'View all registered users, their plans, and last active dates. Promote users to admin or suspend accounts.', target: '[data-tour-id="admin-tab-users"]', placement: 'right' },
+      { emoji: '💳', title: 'Billing & Subscriptions', description: 'See MRR, ARR, active subscriptions, and recent transactions. Drill into individual payments.', target: '[data-tour-id="admin-tab-billing"]', placement: 'right' },
+      { emoji: '🤖', title: 'AI Configuration', description: 'Set your Anthropic or Google Gemini API key, choose the model, and customise the Daky system prompt.', target: '[data-tour-id="admin-accordion-ai"]', placement: 'bottom' },
       { emoji: '🎓', title: 'Daky Learn', description: 'Add article and video URLs for Daky to extract marketing insights from and compile into AI skills.' },
     ],
   },
   billing: {
     title: 'Billing',
     steps: [
-      { emoji: '💳', title: 'Your current plan', description: 'This card shows your active subscription, next billing date, and usage for the current period.' },
-      { emoji: '⬆️', title: 'Upgrade', description: 'Click "Upgrade plan" to move to a higher tier and unlock more posts, agents, team seats, and analytics.' },
+      { emoji: '💳', title: 'Your current plan', description: 'This card shows your active subscription, next billing date, and usage for the current period.', target: '[data-tour-id="billing-plan-card"]', placement: 'bottom' },
+      { emoji: '⬆️', title: 'Upgrade', description: 'Click "Upgrade plan" to move to a higher tier and unlock more posts, agents, team seats, and analytics.', target: '[data-tour-id="btn-upgrade"]', placement: 'bottom' },
       { emoji: '🔄', title: 'Manage subscription', description: 'Cancel, pause, or change your plan at any time. Changes take effect at the end of your current billing period.' },
     ],
   },

@@ -5160,4 +5160,395 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
     );
     CREATE INDEX IF NOT EXISTS niche_research_user_idx ON niche_research(user_id, created_at DESC);
   `).catch(() => undefined);
+
+  await pool.query(`
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'not_required';
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS post_format TEXT NOT NULL DEFAULT 'blog';
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS media_assets JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS video_url TEXT;
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+    ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS autopilot_item_id TEXT;
+  `).catch(() => undefined);
+
+  await pool.query(`
+    ALTER TABLE client_approval_links DROP CONSTRAINT IF EXISTS client_approval_links_resource_type_check;
+    ALTER TABLE client_approval_links ADD CONSTRAINT client_approval_links_resource_type_check
+      CHECK (resource_type IN ('post', 'card', 'campaign', 'autopilot_item', 'autopilot_batch'));
+  `).catch(() => undefined);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS autopilot_business_profiles (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL UNIQUE,
+      org_id UUID,
+      project_id UUID,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      business_name TEXT NOT NULL DEFAULT '',
+      website_url TEXT NOT NULL DEFAULT '',
+      industry TEXT NOT NULL DEFAULT '',
+      niche TEXT NOT NULL DEFAULT '',
+      business_model TEXT NOT NULL DEFAULT 'B2B',
+      primary_offer TEXT NOT NULL DEFAULT '',
+      price_range TEXT NOT NULL DEFAULT '',
+      geography TEXT[] NOT NULL DEFAULT '{}',
+      languages TEXT[] NOT NULL DEFAULT '{en}',
+      audiences JSONB NOT NULL DEFAULT '[]'::jsonb,
+      funnel_stage TEXT NOT NULL DEFAULT 'full_funnel',
+      primary_objective TEXT NOT NULL DEFAULT 'awareness',
+      secondary_objectives TEXT[] NOT NULL DEFAULT '{}',
+      success_metric TEXT NOT NULL DEFAULT '',
+      sales_cycle TEXT NOT NULL DEFAULT 'medium',
+      conversion_path TEXT NOT NULL DEFAULT '',
+      available_proof JSONB NOT NULL DEFAULT '[]'::jsonb,
+      capacity JSONB NOT NULL DEFAULT '{}'::jsonb,
+      channels JSONB NOT NULL DEFAULT '{}'::jsonb,
+      risk_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
+      schedule_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      onboarding_step INT NOT NULL DEFAULT 1,
+      onboarding_completed BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_business_profiles_tenant_idx ON autopilot_business_profiles(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS autopilot_brand_profiles (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL UNIQUE,
+      org_id UUID,
+      project_id UUID,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      brand_name TEXT NOT NULL DEFAULT '',
+      current_version INT NOT NULL DEFAULT 1,
+      source JSONB NOT NULL DEFAULT '{}'::jsonb,
+      identity JSONB NOT NULL DEFAULT '{}'::jsonb,
+      visual JSONB NOT NULL DEFAULT '{}'::jsonb,
+      voice JSONB NOT NULL DEFAULT '{}'::jsonb,
+      content_rules JSONB NOT NULL DEFAULT '{}'::jsonb,
+      approval_status TEXT NOT NULL DEFAULT 'needs_review',
+      approved_by TEXT,
+      approved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_brand_profiles_tenant_idx ON autopilot_brand_profiles(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS autopilot_brand_versions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      brand_profile_id UUID NOT NULL REFERENCES autopilot_brand_profiles(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL,
+      version INT NOT NULL,
+      snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      change_rationale TEXT NOT NULL DEFAULT '',
+      approved_by TEXT,
+      approved_at TIMESTAMPTZ,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(brand_profile_id, version)
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_brand_versions_tenant_idx ON autopilot_brand_versions(tenant_id, version DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_brand_tokens (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      brand_profile_id UUID NOT NULL REFERENCES autopilot_brand_profiles(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      value JSONB NOT NULL,
+      category TEXT NOT NULL,
+      sub_type TEXT NOT NULL DEFAULT '',
+      source_url TEXT,
+      source_type TEXT NOT NULL DEFAULT 'customer_entered',
+      confidence NUMERIC(4,3) NOT NULL DEFAULT 1.000,
+      rights_confirmed BOOLEAN NOT NULL DEFAULT true,
+      approval_status TEXT NOT NULL DEFAULT 'candidate',
+      version INT NOT NULL DEFAULT 1,
+      notes TEXT NOT NULL DEFAULT '',
+      allowed_contexts TEXT[] NOT NULL DEFAULT '{}',
+      last_verified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_brand_tokens_tenant_idx ON autopilot_brand_tokens(tenant_id, category, approval_status);
+
+    CREATE TABLE IF NOT EXISTS autopilot_brand_assets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      brand_profile_id UUID NOT NULL REFERENCES autopilot_brand_profiles(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL,
+      asset_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      mime_type TEXT NOT NULL DEFAULT '',
+      variant TEXT NOT NULL DEFAULT 'master',
+      rights_confirmed BOOLEAN NOT NULL DEFAULT false,
+      consented_likeness BOOLEAN NOT NULL DEFAULT false,
+      usage_rules JSONB NOT NULL DEFAULT '{}'::jsonb,
+      approval_status TEXT NOT NULL DEFAULT 'needs_review',
+      uploaded_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_brand_assets_tenant_idx ON autopilot_brand_assets(tenant_id, asset_type);
+
+    CREATE TABLE IF NOT EXISTS autopilot_strategies (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      org_id UUID,
+      project_id UUID,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT 'Primary Strategy',
+      current_version INT NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      objective JSONB NOT NULL DEFAULT '{}'::jsonb,
+      audiences JSONB NOT NULL DEFAULT '[]'::jsonb,
+      positioning JSONB NOT NULL DEFAULT '{}'::jsonb,
+      channels JSONB NOT NULL DEFAULT '[]'::jsonb,
+      pillars JSONB NOT NULL DEFAULT '[]'::jsonb,
+      funnel_mix JSONB NOT NULL DEFAULT '{}'::jsonb,
+      cadence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      campaigns JSONB NOT NULL DEFAULT '[]'::jsonb,
+      cta_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      proof_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      risk_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      measurement JSONB NOT NULL DEFAULT '{}'::jsonb,
+      assumptions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      follow_up_questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      rationale TEXT NOT NULL DEFAULT '',
+      approved_by TEXT,
+      approved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_strategies_tenant_idx ON autopilot_strategies(tenant_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_strategy_versions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      strategy_id UUID NOT NULL REFERENCES autopilot_strategies(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL,
+      version INT NOT NULL,
+      snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      change_rationale TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(strategy_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS autopilot_content_items (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      org_id UUID,
+      project_id UUID,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      strategy_id UUID REFERENCES autopilot_strategies(id) ON DELETE SET NULL,
+      strategy_version INT,
+      brand_profile_id UUID REFERENCES autopilot_brand_profiles(id) ON DELETE SET NULL,
+      brand_version INT,
+      campaign_name TEXT NOT NULL DEFAULT '',
+      pillar_id TEXT NOT NULL DEFAULT '',
+      pillar_name TEXT NOT NULL DEFAULT '',
+      funnel_stage TEXT NOT NULL DEFAULT 'awareness',
+      title TEXT NOT NULL DEFAULT '',
+      hook TEXT NOT NULL DEFAULT '',
+      caption TEXT NOT NULL DEFAULT '',
+      channel_variants JSONB NOT NULL DEFAULT '{}'::jsonb,
+      format TEXT NOT NULL DEFAULT 'static_graphic',
+      workflow_type TEXT NOT NULL DEFAULT 'branded_social_graphic',
+      target_channels TEXT[] NOT NULL DEFAULT '{}',
+      lifecycle_state TEXT NOT NULL DEFAULT 'idea',
+      approval_required BOOLEAN NOT NULL DEFAULT true,
+      risk_flags TEXT[] NOT NULL DEFAULT '{}',
+      validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
+      media_assets JSONB NOT NULL DEFAULT '[]'::jsonb,
+      deterministic_overlay JSONB NOT NULL DEFAULT '{}'::jsonb,
+      slides JSONB NOT NULL DEFAULT '[]'::jsonb,
+      storyboard JSONB NOT NULL DEFAULT '[]'::jsonb,
+      alt_text TEXT NOT NULL DEFAULT '',
+      disclosures TEXT[] NOT NULL DEFAULT '{}',
+      scheduled_slot JSONB,
+      linked_blog_post_id TEXT,
+      version INT NOT NULL DEFAULT 1,
+      created_by TEXT NOT NULL,
+      approved_by TEXT,
+      approved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_content_items_tenant_idx ON autopilot_content_items(tenant_id, lifecycle_state, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_creative_briefs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      content_item_id UUID NOT NULL UNIQUE REFERENCES autopilot_content_items(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL,
+      objective TEXT NOT NULL DEFAULT '',
+      target_audience TEXT NOT NULL DEFAULT '',
+      channel TEXT NOT NULL DEFAULT 'instagram',
+      placement TEXT NOT NULL DEFAULT 'FEED_POST',
+      aspect_ratio TEXT NOT NULL DEFAULT '4:5',
+      safe_areas JSONB NOT NULL DEFAULT '{}'::jsonb,
+      hook_message TEXT NOT NULL DEFAULT '',
+      intended_takeaway TEXT NOT NULL DEFAULT '',
+      cta TEXT NOT NULL DEFAULT '',
+      destination_url TEXT NOT NULL DEFAULT '',
+      brand_profile_id UUID,
+      brand_version INT NOT NULL DEFAULT 1,
+      creative_mode TEXT NOT NULL DEFAULT 'brand_inspired',
+      controls JSONB NOT NULL DEFAULT '{}'::jsonb,
+      reference_asset_ids TEXT[] NOT NULL DEFAULT '{}',
+      permitted_claims TEXT[] NOT NULL DEFAULT '{}',
+      evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+      selected_provider TEXT NOT NULL DEFAULT '',
+      selected_model TEXT NOT NULL DEFAULT '',
+      estimated_provider_cost_usd NUMERIC(10,4) NOT NULL DEFAULT 0,
+      estimated_credits INT NOT NULL DEFAULT 0,
+      spend_limit_usd NUMERIC(10,4) NOT NULL DEFAULT 5.0000,
+      credit_ceiling INT NOT NULL DEFAULT 100,
+      max_attempts INT NOT NULL DEFAULT 3,
+      review_criteria TEXT[] NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_creative_briefs_tenant_idx ON autopilot_creative_briefs(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS autopilot_workflow_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      content_item_id UUID NOT NULL REFERENCES autopilot_content_items(id) ON DELETE CASCADE,
+      workflow_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
+      node_executions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      estimated_provider_cost_usd NUMERIC(10,4) NOT NULL DEFAULT 0,
+      actual_provider_cost_usd NUMERIC(10,4) NOT NULL DEFAULT 0,
+      estimated_credits INT NOT NULL DEFAULT 0,
+      actual_credits INT NOT NULL DEFAULT 0,
+      attempt_number INT NOT NULL DEFAULT 1,
+      failure_reason TEXT,
+      provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_workflow_runs_tenant_idx ON autopilot_workflow_runs(tenant_id, content_item_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_approval_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      content_item_id UUID NOT NULL REFERENCES autopilot_content_items(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      from_state TEXT NOT NULL,
+      to_state TEXT NOT NULL,
+      actor_user_id TEXT,
+      actor_name TEXT NOT NULL DEFAULT '',
+      actor_role TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_approval_events_tenant_idx ON autopilot_approval_events(tenant_id, content_item_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_publications (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      content_item_id UUID NOT NULL REFERENCES autopilot_content_items(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      social_account_id TEXT,
+      platform_media_type TEXT NOT NULL DEFAULT 'FEED_POST',
+      slot_name TEXT NOT NULL DEFAULT '',
+      timezone TEXT NOT NULL DEFAULT 'UTC',
+      scheduled_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'pending',
+      remote_post_id TEXT,
+      error_message TEXT,
+      retryable BOOLEAN NOT NULL DEFAULT false,
+      published_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_publications_tenant_idx ON autopilot_publications(tenant_id, status, scheduled_at);
+
+    CREATE TABLE IF NOT EXISTS autopilot_publication_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      publication_id UUID NOT NULL REFERENCES autopilot_publications(id) ON DELETE CASCADE,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      attempt_number INT NOT NULL DEFAULT 1,
+      status TEXT NOT NULL,
+      request_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      response_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error_message TEXT,
+      retryable BOOLEAN NOT NULL DEFAULT false,
+      next_retry_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_pub_attempts_pub_idx ON autopilot_publication_attempts(publication_id, attempt_number DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_channel_metrics (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      content_item_id UUID REFERENCES autopilot_content_items(id) ON DELETE SET NULL,
+      publication_id UUID REFERENCES autopilot_publications(id) ON DELETE SET NULL,
+      channel TEXT NOT NULL,
+      objective TEXT NOT NULL DEFAULT 'awareness',
+      pillar_name TEXT NOT NULL DEFAULT '',
+      format TEXT NOT NULL DEFAULT '',
+      metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+      window_start TIMESTAMPTZ,
+      window_end TIMESTAMPTZ,
+      source TEXT NOT NULL DEFAULT 'platform_api',
+      collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_channel_metrics_tenant_idx ON autopilot_channel_metrics(tenant_id, channel, collected_at DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_experiments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      strategy_id UUID REFERENCES autopilot_strategies(id) ON DELETE SET NULL,
+      hypothesis TEXT NOT NULL,
+      variable_changed TEXT NOT NULL,
+      control_variant JSONB NOT NULL DEFAULT '{}'::jsonb,
+      test_variant JSONB NOT NULL DEFAULT '{}'::jsonb,
+      channel TEXT NOT NULL DEFAULT '',
+      audience_segment TEXT NOT NULL DEFAULT '',
+      primary_metric TEXT NOT NULL,
+      min_sample_size INT NOT NULL DEFAULT 6,
+      current_sample_size INT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      started_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_experiments_tenant_idx ON autopilot_experiments(tenant_id, status);
+
+    CREATE TABLE IF NOT EXISTS autopilot_recommendations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      strategy_id UUID REFERENCES autopilot_strategies(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      sample_size INT NOT NULL DEFAULT 0,
+      confidence NUMERIC(4,3) NOT NULL DEFAULT 0,
+      proposed_patch JSONB NOT NULL DEFAULT '{}'::jsonb,
+      attribution_note TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_by TEXT,
+      decided_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_recommendations_tenant_idx ON autopilot_recommendations(tenant_id, status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS autopilot_audit_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      actor_user_id TEXT,
+      actor_role TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS autopilot_audit_events_tenant_idx ON autopilot_audit_events(tenant_id, created_at DESC);
+  `).catch(() => undefined);
 }

@@ -726,9 +726,16 @@ async function runTokenHealthScan(): Promise<{ refreshed: number; flagged: numbe
     const platformId = normalizePlatformId(String(row.platform));
     const userId = String(row.user_id || '');
     const tokenData = row.token_data && typeof row.token_data === 'object' ? row.token_data : {};
+    let hasFbAppCredentials = Boolean(process.env.VITE_FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET);
+    if (platformId === 'instagram' && !hasFbAppCredentials) {
+      const igCfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
+      const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+      hasFbAppCredentials = Boolean((igCfg.appId || fbCfg.appId) && (igCfg.appSecret || fbCfg.appSecret));
+    }
     const mode = getRefreshMode(platformId, {
       hasRefreshToken: Boolean(row.has_refresh),
       isInstagramDirect: platformId === 'instagram' && isInstagramDirectLogin({ tokenData }),
+      hasFbAppCredentials,
     });
     if (mode === 'none') {
       if (!row.needs_reapproval) {
@@ -1114,9 +1121,16 @@ async function getPublishableSocialConnection(
   const isExpired = Number.isFinite(expiresAtMs) && expiresAtMs <= now;
   const hasUsableToken = Boolean(accessToken) && !isExpired;
   const flaggedReason = String(match?.token_data?.reason || '').trim().toLowerCase();
+  let hasFbAppCredentials = Boolean(process.env.VITE_FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET);
+  if (platformId === 'instagram' && !hasFbAppCredentials) {
+    const igCfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
+    const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+    hasFbAppCredentials = Boolean((igCfg.appId || fbCfg.appId) && (igCfg.appSecret || fbCfg.appSecret));
+  }
   const refreshMode = getRefreshMode(platformId, {
     hasRefreshToken: Boolean(refreshToken),
     isInstagramDirect: platformId === 'instagram' && isInstagramDirectLogin({ accessToken, tokenData }),
+    hasFbAppCredentials,
   });
 
   // A hard flag (revoked, undecryptable, expired refresh token) waits for the
@@ -1190,6 +1204,18 @@ async function getPublishableSocialConnection(
         refreshed = await refreshThreadsAccessToken(accessToken);
       } else if (platformId === 'instagram' && refreshMode === 'instagram_access_token') {
         refreshed = await refreshInstagramAccessToken(accessToken);
+      } else if (platformId === 'instagram' && refreshMode === 'instagram_fb_exchange') {
+        const igCfg = await getPlatformConfig('instagram').catch(() => ({} as Record<string, string>));
+        const fbCfg = await getPlatformConfig('facebook').catch(() => ({} as Record<string, string>));
+        const appId = String(igCfg.appId || fbCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim();
+        const appSecret = String(igCfg.appSecret || fbCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim();
+        if (appId && appSecret) {
+          const fbRes = await instagramBusinessPlatform.refreshToken({ accessToken, helpers: { appId, appSecret } } as any);
+          if (fbRes?.accessToken) {
+            const ttlSec = fbRes.expiresAt ? Math.max(60, Math.round((fbRes.expiresAt.getTime() - Date.now()) / 1000)) : 5184000;
+            refreshed = { access_token: fbRes.accessToken, expires_in: ttlSec };
+          }
+        }
       } else if (platformId === 'twitter') {
         refreshed = await refreshTwitterAccessToken(refreshToken);
       } else if (platformId === 'linkedin') {
@@ -1554,10 +1580,21 @@ async function processSocialAutomationTaskById(taskId: string, attemptNumber: nu
       [postId, userId]
     );
     if (!postRows.rows.length) throw new Error('Post not found');
+    const postRow = postRows.rows[0];
+    if (['pending', 'review_required', 'rejected', 'needs_changes'].includes(String(postRow.approval_status || ''))) {
+      await pool.query(
+        `UPDATE social_automation_tasks SET status='cancelled', last_error='Blocked: post requires approval before publishing', updated_at=NOW() WHERE id=$1`,
+        [taskId]
+      ).catch(() => undefined);
+      return;
+    }
 
-    const result = await publishToplatform(userId, postRows.rows[0], platform, {
+    const result = await publishToplatform(userId, postRow, platform, {
       template,
       destination,
+      mediaType: payload?.mediaType || undefined,
+      mediaAssets: Array.isArray(payload?.mediaAssets) ? payload.mediaAssets : undefined,
+      captionOverride: payload?.captionOverride ? String(payload.captionOverride) : undefined,
     });
 
     if (result.status === 'failed' && result.retryable && attemptNumber < maxAttempts) {
@@ -2023,7 +2060,13 @@ async function publishToplatform(
   userId: string,
   post: Record<string, any>,
   platform: string,
-  options?: { template?: string; destination?: any }
+  options?: {
+    template?: string;
+    destination?: any;
+    mediaType?: 'FEED_POST' | 'CAROUSEL' | 'REEL' | 'STORY';
+    mediaAssets?: Array<{ url: string; type?: 'image' | 'video'; alt_text?: string }>;
+    captionOverride?: string;
+  }
 ): Promise<{ status: string; platformPostId?: string; error?: string; retryable?: boolean }> {
   try {
     const platformId = normalizePlatformId(platform);
@@ -2139,20 +2182,72 @@ async function publishToplatform(
     if (platformId === 'instagram') {
       const igUserId = String(conn.account_id || '').trim();
       if (!igUserId) {
-        return { status: 'failed', error: 'Instagram is not connected. Select an Instagram Business account under Integrations -> Instagram.' };
-      }
-      if (!featuredImage || !/^https?:\/\//i.test(featuredImage)) {
-        return { status: 'failed', error: 'Instagram publishing requires a public image URL. Set a featured image first.' };
+        return { status: 'failed', error: 'Instagram is not connected. Select an Instagram Business account under Integrations -> Instagram.', retryable: false };
       }
 
+      const requestedFormatRaw = String(options?.mediaType || post.post_format || 'FEED_POST').toUpperCase();
+      const igFormat: 'FEED_POST' | 'CAROUSEL' | 'REEL' | 'STORY' =
+        requestedFormatRaw === 'CAROUSEL' ? 'CAROUSEL'
+        : (requestedFormatRaw === 'REEL' || requestedFormatRaw === 'REELS' || requestedFormatRaw === 'SHORT_VIDEO') ? 'REEL'
+        : (requestedFormatRaw === 'STORY' || requestedFormatRaw === 'STORIES') ? 'STORY'
+        : 'FEED_POST';
+
+      const rawAssets: Array<{ url: string; type?: 'image' | 'video' }> = Array.isArray(options?.mediaAssets) && options!.mediaAssets!.length > 0
+        ? options!.mediaAssets!
+        : Array.isArray(post.media_assets) && post.media_assets.length > 0
+          ? post.media_assets
+          : [];
+
+      const normalizedMedia: Array<{ url: string; type: 'image' | 'video' }> = [];
+      for (const item of rawAssets) {
+        const u = String(item?.url || '').trim();
+        if (!u) continue;
+        const isVid = item?.type === 'video' || /\.(mp4|mov|m4v)(\?|$)/i.test(u);
+        normalizedMedia.push({ url: u, type: isVid ? 'video' : 'image' });
+      }
+
+      if (normalizedMedia.length === 0) {
+        const videoCandidate = String(post.video_url || '').trim();
+        if ((igFormat === 'REEL' || igFormat === 'STORY') && videoCandidate) {
+          normalizedMedia.push({ url: videoCandidate, type: 'video' });
+        } else if (featuredImage) {
+          normalizedMedia.push({ url: featuredImage, type: /\.(mp4|mov|m4v)(\?|$)/i.test(featuredImage) ? 'video' : 'image' });
+        }
+      }
+
+      if (normalizedMedia.length === 0 || normalizedMedia.some((m) => !/^https?:\/\//i.test(m.url))) {
+        return {
+          status: 'failed',
+          error: `Instagram ${igFormat} publishing requires public HTTP(S) media URLs. Ensure media is uploaded and publicly fetchable.`,
+          retryable: false,
+        };
+      }
+
+      if (igFormat === 'CAROUSEL' && (normalizedMedia.length < 2 || normalizedMedia.length > 10)) {
+        return {
+          status: 'failed',
+          error: `Instagram CAROUSEL requires between 2 and 10 media items (received ${normalizedMedia.length}).`,
+          retryable: false,
+        };
+      }
+
+      if (igFormat === 'REEL' && normalizedMedia[0].type !== 'video') {
+        return {
+          status: 'failed',
+          error: 'Instagram REEL publishing requires a public MP4/MOV video URL.',
+          retryable: false,
+        };
+      }
+
+      const finalCaption = (options?.captionOverride ? String(options.captionOverride) : text).trim().slice(0, maxLen);
       const instagramPost: PostObject = {
-        type: 'FEED_POST',
-        content: { text },
-        media: [{ url: featuredImage, type: 'image' }],
+        type: igFormat,
+        content: { text: finalCaption },
+        media: igFormat === 'CAROUSEL' ? normalizedMedia.slice(0, 10) : [normalizedMedia[0]],
       };
       const validation = instagramBusinessPlatform.validate(instagramPost);
       if (!validation.ok) {
-        return { status: 'failed', error: validation.error };
+        return { status: 'failed', error: validation.error, retryable: false };
       }
 
       await acquirePlatformSlot('instagram');
@@ -2179,6 +2274,8 @@ async function publishToplatform(
           status: 'success',
           response: {
             platformPostId: result.platformPostId || null,
+            mediaType: igFormat,
+            mediaCount: instagramPost.media?.length ?? 1,
             instagramId: conn.account_id || null,
             pageId: token_data?.pageId || null,
           },

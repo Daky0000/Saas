@@ -1150,6 +1150,7 @@ export default function ChatWidget() {
       {/* Floating button */}
       <button
         type="button"
+        data-tour-id="chat-widget-button"
         onClick={() => setOpen((v) => !v)}
         className="fixed bottom-6 right-6 z-50 flex items-center justify-center rounded-[14px] bg-navy text-white shadow-menu transition-all hover:bg-blue focus:outline-none"
         style={{ width: 48, height: 48 }}

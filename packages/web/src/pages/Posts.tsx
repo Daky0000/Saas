@@ -1027,6 +1027,19 @@ function PostEditor({
 
   useEffect(() => { setLocalCategories(categories); }, [categories]);
   useEffect(() => { setLocalTags(tags); }, [tags]);
+  useEffect(() => {
+    if (postId) return;
+    try {
+      const raw = localStorage.getItem('contentflow_prefill_post');
+      if (!raw) return;
+      localStorage.removeItem('contentflow_prefill_post');
+      const parsed = JSON.parse(raw);
+      if (parsed?.title) { setTitle(String(parsed.title)); setSlug(slugify(String(parsed.title))); }
+      if (parsed?.content) setContent(String(parsed.content));
+      if (parsed?.excerpt) setExcerpt(String(parsed.excerpt));
+      if (parsed?.featured_image) setFeaturedImage(String(parsed.featured_image));
+    } catch { /* ignore invalid prefill */ }
+  }, [postId]);
 
   useEffect(() => {
     if (!scheduleOpen) return;
@@ -2131,7 +2144,7 @@ function PostCalendar({ onEdit }: { onEdit: (id: string) => void }) {
 }
 
 export default function Posts({ currentUser }: { currentUser: AppUser | null }) {
-  const [view, setView] = useState<PostsView>('posts');
+  const [view, setView] = useState<PostsView>(() => localStorage.getItem('contentflow_prefill_post') ? 'editor' : 'posts');
   const [editPostId, setEditPostId] = useState<string | null>(null);
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [tags, setTags] = useState<BlogTag[]>([]);

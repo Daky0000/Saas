@@ -711,6 +711,8 @@ Generate 2-3 highly specific, immediately actionable proposals.${extraInstructio
 team_briefing in the context is your team's shared state:
 - team_strategy is the strategy the whole team follows and why; every proposal should serve it, and your_focus is your part. Say how in payload.strategy_link.
 - niche_research is current research on the user's niche. Ground proposals in it and name the finding in payload.evidence; do not invent statistics.
+- platform_benchmarks in niche_research shows what has been working for popular accounts in this niche across connected channels (Instagram, TikTok, LinkedIn, X, Facebook, Threads, Pinterest). Adopt their winning formats and hook structures.
+- STRICT GROUNDING: Fill those winning structural frameworks ONLY with verified business details from the user context and memories (actual offerings, services, website, audience). Absolutely NEVER invent unverified capabilities, fictional pricing, imaginary client reviews, or fake guarantees.
 - inbox holds messages from teammates and the director. Act on requests and directives addressed to you.
 - your_track_record shows what the user rejected recently; do not repeat those ideas.
 Use "messages" only when a teammate must act or know something to do their part (to: an agent key such as daky, nova, sage, trend_research, audience_research, seo_research, hook_writing, ad_copy, or "director" to flag that the strategy is not working). Leave it empty otherwise.

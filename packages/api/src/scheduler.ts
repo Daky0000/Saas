@@ -93,43 +93,62 @@ export async function runTaskReminders() {
 export interface PublishDuePostsDeps {
   queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
   fireWorkflowTriggers: (userId: string, event: string, data: any) => Promise<void>;
+  dbPool?: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> };
+  forceRun?: boolean;
 }
 
 // Runs every 2 minutes. Finds posts whose scheduled_at has passed, promotes them
 // to published, fires social automation + workflow triggers for each.
+// Safety gate: never auto-publishes unapproved drafts/items or social-only records.
 export async function publishDuePosts(deps?: Partial<PublishDuePostsDeps>) {
-  if (!hasDatabase() || !deps?.queueSocialAutomationForPublishedPost) return;
+  if ((!hasDatabase() && !deps?.forceRun) || !deps?.queueSocialAutomationForPublishedPost) return;
+  const activePool = deps.dbPool ?? pool;
   try {
     // The publication transition and its durable delivery intent commit together.
-    await pool.query(`WITH published AS (
+    await activePool.query(`WITH published AS (
       UPDATE blog_posts SET status='published',published_at=NOW(),updated_at=NOW()
-      WHERE status='scheduled' AND scheduled_at<=NOW() RETURNING *
+      WHERE status='scheduled'
+        AND scheduled_at<=NOW()
+        AND COALESCE(approval_status, 'not_required') NOT IN ('pending', 'review_required', 'rejected', 'needs_changes')
+        AND COALESCE(post_format, 'blog') != 'social_only'
+      RETURNING *
     ) INSERT INTO publication_outbox(id,post_id,user_id,payload)
       SELECT id,id,user_id,to_jsonb(published) FROM published ON CONFLICT(id) DO NOTHING`);
-    const { rows }=await pool.query(`WITH due AS (
+    const { rows }=await activePool.query(`WITH due AS (
       SELECT id FROM publication_outbox WHERE status IN ('pending','processing') AND run_at<=NOW()
       ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 30
     ) UPDATE publication_outbox o SET status='processing',run_at=NOW()+INTERVAL '15 minutes'
       FROM due WHERE o.id=due.id RETURNING o.*`);
     for (const event of rows) {
       try {
-        const { rows: posts }=await pool.query(`SELECT p.*,
+        const { rows: posts }=await activePool.query(`SELECT p.*,
           ARRAY(SELECT t.name FROM blog_tags t JOIN blog_post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=p.id) AS tag_names
           FROM blog_posts p WHERE p.id=$1 AND p.user_id=$2`,[event.post_id,event.user_id]);
         if (!posts[0]) throw new Error('Published post is unavailable');
         if (!event.distribution_enqueued) {
           await deps.queueSocialAutomationForPublishedPost(event.user_id,posts[0]);
-          await pool.query('UPDATE publication_outbox SET distribution_enqueued=true WHERE id=$1',[event.id]);
+          await activePool.query('UPDATE publication_outbox SET distribution_enqueued=true WHERE id=$1',[event.id]);
         }
         await deps.fireWorkflowTriggers?.(event.user_id,'post_published',posts[0]);
-        await pool.query(`UPDATE publication_outbox SET status='completed',last_error=NULL WHERE id=$1`,[event.id]);
-        await dbQuery(`INSERT INTO notifications(user_id,type,title,message,data) VALUES($1,'post','Blog post published',$2,$3)`,
+        await activePool.query(`UPDATE publication_outbox SET status='completed',last_error=NULL WHERE id=$1`,[event.id]);
+        await (deps.dbPool ? deps.dbPool.query.bind(deps.dbPool) : dbQuery)(`INSERT INTO notifications(user_id,type,title,message,data) VALUES($1,'post','Blog post published',$2,$3)`,
           [event.user_id,`"${posts[0].title}" is published. Social distribution is queued separately.`,JSON.stringify({ post_id: event.post_id })]);
       } catch(error) {
-        await pool.query(`UPDATE publication_outbox SET status=CASE WHEN attempts>=7 THEN 'failed' ELSE 'pending' END,
+        await activePool.query(`UPDATE publication_outbox SET status=CASE WHEN attempts>=7 THEN 'failed' ELSE 'pending' END,
           attempts=attempts+1,run_at=NOW()+INTERVAL '5 minutes',last_error=$2 WHERE id=$1`,[event.id,error instanceof Error ? error.message.slice(0,300) : 'Delivery failed']);
         logger.error({ err: error,eventId: event.id },'publication_delivery_failed');
       }
     }
   } catch(error) { logger.error({ err: error },'scheduled_posts_publish_error'); }
+}
+
+// Runs periodically to scan post performance across all platforms and update tactical guidance.
+export async function runWeeklyPostScans() {
+  if (!hasDatabase()) return;
+  try {
+    const { runAllWeeklyPerformanceScans } = await import('./server/agentTeam/weeklyScanner.ts');
+    await runAllWeeklyPerformanceScans();
+  } catch (err) {
+    logger.error({ err }, 'weekly_post_scans_scheduler_error');
+  }
 }

@@ -104,7 +104,7 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
   if (googleKey) {
     try {
       const resp = await axios.post(
-        `${GOOGLE_BASE}/models/gemini-2.0-flash-exp:generateContent`,
+        `${GOOGLE_BASE}/models/gemini-2.5-flash-image:generateContent`,
         { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } },
         { headers: { 'x-goog-api-key': googleKey, 'Content-Type': 'application/json' }, timeout: 60_000 }
       );
@@ -119,7 +119,7 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
     try {
       const resp = await axios.post(
         'https://api.openai.com/v1/images/generations',
-        { model: 'dall-e-3', prompt: prompt.slice(0, 3800), n: 1, size: '1024x1024', response_format: 'b64_json' },
+        { model: 'gpt-image-1', prompt: prompt.slice(0, 3800), n: 1, size: '1024x1024', quality: 'auto' },
         { headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' }, timeout: 90_000 }
       );
       const b64: string = resp.data?.data?.[0]?.b64_json ?? '';
@@ -237,8 +237,8 @@ Respond ONLY with JSON: {"title": "post title (max 70 chars)", "excerpt": "1-2 s
       const postId = randomUUID();
       const scheduledAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
       await pool.query(
-        `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, featured_image, status, scheduled_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8)`,
+        `INSERT INTO blog_posts (id, user_id, title, slug, content, excerpt, featured_image, status, scheduled_at, source, approval_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'scheduled',$8,'content_plan','review_required')`,
         [postId, plan.user_id, title, `${slugify(title)}-${postId.slice(0, 6)}`,
          String(piece.content || ''), String(piece.excerpt || '').slice(0, 500), imageUrl || '', scheduledAt.toISOString()]
       );
