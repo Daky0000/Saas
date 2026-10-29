@@ -1,5 +1,5 @@
 // Generated from the migration source. Regenerate before build or development.
-export const SCHEMA_SOURCE_HASH = 'a442bcf79dbca69b7498a3ecc437f360bb58b956ed3869b1e7f3105c9a5a50b7';
+export const SCHEMA_SOURCE_HASH = '6ed8f78c427132d0baa5ef9be63f80dfb3b1ae17c5a9988be2bb63b8b65d8e86';
 export const REQUIRED_SCHEMA_TABLES = [
   "account_metrics",
   "admin_agent_runs",
@@ -23,7 +23,10 @@ export const REQUIRED_SCHEMA_TABLES = [
   "apify_runs",
   "audit_logs",
   "auth_providers",
+  "autopilot_accounting_events",
   "autopilot_approval_events",
+  "autopilot_asset_blobs",
+  "autopilot_assets",
   "autopilot_audit_events",
   "autopilot_brand_assets",
   "autopilot_brand_profiles",

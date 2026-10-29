@@ -10,6 +10,7 @@ import { dbQuery } from '../db.ts';
 import { getAIConfig, resolveActiveKey, callAINonStreaming, hasAICredits, chargeAICredits, ensureCreditAccount, FAST_MODEL, GEMINI_MODELS } from '../ai-helpers.ts';
 import { buildSharedAgentContext } from './agentSharedContext.ts';
 import { magnificOneGenerate, magnificGenerateImage } from './magnificRoutes.ts';
+import { DEFAULT_OPENAI_IMAGE_MODEL } from './openaiRoutes.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-content plans.
@@ -119,7 +120,7 @@ export async function generateFeaturedImage(prompt: string): Promise<string | nu
     try {
       const resp = await axios.post(
         'https://api.openai.com/v1/images/generations',
-        { model: 'gpt-image-1', prompt: prompt.slice(0, 3800), n: 1, size: '1024x1024', quality: 'auto' },
+        { model: DEFAULT_OPENAI_IMAGE_MODEL, prompt: prompt.slice(0, 3800), n: 1, size: '1024x1024', quality: 'auto' },
         { headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' }, timeout: 90_000 }
       );
       const b64: string = resp.data?.data?.[0]?.b64_json ?? '';

@@ -93,6 +93,8 @@ function isBullMqEnabled() {
 export interface DistributionModule {
   queueSocialAutomationForPublishedPost: (userId: string, post: any) => Promise<void>;
   publishToplatform: (userId: string, post: any, platformId: string, options?: any) => Promise<any>;
+  /** Step-wise Instagram publishing (container, poll, publish) for the autopilot worker. */
+  instagramStagedPublisher: import('./autopilot/lifecycleAndPublishingService.ts').StagedPublisher;
   router: Router;
   getPublishableSocialConnection: (userId: string, platformId: string, options?: { refreshWithinMs?: number }) => Promise<PublishableSocialConnection | null>;
   markSocialAccountNeedsReapproval: (params: { platformId: string; accountId?: string | null; userId?: string | null; reason?: string; disconnect?: boolean }) => Promise<void>;
@@ -2234,10 +2236,10 @@ async function publishToplatform(
         };
       }
 
-      if (igFormat === 'CAROUSEL' && (normalizedMedia.length < 2 || normalizedMedia.length > 10)) {
+      if (igFormat === 'CAROUSEL' && (normalizedMedia.length < 2 || normalizedMedia.length > 20)) {
         return {
           status: 'failed',
-          error: `Instagram CAROUSEL requires between 2 and 10 media items (received ${normalizedMedia.length}).`,
+          error: `Instagram CAROUSEL requires between 2 and 20 media items (received ${normalizedMedia.length}).`,
           retryable: false,
         };
       }
@@ -2254,7 +2256,7 @@ async function publishToplatform(
       const instagramPost: PostObject = {
         type: igFormat,
         content: { text: finalCaption },
-        media: igFormat === 'CAROUSEL' ? normalizedMedia.slice(0, 10) : [normalizedMedia[0]],
+        media: igFormat === 'CAROUSEL' ? normalizedMedia.slice(0, 20) : [normalizedMedia[0]],
       };
       const validation = instagramBusinessPlatform.validate(instagramPost);
       if (!validation.ok) {
@@ -3040,10 +3042,72 @@ router.post('/automation/retry/:logId', async (req: Request, res: Response) => {
 
 // Meta deauthorize / data-deletion callbacks live in complianceRoutes.ts.
 
+  // Step-wise Instagram publishing for the autopilot worker: container
+  // creation, status polling and publish are separate calls so each step's
+  // result (container ID first) is persisted before the next is attempted.
+  async function instagramContext(userId: string) {
+    const conn = await getPublishableSocialConnection(userId, 'instagram');
+    if (!conn || !conn.access_token || !String(conn.account_id || '').trim()) {
+      return { error: { code: 'ACCOUNT_NOT_CONNECTED', message: 'Instagram is not connected for this user. Connect a Business or Creator account in Integrations.' } };
+    }
+    if (conn.needs_reapproval) {
+      return { error: { code: 'RECONNECT_ACCOUNT', message: 'The Instagram connection needs to be re-approved. Reconnect it in Integrations.' } };
+    }
+    const instagramCfg = await getPlatformConfig('instagram');
+    const facebookCfg = await getPlatformConfig('facebook');
+    return {
+      ctx: {
+        accessToken: conn.access_token,
+        accountId: conn.account_id,
+        accountName: conn.account_name,
+        tokenData: conn.token_data,
+        helpers: {
+          graphBase: resolveInstagramGraphBase({ accessToken: conn.access_token, tokenData: conn.token_data }),
+          appId: String(instagramCfg.appId || facebookCfg.appId || process.env.VITE_FACEBOOK_APP_ID || '').trim() || undefined,
+          appSecret: String(instagramCfg.appSecret || facebookCfg.appSecret || process.env.FACEBOOK_APP_SECRET || '').trim() || undefined,
+        },
+      } as any,
+    };
+  }
 
+  const instagramStagedPublisher = {
+    async checkAccount(userId: string) {
+      const c = await instagramContext(userId);
+      return c.error ? { ok: false as const, ...c.error } : { ok: true as const };
+    },
+    async createContainer(input: { userId: string; caption: string; platformMediaType: 'FEED_POST' | 'CAROUSEL' | 'REEL' | 'STORY'; mediaAssets: Array<{ url: string; type: 'image' | 'video'; mime_type?: string }> }) {
+      const c = await instagramContext(input.userId);
+      if (c.error) return { ok: false as const, code: c.error.code, message: c.error.message, retryable: false, outcome: 'definitive' as const };
+      await acquirePlatformSlot('instagram');
+      return instagramBusinessPlatform.createContainerForPost({
+        type: input.platformMediaType,
+        content: { text: input.caption.slice(0, 2200) },
+        media: input.mediaAssets.map((m) => ({ url: m.url, type: m.type, mimeType: m.mime_type })),
+      } as PostObject, c.ctx);
+    },
+    async checkContainer(userId: string, containerId: string) {
+      const c = await instagramContext(userId);
+      if (c.error) return { status: 'UNKNOWN' as const, detail: c.error.message };
+      return instagramBusinessPlatform.getContainerStatus(containerId, c.ctx);
+    },
+    async publishContainer(userId: string, containerId: string) {
+      const c = await instagramContext(userId);
+      if (c.error) return { ok: false as const, code: c.error.code, message: c.error.message, retryable: false, outcome: 'definitive' as const };
+      const res = await instagramBusinessPlatform.publishCreatedContainer(containerId, c.ctx);
+      if (res.ok) {
+        await logIntegrationEvent({ userId, integrationSlug: 'instagram', eventType: 'post_published', status: 'success', response: { platformPostId: res.mediaId, containerId, via: 'autopilot' } });
+      }
+      return res;
+    },
+    async findPublishedMedia(userId: string, opts: { containerId: string; caption: string; sinceIso: string }) {
+      const c = await instagramContext(userId);
+      if (c.error) return null;
+      return instagramBusinessPlatform.findRecentMediaByCaption(c.ctx, opts.caption, opts.sinceIso);
+    },
+  };
 
   return {
-    router, publishToplatform,
+    router, publishToplatform, instagramStagedPublisher,
     getPublishableSocialConnection,
     markSocialAccountNeedsReapproval,
     listLinkedInAdminOrganizations,

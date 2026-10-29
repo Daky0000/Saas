@@ -507,15 +507,18 @@ export default function CreativeQueueTab({ onRefreshOverview, onOpenApprovalQueu
             </div>
 
             {/* Deterministic Raster Preview + Slide / Storyboard Breakdown */}
-            {detail.item.deterministic_overlay?.preview_raster_data_url && (
+            {detail.item.media_assets?.[0]?.url && detail.item.media_assets[0].type === 'image' && (
               <div className="rounded-xl border border-line bg-sunken p-4">
                 <Eyebrow>DETERMINISTIC COMPOSITOR PREVIEW & CONTRAST CHECK</Eyebrow>
                 <div className="mt-3 flex flex-wrap items-start gap-4">
                   <div className={`relative overflow-hidden rounded-[10px] border border-line bg-white ${
                     aspectRatio === '9:16' ? 'aspect-[9/16] w-40' : aspectRatio === '1:1' ? 'aspect-square w-44' : 'aspect-[4/5] w-44'
                   }`}>
+                    {detail.item.media_assets[0].is_demo && (
+                      <div className="absolute left-0 right-0 top-0 z-10 bg-red-600 py-0.5 text-center text-[9px] font-mono font-bold text-white">DEMO — NOT PUBLISHABLE</div>
+                    )}
                     <img
-                      src={detail.item.deterministic_overlay.preview_raster_data_url}
+                      src={detail.item.media_assets[0].url}
                       alt={detail.item.alt_text || detail.item.title}
                       className="h-full w-full object-contain"
                     />

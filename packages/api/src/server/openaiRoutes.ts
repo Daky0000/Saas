@@ -21,13 +21,34 @@ interface OpenAIDeps {
 
 const OPENAI_BASE = 'https://api.openai.com/v1';
 
-// Official current OpenAI image models; deprecated dall-e-2 / dall-e-3 removed per model audit.
+// Checked against developers.openai.com/api/docs/models and /deprecations on
+// 2026-10-29. providerCostUsd is an upper estimate (image output is priced per
+// token); keep it, the credits and the autopilot registry in step — the
+// registry-consistency test fails when they drift.
 export const OPENAI_IMAGE_MODELS: Record<string, { credits: number; providerCostUsd: number; returnFormat: 'b64' }> = {
-  'gpt-image-1':      { credits: 8, providerCostUsd: 0.04, returnFormat: 'b64' },
-  'gpt-image-1-mini': { credits: 4, providerCostUsd: 0.015, returnFormat: 'b64' },
+  'gpt-image-2.5-flare':    { credits: 8,  providerCostUsd: 0.129, returnFormat: 'b64' },
+  'gpt-image-2.5-sunburst': { credits: 12, providerCostUsd: 0.129, returnFormat: 'b64' },
 };
 
-export const DEPRECATED_OPENAI_IMAGE_MODELS = new Set(['dall-e-2', 'dall-e-3']);
+export const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-2.5-flare';
+
+// Shut down (dall-e-2, dall-e-3: 2026-05-12; gpt-image-1: 2026-10-23) or
+// announced for shutdown (gpt-image-1-mini, gpt-image-1.5, chatgpt-image-latest: 2026-12-01).
+export const DEPRECATED_OPENAI_IMAGE_MODELS = new Set([
+  'dall-e-2', 'dall-e-3', 'gpt-image-1', 'gpt-image-1-mini', 'gpt-image-1.5', 'gpt-image-1.5-2025-12-16', 'chatgpt-image-latest',
+]);
+
+/** WIDTHxHEIGHT for gpt-image-2.5: both sides divisible by 16, ratio between 1:3 and 3:1. */
+export function openaiImageSizeForAspect(aspect: string): string {
+  switch (aspect) {
+    case '16:9': return '1792x1008';
+    case '9:16': return '1008x1792';
+    case '4:5': return '1024x1280';
+    case '3:4': return '1152x1536';
+    case '4:3': return '1536x1152';
+    default: return '1024x1024';
+  }
+}
 
 const OPENAI_TTS_CREDITS: Record<string, number> = { 'gpt-4o-mini-tts': 3, 'tts-1': 2, 'tts-1-hd': 4 };
 
@@ -45,9 +66,7 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
   }
 
   function openaiImageSize(_model: string, aspect: string): string {
-    if (aspect === '16:9') return '1536x1024';
-    if (aspect === '9:16') return '1024x1536';
-    return '1024x1024';
+    return openaiImageSizeForAspect(aspect);
   }
 
   async function storeImageViaImgbb(base64Data: string, mimeType: string): Promise<string> {
@@ -136,10 +155,10 @@ export function registerOpenAIRoutes({ requireAuth, requireAdmin, hasDatabase, d
     if (!auth) return;
     if (!hasDatabase()) return res.status(503).json({ error: 'Database unavailable' });
 
-    const { prompt = '', model = 'gpt-image-1', aspect_ratio = '1:1', quality = 'auto', save = true } = req.body as Record<string, any>;
+    const { prompt = '', model = DEFAULT_OPENAI_IMAGE_MODEL, aspect_ratio = '1:1', quality = 'auto', save = true } = req.body as Record<string, any>;
     if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
     if (DEPRECATED_OPENAI_IMAGE_MODELS.has(String(model))) {
-      return res.status(400).json({ error: `Model "${model}" is deprecated and no longer supported. Use "gpt-image-1" or "gpt-image-1-mini".` });
+      return res.status(400).json({ code: 'MODEL_UNAVAILABLE', error: `Model "${model}" is retired or scheduled for shutdown by OpenAI. Use ${Object.keys(OPENAI_IMAGE_MODELS).map((m) => `"${m}"`).join(' or ')}.` });
     }
 
     const cfg = OPENAI_IMAGE_MODELS[model];

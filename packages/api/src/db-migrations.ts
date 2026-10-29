@@ -11,8 +11,38 @@ export function isTestUserCreditGrantEnabled(env: NodeJS.ProcessEnv = process.en
 }
 
 export const BASE_SCHEMA_VERSION = '2026.09.23-v2-core';
+export const AUTOPILOT_P0_SCHEMA_VERSION = '2026.10.29-autopilot-p0';
+/** Columns the running code writes; startup fails when the database lacks any of them. */
+export const REQUIRED_SCHEMA_COLUMNS: Record<string, string[]> = {
+  autopilot_assets: ['storage_key', 'sha256', 'delivery_verified_at', 'is_demo'],
+  autopilot_accounting_events: ['idempotency_key', 'credit_hold_delta', 'credit_charge_delta', 'cost_status'],
+  autopilot_budget_reservations: ['credits_held', 'units', 'unit_credit_rate', 'cost_status'],
+  autopilot_publications: ['acting_user_id', 'lease_expires_at', 'provider_container_id', 'permalink', 'next_attempt_at', 'version'],
+};
 export function computeMigrationChecksum(versionTag: string): string {
   return createHash('sha256').update(`contentflow-schema:${versionTag}:${SCHEMA_SOURCE_HASH}`).digest('hex');
+}
+
+/**
+ * A hash of the live schema (columns with types and nullability, plus index
+ * definitions) for the public schema. Two databases migrated from the same
+ * release produce the same value; compare it with the one CI prints for the SHA.
+ */
+export async function computeLiveSchemaFingerprint(pool: Pick<Pool, 'query'>): Promise<{ fingerprint: string; tables: number; columns: number; indexes: number }> {
+  const cols = await pool.query<{ t: string; c: string; ty: string; n: string }>(
+    `SELECT table_name AS t, column_name AS c, data_type AS ty, is_nullable AS n
+     FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, column_name`,
+  );
+  const idx = await pool.query<{ d: string }>(`SELECT indexdef AS d FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname`);
+  const h = createHash('sha256');
+  for (const r of cols.rows) h.update(`${r.t}.${r.c}:${r.ty}:${r.n}\n`);
+  for (const r of idx.rows) h.update(`${r.d}\n`);
+  return {
+    fingerprint: h.digest('hex'),
+    tables: new Set(cols.rows.map((r) => r.t)).size,
+    columns: cols.rows.length,
+    indexes: idx.rows.length,
+  };
 }
 
 export async function runDatabaseMigrations(pool: Pool): Promise<void> {
@@ -24,6 +54,10 @@ export async function runDatabaseMigrations(pool: Pool): Promise<void> {
     const present=new Set(result.rows.map(row=>row.table_name));
     const missing=REQUIRED_SCHEMA_TABLES.filter(name=>!present.has(name));
     if(missing.length) throw new Error(`Database migration did not create required tables: ${missing.join(', ')}`);
+    const cols=await client.query<{ table_name: string; column_name: string }>(`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public' AND table_name = ANY($1::text[])`,[Object.keys(REQUIRED_SCHEMA_COLUMNS)]);
+    const have=new Set(cols.rows.map(r=>`${r.table_name}.${r.column_name}`));
+    const missingCols=Object.entries(REQUIRED_SCHEMA_COLUMNS).flatMap(([t,cs])=>cs.map(c=>`${t}.${c}`)).filter(k=>!have.has(k));
+    if(missingCols.length) throw new Error(`Database schema is missing required columns: ${missingCols.join(', ')}`);
     await client.query(`INSERT INTO schema_migrations(version,checksum) VALUES($1,$2) ON CONFLICT(version) DO UPDATE SET checksum=EXCLUDED.checksum`, [BASE_SCHEMA_VERSION,computeMigrationChecksum(BASE_SCHEMA_VERSION)]);
   } finally { await client.query('SELECT pg_advisory_unlock(18473021)');client.release(); }
 }
@@ -5692,6 +5726,132 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
       VALUES ('2026.10.29-autopilot-v2-production', 'applied', NOW())
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
     `);
+
+    // 2026.10.29-autopilot-p0: durable media, immutable accounting ledger,
+    // leased publishing. Expand-only: new tables, nullable or defaulted columns,
+    // unique indexes only on new tables or on states existing rows already satisfy.
+    const autopilotP0Sql = `
+      CREATE TABLE IF NOT EXISTS autopilot_assets (
+        id UUID PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        content_item_id UUID REFERENCES autopilot_content_items(id) ON DELETE SET NULL,
+        workflow_run_id UUID,
+        slot TEXT NOT NULL DEFAULT '',
+        storage_driver TEXT NOT NULL,
+        storage_key TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        media_type TEXT NOT NULL CHECK (media_type IN ('image', 'video')),
+        byte_size BIGINT NOT NULL CHECK (byte_size > 0),
+        width INT,
+        height INT,
+        duration_ms INT,
+        video_codec TEXT,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider_request_id TEXT,
+        provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+        is_demo BOOLEAN NOT NULL DEFAULT false,
+        qa_state TEXT NOT NULL DEFAULT 'pending',
+        delivery_verified_at TIMESTAMPTZ,
+        delivery_error TEXT,
+        retention_class TEXT NOT NULL DEFAULT 'draft',
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ,
+        UNIQUE (tenant_id, storage_key)
+      );
+      CREATE INDEX IF NOT EXISTS autopilot_assets_item_idx ON autopilot_assets(tenant_id, content_item_id);
+      CREATE INDEX IF NOT EXISTS autopilot_assets_expiry_idx ON autopilot_assets(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS autopilot_asset_blobs (
+        storage_key TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        content BYTEA NOT NULL,
+        mime_type TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        byte_size BIGINT NOT NULL CHECK (byte_size > 0),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS autopilot_asset_blobs_tenant_idx ON autopilot_asset_blobs(tenant_id);
+
+      CREATE TABLE IF NOT EXISTS autopilot_accounting_events (
+        id UUID PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        reservation_id UUID NOT NULL,
+        job_id UUID,
+        attempt_key TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        entry_type TEXT NOT NULL CHECK (entry_type IN ('reservation','submission','provider_outcome','settlement','release','reconciliation','adjustment')),
+        credit_hold_delta INT NOT NULL DEFAULT 0,
+        credit_charge_delta INT NOT NULL DEFAULT 0,
+        estimated_usd NUMERIC(12,6),
+        actual_usd NUMERIC(12,6),
+        cost_status TEXT NOT NULL DEFAULT 'estimated',
+        provider TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        provider_request_id TEXT,
+        status TEXT NOT NULL,
+        meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+      );
+      CREATE INDEX IF NOT EXISTS autopilot_accounting_events_tenant_idx ON autopilot_accounting_events(tenant_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS autopilot_accounting_events_reservation_idx ON autopilot_accounting_events(reservation_id, created_at);
+
+      CREATE OR REPLACE FUNCTION autopilot_accounting_events_immutable() RETURNS trigger AS $fn$
+      BEGIN
+        RAISE EXCEPTION 'autopilot_accounting_events rows are immutable; append an adjustment instead';
+      END;
+      $fn$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS autopilot_accounting_events_no_update ON autopilot_accounting_events;
+      CREATE TRIGGER autopilot_accounting_events_no_update BEFORE UPDATE ON autopilot_accounting_events
+        FOR EACH ROW EXECUTE FUNCTION autopilot_accounting_events_immutable();
+
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS credits_held INT NOT NULL DEFAULT 0;
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS units_reserved INT NOT NULL DEFAULT 0;
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS unit_credit_rate INT NOT NULL DEFAULT 0;
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS unit_estimated_usd NUMERIC(12,6) NOT NULL DEFAULT 0;
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS units JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS cost_status TEXT NOT NULL DEFAULT 'estimated';
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+      ALTER TABLE autopilot_budget_reservations ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+      ALTER TABLE autopilot_budget_reservations ALTER COLUMN actual_provider_cost_usd TYPE NUMERIC(12,6);
+      ALTER TABLE autopilot_budget_reservations ALTER COLUMN estimated_provider_cost_usd TYPE NUMERIC(12,6);
+      CREATE INDEX IF NOT EXISTS autopilot_budget_res_stale_idx ON autopilot_budget_reservations(status, updated_at)
+        WHERE status IN ('reserved', 'submitted', 'reconciliation_required');
+
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS acting_user_id TEXT;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS publish_idempotency_key TEXT;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS attempt_count INT NOT NULL DEFAULT 0;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS lease_owner TEXT;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS provider_container_id TEXT;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS permalink TEXT;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS error_code TEXT;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ;
+      ALTER TABLE autopilot_publications ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+      CREATE UNIQUE INDEX IF NOT EXISTS autopilot_publications_idem_idx ON autopilot_publications(tenant_id, publish_idempotency_key)
+        WHERE publish_idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS autopilot_publications_lease_idx ON autopilot_publications(status, next_attempt_at, lease_expires_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS autopilot_publications_live_unique_idx ON autopilot_publications (tenant_id, content_item_id, channel, COALESCE(social_account_id, ''))
+        WHERE status IN ('pending', 'scheduled', 'claimed', 'submitting', 'remote_processing', 'publishing', 'retry_wait', 'reconciliation_required');
+
+      -- Rows scheduled before this release recorded no publisher. Use the item's
+      -- creator; the worker still re-checks their publish rights before posting.
+      UPDATE autopilot_publications p SET acting_user_id = i.created_by
+      FROM autopilot_content_items i
+      WHERE p.content_item_id = i.id AND p.tenant_id = i.tenant_id AND p.acting_user_id IS NULL
+        AND p.status IN ('pending', 'scheduled', 'publish_failed', 'publishing');
+    `;
+    await pool.query(autopilotP0Sql);
+    await pool.query(
+      `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum`,
+      [AUTOPILOT_P0_SCHEMA_VERSION, createHash('sha256').update(autopilotP0Sql).digest('hex')],
+    );
 
     logger.info('Autopilot v2 production migration applied successfully');
   } catch (err: any) {
