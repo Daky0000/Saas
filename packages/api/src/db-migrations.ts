@@ -5679,7 +5679,14 @@ export async function runIncrementalUpgradeMigrations(pool: Pool): Promise<void>
 
       CREATE UNIQUE INDEX IF NOT EXISTS autopilot_pub_attempts_tenant_idemp_idx ON autopilot_publication_attempts(tenant_id, idempotency_key);
       CREATE UNIQUE INDEX IF NOT EXISTS autopilot_publications_active_unique_idx ON autopilot_publications (tenant_id, content_item_id, channel, COALESCE(social_account_id, '')) WHERE status IN ('pending', 'scheduled', 'publishing');
-      CREATE UNIQUE INDEX IF NOT EXISTS autopilot_metrics_dedup_idx ON autopilot_channel_metrics (tenant_id, COALESCE(publication_id::text, ''), channel, COALESCE(window_start::text, ''), COALESCE(window_end::text, ''), traffic_source);
+      CREATE UNIQUE INDEX IF NOT EXISTS autopilot_metrics_dedup_idx ON autopilot_channel_metrics (
+        tenant_id,
+        COALESCE(publication_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        channel,
+        COALESCE(window_start, '1970-01-01 00:00:00+00'::timestamptz),
+        COALESCE(window_end, '1970-01-01 00:00:00+00'::timestamptz),
+        traffic_source
+      );
 
       INSERT INTO schema_migrations(version, checksum, applied_at)
       VALUES ('2026.10.29-autopilot-v2-production', 'applied', NOW())
