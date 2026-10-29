@@ -1660,6 +1660,9 @@ test('PostgreSQL E2E: migrations, full Autopilot SQL repository, review link, an
 
     await request(app).post(`/api/v1/autopilot/publications/${sched.body.publications[0].id}/publish`).set(hdr).send({}).expect(200);
     await request(app).delete('/api/v1/autopilot/tenant-data').set(hdr).expect(200);
+    await pool.query(`DELETE FROM credit_events WHERE user_id = $1`, [userId]).catch(() => {});
+    await pool.query(`DELETE FROM credit_ledger WHERE user_id = $1`, [userId]).catch(() => {});
+    await pool.query(`DELETE FROM user_credits WHERE user_id = $1`, [userId]).catch(() => {});
     await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
   } finally {
     await pool.end();
